@@ -1,6 +1,6 @@
 # GeoStudio — projekt nowoczesnego edytora map geodezyjnych
 
-**Wczesny prototyp v0.11.0 — wersja testowa, nie do dokumentacji urzędowej ani produkcyjnej.**
+**Wczesny prototyp v0.12.0 — wersja testowa, nie do dokumentacji urzędowej ani produkcyjnej.**
 
 GeoStudio ma docelowo umożliwiać edycję plików GEO-MAP `.MAP` z zachowaniem
 katalogów `.SYM`, `.LAY`, `.CDF`, a także pomiary, rastry, eksporty DXF/VAL
@@ -514,3 +514,34 @@ odtworzone w tej wersji.
    Sprawdź jej geometrię, punkty wspólne, powierzchnie, elementy
    legendy i tabele. Nie używaj eksperymentalnego wyniku do pracy
    urzędowej bez walidacji.
+
+
+## GeoStudio v0.12 — czytelne, nieodbite podpisy A1/A2
+
+Naprawiono błąd zgłoszony po v0.11 na `MOKRA WIEŚ_EPSG2178.MAP`:
+napisy przy poprawnej orientacji geodezyjnej były odwrócone/lustrzane.
+
+- Napisy `A1` i `A2` budynków 5310, numery działek 5216 oraz opisy
+  użytków 5220/5230 są **zawsze poziome i czytane od lewej do prawej**;
+  obrót, lustrzane przekształcenie lub przełączenie orientacji GEO-MAP
+  nie obraca samych znaków pisma.
+- Zachowano **rozmiar związany ze skalą mapy**: podczas oddalania napisy
+  maleją razem z geometrią, a podczas przybliżania rosną razem z nią.
+  Nie działa automatyczne ukrywanie ze względu na skalę ani kolizje.
+  Ukrycie warstwy lub ręczne wyłączenie podpisów nadal działa.
+- Mechanizm: Qt `ItemIgnoresTransformations` neutralizuje obrócenie i
+  odbicie liter; aktualizacja widoku ustawia rozmiar etykiety na iloczyn
+  `0.55 × powiększenie widoku`. Ustawienie dotyczy wyłącznie **widoku**,
+  nie zmienia współrzędnych, atrybutów ani formatu `.MAP`.
+- Działają nadal oddzielne pozycje podpisów A1/A2 (`L`), obrót widoku,
+  zoom rolką oraz skala `1:N` w dolnym pasku.
+
+### Test na Windows
+
+1. Otwórz `MOKRA WIEŚ_EPSG2178.MAP` lub oryginalną mapę.
+2. Sprawdź `5310`, numery działek i `RV` — litery powinny być normalne,
+   nieobrócone i nieodbite, niezależnie od orientacji mapy.
+3. Przybliż i oddal kilka razy rolką, wpisz `1:1000` i `1:5000`:
+   proporcje napisów do geometrii powinny pozostać takie same.
+4. Obróć mapę o 15° i 90°, użyj `N ↑ GEO-MAP` i przesuń A1/A2
+   narzędziem L. W razie różnic zrób zrzut ekranu.
