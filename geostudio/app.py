@@ -1106,17 +1106,15 @@ class GeoStudioWindow(QMainWindow):
                 continue
             if self.layer_for_uid.get(uid,'') in self.hidden_layers:
                 continue
-            point = self.view.mapFromScene(item.pos())
-            bounds = item.boundingRect()
-            # A1 and A2 have independent pixel offsets despite sharing
-            # a geographic anchor; test their ACTUAL displayed centres.
-            shift = item.transform()
-            cx = point.x() + shift.dx() + bounds.width()/2
-            cy = point.y() + shift.dy() + bounds.height()/2
-            dx = abs(click.x()-cx)
-            dy = abs(click.y()-cy)
-            if dx <= max(12,bounds.width()/2+6) and dy <= max(10,bounds.height()/2+6):
-                found.append((dx+dy,item))
+            # Use the *actual* device transform so hitting text works
+            # whether it scales with the map or uses a rotated viewport.
+            rect = item.deviceTransform(
+                self.view.viewportTransform()).mapRect(item.boundingRect())
+            mouse = QPointF(click)
+            if rect.adjusted(-8,-8,8,8).contains(mouse):
+                center = rect.center()
+                found.append((abs(mouse.x()-center.x())
+                              + abs(mouse.y()-center.y()),item))
         if found:
             _, item = min(found, key=lambda choice: choice[0])
             self._active_label = item
