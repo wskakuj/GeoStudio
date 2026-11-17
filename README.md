@@ -1,6 +1,6 @@
 # GeoStudio — projekt nowoczesnego edytora map geodezyjnych
 
-**Wczesny prototyp v0.5.0 — wersja testowa, nie do dokumentacji urzędowej ani produkcyjnej.**
+**Wczesny prototyp v0.6.0 — wersja testowa, nie do dokumentacji urzędowej ani produkcyjnej.**
 
 GeoStudio ma docelowo umożliwiać edycję plików GEO-MAP `.MAP` z zachowaniem
 katalogów `.SYM`, `.LAY`, `.CDF`, a także pomiary, rastry, eksporty DXF/VAL
@@ -199,3 +199,56 @@ obiektów. Nie są także automatycznie przeliczane urzędowe pola A6.
 
 Instalacja sklonowana przez Git: uruchom `update_windows.bat`.
 Po pobraniu ZIP musisz pobrać ZIP nowej wersji i ponownie zainstalować zależności.
+
+## GeoStudio v0.6 — wygodniejsza edycja i wyszukiwanie
+
+- **Esc podczas rysowania P** cofa wyłącznie ostatnio dodany wierzchołek.
+  Ponowne Esc cofa następny; gdy lista jest pusta, narzędzie rysowania pozostaje
+  aktywne. Aby wyłączyć rysowanie, wybierz **S — Zaznacz**.
+  Do tego samego służy przycisk **↶ Cofnij punkt**.
+- **Otwórz MAP** i **Wczytaj biblioteki** pamiętają oddzielnie foldery używane
+  ostatnim razem między uruchomieniami (QSettings). Po zmianie komputera ustawienia
+  zaczynają się od katalogu domowego.
+- Po zamknięciu okien **Warstwy**, **Właściwości**, **Szukaj** i **Pomoc**
+  przywróć je małymi przyciskami przy prawej krawędzi programu lub przez
+  **Widok → Panele → ...** / **Widok → Przywróć wszystkie panele**.
+- Podpisy **5310 (A1 i A2)** są większe, pogrubione i czerwone. Numery działek
+  **5216** zachowują poprzednią czcionkę, a opisy użytków **5220/5230**
+  są mniejsze i częściowo przezroczyste. To style podglądu GeoStudio.
+- **Wypełnienie:** we **Właściwościach** możesz wpisać kolor i krycie
+  jako `#RRGGBB@NN`, np. `#D94848@40` = czerwony i 40% krycia;
+  dostępna jest też paleta, suwak procentowy i przycisk kopiowania kodu.
+  **Zastosuj** zmienia jeden lub wiele zaznaczonych poligonów.
+- **Ctrl+klik** dodaje lub usuwa obiekt z zaznaczenia; **Ctrl+H** zaznacza
+  wszystkie widoczne obiekty o tym samym czterocyfrowym kodzie, co ostatnio
+  wybrany. **Delete** usuwa całą zaznaczoną grupę z kopii roboczej, z jednym
+  potwierdzeniem. Nadal nie ma funkcji Cofnij dla usuwania, więc zachowuj
+  oryginalne pliki.
+- **Ctrl+F** otwiera wyszukiwarkę po kodzie GEO-MAP i dokładnej wartości
+  atrybutu (bez rozróżnienia wielkości liter), np. `5310, A1=bx` albo
+  `5216, A2=29/16`. Kliknięcie wyniku podświetla obiekt i przybliża mapę;
+  przycisk **Zaznacz wszystkie wyniki** pozwala na edycję grupową.
+
+### Ważne: format wypełnień GeoStudio a GEO-MAP
+
+Nie ma jeszcze potwierdzonego sposobu zapisu własnych kolorów przezroczystego
+wypełnienia bezpośrednio w formacie GEO-MAP w sposób zgodny 1:1 z oryginałem.
+**Własne style nie modyfikują rekordów MAP.** GeoStudio przechowuje je w
+towarzyszącym pliku `nazwa.MAP.geostudio.json`, zapisanym obok **nowo
+utworzonej kopii roboczej** lub mapy zapisanej przez **Zapisz jako**. Aby
+zachować wygląd przy ponownym otwarciu w GeoStudio, przenieś oba pliki.
+GEO-MAP nie interpretuje tych ustawień. Brak gwarancji odtworzenia wypełnień
+w eksporcie DXF/innym programie.
+
+### Zalecany test na Windows
+
+1. Wprowadź 4 wierzchołki w P, cofnij dwa klawiszem Esc i dokończ poligon.
+2. Otwórz mapę z folderu, zamknij aplikację i sprawdź, czy następne Otwórz
+   wskazuje ten sam katalog.
+3. Zamknij panel Warstwy i przywróć go prawym paskiem przycisków.
+4. Wybierz 5310, naciśnij Ctrl+H, zmień kod wypełnienia na
+   `#C03030@50`, sprawdź efekt i plik `*.geostudio.json`.
+5. Sprawdź wyszukiwanie 5310/A1 oraz 5216/A2, w tym przejście do wyniku.
+6. Usuń grupę tylko z **kopii mapy** i sprawdź ją w oryginalnym GEO-MAP.
+
+**To nadal prototyp, nie certyfikowany edytor geodezyjny.**
