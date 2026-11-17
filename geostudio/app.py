@@ -359,23 +359,118 @@ class GeoStudioWindow(QMainWindow):
         toolbar.addWidget(self.selector)
 
     def _setup_docks(self):
-        left=QDockWidget('Warstwy GEO-MAP',self)
-        self.layers_tree=QTreeWidget()
-        self.layers_tree.setHeaderLabels(['Warstwa','Obiekty'])
-        self.layers_tree.header().setSectionResizeMode(0,QHeaderView.Stretch)
+        self.selected_uid = ''
+        self.layers_dock = QDockWidget('Warstwy GEO-MAP', self)
+        self.layers_dock.setObjectName('GeoStudioLayersDock')
+        self.layers_tree = QTreeWidget()
+        self.layers_tree.setHeaderLabels(['Warstwa', 'Obiekty'])
+        self.layers_tree.header().setSectionResizeMode(0, QHeaderView.Stretch)
         self.layers_tree.itemChanged.connect(self.on_layer_toggle)
-        left.setWidget(self.layers_tree)
-        self.addDockWidget(Qt.LeftDockWidgetArea,left)
-        right=QDockWidget('Właściwości obiektu',self)
-        self.props=QTreeWidget()
-        self.props.setHeaderLabels(['Pole','Wartość'])
-        self.props.header().setSectionResizeMode(0,QHeaderView.ResizeToContents)
-        self.props.header().setSectionResizeMode(1,QHeaderView.Stretch)
+        self.layers_dock.setWidget(self.layers_tree)
+        self.addDockWidget(Qt.LeftDockWidgetArea, self.layers_dock)
+
+        self.properties_dock = QDockWidget('Właściwości obiektu', self)
+        self.properties_dock.setObjectName('GeoStudioPropertiesDock')
+        prop_root = QWidget(self.properties_dock)
+        prop_layout = QVBoxLayout(prop_root)
+        self.props = QTreeWidget()
+        self.props.setHeaderLabels(['Pole', 'Wartość'])
+        self.props.header().setSectionResizeMode(0, QHeaderView.ResizeToContents)
+        self.props.header().setSectionResizeMode(1, QHeaderView.Stretch)
         self.props.itemDoubleClicked.connect(self.edit_property)
-        right.setWidget(self.props)
-        self.addDockWidget(Qt.RightDockWidgetArea,right)
-        self.selected_uid=''
-        self.addDockWidget(Qt.BottomDockWidgetArea, self._help_dock())
+        prop_layout.addWidget(self.props, 3)
+        self.selected_count_label = QLabel('Brak zaznaczenia')
+        prop_layout.addWidget(self.selected_count_label)
+        prop_layout.addWidget(QLabel('Wypełnienie poligonów (styl GeoStudio)'))
+        form = QFormLayout()
+        self.fill_entry = QLineEdit('#7899B5@25')
+        self.fill_entry.setToolTip('Kod #RRGGBB@krycie%, np. #D94848@40')
+        self.opacity_spin = QSpinBox()
+        self.opacity_spin.setRange(0, 100)
+        self.opacity_spin.setSuffix(' % krycia')
+        self.opacity_spin.setValue(25)
+        form.addRow('Kod koloru', self.fill_entry)
+        form.addRow('Krycie', self.opacity_spin)
+        prop_layout.addLayout(form)
+        style_buttons = QHBoxLayout()
+        for title, fn in [('🎨 Paleta', self.choose_fill_color),
+                          ('Kopiuj kod', self.copy_fill_code),
+                          ('Zastosuj', self.apply_fill_style)]:
+            button = QPushButton(title)
+            button.clicked.connect(fn)
+            style_buttons.addWidget(button)
+        prop_layout.addLayout(style_buttons)
+        self.properties_dock.setWidget(prop_root)
+        self.addDockWidget(Qt.RightDockWidgetArea, self.properties_dock)
+
+        self.search_dock = QDockWidget('Wyszukaj obiekty', self)
+        self.search_dock.setObjectName('GeoStudioSearchDock')
+        search_root = QWidget(self.search_dock)
+        search_layout = QVBoxLayout(search_root)
+        search_form = QFormLayout()
+        self.search_code = QLineEdit()
+        self.search_code.setPlaceholderText('np. 5310 lub 5216')
+        self.search_field = QComboBox()
+        for field in ('A1','A2','A3','A4','A5','A6','TX','ID','*'):
+            self.search_field.addItem('Dowolne pole' if field == '*' else field, field)
+        self.search_value = QLineEdit()
+        self.search_value.setPlaceholderText('np. bx albo 29/16')
+        search_form.addRow('Kod obiektu', self.search_code)
+        search_form.addRow('Atrybut', self.search_field)
+        search_form.addRow('Wartość =', self.search_value)
+        search_layout.addLayout(search_form)
+        find_button = QPushButton('⌕ Znajdź na mapie')
+        find_button.clicked.connect(self.run_search)
+        search_layout.addWidget(find_button)
+        self.search_value.returnPressed.connect(self.run_search)
+        self.search_code.returnPressed.connect(self.run_search)
+        self.search_summary = QLabel('Wpisz kod i wartość atrybutu')
+        search_layout.addWidget(self.search_summary)
+        self.search_results = QTreeWidget()
+        self.search_results.setHeaderLabels(['Kod', 'A1', 'A2'])
+        self.search_results.itemClicked.connect(self.select_search_result)
+        search_layout.addWidget(self.search_results, 1)
+        select_results = QPushButton('Zaznacz wszystkie wyniki')
+        select_results.clicked.connect(self.select_search_results)
+        search_layout.addWidget(select_results)
+        self.search_dock.setWidget(search_root)
+        self.addDockWidget(Qt.RightDockWidgetArea, self.search_dock)
+        self.search_dock.hide()
+
+        self.info_dock = self._help_dock()
+        self.info_dock.setObjectName('GeoStudioInfoDock')
+        self.addDockWidget(Qt.BottomDockWidgetArea, self.info_dock)
+
+        panels = self.view_menu.addMenu('Panele')
+        self.panel_toolbar = QToolBar('Pokaż/ukryj panele', self)
+        self.panel_toolbar.setMovable(False)
+        self.addToolBar(Qt.RightToolBarArea, self.panel_toolbar)
+        for dock, title in ((self.layers_dock, '▤ Warstwy'),
+                            (self.properties_dock, '▦ Właściwości'),
+                            (self.search_dock, '⌕ Szukaj'),
+                            (self.info_dock, 'ⓘ Pomoc')):
+            action = dock.toggleViewAction()
+            action.setText(title)
+            panels.addAction(action)
+            self.panel_toolbar.addAction(action)
+        self.view_menu.addAction(self._action('Przywróć wszystkie panele',
+                                              self.restore_panels))
+
+    def restore_panels(self):
+        for dock, area in ((self.layers_dock, Qt.LeftDockWidgetArea),
+                           (self.properties_dock, Qt.RightDockWidgetArea),
+                           (self.search_dock, Qt.RightDockWidgetArea),
+                           (self.info_dock, Qt.BottomDockWidgetArea)):
+            self.addDockWidget(area, dock)
+            dock.show()
+            dock.raise_()
+        self.layers_dock.raise_()
+
+    def show_search(self):
+        self.search_dock.show()
+        self.search_dock.raise_()
+        self.search_code.setFocus()
+        self.search_code.selectAll()
 
     def _help_dock(self):
         dock=QDockWidget('Informacja',self)
