@@ -28,7 +28,9 @@ from .geomap import GeoMap, GeoObject, library_layers, library_symbols, library_
 from .interactions import find_snap, polygon_is_valid, closest_point_on_edge
 from .geometry_index import GeometryIndex
 from .object_search import search_objects
-from .visual_styles import parse_fill_code, fill_code, load_styles, write_styles, sidecar_path
+from .visual_styles import (parse_fill_code, fill_code, load_styles,
+    load_label_positions, write_styles, sidecar_path)
+from .library_render import parse_cdf, parse_sym_primitives, cdf_for_object, native_fill_color, simple_point_segments
 
 APP_QSS = """
 QMainWindow, QDockWidget, QWidget { background-color: #101826; color: #dce7f5; font: 10pt 'Segoe UI'; }
@@ -64,6 +66,9 @@ class MapView(QGraphicsView):
     vertex_hover = Signal(float, float, int)
     vertex_commit = Signal(float, float, int)
     edge_insert = Signal(float, float)
+    label_press = Signal(float, float)
+    label_move = Signal(float, float)
+    label_drop = Signal(float, float)
     zoom_changed = Signal()
 
     def __init__(self, scene):
@@ -71,6 +76,8 @@ class MapView(QGraphicsView):
         self.draw_mode = False
         self.edit_mode = False
         self.pan_mode = False
+        self.label_mode = False
+        self._label_down = False
         self.edit_points = []
         self.dragged_vertex = None
         self._pan_button = None
@@ -138,7 +145,9 @@ class MapView(QGraphicsView):
             return
         x, y = self._position(event)
         self.coordinate.emit(x, y)
-        if self.draw_mode:
+        if self.label_mode and self._label_down:
+            self.label_move.emit(x, y)
+        elif self.draw_mode:
             self.polygon_hover.emit(x, y)
         elif self.edit_mode and self.dragged_vertex is not None:
             self.vertex_hover.emit(x, y, self.dragged_vertex)
@@ -155,6 +164,12 @@ class MapView(QGraphicsView):
             event.accept()
             return
         x, y = self._position(event)
+        if self.label_mode:
+            if event.button() == Qt.LeftButton:
+                self._label_down = True
+                self.label_press.emit(x, y)
+            event.accept()
+            return
         if self.draw_mode:
             if event.button() == Qt.RightButton:
                 self.finish_polygon.emit()
@@ -189,6 +204,12 @@ class MapView(QGraphicsView):
                            Qt.CrossCursor if (self.draw_mode or self.edit_mode) else Qt.ArrowCursor)
             event.accept()
             return
+        if self.label_mode and self._label_down and event.button() == Qt.LeftButton:
+            self._label_down = False
+            x, y = self._position(event)
+            self.label_drop.emit(x, y)
+            event.accept()
+            return
         if self.edit_mode and self.dragged_vertex is not None and event.button() == Qt.LeftButton:
             x, y = self._position(event)
             idx = self.dragged_vertex
@@ -212,7 +233,7 @@ class MapView(QGraphicsView):
         if event.key() == Qt.Key_Escape:
             if self.draw_mode:
                 self.undo_polygon_point.emit()
-            elif self.edit_mode or self.pan_mode:
+            elif self.edit_mode or self.pan_mode or self.label_mode:
                 self.cancel_action.emit()
             else:
                 super().keyPressEvent(event)
@@ -225,13 +246,19 @@ class MapView(QGraphicsView):
 class GeoStudioWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle('GeoStudio v0.7 — eksperymentalny edytor GEO-MAP')
+        self.setWindowTitle('GeoStudio v0.8 — eksperymentalny edytor GEO-MAP')
         self.resize(1450, 900)
         self.settings = QSettings('GeoStudio', 'GeoStudio')
         self.doc: GeoMap | None=None
         self.catalog: dict[str,str]={}
         self.symbols: dict[str,str]={}
         self.palette: dict[str,tuple[int,int,int]]={}
+        self.cdf_styles = {}
+        self.sym_primitives = {}
+        self.library_paths = {}
+        self.label_positions = {}
+        self.label_items = {}
+        self._active_label = None
         self.items_by_layer:dict[str,list]=defaultdict(list)
         self.graphics_for_uid={}
         self.visual_styles = {}
@@ -277,9 +304,13 @@ class GeoStudioWindow(QMainWindow):
         self.view.point_for_polygon.connect(self.add_polygon_point)
         self.view.finish_polygon.connect(self.finish_polygon)
         self.view.undo_polygon_point.connect(self.undo_last_polygon_point)
+        self.view.label_press.connect(self.begin_label_drag)
+        self.view.label_move.connect(self.move_label)
+        self.view.label_drop.connect(self.end_label_drag)
         self.setCentralWidget(self.view)
         self._setup_menu()
         self._setup_docks()
+        self._load_saved_libraries()
         self.status=QStatusBar();self.setStatusBar(self.status)
         self.status.showMessage('Otwórz mapę GEO-MAP, aby rozpocząć. Zapis odbywa się tylko do nowego pliku.')
         self.setStyleSheet(APP_QSS)
@@ -302,6 +333,7 @@ class GeoStudioWindow(QMainWindow):
         em.addAction(self._action('Przesuwanie mapy',self.start_pan,'H'))
         em.addAction(self._action('Rysuj poligon',self.start_polygon,'P'))
         em.addAction(self._action('Edytuj wierzchołki poligonu',self.start_vertex_edit,'E'))
+        em.addAction(self._action('Przesuń podpis A1 / A2',self.start_label_edit,'L'))
         self.finish_action = self._action('Zakończ i zapisz poligon',self.finish_polygon,'Return')
         em.addAction(self.finish_action)
         self.finish_action.setEnabled(False)
@@ -363,6 +395,7 @@ class GeoStudioWindow(QMainWindow):
             ('pan','✋ Przesuń [H]',self.start_pan),
             ('draw','⬡ Poligon [P]',self.start_polygon),
             ('edit','✥ Wierzchołki [E]',self.start_vertex_edit),
+            ('labels','✎ Opisy A1/A2 [L]',self.start_label_edit),
         ]:
             action = self._action(label, fn)
             action.setCheckable(True)
@@ -532,6 +565,7 @@ class GeoStudioWindow(QMainWindow):
             self.selected_uid = ''
             self.settings.setValue('last_map_dir', str(Path(file).parent))
             self.visual_styles = load_styles(file)
+            self.label_positions = load_label_positions(file)
             self.selected_uids = []
             self._auto_copy_path = None
             self._auto_copy_digest = None
@@ -540,19 +574,46 @@ class GeoStudioWindow(QMainWindow):
             self._last_pick_candidates = ()
             self._look_for_libraries(Path(file).parent)
             self.rebuild_scene()
-            self.setWindowTitle('GeoStudio v0.7 — '+Path(file).name)
+            self.setWindowTitle('GeoStudio v0.8 — '+Path(file).name)
             self.status.showMessage(f'{len(doc.objects)} obiektów, {len(doc.lines)} wierszy | {file}')
         except Exception as exc: QMessageBox.critical(self,'Błąd odczytu mapy',str(exc))
 
-    def _look_for_libraries(self,folder):
-        for ext,handler in [('lay','layers'),('sym','symbols'),('cdf','palette')]:
-            matches=sorted(folder.glob('*.'+ext))+sorted(folder.glob('*.'+ext.upper()))
-            if matches:self.load_library(matches[0],handler)
+    def _load_saved_libraries(self):
+        """Remember stable library locations across sessions, never bundle vendor files."""
+        for kind in ('layers','symbols','palette'):
+            path = self.settings.value('library_' + kind, '')
+            if path and Path(str(path)).is_file():
+                try:
+                    self.load_library(path, kind, remember=False)
+                except (OSError, ValueError):
+                    pass
 
-    def load_library(self, path, kind):
-        if kind=='layers':_,self.catalog=library_layers(path)
-        elif kind=='symbols':self.symbols=library_symbols(path)
-        elif kind=='palette':self.palette=library_colors(path)
+    def _look_for_libraries(self, folder):
+        """Loaded user defaults win; beside-map discovery is a fallback only."""
+        folder=Path(folder)
+        for ext,kind in (('lay','layers'),('sym','symbols'),('cdf','palette')):
+            if kind in self.library_paths and Path(self.library_paths[kind]).is_file():
+                continue
+            matches = sorted(p for p in folder.iterdir() if p.is_file() and
+                             p.suffix.lower() == '.'+ext)
+            if matches:
+                self.load_library(matches[0], kind)
+
+    def load_library(self, path, kind, *, remember=True):
+        path = Path(path).resolve()
+        if kind == 'layers':
+            _, self.catalog = library_layers(path)
+        elif kind == 'symbols':
+            self.symbols = library_symbols(path)
+            self.sym_primitives = parse_sym_primitives(path)
+        elif kind == 'palette':
+            self.palette = library_colors(path)
+            self.cdf_styles = parse_cdf(path)
+        else:
+            raise ValueError('Nieznany typ biblioteki')
+        self.library_paths[kind] = str(path)
+        if remember:
+            self.settings.setValue('library_' + kind, str(path))
 
     def open_catalogs(self):
         files,_=QFileDialog.getOpenFileNames(
@@ -626,6 +687,7 @@ class GeoStudioWindow(QMainWindow):
         self.graphics_for_uid = {}
         self.items_by_layer = defaultdict(list)
         self.labels = []
+        self.label_items = {}
         self.label_world_span = {}
         self.highlight_item = None
         self.draft_item = None
@@ -638,29 +700,66 @@ class GeoStudioWindow(QMainWindow):
                 continue
             layer = resolve_layer(self.catalog, obj.code)
             self.layer_for_uid[obj.uid] = layer
+            # Preserve GEO-MAP COLORREF for stroke; CDF can override
+            # fill and border on exact code/attribute variants.
             color = QColor(*obj.colorref)
-            fill_style = self.visual_styles.get(obj.uid)
-            if fill_style:
-                fill_color = QColor(fill_style['fill'])
-                fill_color.setAlpha(round(fill_style['opacity'] * 255 / 100))
-            else:
-                fill_color = QColor(color.red(), color.green(), color.blue(), 18)
-            pen = QPen(color if obj.colorref != (0,0,0) else QColor('#31455d'))
+            cdf = cdf_for_object(self.cdf_styles, obj.code,
+                                 obj.fields.get('A1',''), obj.fields.get('A2',''))
+            if cdf:
+                border = QColor(*cdf.border)
+                if cdf.border != (0,0,0):
+                    color = border
+            pen = QPen(color)
             pen.setCosmetic(True)
-            pen.setWidth(1)
+            pen.setWidthF(1.0)
+            override = self.visual_styles.get(obj.uid)
+            native_rgb = native_fill_color(obj.style)
+            if override:
+                fill_color = QColor(override['fill'])
+                fill_color.setAlpha(round(override['opacity'] * 255 / 100))
+                fill_brush = QBrush(fill_color)
+            elif native_rgb:
+                # GEO-MAP v8 source records may contain an explicit COLORREF
+                # in the third style token; unlike previous 7%-alpha rendering,
+                # respect the native, fully opaque recorded value.
+                fill_brush = QBrush(QColor(*native_rgb))
+            elif cdf:
+                fill_color = QColor(*cdf.fill)
+                hatch = {0: Qt.SolidPattern,
+                         1: Qt.Dense4Pattern, 2: Qt.Dense5Pattern,
+                         3: Qt.HorPattern, 4: Qt.VerPattern,
+                         5: Qt.CrossPattern, 6: Qt.BDiagPattern,
+                         7: Qt.FDiagPattern, 8: Qt.DiagCrossPattern}.get(
+                             cdf.hatch, Qt.SolidPattern)
+                fill_brush = QBrush(fill_color, hatch)
+            else:
+                fill_brush = QBrush(Qt.NoBrush)
+
             if len(obj.points) == 1:
-                item = QGraphicsEllipseItem(-2.5, -2.5, 5, 5)
+                # Direct line primitives in SYM are rendered for point symbols.
+                # O/T references and curves remain unsupported (no guessed art).
+                primitives = self.sym_primitives.get(obj.code, [])
+                segments = simple_point_segments(primitives)
+                if segments:
+                    path = QPainterPath()
+                    for x1,y1,x2,y2 in segments:
+                        path.moveTo(x1 * 5, -y1 * 5)
+                        path.lineTo(x2 * 5, -y2 * 5)
+                    item = QGraphicsPathItem(path)
+                else:
+                    item = QGraphicsEllipseItem(-2.5, -2.5, 5, 5)
+                    item.setBrush(QBrush(color))
                 item.setPos(obj.points[0].x, -obj.points[0].y)
                 item.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIgnoresTransformations, True)
-                item.setBrush(QBrush(color))
             else:
-                item = QGraphicsPathItem(self._path_for(obj, hide_connectors=self.hide_multipart_connectors))
+                item = QGraphicsPathItem(
+                    self._path_for(obj, hide_connectors=self.hide_multipart_connectors))
                 parts = obj.display_parts
                 is_multipart_area = bool(parts) and all(
                     len(part) >= 4 and (part[0].x, part[0].y) == (part[-1].x, part[-1].y)
                     for part in parts)
                 if obj.is_closed or is_multipart_area:
-                    item.setBrush(QBrush(fill_color))
+                    item.setBrush(fill_brush)
             item.setPen(pen)
             # We handle picking ourselves; Qt's default selection draws an
             # unwanted bounding RECTANGLE instead of the exact contour.
@@ -671,46 +770,61 @@ class GeoStudioWindow(QMainWindow):
             self.items_by_layer[layer].append(item)
             if obj.uid:
                 self.graphics_for_uid[obj.uid] = item
-            label_text = ''
+            # A1 and A2 are independent labels: each can be dragged in tool L.
+            # Keep the field metadata separate so hiding one must never erase
+            # the other or accidentally move map geometry.
+            label_fields = []
             if obj.code == '5310':
-                label_text = '\n'.join(v for v in (obj.fields.get('A1',''), obj.fields.get('A2','')) if v)
-            elif obj.code == '5216':
-                label_text = obj.fields.get('A2', '')
-            elif obj.code in {'5220', '5230'}:
-                label_text = obj.fields.get('A2', '')
+                label_fields = [(key, obj.fields[key]) for key in ('A1','A2')
+                                if obj.fields.get(key)]
+            elif obj.code in {'5216','5220','5230'} and obj.fields.get('A2'):
+                label_fields = [('A2',obj.fields['A2'])]
             elif obj.code.startswith('7') and obj.fields.get('TX'):
-                label_text = obj.fields['TX'].replace('||','\n').replace('|',' ')
-            if label_text:
-                anchor = self._label_anchor(obj)
-                if anchor:
-                    text_item = QGraphicsSimpleTextItem(label_text)
-                    if obj.code == '5310':
-                        text_item.setFont(QFont('Segoe UI', 12, QFont.Bold))
-                        text_item.setBrush(QBrush(QColor('#C31E2B')))
-                    elif obj.code == '5216':
-                        text_item.setFont(QFont('Segoe UI', 9))
-                        text_item.setBrush(QBrush(QColor('#21374c')))
-                    else:
-                        text_item.setFont(QFont('Segoe UI', 8))
-                        muted = QColor('#587280')
-                        muted.setAlpha(170)
-                        text_item.setBrush(QBrush(muted))
-                    text_item.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIgnoresTransformations, True)
-                    text_item.setAcceptedMouseButtons(Qt.NoButton)
-                    bounds = text_item.boundingRect()
-                    text_item.setPos(anchor[0], -anchor[1])
-                    # Local offset remains centered at any zoom level.
-                    text_item.setTransform(QTransform().translate(-bounds.width()/2, -bounds.height()/2))
-                    text_item.setData(0, obj.uid)
-                    text_item.setZValue(20)
-                    self.map_scene.addItem(text_item)
-                    self.items_by_layer[layer].append(text_item)
-                    self.labels.append(text_item)
-                    if obj.uid and obj.points:
-                        xs = [pt.x for pt in obj.points]
-                        ys = [pt.y for pt in obj.points]
-                        self.label_world_span[obj.uid] = max(
-                            max(xs) - min(xs), max(ys) - min(ys))
+                label_fields = [('TX',obj.fields['TX'].replace('||','\\n').replace('|',' '))]
+            if not label_fields:
+                continue
+            anchor = self._label_anchor(obj)
+            if not anchor:
+                continue
+            if obj.uid and obj.points:
+                xs = [pt.x for pt in obj.points]
+                ys = [pt.y for pt in obj.points]
+                self.label_world_span[obj.uid] = max(
+                    max(xs) - min(xs), max(ys) - min(ys))
+            for field, content in label_fields:
+                label = QGraphicsSimpleTextItem(content)
+                if obj.code == '5310':
+                    label.setFont(QFont('Segoe UI', 12, QFont.Bold))
+                    label.setBrush(QBrush(QColor('#C31E2B')))
+                elif obj.code == '5216':
+                    label.setFont(QFont('Segoe UI', 9))
+                    label.setBrush(QBrush(QColor('#21374c')))
+                else:
+                    label.setFont(QFont('Segoe UI', 8))
+                    muted = QColor('#587280')
+                    muted.setAlpha(170)
+                    label.setBrush(QBrush(muted))
+                label.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIgnoresTransformations, True)
+                label.setAcceptedMouseButtons(Qt.NoButton)
+                bounds = label.boundingRect()
+                custom = self.label_positions.get(obj.uid,{}).get(field)
+                x,y = custom if custom else anchor
+                label.setPos(x,-y)
+                offset = 0
+                if not custom and obj.code == '5310':
+                    offset = (-bounds.height()/2 if field == 'A1'
+                              else bounds.height()/2)
+                label.setTransform(QTransform().translate(
+                    -bounds.width()/2, -bounds.height()/2 + offset))
+                label.setData(0, obj.uid)
+                label.setData(1, field)
+                # Put the text above highlight contours so selected labels
+                # are not accidentally obscured by the yellow overlay.
+                label.setZValue(1300)
+                self.map_scene.addItem(label)
+                self.items_by_layer[layer].append(label)
+                self.labels.append(label)
+                self.label_items[(obj.uid, field)] = label
         self._populate_layers()
         if fit:
             self.fit_all()
@@ -751,7 +865,7 @@ class GeoStudioWindow(QMainWindow):
         px_per_map_unit = math.hypot(transform.m11(), transform.m12())
         selected = set(self.selected_uids)
         force_all = self.all_labels_action.isChecked()
-        occupied: set[tuple[int,int]] = set()
+        occupied: dict[tuple[int,int], str] = {}
 
         def priority(item):
             uid = item.data(0)
@@ -805,12 +919,86 @@ class GeoStudioWindow(QMainWindow):
                 for cy in range(math.floor(top / 24), math.floor(bottom / 24) + 1)
             ]
             if not (is_selected or force_all) and any(
-                    cell in occupied for cell in rect_cells):
+                    cell in occupied and occupied[cell] != uid
+                    for cell in rect_cells):
                 item.setVisible(False)
                 continue
             item.setVisible(True)
             if not force_all:
-                occupied.update(rect_cells)
+                for cell in rect_cells:
+                    occupied.setdefault(cell, uid)
+
+    def start_label_edit(self):
+        if not self.doc:
+            return
+        self.cancel_edit()
+        self.view.label_mode = True
+        self.view.setCursor(Qt.CrossCursor)
+        self.tool_actions['labels'].setChecked(True)
+        # Moving descriptions must not mutate GEO-MAP geometry or attributes.
+        self.status.showMessage(
+            'Tryb L: przeciągnij widoczny napis A1 lub A2. '
+            'Pozycje zapisywane są w pliku GeoStudio obok kopii MAP.')
+
+    def begin_label_drag(self, x, y):
+        self._active_label = None
+        if not self.view.label_mode:
+            return
+        click = self.view.mapFromScene(QPointF(x,-y))
+        found = []
+        for item in self.labels:
+            if not item.isVisible():
+                continue
+            uid, field = item.data(0), item.data(1)
+            if field not in {'A1','A2'}:
+                continue
+            if self.layer_for_uid.get(uid,'') in self.hidden_layers:
+                continue
+            point = self.view.mapFromScene(item.pos())
+            bounds = item.boundingRect()
+            # A1 and A2 have independent pixel offsets despite sharing
+            # a geographic anchor; test their ACTUAL displayed centres.
+            shift = item.transform()
+            cx = point.x() + shift.dx() + bounds.width()/2
+            cy = point.y() + shift.dy() + bounds.height()/2
+            dx = abs(click.x()-cx)
+            dy = abs(click.y()-cy)
+            if dx <= max(12,bounds.width()/2+6) and dy <= max(10,bounds.height()/2+6):
+                found.append((dx+dy,item))
+        if found:
+            _, item = min(found, key=lambda choice: choice[0])
+            self._active_label = item
+            self._set_selected_uids([item.data(0)])
+            self.view.setCursor(Qt.ClosedHandCursor)
+            self.status.showMessage(
+                f'Przesuwasz {item.data(1)} obiektu {item.data(0)[:8]}. '
+                'Puść mysz, aby zapisać pozycję w kopii roboczej.')
+
+    def move_label(self, x, y):
+        if self._active_label is not None and self.view.label_mode:
+            self._active_label.setPos(x,-y)
+
+    def end_label_drag(self, x, y):
+        item = self._active_label
+        self._active_label = None
+        if not self.view.label_mode:
+            return
+        self.view.setCursor(Qt.CrossCursor)
+        if item is None:
+            return
+        uid, field = item.data(0), item.data(1)
+        if not uid or field not in {'A1','A2'}:
+            return
+        item.setPos(x,-y)
+        bounds = item.boundingRect()
+        item.setTransform(QTransform().translate(
+            -bounds.width()/2, -bounds.height()/2))
+        self.label_positions.setdefault(uid,{})[field] = [round(x,3),round(y,3)]
+        saved = self._autosave_work_copy()
+        self.update_label_visibility()
+        self.status.showMessage(
+            f'Przesunięto {field} i zapisano pozycję w stylu GeoStudio.' +
+            (f' Kopia: {saved}' if saved else ' Użyj Zapisz jako, aby zachować pozycję.'))
 
     def start_pan(self):
         self.cancel_edit()
@@ -1005,9 +1193,18 @@ class GeoStudioWindow(QMainWindow):
     def on_layer_toggle(self,item,column):
         state=item.checkState(0)==Qt.Checked
         for graphic in self.items_by_layer.get(item.text(0),[]):graphic.setVisible(state)
-        if state:self.hidden_layers.discard(item.text(0))
-        else:self.hidden_layers.add(item.text(0))
-        self.update_label_visibility()
+        if state:
+            self.hidden_layers.discard(item.text(0))
+        else:
+            self.hidden_layers.add(item.text(0))
+        # A hidden layer must not keep a ghost selection overlay; labels
+        # belonging to other visible layers retain their previous positions.
+        selected = [uid for uid in self.selected_uids
+                    if self.layer_for_uid.get(uid) not in self.hidden_layers]
+        if selected != self.selected_uids:
+            self._set_selected_uids(selected)
+        else:
+            self.update_label_visibility()
 
     def _sync_fill_opacity(self, opacity):
         text = self.fill_entry.text().strip()
@@ -1169,6 +1366,7 @@ class GeoStudioWindow(QMainWindow):
         self.doc.delete_objects(selected)
         for uid in selected:
             self.visual_styles.pop(uid, None)
+            self.label_positions.pop(uid, None)
         self.selected_uids = []
         self.selected_uid = ''
         self._last_pick_pos = None
@@ -1191,11 +1389,12 @@ class GeoStudioWindow(QMainWindow):
         if not file:
             return
         try:
-            if self.visual_styles and sidecar_path(file).exists():
+            if (self.visual_styles or self.label_positions) and sidecar_path(file).exists():
                 raise FileExistsError('Plik stylów o tej nazwie już istnieje.')
             self.doc.save_as(file)
-            if self.visual_styles:
-                write_styles(file, self.visual_styles)
+            if self.visual_styles or self.label_positions:
+                write_styles(file, self.visual_styles,
+                             label_positions=self.label_positions)
             QMessageBox.information(self, 'Zapisano eksperymentalną MAP',
                 'Utworzono nowy plik MAP. Osobne wypełnienia (jeśli używane) '
                 'są zapisane w towarzyszącym pliku *.geostudio.json i nie '
@@ -1284,6 +1483,9 @@ class GeoStudioWindow(QMainWindow):
         self.view.draw_mode = False
         self.view.edit_mode = False
         self.view.pan_mode = False
+        self.view.label_mode = False
+        self.view._label_down = False
+        self._active_label = None
         self.view.setCursor(Qt.ArrowCursor)
         if hasattr(self, "tool_actions"):
             self.tool_actions["select"].setChecked(True)
@@ -1472,15 +1674,18 @@ class GeoStudioWindow(QMainWindow):
         if not self._auto_copy_path:
             return
         target = sidecar_path(self._auto_copy_path)
-        if not self.visual_styles and self._auto_style_digest is None:
+        if (not self.visual_styles and not self.label_positions and
+                self._auto_style_digest is None):
             return
         if self._auto_style_digest is None:
-            write_styles(self._auto_copy_path, self.visual_styles, overwrite=False)
+            write_styles(self._auto_copy_path, self.visual_styles, overwrite=False,
+                         label_positions=self.label_positions)
         else:
             if not target.is_file() or hashlib.sha256(
                     target.read_bytes()).digest() != self._auto_style_digest:
                 raise RuntimeError('Plik stylów zmieniono poza GeoStudio; nie nadpisuję go.')
-            write_styles(self._auto_copy_path, self.visual_styles, overwrite=True)
+            write_styles(self._auto_copy_path, self.visual_styles, overwrite=True,
+                         label_positions=self.label_positions)
         self._auto_style_digest = hashlib.sha256(target.read_bytes()).digest()
 
     def _autosave_work_copy(self):

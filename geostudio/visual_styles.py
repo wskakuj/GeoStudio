@@ -43,28 +43,61 @@ def validated_styles(styles: dict) -> dict[str, dict]:
     return cleaned
 
 
+
+
+def validated_label_positions(positions: dict) -> dict[str, dict[str, list[float]]]:
+    """Only A1/A2 geographic coordinates are allowed in visual sidecars."""
+    from math import isfinite
+    result = {}
+    if not isinstance(positions, dict):
+        return result
+    for uid, fields in positions.items():
+        if not isinstance(uid, str) or not isinstance(fields, dict):
+            continue
+        valid = {}
+        for key, xy in fields.items():
+            if key not in ('A1','A2','TX') or not isinstance(xy, (list, tuple)) or len(xy) != 2:
+                continue
+            try:
+                x,y = float(xy[0]), float(xy[1])
+            except (TypeError, ValueError):
+                continue
+            if isfinite(x) and isfinite(y) and abs(x)<1e9 and abs(y)<1e9:
+                valid[key] = [x,y]
+        if valid:
+            result[uid] = valid
+    return result
+
+
+def _read_payload(map_path: str | Path) -> dict:
+    path = sidecar_path(map_path)
+    if not path.exists():
+        return {'format':'geostudio-visual-v1','objects':{},'labels':{}}
+    if path.stat().st_size > 2_000_000:
+        raise ValueError('Plik stylów jest zbyt duży')
+    payload = json.loads(path.read_text(encoding='utf-8'))
+    if not isinstance(payload,dict) or payload.get('format') != 'geostudio-visual-v1':
+        raise ValueError('Nieznany format stylów GeoStudio')
+    return payload
+
+
+def load_label_positions(map_path: str | Path) -> dict[str, dict[str, list[float]]]:
+    return validated_label_positions(_read_payload(map_path).get('labels', {}))
+
+
 def load_styles(map_path: str | Path) -> dict[str, dict]:
-    source = sidecar_path(map_path)
-    if not source.is_file():
-        return {}
-    if source.stat().st_size > 2_000_000:
-        raise ValueError("Plik stylów jest zbyt duży")
-    content = json.loads(source.read_text(encoding="utf-8"))
-    if not isinstance(content, dict) or content.get("format") != "geostudio-visual-v1":
-        raise ValueError("Nieznany format stylów GeoStudio")
-    styles = content.get("objects", {})
-    if not isinstance(styles, dict):
-        raise ValueError("Nieprawidłowa lista stylów")
-    return validated_styles(styles)
+    return validated_styles(_read_payload(map_path).get('objects', {}))
 
 
-def write_styles(map_path: str | Path, styles: dict, *, overwrite: bool = False) -> None:
+def write_styles(map_path: str | Path, styles: dict, *, overwrite: bool = False,
+                 label_positions: dict | None = None) -> None:
     """Write sidecar (not MAP). Existing user style files never overwritten unless explicitly owned."""
     import os
     import tempfile
     target = sidecar_path(map_path)
     data = (json.dumps({"format": "geostudio-visual-v1",
-                        "objects": validated_styles(styles)},
+                        "objects": validated_styles(styles),
+                        "labels": validated_label_positions(label_positions or {})},
                        ensure_ascii=False, indent=2) + "\n").encode("utf-8")
     if not overwrite:
         with target.open("xb") as output:
