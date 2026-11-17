@@ -27,6 +27,9 @@ except ImportError as exc:
 from .geomap import GeoMap, GeoObject, library_layers, library_symbols, library_colors, resolve_layer
 from .interactions import find_snap, polygon_is_valid, closest_point_on_edge
 from .geometry_index import GeometryIndex
+from .coordinates import (CRS_CHOICES, MODERN_EPSG, transform_xy,
+    transform_map_copy, output_prj_text, transform_label_positions,
+    detected_crs_from_prj)
 from .object_search import search_objects
 from .visual_styles import (parse_fill_code, fill_code, load_styles,
     load_label_positions, write_styles, sidecar_path)
@@ -253,6 +256,7 @@ class GeoStudioWindow(QMainWindow):
         self.resize(1450, 900)
         self.settings = QSettings('GeoStudio', 'GeoStudio')
         self.doc: GeoMap | None=None
+        self.current_crs_epsg = None  # Never guess source CRS from raw coordinates.
         self.catalog: dict[str,str]={}
         self.symbols: dict[str,str]={}
         self.palette: dict[str,tuple[int,int,int]]={}
@@ -319,7 +323,7 @@ class GeoStudioWindow(QMainWindow):
         self._load_saved_libraries()
         self.status=QStatusBar();self.setStatusBar(self.status)
         self._setup_scale_widget()
-        self.status.showMessage('Otwórz mapę GEO-MAP, aby rozpocząć. Zapis odbywa się tylko do nowego pliku.')
+        self.status.showMessage('Otwórz mapę GEO-MAP. Trans → Przelicz współrzędne; skalę 1:N ustawisz w dolnym pasku.')
         self.setStyleSheet(APP_QSS)
 
     def _action(self,label,callback,shortcut=None):
@@ -350,6 +354,10 @@ class GeoStudioWindow(QMainWindow):
         em.addAction(self.delete_action)
         em.addAction(self._action('Zaznacz wszystkie obiekty tego kodu', self.select_all_same_code, 'Ctrl+H'))
         em.addAction(self._action('Szukaj obiektu', self.show_search, 'Ctrl+F'))
+        trans_menu = self.menuBar().addMenu('&Trans')
+        trans_menu.addAction(self._action(
+            'Przelicz współrzędne / eksportuj kopię MAP…',
+            self.open_crs_converter, 'Ctrl+T'))
         vm=self.menuBar().addMenu('&Widok')
         self.view_menu = vm
         vm.addAction(self._action('Dopasuj widok do mapy',self.fit_all,'Ctrl+0'))
@@ -555,6 +563,149 @@ class GeoStudioWindow(QMainWindow):
         dock.setWidget(label)
         return dock
 
+    def open_crs_converter(self):
+        """Interactive single-point converter and explicitly warned MAP export."""
+        dialog = QDialog(self)
+        dialog.setWindowTitle('Układy współrzędnych — PL-1992 / PL-2000 / 1965')
+        dialog.resize(560,420)
+        form = QFormLayout(dialog)
+        source = QComboBox(dialog)
+        destination = QComboBox(dialog)
+        for title, epsg in CRS_CHOICES:
+            source.addItem(title,epsg)
+            destination.addItem(title,epsg)
+        initial = self.current_crs_epsg or 2180
+        idx = source.findData(initial)
+        source.setCurrentIndex(idx if idx>=0 else 0)
+        dst_idx = destination.findData(2178)
+        destination.setCurrentIndex(dst_idx if dst_idx>=0 else 1)
+        form.addRow('Układ źródłowy',source)
+        form.addRow('Układ docelowy',destination)
+
+        notice = QLabel(
+            'Współrzędne GEO-MAP: X = północ (northing), Y = wschód (easting). '
+            'Jeśli w folderze MAP brak pliku .prj, układ źródłowy NIE jest '
+            'automatycznie rozpoznawany — zweryfikuj go w GEO-MAP przed przeliczeniem.')
+        notice.setWordWrap(True)
+        form.addRow(notice)
+        input_x = QLineEdit(dialog)
+        input_y = QLineEdit(dialog)
+        input_x.setPlaceholderText('np. 513102,968')
+        input_y.setPlaceholderText('np. 670076,708')
+        form.addRow('X źródłowe [m]',input_x)
+        form.addRow('Y źródłowe [m]',input_y)
+        result = QLabel('Wynik: —')
+        result.setWordWrap(True)
+        form.addRow(result)
+
+        def convert():
+            try:
+                x = float(input_x.text().strip().replace(',','.'))
+                y = float(input_y.text().strip().replace(',','.'))
+                sx,sy = transform_xy(x,y,source.currentData(),destination.currentData())
+                result.setText(f'X = {sx:.3f} m     Y = {sy:.3f} m')
+                return (sx,sy)
+            except Exception as exc:
+                result.setText('Błąd: ' + str(exc))
+                return None
+
+        row = QHBoxLayout()
+        calculate = QPushButton('Przelicz punkt')
+        calculate.clicked.connect(convert)
+        row.addWidget(calculate)
+        copy = QPushButton('Kopiuj X / Y')
+        def copy_coords():
+            transformed = convert()
+            if transformed is not None:
+                QApplication.clipboard().setText(
+                    f'{transformed[0]:.3f}\t{transformed[1]:.3f}')
+        copy.clicked.connect(copy_coords)
+        row.addWidget(copy)
+        form.addRow(row)
+
+        map_button = QPushButton('Eksportuj przetransformowaną kopię MAP (eksperymentalnie)')
+        map_button.setEnabled(bool(self.doc))
+        map_button.setToolTip(
+            'Konwertuje wszystkie rekordy P; nie jest to certyfikowana transformacja całego arkusza.')
+        def export_copy():
+            dialog_source=int(source.currentData())
+            dialog_target=int(destination.currentData())
+            if dialog_source not in MODERN_EPSG or dialog_target not in MODERN_EPSG:
+                QMessageBox.warning(dialog,'Eksport MAP',
+                    'Transformacja całej MAP obsługuje na razie wyłącznie PL-1992 '
+                    'i PL-2000, strefy 5–8. Układy 1965: dostępny jest '
+                    'kalkulator punktów, ale eksport mapy wymaga sprawdzenia '
+                    'transformacji historycznych i dokładności.')
+                return
+            if dialog_source == dialog_target:
+                QMessageBox.information(dialog,'Eksport MAP','Wybierz dwa różne układy.')
+                return
+            if not self.doc:
+                return
+            warn = (
+                f'PRZELICZENIE CAŁEJ MAPY: EPSG:{dialog_source} → EPSG:{dialog_target}.\\n\\n'
+                'GeoStudio zmieni wszystkie współrzędne rekordów P, '
+                'włącznie z elementami arkusza, tabelami i opisami. '
+                'Nie przeliczy automatycznie georeferencji rastrów ani '
+                'powierzchni zapisanych jako atrybuty.\\n'
+                'Powstaną wyłącznie nowe pliki MAP i PRJ. '
+                'Koniecznie sprawdź pozycje i pola powierzchni w GEO-MAP.\\n\\n'
+                'Kontynuować eksperymentalny eksport?')
+            answer=QMessageBox.warning(dialog,'Uwaga — dane geodezyjne',
+                warn,QMessageBox.Yes | QMessageBox.No,QMessageBox.No)
+            if answer!=QMessageBox.Yes:
+                return
+            source_path=Path(self.doc.filename or 'mapa.MAP')
+            default=source_path.with_name(
+                source_path.stem+f'_EPSG{dialog_target}.MAP')
+            filename,_=QFileDialog.getSaveFileName(
+                dialog,'Wybierz nowy plik mapy (oryginał bez zmian)',
+                str(default),'GEO-MAP (*.MAP)')
+            if not filename:
+                return
+            target=Path(filename)
+            prj=target.with_suffix('.prj')
+            visual=sidecar_path(target)
+            if target.exists() or prj.exists() or (
+                    (self.visual_styles or self.label_positions) and visual.exists()):
+                QMessageBox.warning(dialog,'Istniejący plik',
+                    'Nie nadpisuję istniejących plików MAP, PRJ ani stylów. '
+                    'Wybierz nową nazwę.')
+                return
+            try:
+                source_doc=GeoMap(self.doc.to_bytes())
+                projected=transform_map_copy(
+                    source_doc,dialog_source,dialog_target)
+                wkt=output_prj_text(dialog_target)
+                adjusted_labels=transform_label_positions(
+                    self.label_positions,dialog_source,dialog_target)
+                projected.save_as(target)
+                # PRJ is a standard metadata sidecar, may be ignored by GEO-MAP.
+                prj.write_text(wkt,encoding='utf-8')
+                if self.visual_styles or adjusted_labels:
+                    write_styles(target,self.visual_styles,
+                                 label_positions=adjusted_labels)
+                QMessageBox.information(dialog,'Eksport zakończony',
+                    f'Zapisano kopię:\\n{target}\\n{prj}\\n\\n'
+                    'Oryginalna mapa nie została zmieniona. '
+                    'Weryfikuj wynik w GEO-MAP, zwłaszcza atrybuty powierzchni '
+                    'oraz elementy arkusza i rastry.')
+            except Exception as exc:
+                QMessageBox.critical(dialog,'Nie udało się przeliczyć mapy',str(exc))
+
+        map_button.clicked.connect(export_copy)
+        form.addRow(map_button)
+        note = QLabel(
+            'Uwaga: Warszawa 25/75, lokalny Poznań i niejednoznaczny układ '
+            '1942 nie są jeszcze dostępne. Historyczne 1965 może wymagać '
+            'parametrów lokalnych lub siatek transformacyjnych.')
+        note.setWordWrap(True)
+        form.addRow(note)
+        close=QDialogButtonBox(QDialogButtonBox.Close,dialog)
+        close.rejected.connect(dialog.reject)
+        form.addRow(close)
+        dialog.exec()
+
     def _recent_folder(self, key):
         saved = Path(str(self.settings.value(key, str(Path.home()))))
         return str(saved if saved.is_dir() else Path.home())
@@ -570,6 +721,7 @@ class GeoStudioWindow(QMainWindow):
                 answer=QMessageBox.warning(self,'Suma kontrolna','Suma MD5 pliku nie zgadza się z nagłówkiem. Otworzyć tylko do podglądu?',QMessageBox.Yes|QMessageBox.No)
                 if answer!=QMessageBox.Yes:return
             self.doc=doc
+            self.current_crs_epsg = detected_crs_from_prj(file)
             self.selected_uid = ''
             self.settings.setValue('last_map_dir', str(Path(file).parent))
             self.visual_styles = load_styles(file)
