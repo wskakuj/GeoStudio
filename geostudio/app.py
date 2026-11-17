@@ -66,6 +66,9 @@ class MapView(QGraphicsView):
     vertex_hover = Signal(float, float, int)
     vertex_commit = Signal(float, float, int)
     edge_insert = Signal(float, float)
+    label_press = Signal(float, float)
+    label_move = Signal(float, float)
+    label_drop = Signal(float, float)
     zoom_changed = Signal()
 
     def __init__(self, scene):
@@ -73,6 +76,8 @@ class MapView(QGraphicsView):
         self.draw_mode = False
         self.edit_mode = False
         self.pan_mode = False
+        self.label_mode = False
+        self._label_down = False
         self.edit_points = []
         self.dragged_vertex = None
         self._pan_button = None
@@ -140,7 +145,9 @@ class MapView(QGraphicsView):
             return
         x, y = self._position(event)
         self.coordinate.emit(x, y)
-        if self.draw_mode:
+        if self.label_mode and self._label_down:
+            self.label_move.emit(x, y)
+        elif self.draw_mode:
             self.polygon_hover.emit(x, y)
         elif self.edit_mode and self.dragged_vertex is not None:
             self.vertex_hover.emit(x, y, self.dragged_vertex)
@@ -157,6 +164,12 @@ class MapView(QGraphicsView):
             event.accept()
             return
         x, y = self._position(event)
+        if self.label_mode:
+            if event.button() == Qt.LeftButton:
+                self._label_down = True
+                self.label_press.emit(x, y)
+            event.accept()
+            return
         if self.draw_mode:
             if event.button() == Qt.RightButton:
                 self.finish_polygon.emit()
@@ -191,6 +204,12 @@ class MapView(QGraphicsView):
                            Qt.CrossCursor if (self.draw_mode or self.edit_mode) else Qt.ArrowCursor)
             event.accept()
             return
+        if self.label_mode and self._label_down and event.button() == Qt.LeftButton:
+            self._label_down = False
+            x, y = self._position(event)
+            self.label_drop.emit(x, y)
+            event.accept()
+            return
         if self.edit_mode and self.dragged_vertex is not None and event.button() == Qt.LeftButton:
             x, y = self._position(event)
             idx = self.dragged_vertex
@@ -214,7 +233,7 @@ class MapView(QGraphicsView):
         if event.key() == Qt.Key_Escape:
             if self.draw_mode:
                 self.undo_polygon_point.emit()
-            elif self.edit_mode or self.pan_mode:
+            elif self.edit_mode or self.pan_mode or self.label_mode:
                 self.cancel_action.emit()
             else:
                 super().keyPressEvent(event)
@@ -285,6 +304,9 @@ class GeoStudioWindow(QMainWindow):
         self.view.point_for_polygon.connect(self.add_polygon_point)
         self.view.finish_polygon.connect(self.finish_polygon)
         self.view.undo_polygon_point.connect(self.undo_last_polygon_point)
+        self.view.label_press.connect(self.begin_label_drag)
+        self.view.label_move.connect(self.move_label)
+        self.view.label_drop.connect(self.end_label_drag)
         self.setCentralWidget(self.view)
         self._setup_menu()
         self._setup_docks()
@@ -311,6 +333,7 @@ class GeoStudioWindow(QMainWindow):
         em.addAction(self._action('Przesuwanie mapy',self.start_pan,'H'))
         em.addAction(self._action('Rysuj poligon',self.start_polygon,'P'))
         em.addAction(self._action('Edytuj wierzchołki poligonu',self.start_vertex_edit,'E'))
+        em.addAction(self._action('Przesuń podpis A1 / A2',self.start_label_edit,'L'))
         self.finish_action = self._action('Zakończ i zapisz poligon',self.finish_polygon,'Return')
         em.addAction(self.finish_action)
         self.finish_action.setEnabled(False)
@@ -372,6 +395,7 @@ class GeoStudioWindow(QMainWindow):
             ('pan','✋ Przesuń [H]',self.start_pan),
             ('draw','⬡ Poligon [P]',self.start_polygon),
             ('edit','✥ Wierzchołki [E]',self.start_vertex_edit),
+            ('labels','✎ Opisy A1/A2 [L]',self.start_label_edit),
         ]:
             action = self._action(label, fn)
             action.setCheckable(True)
@@ -849,6 +873,70 @@ class GeoStudioWindow(QMainWindow):
             if not force_all:
                 occupied.update(rect_cells)
 
+    def start_label_edit(self):
+        if not self.doc:
+            return
+        self.cancel_edit()
+        self.view.label_mode = True
+        self.view.setCursor(Qt.CrossCursor)
+        self.tool_actions['labels'].setChecked(True)
+        # Moving descriptions must not mutate GEO-MAP geometry or attributes.
+        self.status.showMessage(
+            'Tryb L: przeciągnij widoczny napis A1 lub A2. '
+            'Pozycje zapisywane są w pliku GeoStudio obok kopii MAP.')
+
+    def begin_label_drag(self, x, y):
+        self._active_label = None
+        if not self.view.label_mode:
+            return
+        click = self.view.mapFromScene(QPointF(x,-y))
+        found = []
+        for item in self.labels:
+            if not item.isVisible():
+                continue
+            uid, field = item.data(0), item.data(1)
+            if field not in {'A1','A2'}:
+                continue
+            if self.layer_for_uid.get(uid,'') in self.hidden_layers:
+                continue
+            point = self.view.mapFromScene(item.pos())
+            width = item.boundingRect().width()
+            height = item.boundingRect().height()
+            if (abs(click.x()-point.x()) <= max(12,width/2+6)
+                and abs(click.y()-point.y()) <= max(12,height+8)):
+                found.append(((click-point).manhattanLength(),item))
+        if found:
+            _, item = min(found, key=lambda choice: choice[0])
+            self._active_label = item
+            self._set_selected_uids([item.data(0)])
+            self.view.setCursor(Qt.ClosedHandCursor)
+            self.status.showMessage(
+                f'Przesuwasz {item.data(1)} obiektu {item.data(0)[:8]}. '
+                'Puść mysz, aby zapisać pozycję w kopii roboczej.')
+
+    def move_label(self, x, y):
+        if self._active_label is not None and self.view.label_mode:
+            self._active_label.setPos(x,-y)
+
+    def end_label_drag(self, x, y):
+        item = self._active_label
+        self._active_label = None
+        if not self.view.label_mode:
+            return
+        self.view.setCursor(Qt.CrossCursor)
+        if item is None:
+            return
+        uid, field = item.data(0), item.data(1)
+        if not uid or field not in {'A1','A2'}:
+            return
+        item.setPos(x,-y)
+        self.label_positions.setdefault(uid,{})[field] = [round(x,3),round(y,3)]
+        saved = self._autosave_work_copy()
+        self.update_label_visibility()
+        self.status.showMessage(
+            f'Przesunięto {field} i zapisano pozycję w stylu GeoStudio.' +
+            (f' Kopia: {saved}' if saved else ' Użyj Zapisz jako, aby zachować pozycję.'))
+
     def start_pan(self):
         self.cancel_edit()
         self.view.pan_mode = True
@@ -1321,6 +1409,9 @@ class GeoStudioWindow(QMainWindow):
         self.view.draw_mode = False
         self.view.edit_mode = False
         self.view.pan_mode = False
+        self.view.label_mode = False
+        self.view._label_down = False
+        self._active_label = None
         self.view.setCursor(Qt.ArrowCursor)
         if hasattr(self, "tool_actions"):
             self.tool_actions["select"].setChecked(True)
