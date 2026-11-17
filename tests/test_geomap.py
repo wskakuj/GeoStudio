@@ -124,20 +124,20 @@ def test_delete_object_removes_record_not_neighbors():
 def test_multipart_p0_marks_breaks_without_changing_original_bytes():
     # A real GEO-MAP multipart object has P 0 after each component.
     body = (
-        b';# EXT 3500 0 0 20 20\\r\\n'
-        b'*5220 32768  16          0\\r\\n'
-        b':ID[MULTI]\\r\\n:A1[105]\\r\\n:A2[RV]\\r\\n'
-        b'P 1   0.000   0.000\\r\\n'
-        b'P 1   1.000   0.000\\r\\n'
-        b'P 1   1.000   1.000\\r\\n'
-        b'P 0   0.000   0.000\\r\\n'
-        b'P 1   10.000   10.000\\r\\n'
-        b'P 1   11.000   10.000\\r\\n'
-        b'P 1   11.000   11.000\\r\\n'
-        b'P 0   10.000   10.000\\r\\n'
+        b';# EXT 3500 0 0 20 20\r\n'
+        b'*5220 32768  16          0\r\n'
+        b':ID[MULTI]\r\n:A1[105]\r\n:A2[RV]\r\n'
+        b'P 1   0.000   0.000\r\n'
+        b'P 1   1.000   0.000\r\n'
+        b'P 1   1.000   1.000\r\n'
+        b'P 0   0.000   0.000\r\n'
+        b'P 1   10.000   10.000\r\n'
+        b'P 1   11.000   10.000\r\n'
+        b'P 1   11.000   11.000\r\n'
+        b'P 0   10.000   10.000\r\n'
     )
-    first = (b';# Plik danych systemu GEO-MAP ver=[ 8.00]  N=[          13] CHK=['
-             + hashlib.md5(body).hexdigest().encode() + b']\\r\\n')
+    first = (b';# Plik danych systemu GEO-MAP ver=[ 8.00]  N=[          14] CHK=['
+             + hashlib.md5(body).hexdigest().encode() + b']\r\n')
     data = first + body
     doc = GeoMap(data)
     assert doc.checksum_valid
