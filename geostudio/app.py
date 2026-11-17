@@ -700,29 +700,66 @@ class GeoStudioWindow(QMainWindow):
                 continue
             layer = resolve_layer(self.catalog, obj.code)
             self.layer_for_uid[obj.uid] = layer
+            # Preserve GEO-MAP COLORREF for stroke; CDF can override
+            # fill and border on exact code/attribute variants.
             color = QColor(*obj.colorref)
-            fill_style = self.visual_styles.get(obj.uid)
-            if fill_style:
-                fill_color = QColor(fill_style['fill'])
-                fill_color.setAlpha(round(fill_style['opacity'] * 255 / 100))
-            else:
-                fill_color = QColor(color.red(), color.green(), color.blue(), 18)
-            pen = QPen(color if obj.colorref != (0,0,0) else QColor('#31455d'))
+            cdf = cdf_for_object(self.cdf_styles, obj.code,
+                                 obj.fields.get('A1',''), obj.fields.get('A2',''))
+            if cdf:
+                border = QColor(*cdf.border)
+                if cdf.border != (0,0,0):
+                    color = border
+            pen = QPen(color)
             pen.setCosmetic(True)
-            pen.setWidth(1)
+            pen.setWidthF(1.0)
+            override = self.visual_styles.get(obj.uid)
+            native_rgb = native_fill_color(obj.style)
+            if override:
+                fill_color = QColor(override['fill'])
+                fill_color.setAlpha(round(override['opacity'] * 255 / 100))
+                fill_brush = QBrush(fill_color)
+            elif native_rgb:
+                # GEO-MAP v8 source records may contain an explicit COLORREF
+                # in the third style token; unlike previous 7%-alpha rendering,
+                # respect the native, fully opaque recorded value.
+                fill_brush = QBrush(QColor(*native_rgb))
+            elif cdf:
+                fill_color = QColor(*cdf.fill)
+                hatch = {0: Qt.SolidPattern,
+                         1: Qt.Dense4Pattern, 2: Qt.Dense5Pattern,
+                         3: Qt.HorPattern, 4: Qt.VerPattern,
+                         5: Qt.CrossPattern, 6: Qt.BDiagPattern,
+                         7: Qt.FDiagPattern, 8: Qt.DiagCrossPattern}.get(
+                             cdf.hatch, Qt.SolidPattern)
+                fill_brush = QBrush(fill_color, hatch)
+            else:
+                fill_brush = QBrush(Qt.NoBrush)
+
             if len(obj.points) == 1:
-                item = QGraphicsEllipseItem(-2.5, -2.5, 5, 5)
+                # Direct line primitives in SYM are rendered for point symbols.
+                # O/T references and curves remain unsupported (no guessed art).
+                primitives = self.sym_primitives.get(obj.code, [])
+                segments = simple_point_segments(primitives)
+                if segments:
+                    path = QPainterPath()
+                    for x1,y1,x2,y2 in segments:
+                        path.moveTo(x1 * 5, -y1 * 5)
+                        path.lineTo(x2 * 5, -y2 * 5)
+                    item = QGraphicsPathItem(path)
+                else:
+                    item = QGraphicsEllipseItem(-2.5, -2.5, 5, 5)
+                    item.setBrush(QBrush(color))
                 item.setPos(obj.points[0].x, -obj.points[0].y)
                 item.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIgnoresTransformations, True)
-                item.setBrush(QBrush(color))
             else:
-                item = QGraphicsPathItem(self._path_for(obj, hide_connectors=self.hide_multipart_connectors))
+                item = QGraphicsPathItem(
+                    self._path_for(obj, hide_connectors=self.hide_multipart_connectors))
                 parts = obj.display_parts
                 is_multipart_area = bool(parts) and all(
                     len(part) >= 4 and (part[0].x, part[0].y) == (part[-1].x, part[-1].y)
                     for part in parts)
                 if obj.is_closed or is_multipart_area:
-                    item.setBrush(QBrush(fill_color))
+                    item.setBrush(fill_brush)
             item.setPen(pen)
             # We handle picking ourselves; Qt's default selection draws an
             # unwanted bounding RECTANGLE instead of the exact contour.
