@@ -218,7 +218,7 @@ def test_map_label_anchor_is_stationary_under_zoom_rotation_and_orientation(view
         for item in labels:
             t=item.deviceTransform(view.viewportTransform())
             center=t.map(item.boundingRect().center())
-            anchor=view.mapFromScene(item.pos())
+            anchor=view.viewportTransform().map(item.pos())
             q=pps(view)
             offset=float(item.data(2) or 0)
             ratio=float(item.data(3) or .55)
@@ -263,6 +263,6 @@ def test_manual_label_drag_keeps_anchor_exact_after_zoom(viewer):
         viewer.update_label_visibility()
         center=item.deviceTransform(viewer.view.viewportTransform()).map(
             item.boundingRect().center())
-        anchor=viewer.view.mapFromScene(item.pos())
+        anchor=viewer.view.viewportTransform().map(item.pos())
         assert center.x() == pytest.approx(anchor.x(),abs=.02)
         assert center.y() == pytest.approx(anchor.y(),abs=.02)
