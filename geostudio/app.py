@@ -27,7 +27,7 @@ except ImportError as exc:
 from .geomap import GeoMap, GeoObject, library_layers, library_symbols, library_colors, resolve_layer
 from .interactions import find_snap, polygon_is_valid, closest_point_on_edge
 from .geometry_index import GeometryIndex
-from .scene_builder import RenderContext, build_scene, object_path
+from .scene_builder import RenderContext, build_scene, label_anchor, object_path
 from .map_layout import (detect_source_compilation_scale, validated_compilation_scale,
     label_ratio, source_text_height, text_line_offset, DEFAULT_SCALE)
 from .coordinates import (CRS_CHOICES, MODERN_EPSG, transform_xy,
@@ -808,6 +808,11 @@ class GeoStudioWindow(QMainWindow):
     def _path_for(obj, points_override=None, *, hide_connectors=False):
         """Kept for callers in this module and for tests; see scene_builder.object_path."""
         return object_path(obj, points_override, hide_connectors=hide_connectors)
+
+    @staticmethod
+    def _label_anchor(obj):
+        """Kept for callers in this module and for tests; see scene_builder.label_anchor."""
+        return label_anchor(obj)
 
     def toggle_multipart_connectors(self, checked):
         self.hide_multipart_connectors = bool(checked)

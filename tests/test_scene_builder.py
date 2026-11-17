@@ -80,6 +80,15 @@ def test_window_path_helper_still_delegates():
         object_path(obj, hide_connectors=True).elementCount()
 
 
+def test_window_label_anchor_still_delegates():
+    """GeoStudioWindow keeps _label_anchor as a thin alias to scene_builder."""
+    doc = GeoMap(golden_map_bytes())
+    for uid in ("PARCEL", "OPEN"):
+        obj = doc.by_id[uid]
+        assert GeoStudioWindow._label_anchor(obj) == label_anchor(obj)
+    assert GeoStudioWindow._label_anchor(doc.by_id["PARCEL"]) == pytest.approx((500150.0, 6500150.0))
+
+
 def test_label_anchor_centroid_and_midpoint():
     doc = GeoMap(golden_map_bytes())
     assert label_anchor(doc.by_id["PARCEL"]) == pytest.approx((500150.0, 6500150.0))
