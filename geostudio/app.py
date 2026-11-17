@@ -9,23 +9,26 @@ import math
 import os
 import tempfile
 import hashlib
+import json
 from pathlib import Path
 from collections import defaultdict
 
 try:
     from PySide6.QtCore import Qt, QPoint, QPointF, QRectF, QSettings, Signal
-    from PySide6.QtGui import QAction, QBrush, QColor, QFont, QPainter, QPainterPath, QPen, QPixmap, QImage, QTransform, QActionGroup
+    from PySide6.QtGui import QAction, QBrush, QColor, QColorDialog, QFont, QPainter, QPainterPath, QPen, QPixmap, QImage, QTransform, QActionGroup
     from PySide6.QtWidgets import (QApplication, QMainWindow, QFileDialog, QGraphicsView, QGraphicsScene,
         QGraphicsPathItem, QGraphicsEllipseItem, QGraphicsPixmapItem, QGraphicsSimpleTextItem, QGraphicsItem, QDockWidget,
         QTreeWidget, QTreeWidgetItem, QToolBar, QMessageBox, QStatusBar, QInputDialog, QMenu,
         QLabel, QWidget, QVBoxLayout, QHeaderView, QSplitter, QComboBox,
-        QDialog, QDialogButtonBox, QFormLayout, QLineEdit)
+        QDialog, QDialogButtonBox, QFormLayout, QLineEdit, QHBoxLayout, QPushButton, QSpinBox)
 except ImportError as exc:
     raise SystemExit('Zainstaluj GUI: python -m pip install -e .\nBrakuje PySide6') from exc
 
 from .geomap import GeoMap, GeoObject, library_layers, library_symbols, library_colors, resolve_layer
 from .interactions import find_snap, polygon_is_valid, closest_point_on_edge
 from .geometry_index import GeometryIndex
+from .object_search import search_objects
+from .visual_styles import parse_fill_code, fill_code, load_styles, write_styles, sidecar_path
 
 APP_QSS = """
 QMainWindow, QDockWidget, QWidget { background-color: #101826; color: #dce7f5; font: 10pt 'Segoe UI'; }
@@ -51,11 +54,12 @@ class MapView(QGraphicsView):
     treated as a pan. All edit actions now handle real viewport events directly.
     """
     coordinate = Signal(float, float)
-    canvas_click = Signal(float, float, bool)
+    canvas_click = Signal(float, float, bool, bool)
     canvas_context = Signal(float, float)
     point_for_polygon = Signal(float, float)
     polygon_hover = Signal(float, float)
     finish_polygon = Signal()
+    undo_polygon_point = Signal()
     cancel_action = Signal()
     vertex_hover = Signal(float, float, int)
     vertex_commit = Signal(float, float, int)
@@ -165,7 +169,8 @@ class MapView(QGraphicsView):
         elif event.button() == Qt.RightButton:
             self.canvas_context.emit(x, y)
         elif event.button() == Qt.LeftButton:
-            self.canvas_click.emit(x, y, bool(event.modifiers() & Qt.AltModifier))
+            self.canvas_click.emit(x, y, bool(event.modifiers() & Qt.AltModifier),
+                                   bool(event.modifiers() & Qt.ControlModifier))
         event.accept()
 
     def mouseReleaseEvent(self, event):
@@ -196,8 +201,14 @@ class MapView(QGraphicsView):
             self.finish_polygon.emit()
             event.accept()
             return
-        if event.key() == Qt.Key_Escape and (self.draw_mode or self.edit_mode or self.pan_mode):
-            self.cancel_action.emit()
+        if event.key() == Qt.Key_Escape:
+            if self.draw_mode:
+                self.undo_polygon_point.emit()
+            elif self.edit_mode or self.pan_mode:
+                self.cancel_action.emit()
+            else:
+                super().keyPressEvent(event)
+                return
             event.accept()
             return
         super().keyPressEvent(event)
@@ -206,14 +217,18 @@ class MapView(QGraphicsView):
 class GeoStudioWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle('GeoStudio v0.5 — eksperymentalny edytor GEO-MAP')
+        self.setWindowTitle('GeoStudio v0.6 — eksperymentalny edytor GEO-MAP')
         self.resize(1450, 900)
+        self.settings = QSettings('GeoStudio', 'GeoStudio')
         self.doc: GeoMap | None=None
         self.catalog: dict[str,str]={}
         self.symbols: dict[str,str]={}
         self.palette: dict[str,tuple[int,int,int]]={}
         self.items_by_layer:dict[str,list]=defaultdict(list)
         self.graphics_for_uid={}
+        self.visual_styles = {}
+        self.selected_uids = []
+        self.highlight_items = []
         self.labels=[]
         self.labels_enabled = True
         self.hide_multipart_connectors = True
@@ -249,6 +264,7 @@ class GeoStudioWindow(QMainWindow):
         self.view.zoom_changed.connect(self.update_label_visibility)
         self.view.point_for_polygon.connect(self.add_polygon_point)
         self.view.finish_polygon.connect(self.finish_polygon)
+        self.view.undo_polygon_point.connect(self.undo_last_polygon_point)
         self.setCentralWidget(self.view)
         self._setup_menu()
         self._setup_docks()
@@ -277,11 +293,14 @@ class GeoStudioWindow(QMainWindow):
         self.finish_action = self._action('Zakończ i zapisz poligon',self.finish_polygon,'Return')
         em.addAction(self.finish_action)
         self.finish_action.setEnabled(False)
-        em.addAction(self._action('Zakończ / anuluj narzędzie',self.cancel_edit,'Esc'))
+        em.addAction(self._action('Zakończ narzędzie (S)',self.cancel_edit))
         em.addAction(self._action('Edytuj atrybut zaznaczonego obiektu…',self.edit_selected,'F2'))
         self.delete_action = self._action('Usuń zaznaczony obiekt', self.delete_selected, 'Delete')
         em.addAction(self.delete_action)
+        em.addAction(self._action('Zaznacz wszystkie obiekty tego kodu', self.select_all_same_code, 'Ctrl+H'))
+        em.addAction(self._action('Szukaj obiektu', self.show_search, 'Ctrl+F'))
         vm=self.menuBar().addMenu('&Widok')
+        self.view_menu = vm
         vm.addAction(self._action('Dopasuj widok do mapy',self.fit_all,'Ctrl+0'))
         self.multipart_action = vm.addAction('Ukryj łączniki między częściami obiektu (P 0)')
         self.multipart_action.setCheckable(True)
@@ -299,6 +318,7 @@ class GeoStudioWindow(QMainWindow):
         self.snap_action.setCheckable(True)
         self.snap_action.setChecked(True)
         toolbar=QToolBar('Narzędzia',self)
+        self.main_toolbar = toolbar
         toolbar.setMovable(False)
         self.addToolBar(toolbar)
         for label,fn in [('📂 Otwórz',self.open_map),('💾 Zapisz jako',self.save_map),
@@ -324,6 +344,9 @@ class GeoStudioWindow(QMainWindow):
         self.finish_toolbar_action = self._action('✓ Zakończ poligon [Enter]', self.finish_polygon)
         toolbar.addAction(self.finish_toolbar_action)
         self.finish_toolbar_action.setVisible(False)
+        self.undo_toolbar_action = self._action('↶ Cofnij punkt [Esc]', self.undo_last_polygon_point)
+        toolbar.addAction(self.undo_toolbar_action)
+        self.undo_toolbar_action.setVisible(False)
         toolbar.addSeparator()
         toolbar.addAction(self.snap_action)
         toolbar.addAction(self.labels_action)
@@ -365,8 +388,14 @@ class GeoStudioWindow(QMainWindow):
         dock.setWidget(label)
         return dock
 
+    def _recent_folder(self, key):
+        saved = Path(str(self.settings.value(key, str(Path.home()))))
+        return str(saved if saved.is_dir() else Path.home())
+
     def open_map(self):
-        file,_=QFileDialog.getOpenFileName(self,'Otwórz mapę GEO-MAP',str(Path.home()),'GEO-MAP (*.MAP *.map)')
+        file,_=QFileDialog.getOpenFileName(
+            self, 'Otwórz mapę GEO-MAP',
+            self._recent_folder('last_map_dir'), 'GEO-MAP (*.MAP *.map)')
         if not file:return
         try:
             doc=GeoMap.open(file)
@@ -374,13 +403,16 @@ class GeoStudioWindow(QMainWindow):
                 answer=QMessageBox.warning(self,'Suma kontrolna','Suma MD5 pliku nie zgadza się z nagłówkiem. Otworzyć tylko do podglądu?',QMessageBox.Yes|QMessageBox.No)
                 if answer!=QMessageBox.Yes:return
             self.doc=doc
+            self.settings.setValue('last_map_dir', str(Path(file).parent))
+            self.visual_styles = load_styles(file)
+            self.selected_uids = []
             self._auto_copy_path = None
             self._auto_copy_digest = None
             self._last_pick_pos = None
             self._last_pick_candidates = ()
             self._look_for_libraries(Path(file).parent)
             self.rebuild_scene()
-            self.setWindowTitle('GeoStudio v0.4 — '+Path(file).name)
+            self.setWindowTitle('GeoStudio v0.6 — '+Path(file).name)
             self.status.showMessage(f'{len(doc.objects)} obiektów, {len(doc.lines)} wierszy | {file}')
         except Exception as exc: QMessageBox.critical(self,'Błąd odczytu mapy',str(exc))
 
@@ -395,9 +427,13 @@ class GeoStudioWindow(QMainWindow):
         elif kind=='palette':self.palette=library_colors(path)
 
     def open_catalogs(self):
-        files,_=QFileDialog.getOpenFileNames(self,'Wczytaj biblioteki',str(Path.home()),'Biblioteki (*.lay *.LAY *.sym *.SYM *.cdf *.CDF)')
+        files,_=QFileDialog.getOpenFileNames(
+            self, 'Wczytaj biblioteki',
+            self._recent_folder('last_library_dir'),
+            'Biblioteki (*.lay *.LAY *.sym *.SYM *.cdf *.CDF)')
         if not files:return
         try:
+            self.settings.setValue('last_library_dir', str(Path(files[0]).parent))
             for f in files:
                 kind={'.lay':'layers','.sym':'symbols','.cdf':'palette'}.get(Path(f).suffix.lower())
                 if kind:self.load_library(f,kind)
@@ -837,6 +873,8 @@ class GeoStudioWindow(QMainWindow):
             self.finish_action.setEnabled(False)
         self.current_polygon = []
         self.edit_uid = ''
+        if hasattr(self, 'undo_toolbar_action'):
+            self.undo_toolbar_action.setVisible(False)
         if self.draft_item:
             self.map_scene.removeItem(self.draft_item)
             self.draft_item = None
@@ -869,6 +907,7 @@ class GeoStudioWindow(QMainWindow):
         self.view.setDragMode(QGraphicsView.NoDrag)
         self._ensure_feedback_items()
         self.finish_toolbar_action.setVisible(True)
+        self.undo_toolbar_action.setVisible(True)
         self.finish_action.setEnabled(True)
         self.status.showMessage('Poligon: klikaj wierzchołki, kliknij PIERWSZY punkt lub Enter/prawy przycisk, aby zakończyć i zapisać kopię.')
 
@@ -927,6 +966,27 @@ class GeoStudioWindow(QMainWindow):
         self.draft_points.append(dot)
         self.preview_polygon(px, py)
         self.status.showMessage(f'Poligon: {len(self.current_polygon)} punkty. Kliknij początek, Enter, prawy przycisk lub ✓ Zakończ.')
+
+    def undo_last_polygon_point(self):
+        """Escape removes one point but leaves the polygon drawing tool active."""
+        if not self.view.draw_mode:
+            return
+        if not self.current_polygon:
+            self.status.showMessage('Brak punktów do cofnięcia. Narzędzie P nadal aktywne.')
+            return
+        self.current_polygon.pop()
+        if self.draft_points:
+            marker = self.draft_points.pop()
+            self.map_scene.removeItem(marker)
+        if self.draft_item:
+            if not self.current_polygon:
+                self.draft_item.setPath(QPainterPath())
+            else:
+                self.preview_polygon(*self.current_polygon[-1])
+        if self.snap_marker:
+            self.snap_marker.setVisible(False)
+        self.status.showMessage(
+            f'Cofnięto ostatni punkt. Pozostało {len(self.current_polygon)} punktów. Esc cofa kolejne.')
 
     def _ask_polygon_attributes(self):
         """Full form for new-object attributes; blanks are stored as editable empty fields."""
