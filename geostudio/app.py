@@ -588,9 +588,10 @@ class GeoStudioWindow(QMainWindow):
 
     def toggle_multipart_connectors(self, checked):
         self.hide_multipart_connectors = bool(checked)
-        selected = set(self.selected_uids)
+        selected = list(self.selected_uids)
         if self.doc:
-            self.rebuild_scene(fit=False, reselect=selected)
+            self.rebuild_scene(fit=False)
+            self._set_selected_uids(selected)
         self.status.showMessage('Łączniki między częściami mapy: ' +
                                 ('ukryte' if checked else 'widoczne') +
                                 '. Zmiana jest tylko wizualna; plik MAP pozostaje bez zmian.')
