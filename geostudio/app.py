@@ -389,6 +389,7 @@ class GeoStudioWindow(QMainWindow):
         self.opacity_spin.setRange(0, 100)
         self.opacity_spin.setSuffix(' % krycia')
         self.opacity_spin.setValue(25)
+        self.opacity_spin.valueChanged.connect(self._sync_fill_opacity)
         form.addRow('Kod koloru', self.fill_entry)
         form.addRow('Krycie', self.opacity_spin)
         prop_layout.addLayout(form)
@@ -426,6 +427,7 @@ class GeoStudioWindow(QMainWindow):
         self.search_code.returnPressed.connect(self.run_search)
         self.search_summary = QLabel('Wpisz kod i wartość atrybutu')
         search_layout.addWidget(self.search_summary)
+        self._search_uids = []
         self.search_results = QTreeWidget()
         self.search_results.setHeaderLabels(['Kod', 'A1', 'A2'])
         self.search_results.itemClicked.connect(self.select_search_result)
@@ -939,6 +941,122 @@ class GeoStudioWindow(QMainWindow):
         else:self.hidden_layers.add(item.text(0))
         self.update_label_visibility()
 
+    def _sync_fill_opacity(self, opacity):
+        text = self.fill_entry.text().strip()
+        try:
+            color, _ = parse_fill_code(text, opacity)
+            self.fill_entry.setText(fill_code(color, opacity))
+        except ValueError:
+            pass
+
+    def choose_fill_color(self):
+        try:
+            color, _ = parse_fill_code(self.fill_entry.text(),
+                                       self.opacity_spin.value())
+        except ValueError:
+            color = '#8AADC6'
+        picked = QColorDialog.getColor(QColor(color), self, 'Wybierz kolor wypełnienia')
+        if picked.isValid():
+            self.fill_entry.setText(fill_code(picked.name().upper(),
+                                              self.opacity_spin.value()))
+
+    def copy_fill_code(self):
+        try:
+            color, alpha = parse_fill_code(self.fill_entry.text(),
+                                           self.opacity_spin.value())
+        except ValueError as exc:
+            QMessageBox.warning(self, 'Kod koloru', str(exc))
+            return
+        code = fill_code(color, alpha)
+        QApplication.clipboard().setText(code)
+        self.status.showMessage('Skopiowano kod wypełnienia: ' + code)
+
+    def apply_fill_style(self):
+        """Apply GeoStudio-only fill appearance to one or many polygons."""
+        if not self.doc or not self.selected_uids:
+            QMessageBox.information(self, 'Wypełnienie',
+                'Najpierw zaznacz poligon lub grupę poligonów.')
+            return
+        try:
+            color, opacity = parse_fill_code(self.fill_entry.text(),
+                                              self.opacity_spin.value())
+        except ValueError as exc:
+            QMessageBox.warning(self, 'Niepoprawny kod koloru', str(exc))
+            return
+        modified = []
+        for uid in self.selected_uids:
+            obj = self.doc.by_id.get(uid)
+            if obj and (obj.is_closed or all(
+                len(p) >= 4 and (p[0].x, p[0].y) == (p[-1].x, p[-1].y)
+                for p in obj.display_parts)):
+                self.visual_styles[uid] = {'fill': color, 'opacity': opacity}
+                modified.append(uid)
+        if not modified:
+            QMessageBox.information(self, 'Wypełnienie',
+                'Żaden zaznaczony obiekt nie jest zamkniętym poligonem.')
+            return
+        selected = list(self.selected_uids)
+        self.rebuild_scene(fit=False)
+        self._set_selected_uids(selected)
+        saved = self._autosave_work_copy()
+        self.status.showMessage(
+            f'Ustawiono {color}@{opacity} dla {len(modified)} poligonów. '
+            'Styl przechowywany w osobnym pliku *.geostudio.json.' +
+            (f' Kopia: {saved}' if saved else ' Użyj Zapisz jako.'))
+
+    def run_search(self):
+        if not self.doc:
+            self.search_summary.setText('Najpierw otwórz mapę.')
+            return
+        try:
+            matches = search_objects(self.doc.objects, self.search_code.text(),
+                self.search_field.currentData(), self.search_value.text())
+        except ValueError as exc:
+            QMessageBox.warning(self, 'Wyszukiwarka', str(exc))
+            return
+        self._search_uids = [obj.uid for obj in matches]
+        self.search_results.clear()
+        for obj in matches[:500]:
+            row = QTreeWidgetItem([obj.code, obj.fields.get('A1',''),
+                                   obj.fields.get('A2','')])
+            row.setData(0, Qt.UserRole, obj.uid)
+            self.search_results.addTopLevelItem(row)
+        self.search_summary.setText(
+            f'Znaleziono {len(matches)} obiektów' +
+            (' (lista pokazuje pierwsze 500)' if len(matches) > 500 else ''))
+        if matches:
+            self.select_search_uid(matches[0].uid)
+
+    def select_search_result(self, item, column):
+        self.select_search_uid(item.data(0, Qt.UserRole))
+
+    def select_search_uid(self, uid):
+        if not self.doc or uid not in self.doc.by_id:
+            return
+        self.cancel_edit()
+        self._select_uid(uid)
+        obj = self.doc.by_id[uid]
+        if obj.points:
+            xs = [point.x for point in obj.points]
+            ys = [point.y for point in obj.points]
+            padding = max((max(xs)-min(xs)), (max(ys)-min(ys)), 1) * .3
+            rect = QRectF(min(xs)-padding, -max(ys)-padding,
+                max(xs)-min(xs)+2*padding, max(ys)-min(ys)+2*padding)
+            self.view.fitInView(rect, Qt.KeepAspectRatio)
+            self.update_label_visibility()
+        self.status.showMessage(
+            f'Wynik: {obj.code} • A1={obj.fields.get("A1","")} '
+            f'• A2={obj.fields.get("A2","")}')
+
+    def select_search_results(self):
+        if not self.doc:
+            return
+        self.cancel_edit()
+        self._set_selected_uids(self._search_uids)
+        self.status.showMessage(
+            f'Zaznaczono {len(self.selected_uids)} wyników wyszukiwania. '
+            'Delete usuwa całą grupę po potwierdzeniu.')
+
     def edit_property(self,item,column):
         if item.text(0) in {'A1','A2','A3','A4','A5','A6','TX','MP','KR'}:
             self._edit_field(item.text(0),item.text(1))
@@ -962,28 +1080,36 @@ class GeoStudioWindow(QMainWindow):
         except Exception as exc:QMessageBox.warning(self,'Nie udało się zmienić atrybutu',str(exc))
 
     def delete_selected(self):
-        """Delete whole GEO-MAP feature, never individual shared boundary points."""
-        if not self.doc or not self.selected_uid:
-            self.status.showMessage('Najpierw zaznacz obiekt, który chcesz usunąć.')
+        """Delete selected feature records (including bulk Ctrl+H selection)."""
+        if not self.doc or not self.selected_uids:
+            self.status.showMessage('Najpierw zaznacz obiekt lub grupę obiektów.')
             return
-        uid = self.selected_uid
-        obj = self.doc.by_id[uid]
-        prompt = (f'Usunąć obiekt {obj.code}, A1={obj.fields.get("A1", "")}, '
-                  f'A2={obj.fields.get("A2", "")}?\\n'
-                  'Usunięcie dotyczy CAŁEGO rekordu, także wszystkich jego części.\\n'
-                  'Nie ma jeszcze Cofnij. Oryginalny MAP pozostanie bez zmian.')
+        selected = list(self.selected_uids)
+        count = len(selected)
+        sample = self.doc.by_id[selected[-1]]
+        prompt = (f'Usunąć {count} zaznaczonych obiektów z mapy?\\n'
+                  f'Ostatni: {sample.code}, A1={sample.fields.get("A1", "")}, '
+                  f'A2={sample.fields.get("A2", "")}.\\n'
+                  'Ta operacja usuwa CAŁE rekordy i nie ma jeszcze Cofnij.\\n'
+                  'Oryginalny MAP pozostaje nietknięty.')
         answer = QMessageBox.question(self, 'Potwierdź usunięcie', prompt,
-                                      QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
+                                      QMessageBox.Yes | QMessageBox.No,
+                                      QMessageBox.No)
         if answer != QMessageBox.Yes:
             return
         self.cancel_edit()
-        self.doc.delete_object(uid)
+        self.doc.delete_objects(selected)
+        for uid in selected:
+            self.visual_styles.pop(uid, None)
+        self.selected_uids = []
         self.selected_uid = ''
         self._last_pick_pos = None
         self._last_pick_candidates = ()
         self.rebuild_scene(fit=False)
+        self._set_selected_uids([])
         saved = self._autosave_work_copy()
-        self.status.showMessage('Usunięto obiekt z mapy.' +
+        self.status.showMessage(
+            f'Usunięto {count} obiektów.' +
             (f' Kopia robocza: {saved}' if saved else ' Zapisz jako nową mapę.'))
 
     def save_map(self):
