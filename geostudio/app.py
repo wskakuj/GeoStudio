@@ -1321,6 +1321,7 @@ class GeoStudioWindow(QMainWindow):
         self.doc.delete_objects(selected)
         for uid in selected:
             self.visual_styles.pop(uid, None)
+            self.label_positions.pop(uid, None)
         self.selected_uids = []
         self.selected_uid = ''
         self._last_pick_pos = None
@@ -1343,11 +1344,12 @@ class GeoStudioWindow(QMainWindow):
         if not file:
             return
         try:
-            if self.visual_styles and sidecar_path(file).exists():
+            if (self.visual_styles or self.label_positions) and sidecar_path(file).exists():
                 raise FileExistsError('Plik stylów o tej nazwie już istnieje.')
             self.doc.save_as(file)
-            if self.visual_styles:
-                write_styles(file, self.visual_styles)
+            if self.visual_styles or self.label_positions:
+                write_styles(file, self.visual_styles,
+                             label_positions=self.label_positions)
             QMessageBox.information(self, 'Zapisano eksperymentalną MAP',
                 'Utworzono nowy plik MAP. Osobne wypełnienia (jeśli używane) '
                 'są zapisane w towarzyszącym pliku *.geostudio.json i nie '
@@ -1627,15 +1629,18 @@ class GeoStudioWindow(QMainWindow):
         if not self._auto_copy_path:
             return
         target = sidecar_path(self._auto_copy_path)
-        if not self.visual_styles and self._auto_style_digest is None:
+        if (not self.visual_styles and not self.label_positions and
+                self._auto_style_digest is None):
             return
         if self._auto_style_digest is None:
-            write_styles(self._auto_copy_path, self.visual_styles, overwrite=False)
+            write_styles(self._auto_copy_path, self.visual_styles, overwrite=False,
+                         label_positions=self.label_positions)
         else:
             if not target.is_file() or hashlib.sha256(
                     target.read_bytes()).digest() != self._auto_style_digest:
                 raise RuntimeError('Plik stylów zmieniono poza GeoStudio; nie nadpisuję go.')
-            write_styles(self._auto_copy_path, self.visual_styles, overwrite=True)
+            write_styles(self._auto_copy_path, self.visual_styles, overwrite=True,
+                         label_positions=self.label_positions)
         self._auto_style_digest = hashlib.sha256(target.read_bytes()).digest()
 
     def _autosave_work_copy(self):
