@@ -1,6 +1,6 @@
 # GeoStudio — projekt nowoczesnego edytora map geodezyjnych
 
-**Wczesny prototyp v0.10.0 — wersja testowa, nie do dokumentacji urzędowej ani produkcyjnej.**
+**Wczesny prototyp v0.11.0 — wersja testowa, nie do dokumentacji urzędowej ani produkcyjnej.**
 
 GeoStudio ma docelowo umożliwiać edycję plików GEO-MAP `.MAP` z zachowaniem
 katalogów `.SYM`, `.LAY`, `.CDF`, a także pomiary, rastry, eksporty DXF/VAL
@@ -434,3 +434,83 @@ nakładany zgodnie z kolejnością rekordów MAP i zasłaniał linie działek.
 od oryginalnego GEO-MAP. Złożone makra O / opisy T z SYM, pełne
 legendy, arkusze i nieudokumentowane style linii nie zostały
 odtworzone w tej wersji.
+
+
+## GeoStudio v0.11 — opisy jak na mapie, skala 1:N i transformacje
+
+### Napisy A1/A2 i numery działek — skala mapowa
+
+- Zmieniono sposób wyświetlania wszystkich podpisów z dotychczasowego
+  `ItemIgnoresTransformations` na **rozmiar związany ze współrzędnymi mapy**.
+  Przy oddalaniu podpisy zmniejszają się **razem z geometrią**, a przy
+  przybliżaniu rosną dokładnie tak jak mapa. Nie występuje efekt pozornie
+  rosnącego tekstu na malejącej działce.
+- **Wyłączono automatyczne ukrywanie podpisów** ze względu na skalę lub
+  nakładanie się na inne napisy. Tekst będzie obecny nawet na dużych
+  oddaleniach, choć może stać się drobny w pikselach. Widok → Podpisy
+  A1/A2 pozwala jedynie ukryć wszystkie opisy ręcznie.
+- Zachowano czerwony, pogrubiony 5310 (A1, A2), numery działek 5216,
+  zielone opisy użytków 5220/5230 oraz możliwość przesuwania A1/A2
+  narzędziem **L**.
+- Przesuwanie A1/A2 rozpoznaje teraz rzeczywisty obszar napisu po
+  przekształceniu i aktualnym obrocie mapy.
+
+### Skala widoku 1:N
+
+- W dolnym pasku znajduje się edytowalne pole **Skala widoku: 1:N**,
+  np. `1:500`, `1:1000`, `1:2000`, `1:5000`.
+- Można również użyć **Widok → Ustaw skalę widoku 1:N…** lub
+  **Ctrl+M**. Zmiana skali zachowuje środek mapy i jej obrót.
+- Wartość skali automatycznie aktualizuje się przy używaniu rolki i
+  przycisku Cała mapa. Obliczana jest z układu w metrach i
+  **logicznego DPI ekranu Qt**.
+- **Ważne:** jest to przybliżona **skala widoku na ekranie**,
+  **nie ustawienie skali urzędowego wydruku**. Dokładne skalowanie
+  wydruków wymaga osobnego modułu druku.
+
+### Układy współrzędnych
+
+- W menu **Trans → Przelicz współrzędne / eksportuj kopię MAP…**
+  pojawił się kalkulator, używający `pyproj` (biblioteki PROJ).
+- Dostępne:
+  - PL-1992 / 19° **EPSG:2180**
+  - PL-2000 strefy 5,6,7,8 **EPSG:2176–2179**
+  - Historyczne układy 1965 strefy I–V **EPSG:2171–2175**
+    tylko dla pojedynczych punktów, z ograniczeniami wynikającymi
+    z transformacji historycznych i wymaganej dokładności.
+- Przyjmujemy kolejność **GEO-MAP: X (północ) i Y (wschód)**;
+  `pyproj` ma `always_xy=True` (wschód, północ), więc osie są
+  świadomie zamieniane podczas przeliczania.
+- Gdy oryginalny `.MAP` ma wiarygodny sąsiedni `.prj`, program
+  odczytuje układ automatycznie; bez niego **użytkownik musi ręcznie
+  potwierdzić źródłowy EPSG**. Program **nie zgaduje układu** na
+  podstawie podobieństwa współrzędnych.
+- **Nowa kopia MAP:** eksport całej mapy z PL-1992 do PL-2000
+  (i odwrotnie, oraz między strefami 2000) jest na razie
+  **eksperymentalny**. Przeliczane są wszystkie rekordy `P`,
+  aktualizowany jest prosty zakres `EXT` i suma kontrolna `CHK`.
+  Tworzony jest osobny plik `.MAP` i `.prj` z układem docelowym.
+  Oryginalne pliki nigdy nie są nadpisywane.
+- **Ostrzeżenie geodezyjne:** elementy arkusza (legenda, tabela),
+  georeferencja rastrów, miary powierzchni zapisane w atrybutach
+  oraz nieznane typy rekordów **nie są kompleksowo obsługiwane**.
+  Konwersja całej MAP może zmienić pozycje obiektów arkusza;
+  wszystkie dane wymagają porównania w GEO-MAP przed zastosowaniem
+  w jakichkolwiek pracach.
+- Warszawa 25/75, lokalny Poznań oraz niejednoznaczne warianty
+  Układu 1942 **nie są pozornie przeliczane**: należy najpierw
+  ustalić oficjalne parametry i osnowę odniesienia.
+
+### Test na Windows
+
+1. Otwórz kopię MOKRA WIEŚ.MAP i zrób duże oddalenie. Napisy
+   pozostają na mapie i maleją razem z nią — nie znikają z powodu
+   algorytmu automatycznego rozrzedzania.
+2. Sprawdź przybliżanie i zmiany skali przez wpisanie 1:1000, 1:2000,
+   1:5000. To nie zmienia źródłowych współrzędnych.
+3. W Trans przelicz znany punkt X/Y z PL-1992 do PL-2000 strefy 7
+   i z powrotem. Wynik porównaj z GEO-MAP.
+4. Eksport całej mapy wykonuj **wyłącznie na kopii do testów**.
+   Sprawdź jej geometrię, punkty wspólne, powierzchnie, elementy
+   legendy i tabele. Nie używaj eksperymentalnego wyniku do pracy
+   urzędowej bez walidacji.

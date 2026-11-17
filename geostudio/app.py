@@ -27,6 +27,9 @@ except ImportError as exc:
 from .geomap import GeoMap, GeoObject, library_layers, library_symbols, library_colors, resolve_layer
 from .interactions import find_snap, polygon_is_valid, closest_point_on_edge
 from .geometry_index import GeometryIndex
+from .coordinates import (CRS_CHOICES, MODERN_EPSG, transform_xy,
+    transform_map_copy, output_prj_text, transform_label_positions,
+    detected_crs_from_prj)
 from .object_search import search_objects
 from .visual_styles import (parse_fill_code, fill_code, load_styles,
     load_label_positions, write_styles, sidecar_path)
@@ -249,10 +252,11 @@ class MapView(QGraphicsView):
 class GeoStudioWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle('GeoStudio v0.10 — eksperymentalny edytor GEO-MAP')
+        self.setWindowTitle('GeoStudio v0.11 — eksperymentalny edytor GEO-MAP')
         self.resize(1450, 900)
         self.settings = QSettings('GeoStudio', 'GeoStudio')
         self.doc: GeoMap | None=None
+        self.current_crs_epsg = None  # Never guess source CRS from raw coordinates.
         self.catalog: dict[str,str]={}
         self.symbols: dict[str,str]={}
         self.palette: dict[str,tuple[int,int,int]]={}
@@ -318,7 +322,8 @@ class GeoStudioWindow(QMainWindow):
         self._setup_docks()
         self._load_saved_libraries()
         self.status=QStatusBar();self.setStatusBar(self.status)
-        self.status.showMessage('Otwórz mapę GEO-MAP, aby rozpocząć. Zapis odbywa się tylko do nowego pliku.')
+        self._setup_scale_widget()
+        self.status.showMessage('Otwórz mapę GEO-MAP. Trans → Przelicz współrzędne; skalę 1:N ustawisz w dolnym pasku.')
         self.setStyleSheet(APP_QSS)
 
     def _action(self,label,callback,shortcut=None):
@@ -349,9 +354,14 @@ class GeoStudioWindow(QMainWindow):
         em.addAction(self.delete_action)
         em.addAction(self._action('Zaznacz wszystkie obiekty tego kodu', self.select_all_same_code, 'Ctrl+H'))
         em.addAction(self._action('Szukaj obiektu', self.show_search, 'Ctrl+F'))
+        trans_menu = self.menuBar().addMenu('&Trans')
+        trans_menu.addAction(self._action(
+            'Przelicz współrzędne / eksportuj kopię MAP…',
+            self.open_crs_converter, 'Ctrl+T'))
         vm=self.menuBar().addMenu('&Widok')
         self.view_menu = vm
         vm.addAction(self._action('Dopasuj widok do mapy',self.fit_all,'Ctrl+0'))
+        vm.addAction(self._action('Ustaw skalę widoku 1:N…', self.ask_view_scale, 'Ctrl+M'))
         orientation_menu = vm.addMenu('Orientacja i obrót mapy')
         orientation_menu.addAction(self._action(
             'Orientacja GEO-MAP (geodezyjna X/Y)',self.reset_orientation,'Ctrl+Alt+0'))
@@ -376,7 +386,7 @@ class GeoStudioWindow(QMainWindow):
         self.labels_action.toggled.connect(self.set_labels_enabled)
         self.all_labels_action = vm.addAction('Pokaż wszystkie podpisy (również nakładające się)')
         self.all_labels_action.setCheckable(True)
-        self.all_labels_action.setChecked(False)
+        self.all_labels_action.setChecked(True)
         self.all_labels_action.toggled.connect(lambda _checked: self.update_label_visibility())
         self.snap_action = em.addAction('Przyciąganie do punktów i odcinków')
         self.snap_action.setCheckable(True)
@@ -553,6 +563,149 @@ class GeoStudioWindow(QMainWindow):
         dock.setWidget(label)
         return dock
 
+    def open_crs_converter(self):
+        """Interactive single-point converter and explicitly warned MAP export."""
+        dialog = QDialog(self)
+        dialog.setWindowTitle('Układy współrzędnych — PL-1992 / PL-2000 / 1965')
+        dialog.resize(560,420)
+        form = QFormLayout(dialog)
+        source = QComboBox(dialog)
+        destination = QComboBox(dialog)
+        for title, epsg in CRS_CHOICES:
+            source.addItem(title,epsg)
+            destination.addItem(title,epsg)
+        initial = self.current_crs_epsg or 2180
+        idx = source.findData(initial)
+        source.setCurrentIndex(idx if idx>=0 else 0)
+        dst_idx = destination.findData(2178)
+        destination.setCurrentIndex(dst_idx if dst_idx>=0 else 1)
+        form.addRow('Układ źródłowy',source)
+        form.addRow('Układ docelowy',destination)
+
+        notice = QLabel(
+            'Współrzędne GEO-MAP: X = północ (northing), Y = wschód (easting). '
+            'Jeśli w folderze MAP brak pliku .prj, układ źródłowy NIE jest '
+            'automatycznie rozpoznawany — zweryfikuj go w GEO-MAP przed przeliczeniem.')
+        notice.setWordWrap(True)
+        form.addRow(notice)
+        input_x = QLineEdit(dialog)
+        input_y = QLineEdit(dialog)
+        input_x.setPlaceholderText('np. 513102,968')
+        input_y.setPlaceholderText('np. 670076,708')
+        form.addRow('X źródłowe [m]',input_x)
+        form.addRow('Y źródłowe [m]',input_y)
+        result = QLabel('Wynik: —')
+        result.setWordWrap(True)
+        form.addRow(result)
+
+        def convert():
+            try:
+                x = float(input_x.text().strip().replace(',','.'))
+                y = float(input_y.text().strip().replace(',','.'))
+                sx,sy = transform_xy(x,y,source.currentData(),destination.currentData())
+                result.setText(f'X = {sx:.3f} m     Y = {sy:.3f} m')
+                return (sx,sy)
+            except Exception as exc:
+                result.setText('Błąd: ' + str(exc))
+                return None
+
+        row = QHBoxLayout()
+        calculate = QPushButton('Przelicz punkt')
+        calculate.clicked.connect(convert)
+        row.addWidget(calculate)
+        copy = QPushButton('Kopiuj X / Y')
+        def copy_coords():
+            transformed = convert()
+            if transformed is not None:
+                QApplication.clipboard().setText(
+                    f'{transformed[0]:.3f}\t{transformed[1]:.3f}')
+        copy.clicked.connect(copy_coords)
+        row.addWidget(copy)
+        form.addRow(row)
+
+        map_button = QPushButton('Eksportuj przetransformowaną kopię MAP (eksperymentalnie)')
+        map_button.setEnabled(bool(self.doc))
+        map_button.setToolTip(
+            'Konwertuje wszystkie rekordy P; nie jest to certyfikowana transformacja całego arkusza.')
+        def export_copy():
+            dialog_source=int(source.currentData())
+            dialog_target=int(destination.currentData())
+            if dialog_source not in MODERN_EPSG or dialog_target not in MODERN_EPSG:
+                QMessageBox.warning(dialog,'Eksport MAP',
+                    'Transformacja całej MAP obsługuje na razie wyłącznie PL-1992 '
+                    'i PL-2000, strefy 5–8. Układy 1965: dostępny jest '
+                    'kalkulator punktów, ale eksport mapy wymaga sprawdzenia '
+                    'transformacji historycznych i dokładności.')
+                return
+            if dialog_source == dialog_target:
+                QMessageBox.information(dialog,'Eksport MAP','Wybierz dwa różne układy.')
+                return
+            if not self.doc:
+                return
+            warn = (
+                f'PRZELICZENIE CAŁEJ MAPY: EPSG:{dialog_source} → EPSG:{dialog_target}.\\n\\n'
+                'GeoStudio zmieni wszystkie współrzędne rekordów P, '
+                'włącznie z elementami arkusza, tabelami i opisami. '
+                'Nie przeliczy automatycznie georeferencji rastrów ani '
+                'powierzchni zapisanych jako atrybuty.\\n'
+                'Powstaną wyłącznie nowe pliki MAP i PRJ. '
+                'Koniecznie sprawdź pozycje i pola powierzchni w GEO-MAP.\\n\\n'
+                'Kontynuować eksperymentalny eksport?')
+            answer=QMessageBox.warning(dialog,'Uwaga — dane geodezyjne',
+                warn,QMessageBox.Yes | QMessageBox.No,QMessageBox.No)
+            if answer!=QMessageBox.Yes:
+                return
+            source_path=Path(self.doc.filename or 'mapa.MAP')
+            default=source_path.with_name(
+                source_path.stem+f'_EPSG{dialog_target}.MAP')
+            filename,_=QFileDialog.getSaveFileName(
+                dialog,'Wybierz nowy plik mapy (oryginał bez zmian)',
+                str(default),'GEO-MAP (*.MAP)')
+            if not filename:
+                return
+            target=Path(filename)
+            prj=target.with_suffix('.prj')
+            visual=sidecar_path(target)
+            if target.exists() or prj.exists() or (
+                    (self.visual_styles or self.label_positions) and visual.exists()):
+                QMessageBox.warning(dialog,'Istniejący plik',
+                    'Nie nadpisuję istniejących plików MAP, PRJ ani stylów. '
+                    'Wybierz nową nazwę.')
+                return
+            try:
+                source_doc=GeoMap(self.doc.to_bytes())
+                projected=transform_map_copy(
+                    source_doc,dialog_source,dialog_target)
+                wkt=output_prj_text(dialog_target)
+                adjusted_labels=transform_label_positions(
+                    self.label_positions,dialog_source,dialog_target)
+                projected.save_as(target)
+                # PRJ is a standard metadata sidecar, may be ignored by GEO-MAP.
+                prj.write_text(wkt,encoding='utf-8')
+                if self.visual_styles or adjusted_labels:
+                    write_styles(target,self.visual_styles,
+                                 label_positions=adjusted_labels)
+                QMessageBox.information(dialog,'Eksport zakończony',
+                    f'Zapisano kopię:\\n{target}\\n{prj}\\n\\n'
+                    'Oryginalna mapa nie została zmieniona. '
+                    'Weryfikuj wynik w GEO-MAP, zwłaszcza atrybuty powierzchni '
+                    'oraz elementy arkusza i rastry.')
+            except Exception as exc:
+                QMessageBox.critical(dialog,'Nie udało się przeliczyć mapy',str(exc))
+
+        map_button.clicked.connect(export_copy)
+        form.addRow(map_button)
+        note = QLabel(
+            'Uwaga: Warszawa 25/75, lokalny Poznań i niejednoznaczny układ '
+            '1942 nie są jeszcze dostępne. Historyczne 1965 może wymagać '
+            'parametrów lokalnych lub siatek transformacyjnych.')
+        note.setWordWrap(True)
+        form.addRow(note)
+        close=QDialogButtonBox(QDialogButtonBox.Close,dialog)
+        close.rejected.connect(dialog.reject)
+        form.addRow(close)
+        dialog.exec()
+
     def _recent_folder(self, key):
         saved = Path(str(self.settings.value(key, str(Path.home()))))
         return str(saved if saved.is_dir() else Path.home())
@@ -568,6 +721,7 @@ class GeoStudioWindow(QMainWindow):
                 answer=QMessageBox.warning(self,'Suma kontrolna','Suma MD5 pliku nie zgadza się z nagłówkiem. Otworzyć tylko do podglądu?',QMessageBox.Yes|QMessageBox.No)
                 if answer!=QMessageBox.Yes:return
             self.doc=doc
+            self.current_crs_epsg = detected_crs_from_prj(file)
             self.selected_uid = ''
             self.settings.setValue('last_map_dir', str(Path(file).parent))
             self.visual_styles = load_styles(file)
@@ -580,7 +734,7 @@ class GeoStudioWindow(QMainWindow):
             self._last_pick_candidates = ()
             self._look_for_libraries(Path(file).parent)
             self.rebuild_scene()
-            self.setWindowTitle('GeoStudio v0.10 — '+Path(file).name)
+            self.setWindowTitle('GeoStudio v0.11 — '+Path(file).name)
             self.status.showMessage(f'{len(doc.objects)} obiektów, {len(doc.lines)} wierszy | {file}')
         except Exception as exc: QMessageBox.critical(self,'Błąd odczytu mapy',str(exc))
 
@@ -846,20 +1000,22 @@ class GeoStudioWindow(QMainWindow):
                     max(xs) - min(xs), max(ys) - min(ys))
             for field, content in label_fields:
                 label = QGraphicsSimpleTextItem(content)
-                # A QFont point size is DPI-dependent. Explicit pixel sizes
-                # and ItemIgnoresTransformations guarantee that zoom/rotation
-                # do NOT enlarge or shrink printed map annotations on screen.
+                # GEO-MAP/CAD-like annotation: text has a fixed geographic
+                # (world-coordinate) size. Zooming affects glyph size exactly
+                # as it affects the parcel lines. No screen-pixel override:
+                # the old mode made text appear bigger *relative* to the map
+                # on zoom out. The view never culls individual map labels.
                 font = QFont('Segoe UI')
                 if obj.code == '5310':
                     font.setPixelSize(16)
                     font.setBold(True)
-                    color = QColor('#CC202C')  # GEO-MAP-style building identifier
+                    color = QColor('#CC202C')
                 elif obj.code == '5216':
                     font.setPixelSize(12)
-                    color = QColor('#4A5056')  # quiet parcel numbers
+                    color = QColor('#4A5056')
                 elif obj.code in {'5220', '5230'}:
                     font.setPixelSize(11)
-                    color = QColor('#35753A')  # land use / contours in green
+                    color = QColor('#35753A')
                     color.setAlpha(190)
                 else:
                     font.setPixelSize(11)
@@ -867,7 +1023,9 @@ class GeoStudioWindow(QMainWindow):
                     color.setAlpha(180)
                 label.setFont(font)
                 label.setBrush(QBrush(color))
-                label.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIgnoresTransformations, True)
+                # 0.55 map-metres per font pixel; label dimensions are
+                # real geographic map units and rotate with the map.
+                label.setScale(0.55)
                 label.setAcceptedMouseButtons(Qt.NoButton)
                 bounds = label.boundingRect()
                 custom = self.label_positions.get(obj.uid,{}).get(field)
@@ -908,88 +1066,19 @@ class GeoStudioWindow(QMainWindow):
         self._select_uid('')
 
     def update_label_visibility(self):
-        """Zoom-adaptive, collision-aware GIS labeling in screen pixels.
+        """Never hide labels merely because of zoom or collisions.
 
-        ItemIgnoresTransformations keeps lettering upright under rotation.
-        Without scale thresholds, 5310 text stays huge when an entire
-        village is fitted on screen; this method hides such labels until
-        objects are large enough to read.
+        All texts are real geographic-size graphics (not fixed device pixels).
+        They become proportionally smaller when zoomed out, exactly like parcel
+        geometry. Layer toggles and the explicit global label checkbox remain.
         """
-        if not hasattr(self, 'labels_action'):
+        if not self.doc or not hasattr(self,'labels_action'):
             return
-        if not self.labels_enabled or not self.doc:
-            for item in self.labels:
-                item.setVisible(False)
-            return
-
-        view = self.view
-        viewport = view.viewport().rect().adjusted(-10, -10, 10, 10)
-        transform = view.transform()
-        px_per_map_unit = math.hypot(transform.m11(), transform.m12())
-        selected = set(self.selected_uids)
-        force_all = self.all_labels_action.isChecked()
-        occupied: dict[tuple[int,int], str] = {}
-
-        def priority(item):
-            uid = item.data(0)
-            obj = self.doc.by_id.get(uid)
-            if uid in selected:
-                return (0, uid)
-            if obj is None:
-                return (5, uid)
-            return ({'5310': 1, '5216': 2, '5220': 3,
-                     '5230': 3}.get(obj.code, 4), uid)
-
-        for item in sorted(self.labels, key=priority):
-            uid = item.data(0)
-            obj = self.doc.by_id.get(uid)
-            if obj is None or self.layer_for_uid.get(uid,'') in self.hidden_layers:
-                item.setVisible(False)
-                continue
-
-            center = view.mapFromScene(item.pos())
-            if not viewport.contains(center):
-                item.setVisible(False)
-                continue
-
-            is_selected = uid in selected
-            if not (is_selected or force_all):
-                # The display is 1:1 in the map's metre-based source units.
-                # At overview scales keep 5310 A1/A2 from covering the map.
-                scale_threshold = ({'5310': 0.75, '5216': 0.38,
-                                    '5220': 0.65, '5230': 0.65}
-                                   .get(obj.code, 0.65))
-                if px_per_map_unit < scale_threshold:
-                    item.setVisible(False)
-                    continue
-                # Label only when the source object occupies enough pixels.
-                projected_span = self.label_world_span.get(uid, 0) * px_per_map_unit
-                min_span = 34 if obj.code == '5310' else 18
-                if projected_span < min_span:
-                    item.setVisible(False)
-                    continue
-
-            bounds = item.boundingRect()
-            w = max(8.0, bounds.width()) + 8
-            h = max(8.0, bounds.height()) + 6
-            left = center.x() - w/2
-            top = center.y() - h/2
-            right = left + w
-            bottom = top + h
-            rect_cells = [
-                (cx, cy)
-                for cx in range(math.floor(left / 38), math.floor(right / 38) + 1)
-                for cy in range(math.floor(top / 24), math.floor(bottom / 24) + 1)
-            ]
-            if not (is_selected or force_all) and any(
-                    cell in occupied and occupied[cell] != uid
-                    for cell in rect_cells):
-                item.setVisible(False)
-                continue
-            item.setVisible(True)
-            if not force_all:
-                for cell in rect_cells:
-                    occupied.setdefault(cell, uid)
+        for item in self.labels:
+            uid=item.data(0)
+            item.setVisible(bool(self.labels_enabled and
+                self.layer_for_uid.get(uid,'') not in self.hidden_layers))
+        self.update_view_scale_indicator()
 
     def start_label_edit(self):
         if not self.doc:
@@ -1017,17 +1106,15 @@ class GeoStudioWindow(QMainWindow):
                 continue
             if self.layer_for_uid.get(uid,'') in self.hidden_layers:
                 continue
-            point = self.view.mapFromScene(item.pos())
-            bounds = item.boundingRect()
-            # A1 and A2 have independent pixel offsets despite sharing
-            # a geographic anchor; test their ACTUAL displayed centres.
-            shift = item.transform()
-            cx = point.x() + shift.dx() + bounds.width()/2
-            cy = point.y() + shift.dy() + bounds.height()/2
-            dx = abs(click.x()-cx)
-            dy = abs(click.y()-cy)
-            if dx <= max(12,bounds.width()/2+6) and dy <= max(10,bounds.height()/2+6):
-                found.append((dx+dy,item))
+            # Use the *actual* device transform so hitting text works
+            # whether it scales with the map or uses a rotated viewport.
+            rect = item.deviceTransform(
+                self.view.viewportTransform()).mapRect(item.boundingRect())
+            mouse = QPointF(click)
+            if rect.adjusted(-8,-8,8,8).contains(mouse):
+                center = rect.center()
+                found.append((abs(mouse.x()-center.x())
+                              + abs(mouse.y()-center.y()),item))
         if found:
             _, item = min(found, key=lambda choice: choice[0])
             self._active_label = item
@@ -1528,6 +1615,78 @@ class GeoStudioWindow(QMainWindow):
         self.status.showMessage(
             f'Obrót widoku: {self.view_rotation_degrees}°. '
             'Obiekty i zapisane współrzędne pozostają bez zmian.')
+
+    def _setup_scale_widget(self):
+        """Visible map scale, estimated from Qt's logical screen DPI."""
+        self.status.addPermanentWidget(QLabel('Skala widoku:'))
+        self.scale_combo = QComboBox(self)
+        self.scale_combo.setObjectName('GeoStudioScale')
+        self.scale_combo.setEditable(True)
+        self.scale_combo.setMinimumWidth(115)
+        self.scale_combo.addItems(['1:500', '1:1000', '1:2000', '1:5000',
+                                   '1:10000', '1:25000'])
+        self.scale_combo.setCurrentText('1:1000')
+        self.scale_combo.activated.connect(lambda _idx: self.apply_view_scale())
+        self.scale_combo.lineEdit().returnPressed.connect(self.apply_view_scale)
+        self.status.addPermanentWidget(self.scale_combo)
+
+    def _view_pixel_scale(self):
+        t = self.view.transform()
+        return math.hypot(t.m11(), t.m12())
+
+    def _display_denominator(self):
+        px_per_m = self._view_pixel_scale()
+        if px_per_m < 1e-8:
+            return 0
+        # 1 m in projected coordinates is 1000 mm on the ground.
+        # pixel units are Qt logical screen pixels, not printer resolution.
+        return self.view.logicalDpiX() / 0.0254 / px_per_m
+
+    def update_view_scale_indicator(self):
+        if not hasattr(self, 'scale_combo') or not self.doc:
+            return
+        den = self._display_denominator()
+        if not (math.isfinite(den) and 1 <= den <= 1e9):
+            return
+        self.scale_combo.blockSignals(True)
+        self.scale_combo.setCurrentText(f'1:{round(den):d}')
+        self.scale_combo.blockSignals(False)
+
+    def apply_view_scale(self):
+        if not self.doc:
+            return
+        raw = self.scale_combo.currentText().strip().replace(' ', '').replace(',', '.')
+        try:
+            denominator = float(raw.split(':')[-1])
+            if len(raw.split(':')) > 2 or not (10 <= denominator <= 10000000):
+                raise ValueError('Skala 1:N musi być między 1:10 a 1:10000000')
+            if not math.isfinite(denominator):
+                raise ValueError('Wybierz poprawny mianownik skali')
+            current = self._view_pixel_scale()
+            target = self.view.logicalDpiX() / .0254 / denominator
+            factor = target / current
+            if not (1e-5 <= current * factor <= 4000):
+                raise ValueError('Ta skala wykracza poza zakres wyświetlania')
+            center = self.view.mapToScene(self.view.viewport().rect().center())
+            self.view.scale(factor, factor)
+            self.view.centerOn(center)
+            self.update_label_visibility()
+            self.status.showMessage(
+                f'Ustawiono przybliżoną skalę ekranu 1:{denominator:g}. '
+                'Nie zmieniono współrzędnych ani skali wydruku GEO-MAP.')
+        except (ValueError,ZeroDivisionError) as exc:
+            QMessageBox.warning(self,'Nieprawidłowa skala',str(exc))
+            self.update_view_scale_indicator()
+
+    def ask_view_scale(self):
+        if not self.doc:
+            return
+        value, ok = QInputDialog.getText(
+            self,'Skala widoku', 'Podaj skalę 1:N, np. 1:2000',
+            text=self.scale_combo.currentText())
+        if ok:
+            self.scale_combo.setCurrentText(value)
+            self.apply_view_scale()
 
     def fit_all(self):
         if not self.doc:
