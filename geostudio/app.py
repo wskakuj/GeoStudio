@@ -27,6 +27,7 @@ except ImportError as exc:
 from .geomap import GeoMap, GeoObject, library_layers, library_symbols, library_colors, resolve_layer
 from .interactions import find_snap, polygon_is_valid, closest_point_on_edge
 from .geometry_index import GeometryIndex
+from .scene_builder import RenderContext, build_scene, object_path
 from .map_layout import (detect_source_compilation_scale, validated_compilation_scale,
     label_ratio, source_text_height, text_line_offset, DEFAULT_SCALE)
 from .coordinates import (CRS_CHOICES, MODERN_EPSG, transform_xy,
@@ -805,20 +806,8 @@ class GeoStudioWindow(QMainWindow):
 
     @staticmethod
     def _path_for(obj, points_override=None, *, hide_connectors=False):
-        points = points_override if points_override is not None else [(p.x, p.y) for p in obj.points]
-        if not points:
-            return QPainterPath()
-        path = QPainterPath(QPointF(points[0][0], -points[0][1]))
-        previous = obj.points[0] if obj.points else None
-        for i, (x, y) in enumerate(points[1:], 1):
-            if (hide_connectors and points_override is None and previous is not None
-                    and previous.point_type == 0):
-                path.moveTo(x, -y)
-            else:
-                path.lineTo(x, -y)
-            if points_override is None:
-                previous = obj.points[i]
-        return path
+        """Kept for callers in this module and for tests; see scene_builder.object_path."""
+        return object_path(obj, points_override, hide_connectors=hide_connectors)
 
     def toggle_multipart_connectors(self, checked):
         self.hide_multipart_connectors = bool(checked)
@@ -830,270 +819,40 @@ class GeoStudioWindow(QMainWindow):
                                 ('ukryte' if checked else 'widoczne') +
                                 '. Zmiana jest tylko wizualna; plik MAP pozostaje bez zmian.')
 
-    @staticmethod
-    def _label_anchor(obj):
-        """Area centroid for closed geometry, midpoint for other paths."""
-        pts = obj.points[:-1] if obj.is_closed else obj.points
-        if not pts:
-            return None
-        if not obj.is_closed or len(pts) < 3:
-            return (sum(p.x for p in pts)/len(pts), sum(p.y for p in pts)/len(pts))
-        x0, y0 = pts[0].x, pts[0].y
-        double_area, cx, cy = 0.0, 0.0, 0.0
-        for i, a in enumerate(pts):
-            b = pts[(i+1) % len(pts)]
-            ax, ay, bx, by = a.x-x0, a.y-y0, b.x-x0, b.y-y0
-            cross = ax*by - bx*ay
-            double_area += cross
-            cx += (ax+bx)*cross
-            cy += (ay+by)*cross
-        if abs(double_area) < 1e-10:
-            return (sum(p.x for p in pts)/len(pts), sum(p.y for p in pts)/len(pts))
-        return (x0 + cx/(3*double_area), y0 + cy/(3*double_area))
+    def _render_context(self) -> RenderContext:
+        """Snapshot of everything the renderer reads from the window."""
+        return RenderContext(
+            catalog=self.catalog,
+            symbols=self.symbols,
+            cdf_styles=self.cdf_styles,
+            lay_pen_styles=self.lay_pen_styles,
+            sym_primitives=self.sym_primitives,
+            sym_line_patterns=self.sym_line_patterns,
+            visual_styles=self.visual_styles,
+            label_positions=self.label_positions,
+            compilation_scale=self.compilation_scale,
+            source_compilation_scale=self.source_compilation_scale,
+            hide_multipart_connectors=self.hide_multipart_connectors,
+        )
 
     def rebuild_scene(self, *, fit=True, reselect=''):
         if not self.doc:
             return
-        self.map_scene.clear()
-        self.geometry_index = GeometryIndex(self.doc.objects, hide_connectors=self.hide_multipart_connectors)
-        self.layer_for_uid = {}
-        self.graphics_for_uid = {}
-        self.fill_items_for_uid = {}
-        self.items_by_layer = defaultdict(list)
-        self.labels = []
-        self.label_items = {}
-        self.label_world_span = {}
+        result = build_scene(self.map_scene, self.doc, self._render_context())
+        self.geometry_index = result.geometry_index
+        self.layer_for_uid = result.layer_for_uid
+        self.graphics_for_uid = result.graphics_for_uid
+        self.fill_items_for_uid = result.fill_items_for_uid
+        self.items_by_layer = result.items_by_layer
+        self.labels = result.labels
+        self.label_items = result.label_items
+        self.label_world_span = result.label_world_span
         self.highlight_item = None
         self.draft_item = None
         self.snap_marker = None
         self.edit_handles = []
         self.draft_points = []
         self.current_snap = None
-        for obj in self.doc.objects:
-            if not obj.points:
-                continue
-            layer = resolve_layer(self.catalog, obj.code)
-            self.layer_for_uid[obj.uid] = layer
-            # Preserve GEO-MAP COLORREF for stroke; CDF can override
-            # fill and border on exact code/attribute variants.
-            color = QColor(*obj.colorref)
-            cdf = cdf_for_object(self.cdf_styles, obj.code,
-                                 obj.fields.get('A1',''), obj.fields.get('A2',''))
-            if cdf:
-                border = QColor(*cdf.border)
-                if cdf.border != (0,0,0):
-                    color = border
-            pen = QPen(color)
-            pen.setCosmetic(True)
-            lay_style = lay_for_code(self.lay_pen_styles, obj.code)
-            # GEO-MAP's SYM macros define real dash/gap ratios:
-            # *4002 (1,-1), *4003 (2,-1), O 4003 in 5220, O 4002 in 5230.
-            # Resolve that definition first, then approximate LAY fallback.
-            sym_dash = object_sym_line_pattern(
-                self.sym_primitives, self.sym_line_patterns, obj.code)
-            if sym_dash:
-                pen.setStyle(Qt.CustomDashLine)
-                pen.setDashPattern([max(.5, sym_dash[0]*3),
-                                    max(.5, sym_dash[1]*3)])
-            elif sym_dash is None and lay_style and lay_style.line_id.endswith('.008'):
-                pen.setStyle(Qt.DashLine)
-            # Device-pixel width is independent from the map's zoom.
-            # Use the CDF border weight when present; protect against
-            # excessively wide vendor pen settings.
-            pen.setWidthF(min(3.0, max(0.8, cdf.width)) if cdf and cdf.width > 0 else 1.0)
-            override = self.visual_styles.get(obj.uid)
-            native_rgb = native_fill_color(obj.style)
-            if override:
-                fill_color = QColor(override['fill'])
-                fill_color.setAlpha(round(override['opacity'] * 255 / 100))
-                fill_brush = QBrush(fill_color)
-            elif native_rgb:
-                # GEO-MAP v8 source records may contain an explicit COLORREF
-                # in the third style token; unlike previous 7%-alpha rendering,
-                # respect the native, fully opaque recorded value.
-                fill_brush = QBrush(QColor(*native_rgb))
-            elif cdf:
-                fill_color = QColor(*cdf.fill)
-                hatch = {0: Qt.SolidPattern,
-                         1: Qt.Dense4Pattern, 2: Qt.Dense5Pattern,
-                         3: Qt.HorPattern, 4: Qt.VerPattern,
-                         5: Qt.CrossPattern, 6: Qt.BDiagPattern,
-                         7: Qt.FDiagPattern, 8: Qt.DiagCrossPattern}.get(
-                             cdf.hatch, Qt.SolidPattern)
-                # Qt brush hatches approximatively reproduce CDF pattern types.
-                # Native fully opaque RGB is retained; no washed-out 7% fill.
-                fill_brush = QBrush(fill_color, hatch)
-            else:
-                fill_brush = QBrush(Qt.NoBrush)
-
-            if len(obj.points) == 1:
-                # SYM full-circle A instructions describe boundary markers.
-                # Draw actual double rings instead of thousands of generic,
-                # oversized black dots on every surveyed boundary.
-                primitives = self.sym_primitives.get(obj.code, [])
-                segments = simple_point_segments(primitives)
-                circles = simple_point_circles(primitives)
-                if segments or circles:
-                    point_path = QPainterPath()
-                    for x1,y1,x2,y2 in segments:
-                        point_path.moveTo(x1 * 5, -y1 * 5)
-                        point_path.lineTo(x2 * 5, -y2 * 5)
-                    for cx,cy,radius in circles:
-                        radius_px=radius*5
-                        point_path.addEllipse(QPointF(cx*5,-cy*5),
-                                              radius_px,radius_px)
-                    item = QGraphicsPathItem(point_path)
-                else:
-                    # Fallback is deliberately smaller than the old 5 px disc.
-                    item = QGraphicsEllipseItem(-1.0,-1.0,2.0,2.0)
-                    item.setBrush(QBrush(color))
-                item.setPos(obj.points[0].x, -obj.points[0].y)
-                item.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIgnoresTransformations, True)
-                item.setZValue(250)
-            else:
-                path = self._path_for(obj,hide_connectors=self.hide_multipart_connectors)
-                item = QGraphicsPathItem(path)
-                item.setBrush(QBrush(Qt.NoBrush))
-                # All boundary lines are placed ABOVE every filled polygon.
-                # Parcel boundaries must stay visible even under opaque
-                # forestry / land-use polygons, irrespective of object order.
-                item.setZValue(220 if obj.code=='5214' else
-                               180 if obj.code=='5216' else
-                               130 if obj.code in {'5220','5230'} else 100)
-                parts = obj.display_parts
-                is_multipart_area = bool(parts) and all(
-                    len(part) >= 4 and (part[0].x,part[0].y) ==
-                    (part[-1].x,part[-1].y) for part in parts)
-                if obj.is_closed or is_multipart_area:
-                    # The 5200 triangular objects with FA=0 form the black
-                    # quarters of the map's compass rose. Do not fill all
-                    # 5200 legends/boxes: only the explicit source triangles.
-                    if (obj.code == '5200' and len(obj.points)==4
-                            and obj.fields.get('FA')=='0'):
-                        fill_brush=QBrush(QColor('#111111'))
-                    fill_item = QGraphicsPathItem(path)
-                    fill_item.setBrush(fill_brush)
-                    fill_item.setPen(QPen(Qt.NoPen))
-                    # Independent fill stage; never paint parcel strokes over
-                    # the wrong RGB just because a later feature comes next.
-                    fill_item.setZValue(-100)
-                    fill_item.setAcceptedMouseButtons(Qt.NoButton)
-                    fill_item.setData(0,obj.uid or f'index:{obj.start}')
-                    self.map_scene.addItem(fill_item)
-                    self.items_by_layer[layer].append(fill_item)
-                    if obj.uid:
-                        self.fill_items_for_uid[obj.uid] = fill_item
-            # Text-only map annotation codes carry a P-to-P baseline,
-            # not a printed line. Drawing that baseline caused long black
-            # strokes through the title, legend and agency captions.
-            if obj.code in {'6900','7900','6000','6301'} and obj.fields.get('TX'):
-                pen=QPen(Qt.NoPen)
-            item.setPen(pen)
-            # We handle picking ourselves; Qt's default selection draws an
-            # unwanted bounding RECTANGLE instead of the exact contour.
-            item.setAcceptedMouseButtons(Qt.NoButton)
-            item.setData(0, obj.uid or f'index:{obj.start}')
-            item.setToolTip(
-                f'Kod {obj.code} • {self.symbols.get(obj.code,layer)}\\n'
-                f'{obj.fields.get("A2","")}')
-            self.map_scene.addItem(item)
-            self.items_by_layer[layer].append(item)
-            if obj.uid:
-                self.graphics_for_uid[obj.uid] = item
-            # Compose annotations only from source records. 6900 stores
-            # directional letters / map-sheet numbers (N/S/E/W/1/2/3).
-            # 7900 stores map title, legend headings and agency names;
-            # 6000/6301 store the textual legend. These objects provide two
-            # P anchors, NOT strokes: render the text, not their baseline.
-            labels = []
-            if obj.code == '5310':
-                labels = [(field,obj.fields[field]) for field in ('A1','A2')
-                          if obj.fields.get(field)]
-            elif obj.code in {'5216','5220','5230'} and obj.fields.get('A2'):
-                labels = [('A2',obj.fields['A2'])]
-            elif obj.code == '5214' and obj.fields.get('A3'):
-                # The precinct title is a source attribute, not invented text.
-                labels = [('A3',obj.fields['A3'])]
-            elif obj.code in {'6900','7900','6000','6301'} and obj.fields.get('TX'):
-                texts = [v.strip() for v in obj.fields['TX'].split('||') if v.strip()]
-                labels = [(f'TX{index}',line) for index,line in enumerate(texts)]
-            elif obj.code.startswith('7') and obj.fields.get('TX'):
-                labels = [('TX',obj.fields['TX'].replace('||',' '))]
-            if not labels:
-                continue
-            anchor = self._label_anchor(obj)
-            if anchor is None:
-                continue
-            if obj.uid and obj.points:
-                xs = [pt.x for pt in obj.points]
-                ys = [pt.y for pt in obj.points]
-                self.label_world_span[obj.uid] = max(
-                    max(xs) - min(xs), max(ys) - min(ys))
-            line_count=len(labels)
-            for line_index, (field,content) in enumerate(labels):
-                label = QGraphicsSimpleTextItem(content)
-                font = QFont('Segoe UI')
-                ratio = .55
-                if obj.code == '5310':
-                    font.setPixelSize(16)
-                    font.setBold(True)
-                    color=QColor('#CC202C')
-                elif obj.code == '5216':
-                    font.setPixelSize(12)
-                    color=QColor('#4A5056')
-                elif obj.code in {'5220','5230'}:
-                    font.setPixelSize(11)
-                    color=QColor('#35753A')
-                    color.setAlpha(190)
-                elif obj.code == '5214':
-                    font.setPixelSize(14)
-                    color=QColor('#213B8F')
-                elif obj.code in {'6900','7900','6000','6301'}:
-                    font.setPixelSize(24)
-                    if obj.code in {'7900','6900'}:
-                        font.setFamily('Times New Roman')
-                        font.setBold(True)
-                    else:
-                        font.setFamily('Segoe UI')
-                    color=QColor('#111111')
-                    # A1 height is in the map's coordinate units. In v0.13
-                    # it was MULTIPLIED by 2.1, so independent title rows
-                    # overlapped even though their geographic P anchors
-                    # were correct. Set the drawn glyph's actual height to
-                    # A1 instead; compilation scale controls an independent
-                    # magnification factor for map presentation.
-                else:
-                    font.setPixelSize(11)
-                    color=QColor('#58686F')
-                    color.setAlpha(180)
-                label.setFont(font)
-                label.setBrush(QBrush(color))
-                label.setAcceptedMouseButtons(Qt.NoButton)
-                bounds=label.boundingRect()
-                ratio=label_ratio(obj.code,obj.fields,bounds.height(),
-                                  self.compilation_scale,
-                                  self.source_compilation_scale)
-                custom=self.label_positions.get(obj.uid,{}).get(field)
-                x,y = custom if custom else anchor
-                label.setPos(x,-y)
-                # Screen-direction offsets are expressed in font pixels.
-                # Their real-world displacement scales with the map.
-                offset=0.
-                if not custom and obj.code=='5310':
-                    offset= (-bounds.height()*.6 if field=='A1'
-                             else bounds.height()*.6)
-                elif obj.code in {'7900','6000','6301'} and not custom:
-                    offset=text_line_offset(line_index,line_count,bounds.height())
-                label.setData(0,obj.uid)
-                label.setData(1,field)
-                label.setData(2,offset)
-                label.setData(3,ratio)
-                label.setData(4,ratio/(self.compilation_scale/self.source_compilation_scale))
-                label.setZValue(1300)
-                self.map_scene.addItem(label)
-                self.items_by_layer[layer].append(label)
-                self.labels.append(label)
-                self.label_items[(obj.uid,field)] = label
         self._populate_layers()
         if fit:
             self.fit_all()
