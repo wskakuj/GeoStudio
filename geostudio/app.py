@@ -260,7 +260,8 @@ class GeoStudioWindow(QMainWindow):
         em.addAction(self._action('Przesuwanie mapy',self.start_pan,'H'))
         em.addAction(self._action('Rysuj poligon',self.start_polygon,'P'))
         em.addAction(self._action('Edytuj wierzchołki poligonu',self.start_vertex_edit,'E'))
-        self.finish_action = em.addAction(self._action('Zakończ i zapisz poligon',self.finish_polygon,'Return'))
+        self.finish_action = self._action('Zakończ i zapisz poligon',self.finish_polygon,'Return')
+        em.addAction(self.finish_action)
         self.finish_action.setEnabled(False)
         em.addAction(self._action('Zakończ / anuluj narzędzie',self.cancel_edit,'Esc'))
         em.addAction(self._action('Edytuj atrybut zaznaczonego obiektu…',self.edit_selected,'F2'))
@@ -300,7 +301,8 @@ class GeoStudioWindow(QMainWindow):
             toolbar.addAction(action)
             self.tool_actions[key] = action
         self.tool_actions['select'].setChecked(True)
-        self.finish_toolbar_action = toolbar.addAction(self._action('✓ Zakończ poligon [Enter]', self.finish_polygon))
+        self.finish_toolbar_action = self._action('✓ Zakończ poligon [Enter]', self.finish_polygon)
+        toolbar.addAction(self.finish_toolbar_action)
         self.finish_toolbar_action.setVisible(False)
         toolbar.addSeparator()
         toolbar.addAction(self.snap_action)
@@ -922,7 +924,7 @@ class GeoStudioWindow(QMainWindow):
                     if os.path.exists(temporary):
                         os.unlink(temporary)
             return self._auto_copy_path
-        except (OSError, ValueError) as exc:
+        except (OSError, ValueError, RuntimeError) as exc:
             QMessageBox.warning(self,'Kopia robocza nie została zapisana',
                 f'Zmiana pozostaje w pamięci. Zapisz ją ręcznie przez Zapisz jako.\n{exc}')
             return None
