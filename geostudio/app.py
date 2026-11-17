@@ -1723,7 +1723,7 @@ class GeoStudioWindow(QMainWindow):
             return
         self.compilation_label.setText(f'Opracowanie 1:{self.compilation_scale}')
         self.compilation_label.setToolTip(
-            f'Skala prezentacji symboli i napisów, niezależna od skali '
+            f'Skala prezentacji napisów, niezależna od skali '
             f'widoku. Skala odczytana z legendy: 1:{self.source_compilation_scale}. '
             'Ctrl+F5 zmienia ustawienie w GeoStudio (nie oryginalny MAP).')
 
@@ -1749,8 +1749,8 @@ class GeoStudioWindow(QMainWindow):
             return
         value, accepted = QInputDialog.getInt(
             self,'Skala opracowania (Ctrl+F5)',
-            'Skala opracowania 1:N — rozmiar napisów i opisu arkusza.\\n'
-            'Skala widoku w dolnym pasku jest niezależna.\\n'
+            'Skala opracowania 1:N — rozmiar napisów i opisu arkusza.\n'
+            'Skala widoku w dolnym pasku jest niezależna.\n'
             'To ustawienie GeoStudio, nie modyfikuje oryginalnej MAP:',
             self.compilation_scale,100,1_000_000,100)
         if accepted:
