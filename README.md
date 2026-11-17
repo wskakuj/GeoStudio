@@ -1,6 +1,6 @@
 # GeoStudio — projekt nowoczesnego edytora map geodezyjnych
 
-**Wczesny prototyp v0.7.0 — wersja testowa, nie do dokumentacji urzędowej ani produkcyjnej.**
+**Wczesny prototyp v0.8.0 — wersja testowa, nie do dokumentacji urzędowej ani produkcyjnej.**
 
 GeoStudio ma docelowo umożliwiać edycję plików GEO-MAP `.MAP` z zachowaniem
 katalogów `.SYM`, `.LAY`, `.CDF`, a także pomiary, rastry, eksporty DXF/VAL
@@ -298,3 +298,67 @@ a starszy ekran GeoStudio rysował scenę według X w poziomie, -Y w pionie.
    po zmianie orientacji.
 5. Jak dotychczas testuj edycję wyłącznie na kopiach; transformacja widoku
    nie wpływa na wartości zapisanych współrzędnych.
+
+
+## GeoStudio v0.8 — podpisy, domyślne biblioteki i odczyt kolorów
+
+### Przesuwanie napisów A1/A2 na mapie
+
+- Kliknij **✎ Opisy A1/A2 [L]** lub naciśnij `L`, a następnie **przeciągnij
+  widoczny napis** myszą. W przypadku obiektu 5310 napisy A1 i A2 są teraz
+  **oddzielnymi elementami**, można je przenieść niezależnie.
+- `S` wraca do zaznaczania. Zaznaczony obiekt powinien pokazywać obie etykiety,
+  nawet jeżeli automatyczne rozrzedzanie usuwa inne opisy na tym poziomie zoomu.
+- Przesunięte pozycje zapisywane są jako współrzędne X/Y w pliku
+  `nazwa.MAP.geostudio.json` towarzyszącym **kopii roboczej**, nie wewnątrz MAP.
+  Nie są obecnie przenoszone do oryginalnego GEO-MAP. Przenosząc kopię na
+  drugi komputer, skopiuj oba pliki. Dane źródłowe MAP pozostają nietknięte.
+- Poprawiono wzajemne ukrywanie A1 i A2 tego samego obiektu oraz przywracanie
+  podpisów po ukrywaniu i ponownym włączeniu warstwy.
+
+### Automatyczne ładowanie bibliotek
+
+- Wybierz własne `.SYM`, `.LAY`, `.CDF` raz przez
+  **Plik → Wczytaj biblioteki SYM/LAY/CDF**. GeoStudio zapamięta osobno ich
+  pełne ścieżki w **ustawieniach systemowych QSettings** i przy kolejnych
+  uruchomieniach wczyta je automatycznie, nawet gdy mapa jest w innym katalogu.
+- Umieść biblioteki w stabilnym folderze poza repozytorium, np.
+  `C:\\GeoStudio-biblioteki\\GEO-MAP.sym`,
+  `GEO-MAP.lay`, `GEO-MAP.CDF`. **Nie zmieniaj folderu po wybraniu
+  plików**, albo wskaż je ponownie. W razie braku domyślnej biblioteki
+  GeoStudio spróbuje znaleźć odpowiedni plik obok otwieranej mapy.
+- Biblioteki są danymi użytkownika i **nie są dołączane do GitHub/repozytorium**.
+  Wersje udostępnione przez producenta mogą podlegać oddzielnej licencji.
+
+### Wypełnienia, kolory, znaki
+
+- Odczytane z mapy COLORREF obrysu oraz — tam gdzie występuje — **kolor
+  wypełnienia z trzeciego pola nagłówka obiektu** mają pierwszeństwo przed
+  dawnym domyślnym półprzezroczystym wypełnieniem.
+- Obsługiwany jest wycinek formatu **CDF**: RGB wypełnienia i obrysu,
+  szrafura (przybliżone wzory Qt) i dobór stylu po kodzie / atrybutach.
+- **SYM**: wczytywane są typy instrukcji graficznych i wyświetlane
+  proste odcinki `L` znaków punktowych. Rekurencyjne definicje `O`,
+  opisy `T`, krzywe, symbole zależne od skali i obracane znaki nadal
+  wymagają implementacji. **LAY** wciąż dostarcza nazwy warstw/kody;
+  odwzorowanie wszystkich parametrów piór, linii i tekstów dopiero powstaje.
+- Ręczne wypełnienie `#RRGGBB@NN` z panelu właściwości ma pierwszeństwo
+  nad domyślnym kolorem z GEO-MAP, ale jest zapisywane **wyłącznie jako
+  styl GeoStudio** i nie będzie widoczne w GEO-MAP.
+
+**To nadal renderer częściowy — różnice w kreskowaniu, symbolach, legendzie,
+opisach arkusza i zachowaniu plików mogą być znaczące.** Wszystkie prace
+geodezyjne i zapisane kopie weryfikuj w oryginalnym GEO-MAP.
+
+### Test v0.8
+
+1. Załaduj biblioteki raz, zamknij i ponownie uruchom program.
+   Sprawdź, czy mapa otwarta z innego folderu ma zdefiniowane warstwy.
+2. Wybierz `5310`, przybliż obiekt, naciśnij `L` i przesuń **oddzielnie A1
+   i A2**. Sprawdź, czy po ponownym otwarciu kopii roboczej oba napisy
+   zachowują pozycję.
+3. Wyłącz i włącz warstwę — opisy widocznych obiektów powinny powrócić,
+   a podpisy A1/A2 jednego obiektu nie powinny wzajemnie się ukrywać.
+4. Porównaj obiekty z wypełnieniami `5310` i klasyfikację z oryginalnym
+   GEO-MAP. Jeśli różnica dotyczy szrafury, symbolu lub legendy, zapisz
+   zrzut obu programów przy tej samej skali i orientacji.
