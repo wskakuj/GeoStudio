@@ -193,3 +193,47 @@ def test_real_mouse_drag_moves_A2_not_A1(gui, tmp_path):
     assert 'A1' not in gui.label_positions[uid]
     assert gui._auto_copy_path is not None
     assert load_label_positions(gui._auto_copy_path)[uid]['A2']==gui.label_positions[uid]['A2']
+
+
+def test_map_label_font_is_fixed_in_screen_pixels_at_zoom(gui):
+    """A1/A2 stays 16 px at 1:large and 1:small, not scaled by transform."""
+    from geostudio.geomap import GeoMap
+    from test_geomap import fixture_map
+    from PySide6.QtWidgets import QGraphicsItem
+    gui.doc=GeoMap(fixture_map())
+    uid=gui.doc.append_polygon([(5,5),(10,5),(5,10)],'5310',
+                               fields={'A1':'bx','A2':'a'})
+    gui.rebuild_scene()
+    item=gui.label_items[(uid,'A1')]
+    assert item.font().pixelSize()==16
+    assert item.flags() & QGraphicsItem.GraphicsItemFlag.ItemIgnoresTransformations
+    width=lambda: item.deviceTransform(gui.view.viewportTransform()).mapRect(
+        item.boundingRect()).width()
+    w0=width()
+    gui.view.scale(3.0,3.0)
+    w1=width()
+    gui.view.scale(.11,.11)
+    w2=width()
+    assert w1 == pytest.approx(w0, abs=0.1)
+    assert w2 == pytest.approx(w0, abs=0.1)
+    assert gui.label_items[(uid,'A2')].font().pixelSize()==16
+
+
+def test_geo_map_text_palette_and_pen_width(gui, tmp_path):
+    from geostudio.geomap import GeoMap
+    from test_geomap import fixture_map
+    gui.doc=GeoMap(fixture_map())
+    uid1=gui.doc.append_polygon([(5,5),(10,5),(5,10)],'5310',
+                                fields={'A1':'bx','A2':'bud'})
+    uid2=gui.doc.append_polygon([(15,15),(18,15),(15,18)],'5230',
+                                fields={'A2':'RV'})
+    f=tmp_path/'col.CDF'
+    f.write_bytes(b'5230.RV 20 150 90 3 0 130 0 2.25\r\n')
+    gui.load_library(f,'palette')
+    gui.rebuild_scene()
+    assert gui.label_items[(uid1,'A1')].brush().color().red() > 170
+    assert gui.label_items[(uid2,'A2')].brush().color().green() > (
+        gui.label_items[(uid2,'A2')].brush().color().red())
+    poly=gui.graphics_for_uid[uid2]
+    assert poly.pen().widthF() == pytest.approx(2.25)
+    assert poly.brush().color().getRgb()[:3] == (20,150,90)
