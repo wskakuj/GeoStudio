@@ -523,7 +523,7 @@ class GeoStudioWindow(QMainWindow):
         if fit:
             self.fit_all()
         else:
-            self.map_scene.setSceneRect(self._world_scene_rect())
+            self.map_scene.setSceneRect(self._navigation_scene_rect())
             self.update_label_visibility()
         if reselect:
             self._select_uid(reselect)
@@ -799,13 +799,21 @@ class GeoStudioWindow(QMainWindow):
         return QRectF(xmin - padding, -(ymax + padding),
                       xmax - xmin + 2 * padding, ymax - ymin + 2 * padding)
 
+    def _navigation_scene_rect(self):
+        """Provide pan margin so wheel zoom can stay anchored even near map edges."""
+        rect = self._world_scene_rect()
+        if rect.isEmpty():
+            return rect
+        margin = max(rect.width(), rect.height(), 10.0)
+        return rect.adjusted(-margin, -margin, margin, margin)
+
     def fit_all(self):
         if not self.doc:
             return
         rect = self._world_scene_rect()
         if rect.isEmpty():
             return
-        self.map_scene.setSceneRect(rect)
+        self.map_scene.setSceneRect(self._navigation_scene_rect())
         self.view.fitInView(rect, Qt.KeepAspectRatio)
         self.update_label_visibility()
 
