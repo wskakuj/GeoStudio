@@ -1236,7 +1236,10 @@ class GeoStudioWindow(QMainWindow):
             # but disorienting; first exit the active interaction mode.
             self.cancel_edit()
         center = self.view.mapToScene(self.view.viewport().rect().center())
-        self.view.setTransform(transform)
+        existing = self.view.transform()
+        zoom = math.hypot(existing.m11(), existing.m12())
+        # Resetting orientation should not throw the user back to another zoom.
+        self.view.setTransform(transform.scale(zoom, zoom))
         self.view.centerOn(center)
         self.orientation_is_geodetic = geodetic
         self.view_rotation_degrees = rotation % 360
