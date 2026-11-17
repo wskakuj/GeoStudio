@@ -121,3 +121,37 @@ def simple_point_segments(primitives: list[SymbolPrimitive]) -> list[tuple[float
     return [(p.parameters[0],p.parameters[1],p.parameters[2],p.parameters[3])
             for p in primitives if p.kind=='L' and
             (p.parameters[0],p.parameters[1])!=(p.parameters[2],p.parameters[3])]
+
+
+
+@dataclass(frozen=True)
+class PointDrawCommand:
+    """Subset of SYM instructions that can be rendered without recursive data."""
+    kind: str  # line or ellipse
+    values: tuple[float, float, float, float]
+
+
+def simple_point_commands(primitives: list[SymbolPrimitive]) -> list[PointDrawCommand]:
+    """Render lines L/V and complete A circles; skip unsupported T/O/partial arcs.
+
+    The original GEO-MAP symbol grammar is richer. This intentionally avoids
+    guessing the meaning of references, text positioning or rotated subglyphs.
+    """
+    commands = []
+    for primitive in primitives:
+        params = primitive.parameters
+        if len(params) != 6:
+            continue
+        if primitive.kind in ('L', 'V'):
+            x1,y1,x2,y2 = params[:4]
+            if (x1,y1) != (x2,y2) and max(map(abs, (x1,y1,x2,y2))) <= 30:
+                commands.append(PointDrawCommand('line', (x1,y1,x2,y2)))
+        elif primitive.kind == 'A':
+            cx,cy,rx,ry,angle_start,angle_end = params
+            if (abs(angle_start) < .01 and abs(angle_end-360) < .01
+                    and 0 < abs(rx) <= 5 and max(abs(cx),abs(cy)) <= 25):
+                ry = abs(ry) or abs(rx)
+                if ry <= 5:
+                    commands.append(PointDrawCommand(
+                        'ellipse', (cx,cy,abs(rx),ry)))
+    return commands
