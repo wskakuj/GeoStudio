@@ -1,12 +1,12 @@
 # GeoStudio — projekt nowoczesnego edytora map geodezyjnych
 
-**Wczesny prototyp v0.1.0; nie do dokumentacji urzędowej ani produkcyjnej.**
+**Wczesny prototyp v0.3.0 — wersja testowa, nie do dokumentacji urzędowej ani produkcyjnej.**
 
 GeoStudio ma docelowo umożliwiać edycję plików GEO-MAP `.MAP` z zachowaniem
 katalogów `.SYM`, `.LAY`, `.CDF`, a także pomiary, rastry, eksporty DXF/VAL
 oraz nowoczesny interfejs Windows.
 
-## Co działa w v0.1
+## Co działa w prototypie
 
 - Otwieranie tekstowych plików GEO-MAP `ver=[8.00]` w kodowaniu Windows-1250;
   odczyt wszystkich rekordów, atrybutów `A1..A6`, `TX`, `KR`, identyfikatorów i wierzchołków.
@@ -107,3 +107,51 @@ Nie dołączono oryginalnych plików i bibliotek GEO-MAP.
 - **Zapis:** wyłącznie *Zapisz jako* do nowego pliku. Zmieniona geometria zachowuje nieedytowane rekordy i etykiety punktów, ale zapis nie jest jeszcze zweryfikowany w GEO-MAP.
 
 Testy na plikach użytkownika potwierdziły zachowanie checksum `CHK`, zamknięcia poligonu i pozostałych atrybutów po przesunięciu punktu dla dwóch plików testowych. GUI wymaga niezależnej weryfikacji na Windows; testy Qt w CI używają `offscreen`.
+
+
+## v0.3: interakcje na wzór QGIS
+
+- **Zaznacz [S]** — kliknięcie wybiera rzeczywisty obiekt na podstawie jego
+  geometrii; nie opiera się na widocznym kształcie obiektu Qt. Działka `5216`
+  ma pierwszeństwo względem pokrywających ją użytków. **Alt+klik** przełącza
+  trafione obiekty, a **prawy przycisk** wyświetla ich listę do wyboru.
+  Z menu nad mapą można ograniczyć wybór tylko do działek lub użytków.
+- **Przesuń [H]** — osobny tryb nawigacji, dzięki czemu kliknięcie obiektu nie
+  zostaje zinterpretowane jako początek przeciągania mapy.
+- **Poligon [P]** — wyraźny podgląd obrysu i znacznik każdego wprowadzonego
+  wierzchołka; lewy przycisk dodaje punkty, prawy kończy, Esc anuluje.
+- **Wierzchołki [E]** — po zaznaczeniu zamkniętego poligonu można przeciągać
+  jego zielone węzły; wczytywany rekord `P` jest zachowywany, a przy zapisie
+  aktualizowane są dane węzła. Zmiany testuj wyłącznie na kopii `.MAP`.
+- **Przyciąganie** — osobny przełącznik; domyślnie włączone, do wierzchołków
+  i odcinków widocznych obiektów (12 px).
+- **Podpisy A1/A2** — osobny przełącznik, domyślnie włączone; `5310` pokazuje
+  A1+A2, `5216` i `5230` pokazują A2, o ile pole występuje w pliku. Podpisy
+  nie znikają na podstawie arbitralnego współczynnika zoom. Widoczne etykiety
+  są rozrzedzane, żeby się nie nakładały; podpis zaznaczonego obiektu ma priorytet.
+  W menu Widok jest dodatkowe polecenie „Pokaż wszystkie podpisy”, które
+  wyłącza rozrzedzanie (może powodować nakładanie tekstu). Ich styl i położenie
+  nie są jeszcze zgodne 1:1 z GEO-MAP.
+- **Dopasuj mapę** — bierze pod uwagę geometrię, a nie wielkości podpisów w
+  pikselach; poprawia również wiarygodność testów kliknięć.
+
+### Scenariusz testowy v0.3 (Windows)
+
+1. Uruchom program, otwórz kopię `MOKRA WIEŚ.MAP` i katalogi `.SYM/.LAY/.CDF`.
+2. Kliknij `S`, następnie kliknij działkę wewnątrz użytku. `Alt+klik` oraz
+   prawy przycisk powinny dać dostęp do obydwu obiektów. W razie potrzeby
+   wybierz z listy `Działki 5216`.
+3. Sprawdź na różnych przybliżeniach podpisy obiektów `5310`, `5216` i `5230`.
+   Zaznaczenie obiektu pokazuje także jego pola w panelu właściwości.
+4. Kliknij `P`, wybierz kod `5216`, wskaż trzy różne punkty i zakończ prawym
+   przyciskiem. Gdy pojawi się okno A2, wpisz testowy opis.
+5. Kliknij `S`, zaznacz istniejący zamknięty poligon, potem `E` i przeciągnij
+   zielony wierzchołek. Esc przywraca tryb zaznaczania.
+6. Użyj **Zapisz jako** z nową nazwą. Otwórz kopię w GEO-MAP i porównaj
+   zachowanie na zapisanym obiekcie oraz na innych warstwach.
+
+**Istotne ograniczenia:** to nie jest jeszcze QGIS ani gotowy silnik GEO-MAP.
+Narzędzia nie mają pełnej walidacji topologii sąsiednich działek, automatycznej
+edycji wspólnych granic, dodawania/usuwania węzłów ani zgodności podpisów
+`.SYM`. Automatyczne testy UI korzystają z Qt `offscreen`; wymagane są testy
+manualne na Windows i w oryginalnym GEO-MAP. **Nigdy nie nadpisuj oryginałów.**
