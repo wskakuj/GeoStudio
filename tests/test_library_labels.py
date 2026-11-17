@@ -179,11 +179,8 @@ def test_real_mouse_drag_moves_A2_not_A1(gui, tmp_path):
     gui._select_uid(uid)
     gui.start_label_edit()
     item=gui.label_items[(uid,'A2')]
-    pos=gui.view.mapFromScene(item.pos())
-    box=item.boundingRect()
-    tr=item.transform()
-    click=pos + QPoint(round(tr.dx()+box.width()/2),
-                       round(tr.dy()+box.height()/2))
+    click=item.deviceTransform(gui.view.viewportTransform()).mapRect(
+        item.boundingRect()).center().toPoint()
     QTest.mousePress(gui.view.viewport(),Qt.LeftButton,pos=click)
     assert gui._active_label is item
     new=click+QPoint(22,12)
