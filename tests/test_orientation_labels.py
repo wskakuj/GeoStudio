@@ -83,18 +83,20 @@ def test_zoom_wheel_works_at_90_degree_and_tracks_cursor(viewer):
     assert (after_scene - before_scene).manhattanLength() < .03
 
 
-def test_zoomed_out_does_not_flood_canvas_with_5310_labels(viewer):
+def test_zoomed_out_labels_remain_present_but_shrink_with_map(viewer):
     uid = viewer.doc.append_polygon(
         [(20,20),(35,20),(35,35)], "5310", fields={"A1":"bx","A2":"budynek"})
     viewer.rebuild_scene()
     label = next(x for x in viewer.labels if x.data(0) == uid)
+    before = label.deviceTransform(viewer.view.viewportTransform()).mapRect(
+        label.boundingRect()).width()
     viewer.view.scale(.02, .02)
     viewer.update_label_visibility()
-    assert not label.isVisible()
+    after = label.deviceTransform(viewer.view.viewportTransform()).mapRect(
+        label.boundingRect()).width()
+    assert label.isVisible()  # never intentionally hide by zoom threshold
+    assert after < before / 20
     viewer._select_uid(uid)
-    assert label.isVisible()  # actively selected object's label remains visible
-    viewer._select_uid('')
-    viewer.all_labels_action.setChecked(True)
     assert label.isVisible()
 
 
