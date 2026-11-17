@@ -864,6 +864,16 @@ class GeoStudioWindow(QMainWindow):
         self.highlight_item.setZValue(1000)
         self.highlight_item.setAcceptedMouseButtons(Qt.NoButton)
         self.map_scene.addItem(self.highlight_item)
+        self._show_selection_properties()
+        self.update_label_visibility()
+
+    def _show_selection_properties(self):
+        """Fill the properties dock and the fill widgets for the selection.
+
+        Split out of _set_selected_uids so selection logic and the properties
+        panel can be changed independently. Behaviour is unchanged: same rows,
+        same order, same labels.
+        """
         obj = self.doc.by_id[self.selected_uid]
         if len(self.selected_uids) > 1:
             codes = sorted({self.doc.by_id[uid].code for uid in self.selected_uids})
@@ -895,7 +905,6 @@ class GeoStudioWindow(QMainWindow):
             opacity = 7
         self.fill_entry.setText(color_code)
         self.opacity_spin.setValue(opacity)
-        self.update_label_visibility()
 
     def _select_uid(self, uid):
         self._set_selected_uids([uid] if uid else [])
