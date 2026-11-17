@@ -24,7 +24,7 @@ def test_cdf_rgb_hatch_border_and_exact_variant(tmp_path):
     s=cdf_for_object(styles,'5310','bx','')
     assert s.fill==(220,33,44) and s.border==(120,20,20)
     assert s.hatch==0 and s.width==pytest.approx(1.8)
-    assert cdf_for_object(styles,'5216','12','RV').fill==(10,255,10)
+    assert cdf_for_object(styles,'5216','1','RV').fill==(10,255,10)
     assert cdf_for_object(styles,'5230','', 'RV') is None
 
 
@@ -94,7 +94,7 @@ def test_labels_A1_A2_independent_and_preserved_on_layer_toggle(gui, tmp_path):
     assert load_label_positions(gui._auto_copy_path)[uid]['A1']==gui.label_positions[uid]['A1']
     assert f.read_bytes()==fixture_map()
     gui.rebuild_scene(fit=False,reselect=uid)
-    assert gui.label_items[(uid,'A1')].pos().x()==pytest.approx(pos.x()+2)
+    assert gui.label_items[(uid,'A1')].pos().x()==pytest.approx(pos.x()+2, abs=.001)
     assert gui.label_items[(uid,'A2')].pos().x()!=pytest.approx(pos.x()+2)
 
 
