@@ -67,7 +67,7 @@ def test_edit_vertex_preserves_object_and_selection(qt_app):
     assert window.doc.by_id['DEMO-01'].points[0].x==.2
     assert window.doc.by_id['DEMO-01'].is_closed
     assert window.selected_uid=='DEMO-01'
-    assert not window.view.edit_mode
+    assert window.view.edit_mode
     window.close()
 
 
@@ -151,7 +151,7 @@ def test_edit_vertex_using_actual_mouse_drag(qt_app):
     QTest.mousePress(window.view.viewport(), Qt.LeftButton, pos=start)
     QTest.mouseMove(window.view.viewport(), pos=end)
     QTest.mouseRelease(window.view.viewport(), Qt.LeftButton, pos=end)
-    assert not window.view.edit_mode
+    assert window.view.edit_mode
     edited = window.doc.by_id['DEMO-01']
     assert edited.points[1].x == pytest.approx(.8, abs=.01)
     assert edited.is_closed
@@ -168,4 +168,124 @@ def test_all_labels_toggle(qt_app):
     window.all_labels_action.setChecked(True)
     assert all(label.isVisible() for label in window.labels)
     window.all_labels_action.setChecked(False)
+    window.close()
+
+
+def test_plain_repeated_click_cycles_overlapping_features(qt_app):
+    window = GeoStudioWindow()
+    window.doc = GeoMap(fixture_map())
+    land_uid = window.doc.append_polygon([(0,0),(1,0),(1,1)], '5230', 'R')
+    window.rebuild_scene()
+    window.select_at(.8, .1)
+    assert window.selected_uid == 'DEMO-01'
+    window.select_at(.8, .1)
+    assert window.selected_uid == land_uid
+    window.select_at(.8, .1)
+    assert window.selected_uid == 'DEMO-01'
+    window.select_at(.6, .15)
+    assert window.selected_uid == 'DEMO-01'
+    window.close()
+
+
+def test_click_first_vertex_finishes_and_autosaves_work_copy(qt_app, monkeypatch, tmp_path):
+    from pathlib import Path
+    p = tmp_path / 'example.MAP'
+    original = fixture_map()
+    p.write_bytes(original)
+    window = GeoStudioWindow()
+    window.doc = GeoMap.open(p)
+    window.rebuild_scene()
+    monkeypatch.setattr(QInputDialog, 'getText', staticmethod(lambda *a, **k: ('5216', True)))
+    window.start_polygon()
+    for x, y in ((2,2), (5,2), (3,5)):
+        window.add_polygon_point(x, y)
+    monkeypatch.setattr(QInputDialog, 'getText', staticmethod(lambda *a, **k: ('rysunek', True)))
+    window.add_polygon_point(2.001, 2.001)
+    assert len(window.doc.objects) == 2
+    assert not window.view.draw_mode
+    assert p.read_bytes() == original
+    assert window._auto_copy_path is not None
+    assert window._auto_copy_path.is_file()
+    output = GeoMap.open(window._auto_copy_path)
+    assert output.checksum_valid
+    assert len(output.objects) == 2
+    window.close()
+
+
+def test_edit_click_edge_adds_vertex_and_keeps_edit_mode(qt_app):
+    window = GeoStudioWindow()
+    window.doc = GeoMap(fixture_map())
+    window.rebuild_scene()
+    window._select_uid('DEMO-01')
+    window.start_vertex_edit()
+    original = window.doc.by_id['DEMO-01'].area_m2
+    window.insert_vertex_at(.5, .001)
+    obj = window.doc.by_id['DEMO-01']
+    assert len(obj.points) == 5
+    assert obj.points[1].x == pytest.approx(.5)
+    assert obj.area_m2 == pytest.approx(original)
+    assert window.view.edit_mode
+    assert len(window.edit_handles) == 4
+    window.close()
+
+
+def test_middle_mouse_pan_keeps_tool_active(qt_app, monkeypatch):
+    from PySide6.QtTest import QTest
+    from PySide6.QtCore import Qt, QPoint
+    window = GeoStudioWindow()
+    window.show()
+    window.doc = GeoMap(fixture_map())
+    window.rebuild_scene()
+    qt_app.processEvents()
+    view = window.view
+    for mode in ('select', 'pan', 'draw', 'edit'):
+        if mode == 'pan':
+            window.start_pan()
+        elif mode == 'draw':
+            monkeypatch.setattr(QInputDialog, 'getText', staticmethod(lambda *a, **k: ('5216', True)))
+            window.start_polygon()
+        elif mode == 'edit':
+            window.cancel_edit()
+            window._select_uid('DEMO-01')
+            window.start_vertex_edit()
+        else:
+            window.cancel_edit()
+        QTest.mousePress(view.viewport(), Qt.MiddleButton, pos=QPoint(60,60))
+        assert view._pan_button == Qt.MiddleButton
+        QTest.mouseMove(view.viewport(), pos=QPoint(90,85))
+        QTest.mouseRelease(view.viewport(), Qt.MiddleButton, pos=QPoint(90,85))
+        assert view._pan_button is None
+        if mode == 'draw':
+            assert view.draw_mode
+        if mode == 'edit':
+            assert view.edit_mode
+    window.close()
+
+
+def test_wheel_zoom_same_factor_in_all_tools(qt_app, monkeypatch):
+    from PySide6.QtCore import Qt, QPoint, QPointF
+    from PySide6.QtGui import QWheelEvent
+    window = GeoStudioWindow()
+    window.show()
+    window.doc = GeoMap(fixture_map())
+    window.rebuild_scene()
+    qt_app.processEvents()
+    view = window.view
+    for mode in ('select', 'pan', 'draw', 'edit'):
+        if mode == 'pan':
+            window.start_pan()
+        elif mode == 'draw':
+            monkeypatch.setattr(QInputDialog, 'getText', staticmethod(lambda *a, **k: ('5216', True)))
+            window.start_polygon()
+        elif mode == 'edit':
+            window.cancel_edit()
+            window._select_uid('DEMO-01')
+            window.start_vertex_edit()
+        else:
+            window.cancel_edit()
+        before = view.transform().m11()
+        ev = QWheelEvent(QPointF(100,100),QPointF(100,100),QPoint(),QPoint(0,120),
+                         Qt.NoButton,Qt.NoModifier,Qt.NoScrollPhase,False)
+        view.wheelEvent(ev)
+        assert view.transform().m11() == pytest.approx(before * 1.2)
     window.close()

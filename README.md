@@ -129,9 +129,7 @@ Testy na plikach użytkownika potwierdziły zachowanie checksum `CHK`, zamknięc
   A1+A2, `5216` i `5230` pokazują A2, o ile pole występuje w pliku. Podpisy
   nie znikają na podstawie arbitralnego współczynnika zoom. Widoczne etykiety
   są rozrzedzane, żeby się nie nakładały; podpis zaznaczonego obiektu ma priorytet.
-  W menu Widok jest dodatkowe polecenie „Pokaż wszystkie podpisy”, które
-  wyłącza rozrzedzanie (może powodować nakładanie tekstu). Ich styl i położenie
-  nie są jeszcze zgodne 1:1 z GEO-MAP.
+  Ich styl i położenie nie są jeszcze zgodne 1:1 z GEO-MAP.
 - **Dopasuj mapę** — bierze pod uwagę geometrię, a nie wielkości podpisów w
   pikselach; poprawia również wiarygodność testów kliknięć.
 
@@ -155,3 +153,23 @@ Narzędzia nie mają pełnej walidacji topologii sąsiednich działek, automatyc
 edycji wspólnych granic, dodawania/usuwania węzłów ani zgodności podpisów
 `.SYM`. Automatyczne testy UI korzystają z Qt `offscreen`; wymagane są testy
 manualne na Windows i w oryginalnym GEO-MAP. **Nigdy nie nadpisuj oryginałów.**
+
+## Zmiany sterowania v0.4 — QGIS-like
+
+- **S / zaznaczanie**: kolejne zwykłe kliknięcia w tym samym miejscu przełączają nakładające się obiekty (w tym `5216` i `5230`). Kliknięcie w innym miejscu zaczyna od pierwszego dopasowania.
+- **Kółko myszy**: obrót rolki powiększa lub pomniejsza mapę we wszystkich trybach; **przytrzymanie środkowego przycisku** przesuwa mapę bez zmiany narzędzia.
+- **P / poligon**: klikaj wierzchołki, a następnie kliknij **pierwszy wierzchołek** (po co najmniej trzech różnych punktach), naciśnij **Enter**, użyj prawego przycisku albo przycisku **✓ Zakończ poligon**. Poligon zostanie zamknięty i pojawi się pytanie o etykietę A2. Po zatwierdzeniu powstanie nowa kopia robocza mapy `*_GeoStudio_robocza.MAP` w tym samym katalogu. Oryginalny plik nie jest nadpisywany.
+- **E / wierzchołki**: przeciągaj zielone uchwyty, aby przesuwać wierzchołki; kliknij w środek krawędzi istniejącego poligonu, aby **wstawić nowy wierzchołek**, zachowując jej przebieg. Po zmianie narzędzie E pozostaje aktywne, a kopia robocza jest aktualizowana.
+- Funkcja automatycznego zapisu kopii jest eksperymentalna. Zawsze otwórz kopię w GEO-MAP i sprawdź poprawność zmian, powierzchni i atrybutów. **Nie zastępuj map wykorzystywanych operacyjnie** bez niezależnej kontroli geodezyjnej.
+
+### Proste uruchamianie i aktualizacja na Windows
+
+Po jednorazowym sklonowaniu prywatnego repozytorium za pomocą Git (wymaga uwierzytelnienia):
+
+```powershell
+git clone https://github.com/wskakuj/GeoStudio.git
+cd GeoStudio
+.\setup_windows.bat
+```
+
+Przy kolejnych wersjach uruchamiaj tylko `update_windows.bat` — skrypt wykonuje bezpieczne `git pull --ff-only`, aktualizuje zależności i uruchamia program. Kopie pobrane przez **Download ZIP nie zawierają `.git`** i nie mogą korzystać z `git pull`; w takim przypadku zacznij od powyższego `git clone`.

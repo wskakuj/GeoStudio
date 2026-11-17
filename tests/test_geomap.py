@@ -64,3 +64,30 @@ def test_layer_wildcards():
     assert resolve_layer(catalog,'5216')=='Działki'
     assert resolve_layer(catalog,'7900')=='Ważne'
     assert resolve_layer(catalog,'0001')=='Inne / kod 0001'
+
+
+def test_insert_polygon_vertex_preserves_attributes_and_checksum():
+    doc = GeoMap(fixture_map())
+    doc.insert_polygon_vertex('DEMO-01', 0, 0.5, 0)
+    assert len(doc.by_id['DEMO-01'].points) == 5
+    assert doc.by_id['DEMO-01'].area_m2 == pytest.approx(0.5)
+    assert doc.by_id['DEMO-01'].points[1].x == 0.5
+    saved = doc.to_bytes()
+    assert b':UNKNOWN[retain this]' in saved
+    assert b':A2[TEST]' in saved
+    parsed = GeoMap(saved)
+    assert parsed.checksum_valid
+    assert parsed.declared_lines == len(parsed.lines)
+    assert parsed.by_id['DEMO-01'].is_closed
+    with pytest.raises(ValueError):
+        parsed.insert_polygon_vertex('DEMO-01', 0, 0.001, 0.0)
+
+
+def test_insert_polygon_vertex_on_last_closing_edge():
+    doc = GeoMap(fixture_map())
+    doc.insert_polygon_vertex('DEMO-01', 2, .5, .5)
+    obj = doc.by_id['DEMO-01']
+    assert obj.is_closed
+    assert obj.points[-2].x == pytest.approx(.5)
+    assert obj.points[-2].y == pytest.approx(.5)
+    assert obj.area_m2 == pytest.approx(.5)
