@@ -15,7 +15,7 @@ from collections import defaultdict
 
 try:
     from PySide6.QtCore import Qt, QPoint, QPointF, QRectF, QSettings, Signal
-    from PySide6.QtGui import QAction, QBrush, QColor, QFont, QPainter, QPainterPath, QPen, QPixmap, QImage, QTransform, QActionGroup
+    from PySide6.QtGui import QAction, QBrush, QColor, QFont, QPainterPath, QPen, QPixmap, QTransform, QActionGroup
     from PySide6.QtWidgets import (QApplication, QMainWindow, QFileDialog, QGraphicsView, QGraphicsScene,
         QGraphicsPathItem, QGraphicsEllipseItem, QGraphicsPixmapItem, QGraphicsSimpleTextItem, QGraphicsItem, QDockWidget,
         QTreeWidget, QTreeWidgetItem, QToolBar, QMessageBox, QStatusBar, QInputDialog, QMenu,
@@ -31,6 +31,7 @@ from .scene_builder import RenderContext, build_scene, label_anchor, object_path
 from .map_tools import MapView
 from .selection import (SelectionContext, highlight_path, pick_candidates,
                         resolve_click, snap_at, toggle_selection, visible_uids)
+from .exporters import render_scene_image, save_image, write_dxf
 from .map_layout import (detect_source_compilation_scale, validated_compilation_scale,
     label_ratio, source_text_height, text_line_offset, DEFAULT_SCALE)
 from .coordinates import (CRS_CHOICES, MODERN_EPSG, transform_xy,
@@ -1788,16 +1789,9 @@ class GeoStudioWindow(QMainWindow):
             'PNG (*.png);;JPEG (*.jpg);;TIFF (*.tif)')
         if not file:return
         try:
-            rect=self.map_scene.itemsBoundingRect()
-            if rect.isEmpty():return
-            width=2600; height=max(400,min(5000,round(width*rect.height()/max(rect.width(),1))))
-            img=QImage(width,height,QImage.Format_RGB32)
-            img.fill(QColor('white'))
-            painter=QPainter(img); painter.setRenderHint(QPainter.Antialiasing)
-            self.map_scene.render(painter,QRectF(0,0,width,height),rect,Qt.KeepAspectRatio)
-            painter.end()
-            suffix=Path(file).suffix.lower()
-            if not img.save(file):
+            img=render_scene_image(self.map_scene)
+            if img is None:return
+            if not save_image(img,file):
                 # TIFF writer availability is platform-dependent.
                 raise RuntimeError('Format niedostępny w tej instalacji Qt; wybierz PNG/JPG.')
             self.status.showMessage('Zapisano obraz: '+file)
@@ -1808,17 +1802,7 @@ class GeoStudioWindow(QMainWindow):
         file,_=QFileDialog.getSaveFileName(self,'Eksport uproszczonego DXF',str(Path.home()/'mapa.dxf'),'AutoCAD DXF (*.dxf)')
         if not file:return
         try:
-            import ezdxf
-            d=ezdxf.new('R2010',setup=True);model=d.modelspace()
-            for obj in self.doc.objects:
-                if not obj.points:continue
-                layer=resolve_layer(self.catalog,obj.code)
-                layer=''.join(c if c not in '<>/\\":;?*|,=' else '_' for c in layer)[:100]
-                if layer not in d.layers:d.layers.new(name=layer)
-                vertices=[(p.x,p.y) for p in obj.points]
-                if len(vertices)>1:model.add_lwpolyline(vertices,dxfattribs={'layer':layer})
-                else:model.add_point(vertices[0],dxfattribs={'layer':layer})
-            d.saveas(file)
+            write_dxf(self.doc,self.catalog,file)
             QMessageBox.information(self,'Zapisano DXF','Zapisano podstawową geometrię i warstwy. Eksport NIE odtwarza jeszcze symboli, kreskowań, opisów ani wszystkich atrybutów GEO-MAP.')
         except ImportError:QMessageBox.warning(self,'Wymagana biblioteka','Zainstaluj ezdxf: pip install ezdxf')
         except Exception as exc:QMessageBox.warning(self,'Błąd DXF',str(exc))
