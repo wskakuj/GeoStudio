@@ -1,6 +1,6 @@
 # GeoStudio — projekt nowoczesnego edytora map geodezyjnych
 
-**Wczesny prototyp v0.13.0 — wersja testowa, nie do dokumentacji urzędowej ani produkcyjnej.**
+**Wczesny prototyp v0.14.0 — wersja testowa, nie do dokumentacji urzędowej ani produkcyjnej.**
 
 GeoStudio ma docelowo umożliwiać edycję plików GEO-MAP `.MAP` z zachowaniem
 katalogów `.SYM`, `.LAY`, `.CDF`, a także pomiary, rastry, eksporty DXF/VAL
@@ -591,3 +591,55 @@ Nie jest to pełny interpreter firmowych makr graficznych.
    `6000`, `6301`). Zwróć uwagę na skalę czcionki i przerwy
    między wierszami; zrzuty przy tej samej skali pomogą dopracować
    te parametry.
+
+
+## GeoStudio v0.14 — poprawa składu arkusza i skala opracowania Ctrl+F5
+
+### Tytuł, legenda, wykonawca
+
+- Poprawiono błąd z v0.13, w którym napisom z kodami `7900`,
+  `6000`, `6301` i `6900` nadawano **2,1 raza większą
+  wysokość** niż rzeczywista, zapisana w atrybucie `A1`.
+- Wielkość tekstu arkusza odpowiada teraz mapowym jednostkom
+  `A1`: np. `A1=30` oznacza nominalną wysokość 30 m w układzie
+  współrzędnych. Przy opracowaniu 1:5000 odpowiada to około 6 mm
+  na wydruku, niezależnie od przybliżenia ekranu.
+- Zmniejszono niezamierzone nakładanie się wierszy tytułu, dat,
+  okresu opracowania, legendy i podpisu agencji. Wiersze `TX`
+  rozdzielane przez `||` zachowują pozycję źródłową obiektu.
+- Zmiana jest **wyłącznie w rendererze**; nie modyfikuje geometrii
+  ani atrybutów GEO-MAP.
+
+### Skala opracowania (Ctrl+F5)
+
+- Dodano **Widok → Skala opracowania 1:N…**, skrót **Ctrl+F5**,
+  oraz osobny napis `Opracowanie 1:5000` w dolnym pasku.
+- To **inna wartość niż skala widoku** (`Ctrl+M`, rolka myszy).
+  Zmiana skali opracowania koryguje wielkość napisów/oznaczeń
+  arkusza w relacji do mapy, ale **nie przybliża i nie oddala
+  widoku, nie zmienia współrzędnych ani powierzchni**.
+- Ustawienie jest zapamiętywane osobno dla każdej otwartej
+  lokalnej ścieżki MAP przez QSettings. **Nie jest zapisywane
+  wewnątrz pliku MAP** ani automatycznie przenoszone do GEO-MAP.
+- GeoStudio próbuje wykryć wartość wyjściową z autentycznego
+  podpisu legendy, np. `SKALA 1:5000`, a jeśli go nie ma,
+  przyjmuje wstępnie 1:5000. W ten sposób nie zgaduje skali
+  z geometrii ani wymiarów działek.
+- Wybór skali opracowania w tym prototypie dotyczy na razie
+  **tekstu**, nie wszystkich firmowych znaków punktowych, szrafur
+  i zestawów drukarskich. Tekst `SKALA 1:5000` zapisany
+  jako treść źródłowa `TX` pozostaje **niezmieniony** także
+  po przestawieniu skali — nie wprowadzamy pozornej zmiany
+  dokumentacji źródłowej.
+
+### Test na Windows
+1. Otwórz `MOKRA WIEŚ.MAP` i kliknij `Cała mapa`.
+2. Zbliż tytuł, legendę i agencję. Ich tekst nie powinien
+   nachodzić na siebie jak w v0.13.
+3. Naciśnij **Ctrl+F5**, przestaw 1:5000 na 1:2500
+   lub 1:10000. Rozmiar podpisów zmienia się, ale sam
+   obszar mapy i położenie punktów pozostają identyczne.
+4. Przybliż rolką i wpisz inną skalę widoku. Kontroluj,
+   że `Opracowanie 1:N` pozostaje niezmienione.
+5. Zamknij program, ponownie otwórz mapę i sprawdź,
+   czy GeoStudio pamięta ustawioną skalę.
