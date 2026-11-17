@@ -1,0 +1,595 @@
+{
+ "additive_toggle_off": {
+  "countLabel": "Zaznaczono: 2 obiektów",
+  "current": "LANDUSE",
+  "highlight": {
+   "color": "#ffb000",
+   "cosmetic": true,
+   "elements": 10,
+   "present": true,
+   "subpaths": 2,
+   "width": 3.0,
+   "z": 1000.0
+  },
+  "properties": [
+   [
+    "Zaznaczono",
+    "2"
+   ],
+   [
+    "Kody",
+    "5216, 5230"
+   ],
+   [
+    "Operacje",
+    "Delete usuwa zaznaczone; Zastosuj zmienia wypełnienie"
+   ]
+  ],
+  "selected": [
+   "PARCEL",
+   "LANDUSE"
+  ],
+  "status": "Wybrano kod 5230. Łącznie zaznaczono: 2. Ctrl+klik dodaje/usuwa, Ctrl+H zaznacza cały kod."
+ },
+ "additive_two_objects": {
+  "countLabel": "Zaznaczono: 2 obiektów",
+  "current": "NEIGHBOUR",
+  "highlight": {
+   "color": "#ffb000",
+   "cosmetic": true,
+   "elements": 10,
+   "present": true,
+   "subpaths": 2,
+   "width": 3.0,
+   "z": 1000.0
+  },
+  "properties": [
+   [
+    "Zaznaczono",
+    "2"
+   ],
+   [
+    "Kody",
+    "5216"
+   ],
+   [
+    "Operacje",
+    "Delete usuwa zaznaczone; Zastosuj zmienia wypełnienie"
+   ]
+  ],
+  "selected": [
+   "PARCEL",
+   "NEIGHBOUR"
+  ],
+  "status": "Wybrano kod 5216. Łącznie zaznaczono: 2. Ctrl+klik dodaje/usuwa, Ctrl+H zaznacza cały kod."
+ },
+ "click_empty_space": {
+  "countLabel": "Brak zaznaczenia",
+  "current": "",
+  "highlight": {
+   "present": false
+  },
+  "properties": [],
+  "selected": [],
+  "status": "Wybrano kod 5216. Łącznie zaznaczono: 2. Ctrl+klik dodaje/usuwa, Ctrl+H zaznacza cały kod."
+ },
+ "click_parcel_under_landuse": {
+  "countLabel": "Zaznaczono: 1 obiektów",
+  "current": "PARCEL",
+  "highlight": {
+   "color": "#ffb000",
+   "cosmetic": true,
+   "elements": 5,
+   "present": true,
+   "subpaths": 1,
+   "width": 3.0,
+   "z": 1000.0
+  },
+  "properties": [
+   [
+    "Kod",
+    "5216"
+   ],
+   [
+    "Nazwa symbolu",
+    "granica"
+   ],
+   [
+    "Warstwa",
+    "Działki"
+   ],
+   [
+    "ID",
+    "PARCEL"
+   ],
+   [
+    "Wierzchołki",
+    "5"
+   ],
+   [
+    "Pole geometryczne",
+    "10,000.000 m² / 1.0000 ha"
+   ],
+   [
+    "A1",
+    ""
+   ],
+   [
+    "A2",
+    "12/3"
+   ],
+   [
+    "A3",
+    ""
+   ],
+   [
+    "A4",
+    ""
+   ],
+   [
+    "A5",
+    ""
+   ],
+   [
+    "A6",
+    ""
+   ],
+   [
+    "TX",
+    ""
+   ],
+   [
+    "MP",
+    ""
+   ],
+   [
+    "KR",
+    ""
+   ]
+  ],
+  "selected": [
+   "PARCEL"
+  ],
+  "status": "Wybrano kod 5216. Łącznie zaznaczono: 1. Ctrl+klik dodaje/usuwa, Ctrl+H zaznacza cały kod."
+ },
+ "code_filter": {
+  "countLabel": "Zaznaczono: 1 obiektów",
+  "current": "LANDUSE",
+  "highlight": {
+   "color": "#ffb000",
+   "cosmetic": true,
+   "elements": 5,
+   "present": true,
+   "subpaths": 1,
+   "width": 3.0,
+   "z": 1000.0
+  },
+  "properties": [
+   [
+    "Kod",
+    "5230"
+   ],
+   [
+    "Nazwa symbolu",
+    "użytek"
+   ],
+   [
+    "Warstwa",
+    "Użytki"
+   ],
+   [
+    "ID",
+    "LANDUSE"
+   ],
+   [
+    "Wierzchołki",
+    "5"
+   ],
+   [
+    "Pole geometryczne",
+    "40,000.000 m² / 4.0000 ha"
+   ],
+   [
+    "A1",
+    ""
+   ],
+   [
+    "A2",
+    "R"
+   ],
+   [
+    "A3",
+    ""
+   ],
+   [
+    "A4",
+    ""
+   ],
+   [
+    "A5",
+    ""
+   ],
+   [
+    "A6",
+    ""
+   ],
+   [
+    "TX",
+    ""
+   ],
+   [
+    "MP",
+    ""
+   ],
+   [
+    "KR",
+    ""
+   ]
+  ],
+  "selected": [
+   "LANDUSE"
+  ],
+  "status": "Wybrano kod 5230. Łącznie zaznaczono: 1. Ctrl+klik dodaje/usuwa, Ctrl+H zaznacza cały kod."
+ },
+ "cycle_flag": {
+  "countLabel": "Zaznaczono: 1 obiektów",
+  "current": "PARCEL",
+  "highlight": {
+   "color": "#ffb000",
+   "cosmetic": true,
+   "elements": 5,
+   "present": true,
+   "subpaths": 1,
+   "width": 3.0,
+   "z": 1000.0
+  },
+  "properties": [
+   [
+    "Kod",
+    "5216"
+   ],
+   [
+    "Nazwa symbolu",
+    "granica"
+   ],
+   [
+    "Warstwa",
+    "Działki"
+   ],
+   [
+    "ID",
+    "PARCEL"
+   ],
+   [
+    "Wierzchołki",
+    "5"
+   ],
+   [
+    "Pole geometryczne",
+    "10,000.000 m² / 1.0000 ha"
+   ],
+   [
+    "A1",
+    ""
+   ],
+   [
+    "A2",
+    "12/3"
+   ],
+   [
+    "A3",
+    ""
+   ],
+   [
+    "A4",
+    ""
+   ],
+   [
+    "A5",
+    ""
+   ],
+   [
+    "A6",
+    ""
+   ],
+   [
+    "TX",
+    ""
+   ],
+   [
+    "MP",
+    ""
+   ],
+   [
+    "KR",
+    ""
+   ]
+  ],
+  "selected": [
+   "PARCEL"
+  ],
+  "status": "Wybrano kod 5216. Łącznie zaznaczono: 1. Ctrl+klik dodaje/usuwa, Ctrl+H zaznacza cały kod."
+ },
+ "hidden_layer_skipped": {
+  "countLabel": "Zaznaczono: 1 obiektów",
+  "current": "LANDUSE",
+  "highlight": {
+   "color": "#ffb000",
+   "cosmetic": true,
+   "elements": 5,
+   "present": true,
+   "subpaths": 1,
+   "width": 3.0,
+   "z": 1000.0
+  },
+  "properties": [
+   [
+    "Kod",
+    "5230"
+   ],
+   [
+    "Nazwa symbolu",
+    "użytek"
+   ],
+   [
+    "Warstwa",
+    "Użytki"
+   ],
+   [
+    "ID",
+    "LANDUSE"
+   ],
+   [
+    "Wierzchołki",
+    "5"
+   ],
+   [
+    "Pole geometryczne",
+    "40,000.000 m² / 4.0000 ha"
+   ],
+   [
+    "A1",
+    ""
+   ],
+   [
+    "A2",
+    "R"
+   ],
+   [
+    "A3",
+    ""
+   ],
+   [
+    "A4",
+    ""
+   ],
+   [
+    "A5",
+    ""
+   ],
+   [
+    "A6",
+    ""
+   ],
+   [
+    "TX",
+    ""
+   ],
+   [
+    "MP",
+    ""
+   ],
+   [
+    "KR",
+    ""
+   ]
+  ],
+  "selected": [
+   "LANDUSE"
+  ],
+  "status": "Wybrano kod 5230. Łącznie zaznaczono: 1. Ctrl+klik dodaje/usuwa, Ctrl+H zaznacza cały kod."
+ },
+ "multi_selection_outline": {
+  "countLabel": "Zaznaczono: 3 obiektów",
+  "current": "MULTI",
+  "highlight": {
+   "color": "#ffb000",
+   "cosmetic": true,
+   "elements": 16,
+   "present": true,
+   "subpaths": 4,
+   "width": 3.0,
+   "z": 1000.0
+  },
+  "properties": [
+   [
+    "Zaznaczono",
+    "3"
+   ],
+   [
+    "Kody",
+    "5216"
+   ],
+   [
+    "Operacje",
+    "Delete usuwa zaznaczone; Zastosuj zmienia wypełnienie"
+   ]
+  ],
+  "selected": [
+   "PARCEL",
+   "NEIGHBOUR",
+   "MULTI"
+  ],
+  "status": "Zaznaczono 4 obiektów kodu 5216. Delete usuwa wszystkie po potwierdzeniu; Zastosuj zmienia wypełnienie."
+ },
+ "radius_after_rotation": {
+  "pick_8": 4.0,
+  "snap_12": 6.0
+ },
+ "radius_after_zoom_in": {
+  "pick_8": 4.0,
+  "snap_12": 6.0
+ },
+ "radius_pixels": {
+  "pick_8": 8.0,
+  "snap_12": 12.0
+ },
+ "repeat_click_cycles": {
+  "countLabel": "Zaznaczono: 1 obiektów",
+  "current": "LANDUSE",
+  "highlight": {
+   "color": "#ffb000",
+   "cosmetic": true,
+   "elements": 5,
+   "present": true,
+   "subpaths": 1,
+   "width": 3.0,
+   "z": 1000.0
+  },
+  "properties": [
+   [
+    "Kod",
+    "5230"
+   ],
+   [
+    "Nazwa symbolu",
+    "użytek"
+   ],
+   [
+    "Warstwa",
+    "Użytki"
+   ],
+   [
+    "ID",
+    "LANDUSE"
+   ],
+   [
+    "Wierzchołki",
+    "5"
+   ],
+   [
+    "Pole geometryczne",
+    "40,000.000 m² / 4.0000 ha"
+   ],
+   [
+    "A1",
+    ""
+   ],
+   [
+    "A2",
+    "R"
+   ],
+   [
+    "A3",
+    ""
+   ],
+   [
+    "A4",
+    ""
+   ],
+   [
+    "A5",
+    ""
+   ],
+   [
+    "A6",
+    ""
+   ],
+   [
+    "TX",
+    ""
+   ],
+   [
+    "MP",
+    ""
+   ],
+   [
+    "KR",
+    ""
+   ]
+  ],
+  "selected": [
+   "LANDUSE"
+  ],
+  "status": "Wybrano kod 5230. Łącznie zaznaczono: 1. Ctrl+klik dodaje/usuwa, Ctrl+H zaznacza cały kod."
+ },
+ "select_all_same_code": {
+  "countLabel": "Zaznaczono: 4 obiektów",
+  "current": "MULTI",
+  "highlight": {
+   "color": "#ffb000",
+   "cosmetic": true,
+   "elements": 20,
+   "present": true,
+   "subpaths": 5,
+   "width": 3.0,
+   "z": 1000.0
+  },
+  "properties": [
+   [
+    "Zaznaczono",
+    "4"
+   ],
+   [
+    "Kody",
+    "5216"
+   ],
+   [
+    "Operacje",
+    "Delete usuwa zaznaczone; Zastosuj zmienia wypełnienie"
+   ]
+  ],
+  "selected": [
+   "PARCEL",
+   "NEIGHBOUR",
+   "HIDDEN",
+   "MULTI"
+  ],
+  "status": "Zaznaczono 4 obiektów kodu 5216. Delete usuwa wszystkie po potwierdzeniu; Zastosuj zmienia wypełnienie."
+ },
+ "snap_after_rotation": {
+  "code": "5216",
+  "distance": 0.0,
+  "kind": "vertex",
+  "uid": "PARCEL",
+  "x": 500250.0,
+  "y": 6500250.0
+ },
+ "snap_disabled": null,
+ "snap_edge": {
+  "code": "5216",
+  "distance": 2.0,
+  "kind": "edge",
+  "uid": "PARCEL",
+  "x": 500200.0,
+  "y": 6500150.0
+ },
+ "snap_excluding_parcel": {
+  "code": "5216",
+  "distance": 0.0,
+  "kind": "vertex",
+  "uid": "NEIGHBOUR",
+  "x": 500250.0,
+  "y": 6500250.0
+ },
+ "snap_far_away": null,
+ "snap_hidden_layer": null,
+ "snap_shared_vertex": {
+  "code": "5216",
+  "distance": 0.0,
+  "kind": "vertex",
+  "uid": "PARCEL",
+  "x": 500250.0,
+  "y": 6500250.0
+ },
+ "unknown_uid_ignored": {
+  "countLabel": "Brak zaznaczenia",
+  "current": "",
+  "highlight": {
+   "present": false
+  },
+  "properties": [],
+  "selected": [],
+  "status": "Zaznaczono 4 obiektów kodu 5216. Delete usuwa wszystkie po potwierdzeniu; Zastosuj zmienia wypełnienie."
+ }
+}
