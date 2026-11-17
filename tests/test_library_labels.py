@@ -118,3 +118,48 @@ def test_library_files_auto_load_from_settings(gui, tmp_path):
         window.close()
         for kind in ('symbols','layers','palette'):
             gui.settings.remove('library_'+kind)
+
+
+
+def test_native_polygon_fill_and_cdf_palette(gui, tmp_path):
+    from geostudio.geomap import GeoMap
+    from test_geomap import fixture_map
+    gui.doc = GeoMap(fixture_map())
+    parcel = gui.doc.by_id['DEMO-01']
+    parcel.style = '255 24 8499682'
+    gui.rebuild_scene()
+    item = gui.graphics_for_uid['DEMO-01']
+    assert item.brush().color().getRgb()[:3] == (226,177,129)
+    assert item.brush().color().alpha() == 255
+
+    # A CDF rule is used if no explicit source fill is recorded.
+    parcel.style = '8553090 15 0'
+    cdf=tmp_path/'map.CDF'
+    cdf.write_bytes(b'5216 10 200 100 0 10 20 30 1.0 test\r\n')
+    gui.load_library(cdf,'palette')
+    gui.rebuild_scene()
+    item = gui.graphics_for_uid['DEMO-01']
+    assert item.brush().color().getRgb()[:3] == (10,200,100)
+    assert item.pen().color().getRgb()[:3] == (10,20,30)
+
+
+def test_label_layer_toggle_visibility_is_reversible(gui):
+    from geostudio.geomap import GeoMap
+    from test_geomap import fixture_map
+    from PySide6.QtCore import Qt
+    gui.doc=GeoMap(fixture_map())
+    uid=gui.doc.append_polygon([(5,5),(10,5),(5,10)],'5310',
+                               fields={'A1':'bx','A2':'test'})
+    gui.rebuild_scene()
+    gui._select_uid(uid)
+    layer=gui.layer_for_uid[uid]
+    nodes=[gui.layers_tree.topLevelItem(i)
+           for i in range(gui.layers_tree.topLevelItemCount())]
+    node=next(n for n in nodes if n.text(0)==layer)
+    node.setCheckState(0,Qt.Unchecked)
+    assert not gui.label_items[(uid,'A1')].isVisible()
+    assert not gui.label_items[(uid,'A2')].isVisible()
+    node.setCheckState(0,Qt.Checked)
+    gui._select_uid(uid)
+    assert gui.label_items[(uid,'A1')].isVisible()
+    assert gui.label_items[(uid,'A2')].isVisible()
