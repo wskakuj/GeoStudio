@@ -955,11 +955,16 @@ class GeoStudioWindow(QMainWindow):
             if self.layer_for_uid.get(uid,'') in self.hidden_layers:
                 continue
             point = self.view.mapFromScene(item.pos())
-            width = item.boundingRect().width()
-            height = item.boundingRect().height()
-            if (abs(click.x()-point.x()) <= max(12,width/2+6)
-                and abs(click.y()-point.y()) <= max(12,height+8)):
-                found.append(((click-point).manhattanLength(),item))
+            bounds = item.boundingRect()
+            # A1 and A2 have independent pixel offsets despite sharing
+            # a geographic anchor; test their ACTUAL displayed centres.
+            shift = item.transform()
+            cx = point.x() + shift.dx() + bounds.width()/2
+            cy = point.y() + shift.dy() + bounds.height()/2
+            dx = abs(click.x()-cx)
+            dy = abs(click.y()-cy)
+            if dx <= max(12,bounds.width()/2+6) and dy <= max(10,bounds.height()/2+6):
+                found.append((dx+dy,item))
         if found:
             _, item = min(found, key=lambda choice: choice[0])
             self._active_label = item
@@ -985,6 +990,9 @@ class GeoStudioWindow(QMainWindow):
         if not uid or field not in {'A1','A2'}:
             return
         item.setPos(x,-y)
+        bounds = item.boundingRect()
+        item.setTransform(QTransform().translate(
+            -bounds.width()/2, -bounds.height()/2))
         self.label_positions.setdefault(uid,{})[field] = [round(x,3),round(y,3)]
         saved = self._autosave_work_copy()
         self.update_label_visibility()
