@@ -408,8 +408,12 @@ nakładany zgodnie z kolejnością rekordów MAP i zasłaniał linie działek.
   zarówno wypełnienia, powiązane linie, jak i etykiety.
 - Granice działek 5216 pozostają widoczne nawet pod całkowicie
   nieprzezroczystym wydzieleniem 5310.
-- Pierwsza obsługa wzoru kreskowania 2.008 z biblioteki LAY:
-  jako linia przerywana Qt. Odstępy są na razie przybliżone.
+- LAY pozostaje źródłem parametrów pióra; dokładniejszy wzór konturu
+  jest teraz odczytywany z makr SYM: 5220 przez O 4003, 5230 przez
+  O 4002, 5216 przez 4216 → 4001. W prostych przykładach kreski i
+  przerwy mają proporcje 2:1 lub 1:1; rzeczywiste odstępy w pikselach
+  pozostają przybliżone. Gdy biblioteka SYM nie podaje rozpoznawalnego
+  wzoru, dla LAY 2.008 pozostaje awaryjna linia przerywana Qt.
 - Symbole z SYM: rysowanie zweryfikowanych instrukcji A pełnych
   okręgów, np. dwóch współśrodkowych pierścieni dla granicznika
   1246. Zmniejszono wielkość domyślnych kropek, gdzie nie
