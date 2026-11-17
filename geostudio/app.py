@@ -29,6 +29,8 @@ from .interactions import find_snap, polygon_is_valid, closest_point_on_edge
 from .geometry_index import GeometryIndex
 from .scene_builder import RenderContext, build_scene, label_anchor, object_path
 from .map_tools import MapView
+from .selection import (SelectionContext, highlight_path, pick_candidates,
+                        resolve_click, snap_at, toggle_selection, visible_uids)
 from .map_layout import (detect_source_compilation_scale, validated_compilation_scale,
     label_ratio, source_text_height, text_line_offset, DEFAULT_SCALE)
 from .coordinates import (CRS_CHOICES, MODERN_EPSG, transform_xy,
@@ -807,19 +809,32 @@ class GeoStudioWindow(QMainWindow):
         self.tool_actions['pan'].setChecked(True)
         self.status.showMessage('Tryb przesuwania mapy (H). S lub Esc: powrót do zaznaczania.')
 
+    def _map_radius(self, pixels: float) -> float:
+        """Length of ``pixels`` in map units at the current view transform.
+
+        A tolerance given in pixels is a screen distance, not a distance in
+        metres. Taking the length of the transformed vector keeps the value
+        correct under any zoom, and it does not depend on the view rotation
+        because a rotation preserves length.
+        """
+        origin = self.view.mapToScene(QPoint(0, 0))
+        other = self.view.mapToScene(QPoint(pixels, 0))
+        return math.hypot(other.x() - origin.x(), other.y() - origin.y())
+
+    def _selection_context(self, radius: float) -> SelectionContext:
+        return SelectionContext(
+            doc=self.doc, geometry_index=self.geometry_index,
+            layer_for_uid=self.layer_for_uid,
+            hidden_layers=frozenset(self.hidden_layers),
+            code_filter=self.select_code_filter,
+            hide_connectors=self.hide_multipart_connectors,
+            radius=radius)
+
     def _visible_uids(self):
-        return {uid for uid, layer in self.layer_for_uid.items()
-                if layer not in self.hidden_layers and uid in self.doc.by_id}
+        return visible_uids(self._selection_context(0.0))
 
     def _pick_candidates(self, x, y):
-        if not self.doc:
-            return []
-        origin = self.view.mapToScene(QPoint(0, 0))
-        offset = self.view.mapToScene(QPoint(8, 0))
-        radius = max(math.hypot(offset.x() - origin.x(), offset.y() - origin.y()), 1e-8)
-        hits = self.geometry_index.pick(x, y, radius,
-                  visible=self._visible_uids(),code_filter=self.select_code_filter)
-        return [hit.obj for hit in hits if hit.obj.uid in self.doc.by_id]
+        return pick_candidates(self._selection_context(self._map_radius(8)), x, y)
 
     def show_objects_here(self, x, y):
         """Explicit chooser for all overlapping objects: right-click canvas."""
@@ -850,12 +865,8 @@ class GeoStudioWindow(QMainWindow):
         if not self.selected_uids:
             self.update_label_visibility()
             return
-        combined = QPainterPath()
-        for uid in self.selected_uids:
-            obj = self.doc.by_id[uid]
-            if obj.points:
-                combined.addPath(self._path_for(
-                    obj, hide_connectors=self.hide_multipart_connectors))
+        combined = highlight_path(self.doc, self.selected_uids,
+                                  hide_connectors=self.hide_multipart_connectors)
         self.highlight_item = QGraphicsPathItem(combined)
         outline = QPen(QColor('#ffb000'), 3)
         outline.setCosmetic(True)
@@ -926,17 +937,9 @@ class GeoStudioWindow(QMainWindow):
                   tuple(uids) == self._last_pick_candidates)
         self._last_pick_pos = screen
         self._last_pick_candidates = tuple(uids)
-        current = self.selected_uid
-        if (cycle or repeat) and current in uids:
-            idx = (uids.index(current) + 1) % len(uids)
-        else:
-            idx = 0
-        uid = uids[idx]
+        uid = resolve_click(uids, self.selected_uid, cycle=cycle, repeat=repeat)
         if additive:
-            updated = [x for x in self.selected_uids if x != uid]
-            if uid not in self.selected_uids:
-                updated.append(uid)
-            self._set_selected_uids(updated)
+            self._set_selected_uids(toggle_selection(self.selected_uids, uid))
         else:
             self._select_uid(uid)
         self.status.showMessage(
@@ -958,17 +961,9 @@ class GeoStudioWindow(QMainWindow):
             'Delete usuwa wszystkie po potwierdzeniu; Zastosuj zmienia wypełnienie.')
 
     def _snap(self, x, y, *, exclude_uid=None):
-        if not self.doc or not self.snap_action.isChecked():
-            return None
-        origin = self.view.mapToScene(QPoint(0,0))
-        other = self.view.mapToScene(QPoint(12,0))
-        radius = math.hypot(other.x() - origin.x(), other.y() - origin.y())
-        if radius <= 0:
-            return None
-        candidates = [obj for obj in self.geometry_index.nearby(x, y, radius)
-                      if self.layer_for_uid.get(obj.uid, '') not in self.hidden_layers]
-        return find_snap(x, y, candidates, radius, exclude_uid=exclude_uid,
-                         hide_connectors=self.hide_multipart_connectors)
+        return snap_at(self._selection_context(self._map_radius(12)), x, y,
+                       exclude_uid=exclude_uid,
+                       enabled=self.snap_action.isChecked())
 
     def _ensure_feedback_items(self):
         if self.draft_item is None:

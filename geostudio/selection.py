@@ -1,0 +1,119 @@
+"""Picking, selection arithmetic and snapping, independent of the window.
+
+Everything here works in native GEO-MAP map units. Screen tolerances are
+converted by the caller before they arrive: a radius of 8 *pixels* is not a
+radius of 8 metres, and the conversion depends on the current zoom. See
+``GeoStudioWindow._map_radius`` for the only place that conversion happens.
+
+The module knows nothing about menus, docks, status bars or the view widget.
+``highlight_path`` is the single Qt-aware function, because it builds the
+QPainterPath used for the selection outline.
+"""
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+
+from PySide6.QtGui import QPainterPath
+
+from .geomap import GeoMap, GeoObject
+from .geometry_index import GeometryIndex
+from .interactions import SnapResult, find_snap
+from .scene_builder import object_path
+
+
+@dataclass(frozen=True)
+class SelectionContext:
+    """State the picking and snapping rules need, gathered in one place.
+
+    ``radius`` is already in map units. ``layer_for_uid`` and ``hidden_layers``
+    are kept instead of a precomputed visible set so both rules use exactly the
+    same notion of visibility.
+    """
+
+    doc: GeoMap | None
+    geometry_index: GeometryIndex
+    layer_for_uid: dict[str, str] = field(default_factory=dict)
+    hidden_layers: frozenset[str] = frozenset()
+    code_filter: str | None = None
+    hide_connectors: bool = True
+    radius: float = 0.0
+
+
+def visible_uids(ctx: SelectionContext) -> set[str]:
+    """Objects on layers that are currently switched on and still in the map."""
+    if ctx.doc is None:
+        return set()
+    return {uid for uid, layer in ctx.layer_for_uid.items()
+            if layer not in ctx.hidden_layers and uid in ctx.doc.by_id}
+
+
+def pick_candidates(ctx: SelectionContext, x: float, y: float) -> list[GeoObject]:
+    """Objects under the cursor, in the order the user cycles through them.
+
+    The ordering itself lives in GeometryIndex.pick and is deliberately not
+    touched here: parcels (5216) win over land use (5230) so a parcel lying
+    under a land-use polygon stays selectable with a plain click.
+    """
+    if ctx.doc is None:
+        return []
+    radius = max(ctx.radius, 1e-8)
+    hits = ctx.geometry_index.pick(x, y, radius, visible=visible_uids(ctx),
+                                   code_filter=ctx.code_filter)
+    return [hit.obj for hit in hits if hit.obj.uid in ctx.doc.by_id]
+
+
+def resolve_click(uids: list[str], current_uid: str, *,
+                  cycle: bool = False, repeat: bool = False) -> str:
+    """Which candidate wins this click.
+
+    ``cycle`` comes from Ctrl+click, ``repeat`` from clicking the same spot
+    again; both advance to the next candidate after the current one and wrap.
+    """
+    if (cycle or repeat) and current_uid in uids:
+        index = (uids.index(current_uid) + 1) % len(uids)
+    else:
+        index = 0
+    return uids[index]
+
+
+def toggle_selection(selected: list[str], uid: str) -> list[str]:
+    """Ctrl+click behaviour: add the object, or remove it if already selected."""
+    updated = [item for item in selected if item != uid]
+    if uid not in selected:
+        updated.append(uid)
+    return updated
+
+
+def highlight_path(doc: GeoMap, uids: list[str], *,
+                   hide_connectors: bool = True) -> QPainterPath:
+    """One outline for the whole selection, following the real contours.
+
+    Paths come from object_path, so multipart records are outlined along their
+    components instead of being joined by connector lines, and the result is a
+    true contour rather than a bounding rectangle.
+    """
+    combined = QPainterPath()
+    for uid in uids:
+        obj = doc.by_id[uid]
+        if obj.points:
+            combined.addPath(object_path(obj, hide_connectors=hide_connectors))
+    return combined
+
+
+def snap_at(ctx: SelectionContext, x: float, y: float, *,
+            exclude_uid: str | None = None,
+            enabled: bool = True) -> SnapResult | None:
+    """Snap to the nearest vertex, otherwise to the nearest edge.
+
+    ``radius`` in the context is already map units, so the result respects the
+    current zoom instead of using a fixed distance in metres.
+    """
+    if ctx.doc is None or not enabled:
+        return None
+    radius = ctx.radius
+    if radius <= 0:
+        return None
+    candidates = [obj for obj in ctx.geometry_index.nearby(x, y, radius)
+                  if ctx.layer_for_uid.get(obj.uid, '') not in ctx.hidden_layers]
+    return find_snap(x, y, candidates, radius, exclude_uid=exclude_uid,
+                     hide_connectors=ctx.hide_connectors)
