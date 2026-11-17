@@ -249,7 +249,7 @@ class MapView(QGraphicsView):
 class GeoStudioWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle('GeoStudio v0.10 — eksperymentalny edytor GEO-MAP')
+        self.setWindowTitle('GeoStudio v0.11 — eksperymentalny edytor GEO-MAP')
         self.resize(1450, 900)
         self.settings = QSettings('GeoStudio', 'GeoStudio')
         self.doc: GeoMap | None=None
@@ -376,7 +376,7 @@ class GeoStudioWindow(QMainWindow):
         self.labels_action.toggled.connect(self.set_labels_enabled)
         self.all_labels_action = vm.addAction('Pokaż wszystkie podpisy (również nakładające się)')
         self.all_labels_action.setCheckable(True)
-        self.all_labels_action.setChecked(False)
+        self.all_labels_action.setChecked(True)
         self.all_labels_action.toggled.connect(lambda _checked: self.update_label_visibility())
         self.snap_action = em.addAction('Przyciąganie do punktów i odcinków')
         self.snap_action.setCheckable(True)
@@ -580,7 +580,7 @@ class GeoStudioWindow(QMainWindow):
             self._last_pick_candidates = ()
             self._look_for_libraries(Path(file).parent)
             self.rebuild_scene()
-            self.setWindowTitle('GeoStudio v0.10 — '+Path(file).name)
+            self.setWindowTitle('GeoStudio v0.11 — '+Path(file).name)
             self.status.showMessage(f'{len(doc.objects)} obiektów, {len(doc.lines)} wierszy | {file}')
         except Exception as exc: QMessageBox.critical(self,'Błąd odczytu mapy',str(exc))
 
@@ -846,20 +846,22 @@ class GeoStudioWindow(QMainWindow):
                     max(xs) - min(xs), max(ys) - min(ys))
             for field, content in label_fields:
                 label = QGraphicsSimpleTextItem(content)
-                # A QFont point size is DPI-dependent. Explicit pixel sizes
-                # and ItemIgnoresTransformations guarantee that zoom/rotation
-                # do NOT enlarge or shrink printed map annotations on screen.
+                # GEO-MAP/CAD-like annotation: text has a fixed geographic
+                # (world-coordinate) size. Zooming affects glyph size exactly
+                # as it affects the parcel lines. No screen-pixel override:
+                # the old mode made text appear bigger *relative* to the map
+                # on zoom out. The view never culls individual map labels.
                 font = QFont('Segoe UI')
                 if obj.code == '5310':
                     font.setPixelSize(16)
                     font.setBold(True)
-                    color = QColor('#CC202C')  # GEO-MAP-style building identifier
+                    color = QColor('#CC202C')
                 elif obj.code == '5216':
                     font.setPixelSize(12)
-                    color = QColor('#4A5056')  # quiet parcel numbers
+                    color = QColor('#4A5056')
                 elif obj.code in {'5220', '5230'}:
                     font.setPixelSize(11)
-                    color = QColor('#35753A')  # land use / contours in green
+                    color = QColor('#35753A')
                     color.setAlpha(190)
                 else:
                     font.setPixelSize(11)
@@ -867,7 +869,9 @@ class GeoStudioWindow(QMainWindow):
                     color.setAlpha(180)
                 label.setFont(font)
                 label.setBrush(QBrush(color))
-                label.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIgnoresTransformations, True)
+                # 0.55 map-metres per font pixel; label dimensions are
+                # real geographic map units and rotate with the map.
+                label.setScale(0.55)
                 label.setAcceptedMouseButtons(Qt.NoButton)
                 bounds = label.boundingRect()
                 custom = self.label_positions.get(obj.uid,{}).get(field)
@@ -908,88 +912,19 @@ class GeoStudioWindow(QMainWindow):
         self._select_uid('')
 
     def update_label_visibility(self):
-        """Zoom-adaptive, collision-aware GIS labeling in screen pixels.
+        """Never hide labels merely because of zoom or collisions.
 
-        ItemIgnoresTransformations keeps lettering upright under rotation.
-        Without scale thresholds, 5310 text stays huge when an entire
-        village is fitted on screen; this method hides such labels until
-        objects are large enough to read.
+        All texts are real geographic-size graphics (not fixed device pixels).
+        They become proportionally smaller when zoomed out, exactly like parcel
+        geometry. Layer toggles and the explicit global label checkbox remain.
         """
-        if not hasattr(self, 'labels_action'):
+        if not self.doc or not hasattr(self,'labels_action'):
             return
-        if not self.labels_enabled or not self.doc:
-            for item in self.labels:
-                item.setVisible(False)
-            return
-
-        view = self.view
-        viewport = view.viewport().rect().adjusted(-10, -10, 10, 10)
-        transform = view.transform()
-        px_per_map_unit = math.hypot(transform.m11(), transform.m12())
-        selected = set(self.selected_uids)
-        force_all = self.all_labels_action.isChecked()
-        occupied: dict[tuple[int,int], str] = {}
-
-        def priority(item):
-            uid = item.data(0)
-            obj = self.doc.by_id.get(uid)
-            if uid in selected:
-                return (0, uid)
-            if obj is None:
-                return (5, uid)
-            return ({'5310': 1, '5216': 2, '5220': 3,
-                     '5230': 3}.get(obj.code, 4), uid)
-
-        for item in sorted(self.labels, key=priority):
-            uid = item.data(0)
-            obj = self.doc.by_id.get(uid)
-            if obj is None or self.layer_for_uid.get(uid,'') in self.hidden_layers:
-                item.setVisible(False)
-                continue
-
-            center = view.mapFromScene(item.pos())
-            if not viewport.contains(center):
-                item.setVisible(False)
-                continue
-
-            is_selected = uid in selected
-            if not (is_selected or force_all):
-                # The display is 1:1 in the map's metre-based source units.
-                # At overview scales keep 5310 A1/A2 from covering the map.
-                scale_threshold = ({'5310': 0.75, '5216': 0.38,
-                                    '5220': 0.65, '5230': 0.65}
-                                   .get(obj.code, 0.65))
-                if px_per_map_unit < scale_threshold:
-                    item.setVisible(False)
-                    continue
-                # Label only when the source object occupies enough pixels.
-                projected_span = self.label_world_span.get(uid, 0) * px_per_map_unit
-                min_span = 34 if obj.code == '5310' else 18
-                if projected_span < min_span:
-                    item.setVisible(False)
-                    continue
-
-            bounds = item.boundingRect()
-            w = max(8.0, bounds.width()) + 8
-            h = max(8.0, bounds.height()) + 6
-            left = center.x() - w/2
-            top = center.y() - h/2
-            right = left + w
-            bottom = top + h
-            rect_cells = [
-                (cx, cy)
-                for cx in range(math.floor(left / 38), math.floor(right / 38) + 1)
-                for cy in range(math.floor(top / 24), math.floor(bottom / 24) + 1)
-            ]
-            if not (is_selected or force_all) and any(
-                    cell in occupied and occupied[cell] != uid
-                    for cell in rect_cells):
-                item.setVisible(False)
-                continue
-            item.setVisible(True)
-            if not force_all:
-                for cell in rect_cells:
-                    occupied.setdefault(cell, uid)
+        for item in self.labels:
+            uid=item.data(0)
+            item.setVisible(bool(self.labels_enabled and
+                self.layer_for_uid.get(uid,'') not in self.hidden_layers))
+        self.update_view_scale_indicator()
 
     def start_label_edit(self):
         if not self.doc:
