@@ -32,7 +32,8 @@ from .visual_styles import (parse_fill_code, fill_code, load_styles,
     load_label_positions, write_styles, sidecar_path)
 from .library_render import (parse_cdf, parse_sym_primitives, cdf_for_object,
     native_fill_color, simple_point_segments, simple_point_circles,
-    parse_lay_pen_styles, lay_for_code)
+    parse_lay_pen_styles, lay_for_code,
+    parse_sym_line_patterns, object_sym_line_pattern)
 
 APP_QSS = """
 QMainWindow, QDockWidget, QWidget { background-color: #101826; color: #dce7f5; font: 10pt 'Segoe UI'; }
@@ -258,6 +259,7 @@ class GeoStudioWindow(QMainWindow):
         self.cdf_styles = {}
         self.sym_primitives = {}
         self.lay_pen_styles = {}
+        self.sym_line_patterns = {}
         self.fill_items_for_uid = {}
         self.library_paths = {}
         self.label_positions = {}
@@ -611,6 +613,7 @@ class GeoStudioWindow(QMainWindow):
         elif kind == 'symbols':
             self.symbols = library_symbols(path)
             self.sym_primitives = parse_sym_primitives(path)
+            self.sym_line_patterns = parse_sym_line_patterns(path)
         elif kind == 'palette':
             self.palette = library_colors(path)
             self.cdf_styles = parse_cdf(path)
@@ -718,11 +721,16 @@ class GeoStudioWindow(QMainWindow):
             pen = QPen(color)
             pen.setCosmetic(True)
             lay_style = lay_for_code(self.lay_pen_styles, obj.code)
-            # The LAY catalogue defines line styles. 2.008 is a dashed
-            # classification-contour example present in the supplied library.
-            # Unknown patterns remain solid until a verified pattern decoder
-            # exists; do not fabricate bespoke dash lengths.
-            if lay_style and lay_style.line_id.endswith('.008'):
+            # GEO-MAP's SYM macros define real dash/gap ratios:
+            # *4002 (1,-1), *4003 (2,-1), O 4003 in 5220, O 4002 in 5230.
+            # Resolve that definition first, then approximate LAY fallback.
+            sym_dash = object_sym_line_pattern(
+                self.sym_primitives, self.sym_line_patterns, obj.code)
+            if sym_dash:
+                pen.setStyle(Qt.CustomDashLine)
+                pen.setDashPattern([max(.5, sym_dash[0]*3),
+                                    max(.5, sym_dash[1]*3)])
+            elif sym_dash is None and lay_style and lay_style.line_id.endswith('.008'):
                 pen.setStyle(Qt.DashLine)
             # Device-pixel width is independent from the map's zoom.
             # Use the CDF border weight when present; protect against
