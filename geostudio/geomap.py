@@ -251,13 +251,33 @@ class GeoMap:
         self.lines.insert(after_line, new_line)
         self._parse()
 
-    def delete_object(self, uid: str) -> None:
-        """Remove one object record only; never remove shared boundary points in other objects."""
-        obj = self.by_id.get(uid)
-        if obj is None:
-            raise KeyError(uid)
-        del self.lines[obj.start:obj.end]
+    def delete_objects(self, uids: list[str] | set[str]) -> int:
+        """Delete entire object records in one pass without touching adjacent objects.
+
+        This is significantly faster than reparsing a 100k-line map for every
+        selected object. Unknown and non-object source records are preserved.
+        """
+        ids = set(uids)
+        if not ids:
+            return 0
+        missing = ids.difference(self.by_id)
+        if missing:
+            raise KeyError(next(iter(missing)))
+        intervals = sorted((self.by_id[uid].start, self.by_id[uid].end) for uid in ids)
+        kept = []
+        cursor = 0
+        for start, end in intervals:
+            if start < cursor or end > len(self.lines):
+                raise ValueError("Overlapping or malformed object boundaries")
+            kept.extend(self.lines[cursor:start])
+            cursor = end
+        kept.extend(self.lines[cursor:])
+        self.lines = kept
         self._parse()
+        return len(ids)
+
+    def delete_object(self, uid: str) -> None:
+        self.delete_objects([uid])
 
     def append_polygon(self, points: list[tuple[float,float]], code='5216',
                        label='', fields: dict[str, str] | None = None) -> str:
