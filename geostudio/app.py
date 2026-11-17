@@ -28,7 +28,9 @@ from .geomap import GeoMap, GeoObject, library_layers, library_symbols, library_
 from .interactions import find_snap, polygon_is_valid, closest_point_on_edge
 from .geometry_index import GeometryIndex
 from .object_search import search_objects
-from .visual_styles import parse_fill_code, fill_code, load_styles, write_styles, sidecar_path
+from .visual_styles import (parse_fill_code, fill_code, load_styles,
+    load_label_positions, write_styles, sidecar_path)
+from .library_render import parse_cdf, parse_sym_primitives, cdf_for_object, native_fill_color, simple_point_segments
 
 APP_QSS = """
 QMainWindow, QDockWidget, QWidget { background-color: #101826; color: #dce7f5; font: 10pt 'Segoe UI'; }
@@ -225,13 +227,19 @@ class MapView(QGraphicsView):
 class GeoStudioWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle('GeoStudio v0.7 — eksperymentalny edytor GEO-MAP')
+        self.setWindowTitle('GeoStudio v0.8 — eksperymentalny edytor GEO-MAP')
         self.resize(1450, 900)
         self.settings = QSettings('GeoStudio', 'GeoStudio')
         self.doc: GeoMap | None=None
         self.catalog: dict[str,str]={}
         self.symbols: dict[str,str]={}
         self.palette: dict[str,tuple[int,int,int]]={}
+        self.cdf_styles = {}
+        self.sym_primitives = {}
+        self.library_paths = {}
+        self.label_positions = {}
+        self.label_items = {}
+        self._active_label = None
         self.items_by_layer:dict[str,list]=defaultdict(list)
         self.graphics_for_uid={}
         self.visual_styles = {}
@@ -280,6 +288,7 @@ class GeoStudioWindow(QMainWindow):
         self.setCentralWidget(self.view)
         self._setup_menu()
         self._setup_docks()
+        self._load_saved_libraries()
         self.status=QStatusBar();self.setStatusBar(self.status)
         self.status.showMessage('Otwórz mapę GEO-MAP, aby rozpocząć. Zapis odbywa się tylko do nowego pliku.')
         self.setStyleSheet(APP_QSS)
@@ -532,6 +541,7 @@ class GeoStudioWindow(QMainWindow):
             self.selected_uid = ''
             self.settings.setValue('last_map_dir', str(Path(file).parent))
             self.visual_styles = load_styles(file)
+            self.label_positions = load_label_positions(file)
             self.selected_uids = []
             self._auto_copy_path = None
             self._auto_copy_digest = None
@@ -540,19 +550,46 @@ class GeoStudioWindow(QMainWindow):
             self._last_pick_candidates = ()
             self._look_for_libraries(Path(file).parent)
             self.rebuild_scene()
-            self.setWindowTitle('GeoStudio v0.7 — '+Path(file).name)
+            self.setWindowTitle('GeoStudio v0.8 — '+Path(file).name)
             self.status.showMessage(f'{len(doc.objects)} obiektów, {len(doc.lines)} wierszy | {file}')
         except Exception as exc: QMessageBox.critical(self,'Błąd odczytu mapy',str(exc))
 
-    def _look_for_libraries(self,folder):
-        for ext,handler in [('lay','layers'),('sym','symbols'),('cdf','palette')]:
-            matches=sorted(folder.glob('*.'+ext))+sorted(folder.glob('*.'+ext.upper()))
-            if matches:self.load_library(matches[0],handler)
+    def _load_saved_libraries(self):
+        """Remember stable library locations across sessions, never bundle vendor files."""
+        for kind in ('layers','symbols','palette'):
+            path = self.settings.value('library_' + kind, '')
+            if path and Path(str(path)).is_file():
+                try:
+                    self.load_library(path, kind, remember=False)
+                except (OSError, ValueError):
+                    pass
 
-    def load_library(self, path, kind):
-        if kind=='layers':_,self.catalog=library_layers(path)
-        elif kind=='symbols':self.symbols=library_symbols(path)
-        elif kind=='palette':self.palette=library_colors(path)
+    def _look_for_libraries(self, folder):
+        """Loaded user defaults win; beside-map discovery is a fallback only."""
+        folder=Path(folder)
+        for ext,kind in (('lay','layers'),('sym','symbols'),('cdf','palette')):
+            if kind in self.library_paths and Path(self.library_paths[kind]).is_file():
+                continue
+            matches = sorted(p for p in folder.iterdir() if p.is_file() and
+                             p.suffix.lower() == '.'+ext)
+            if matches:
+                self.load_library(matches[0], kind)
+
+    def load_library(self, path, kind, *, remember=True):
+        path = Path(path).resolve()
+        if kind == 'layers':
+            _, self.catalog = library_layers(path)
+        elif kind == 'symbols':
+            self.symbols = library_symbols(path)
+            self.sym_primitives = parse_sym_primitives(path)
+        elif kind == 'palette':
+            self.palette = library_colors(path)
+            self.cdf_styles = parse_cdf(path)
+        else:
+            raise ValueError('Nieznany typ biblioteki')
+        self.library_paths[kind] = str(path)
+        if remember:
+            self.settings.setValue('library_' + kind, str(path))
 
     def open_catalogs(self):
         files,_=QFileDialog.getOpenFileNames(
