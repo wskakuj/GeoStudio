@@ -828,7 +828,7 @@ class GeoStudioWindow(QMainWindow):
         px_per_map_unit = math.hypot(transform.m11(), transform.m12())
         selected = set(self.selected_uids)
         force_all = self.all_labels_action.isChecked()
-        occupied: set[tuple[int,int]] = set()
+        occupied: dict[tuple[int,int], str] = {}
 
         def priority(item):
             uid = item.data(0)
@@ -882,12 +882,14 @@ class GeoStudioWindow(QMainWindow):
                 for cy in range(math.floor(top / 24), math.floor(bottom / 24) + 1)
             ]
             if not (is_selected or force_all) and any(
-                    cell in occupied for cell in rect_cells):
+                    cell in occupied and occupied[cell] != uid
+                    for cell in rect_cells):
                 item.setVisible(False)
                 continue
             item.setVisible(True)
             if not force_all:
-                occupied.update(rect_cells)
+                for cell in rect_cells:
+                    occupied.setdefault(cell, uid)
 
     def start_label_edit(self):
         if not self.doc:
@@ -1146,9 +1148,18 @@ class GeoStudioWindow(QMainWindow):
     def on_layer_toggle(self,item,column):
         state=item.checkState(0)==Qt.Checked
         for graphic in self.items_by_layer.get(item.text(0),[]):graphic.setVisible(state)
-        if state:self.hidden_layers.discard(item.text(0))
-        else:self.hidden_layers.add(item.text(0))
-        self.update_label_visibility()
+        if state:
+            self.hidden_layers.discard(item.text(0))
+        else:
+            self.hidden_layers.add(item.text(0))
+        # A hidden layer must not keep a ghost selection overlay; labels
+        # belonging to other visible layers retain their previous positions.
+        selected = [uid for uid in self.selected_uids
+                    if self.layer_for_uid.get(uid) not in self.hidden_layers]
+        if selected != self.selected_uids:
+            self._set_selected_uids(selected)
+        else:
+            self.update_label_visibility()
 
     def _sync_fill_opacity(self, opacity):
         text = self.fill_entry.text().strip()
