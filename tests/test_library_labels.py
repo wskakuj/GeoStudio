@@ -207,7 +207,7 @@ def test_map_label_font_scales_with_geometry_but_is_never_culled(gui):
     gui.rebuild_scene()
     item=gui.label_items[(uid,'A1')]
     assert item.font().pixelSize()==16
-    assert item.flags() & QGraphicsItem.GraphicsItemFlag.ItemIgnoresTransformations
+    assert not (item.flags() & QGraphicsItem.GraphicsItemFlag.ItemIgnoresTransformations)
     width=lambda: item.deviceTransform(gui.view.viewportTransform()).mapRect(
         item.boundingRect()).width()
     w0=width()
