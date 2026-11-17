@@ -96,3 +96,14 @@ python -m geostudio.inspect "C:\\mapy\\przyklad.MAP"
 Ten prototyp można rozwijać jako osobny projekt; przed publiczną publikacją
 należy świadomie wybrać licencję i sprawdzić prawa do własnego kodu oraz zależności.
 Nie dołączono oryginalnych plików i bibliotek GEO-MAP.
+
+## Poprawki interakcji w v0.2 (do testów)
+
+- **Zaznaczanie nakładających się obiektów:** kliknięcie preferuje działkę `5216`, a **Alt+klik** przełącza kolejne obiekty pod kursorem (w tym użytek `5230`).
+- **Zaznaczony obiekt:** pomarańczowy kontur po rzeczywistych odcinkach, bez prostokątnej ramki Qt.
+- **Podpisy:** `5310` wyświetla `A1` i `A2`, natomiast `5216` i `5230` pokazują `A2`. Włączają się po przybliżeniu, aby przy widoku całej mapy nie zasłaniały geometrii. Położenie i style napisów są nadal przybliżone.
+- **Rysowanie:** klawisz `P`, wybór czterocyfrowego kodu, kliknięcia wierzchołków, podgląd rysowanej linii, przyciąganie do istniejących punktów i odcinków w promieniu 12 pikseli. Prawy przycisk zamyka; `Esc` anuluje.
+- **Edycja istniejących poligonów:** zaznacz zamknięty poligon i naciśnij `E`; przeciągnij zielony uchwyt wierzchołka (z przyciąganiem do innych obiektów). `Esc` kończy tryb. Na razie obsługiwane jest tylko **przesuwanie** wierzchołków, nie ich dodawanie/usuwanie.
+- **Zapis:** wyłącznie *Zapisz jako* do nowego pliku. Zmieniona geometria zachowuje nieedytowane rekordy i etykiety punktów, ale zapis nie jest jeszcze zweryfikowany w GEO-MAP.
+
+Testy na plikach użytkownika potwierdziły zachowanie checksum `CHK`, zamknięcia poligonu i pozostałych atrybutów po przesunięciu punktu dla dwóch plików testowych. GUI wymaga niezależnej weryfikacji na Windows; testy Qt w CI używają `offscreen`.

@@ -148,6 +148,46 @@ class GeoMap:
         self.lines.insert(insertion,replacement)
         self._parse()
 
+    def move_polygon_vertex(self, uid: str, vertex_index: int, x: float, y: float):
+        """Edit one vertex in-place, preserving the original P record's suffix.
+
+        For closed rings the duplicated first/last vertex is updated together.
+        Non-geometry records, point labels and line endings remain untouched.
+        """
+        from math import isfinite
+        if uid not in self.by_id:
+            raise KeyError(uid)
+        obj = self.by_id[uid]
+        if not obj.is_closed:
+            raise ValueError('Only closed polygons can be edited')
+        if not (isfinite(x) and isfinite(y) and -1e9 < x < 1e9 and -1e9 < y < 1e9):
+            raise ValueError('Invalid coordinates')
+        distinct_count = len(obj.points) - 1
+        if not 0 <= vertex_index < distinct_count:
+            raise IndexError('Vertex outside polygon')
+        from .interactions import polygon_is_valid
+        coords = [(p.x, p.y) for p in obj.points[:-1]]
+        coords[vertex_index] = (x, y)
+        if not polygon_is_valid(coords):
+            raise ValueError('Polygon must have at least three distinct non-collinear vertices')
+        records = [(i, POINT_RE.match(raw.rstrip(b'\r\n')))
+                   for i, raw in enumerate(self.lines[obj.start+1:obj.end], obj.start+1)]
+        records = [(i, m) for i, m in records if m]
+        if len(records) != len(obj.points):
+            raise ValueError('Unexpected P record count; refusing to edit')
+        indices = [vertex_index]
+        if vertex_index == 0:
+            indices.append(distinct_count)
+        for pos in indices:
+            line_no, match = records[pos]
+            original = self.lines[line_no]
+            eol = b'\r\n' if original.endswith(b'\r\n') else b'\n' if original.endswith(b'\n') else b''
+            # Keep P type, optional comma labels, flags, and line ending intact.
+            prefix = original[:match.start(2)]
+            suffix = match.group(4)
+            self.lines[line_no] = prefix + f'{x:.3f}'.encode() + b'   ' + f'{y:.3f}'.encode() + suffix + eol
+        self._parse()
+
     def append_polygon(self, points: list[tuple[float,float]], code='5216', label='') -> str:
         if len(points)<3:raise ValueError('A polygon needs at least three vertices')
         if not re.fullmatch(r'\d{4}',code):raise ValueError('Code must have exactly four digits')
