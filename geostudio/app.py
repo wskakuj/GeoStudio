@@ -10,7 +10,7 @@ from pathlib import Path
 from collections import defaultdict
 
 try:
-    from PySide6.QtCore import Qt, QPointF, QRectF, QSettings, Signal
+    from PySide6.QtCore import Qt, QPoint, QPointF, QRectF, QSettings, Signal
     from PySide6.QtGui import QAction, QBrush, QColor, QFont, QPainter, QPainterPath, QPen, QPixmap, QImage, QTransform
     from PySide6.QtWidgets import (QApplication, QMainWindow, QFileDialog, QGraphicsView, QGraphicsScene,
         QGraphicsPathItem, QGraphicsEllipseItem, QGraphicsPixmapItem, QGraphicsSimpleTextItem, QGraphicsItem, QDockWidget,
@@ -20,6 +20,7 @@ except ImportError as exc:
     raise SystemExit('Zainstaluj GUI: python -m pip install -e .\nBrakuje PySide6') from exc
 
 from .geomap import GeoMap, GeoObject, library_layers, library_symbols, library_colors, resolve_layer
+from .interactions import find_snap, polygon_is_valid
 
 APP_QSS = """
 QMainWindow, QDockWidget, QWidget { background-color: #101826; color: #dce7f5; font: 10pt 'Segoe UI'; }
@@ -40,40 +41,98 @@ QLineEdit {background: #23364f; color: white; border: 1px solid #466080; padding
 
 class MapView(QGraphicsView):
     coordinate = Signal(float, float)
+    canvas_click = Signal(float, float, bool)
     point_for_polygon = Signal(float, float)
+    polygon_hover = Signal(float, float)
     finish_polygon = Signal()
+    cancel_action = Signal()
+    vertex_hover = Signal(float, float, int)
+    vertex_commit = Signal(float, float, int)
+    zoom_changed = Signal()
 
     def __init__(self, scene):
         super().__init__(scene)
-        self.draw_mode=False
+        self.draw_mode = False
+        self.edit_mode = False
+        self.edit_points = []
+        self.dragged_vertex = None
+        self.press_pos = None
         self.setRenderHint(QPainter.Antialiasing)
         self.setDragMode(QGraphicsView.ScrollHandDrag)
         self.setViewportUpdateMode(QGraphicsView.MinimalViewportUpdate)
         self.setBackgroundBrush(QBrush(QColor('#f7f9fb')))
         self.setTransformationAnchor(QGraphicsView.AnchorUnderMouse)
+        self.setMouseTracking(True)
+
+    def _position(self, event):
+        pt = self.mapToScene(event.position().toPoint())
+        return pt.x(), -pt.y()
 
     def wheelEvent(self, event):
-        factor=1.2 if event.angleDelta().y()>0 else 1/1.2
-        self.scale(factor,factor)
+        factor = 1.2 if event.angleDelta().y() > 0 else 1/1.2
+        self.scale(factor, factor)
+        self.zoom_changed.emit()
 
-    def mouseMoveEvent(self,event):
-        pt=self.mapToScene(event.position().toPoint())
-        self.coordinate.emit(pt.x(), -pt.y())
+    def mouseMoveEvent(self, event):
+        x, y = self._position(event)
+        self.coordinate.emit(x, y)
+        if self.draw_mode:
+            self.polygon_hover.emit(x, y)
+            return
+        if self.edit_mode and self.dragged_vertex is not None:
+            self.vertex_hover.emit(x, y, self.dragged_vertex)
+            return
         super().mouseMoveEvent(event)
 
-    def mousePressEvent(self,event):
+    def mousePressEvent(self, event):
+        x, y = self._position(event)
         if self.draw_mode:
-            if event.button()==Qt.RightButton:
-                self.finish_polygon.emit();return
-            if event.button()==Qt.LeftButton:
-                pt=self.mapToScene(event.position().toPoint())
-                self.point_for_polygon.emit(pt.x(),-pt.y());return
+            if event.button() == Qt.RightButton:
+                self.finish_polygon.emit()
+            elif event.button() == Qt.LeftButton:
+                self.point_for_polygon.emit(x, y)
+            return
+        if self.edit_mode:
+            if event.button() == Qt.LeftButton:
+                p = event.position().toPoint()
+                choices = [(self.mapFromScene(QPointF(px, -py))-p).manhattanLength() for px, py in self.edit_points]
+                if choices:
+                    idx = min(range(len(choices)), key=choices.__getitem__)
+                    if choices[idx] <= 18:
+                        self.dragged_vertex = idx
+                        self.vertex_hover.emit(x, y, idx)
+            return
+        self.press_pos = event.position().toPoint() if event.button() == Qt.LeftButton else None
         super().mousePressEvent(event)
 
-    def mouseDoubleClickEvent(self,event):
+    def mouseReleaseEvent(self, event):
+        x, y = self._position(event)
         if self.draw_mode:
-            self.finish_polygon.emit();return
-        super().mouseDoubleClickEvent(event)
+            return
+        if self.edit_mode:
+            if self.dragged_vertex is not None and event.button() == Qt.LeftButton:
+                self.vertex_commit.emit(x, y, self.dragged_vertex)
+                self.dragged_vertex = None
+            return
+        clicked = (event.button() == Qt.LeftButton and self.press_pos is not None
+                   and (event.position().toPoint()-self.press_pos).manhattanLength() < 6)
+        self.press_pos = None
+        super().mouseReleaseEvent(event)
+        if clicked:
+            self.canvas_click.emit(x, y, bool(event.modifiers() & Qt.AltModifier))
+
+    def mouseDoubleClickEvent(self, event):
+        if self.draw_mode:
+            self.finish_polygon.emit()
+            return
+        if not self.edit_mode:
+            super().mouseDoubleClickEvent(event)
+
+    def keyPressEvent(self, event):
+        if event.key() == Qt.Key_Escape and (self.draw_mode or self.edit_mode):
+            self.cancel_action.emit()
+            return
+        super().keyPressEvent(event)
 
 
 class GeoStudioWindow(QMainWindow):
@@ -87,6 +146,13 @@ class GeoStudioWindow(QMainWindow):
         self.palette: dict[str,tuple[int,int,int]]={}
         self.items_by_layer:dict[str,list]=defaultdict(list)
         self.graphics_for_uid={}
+        self.labels=[]
+        self.highlight_item=None
+        self.draft_item=None
+        self.snap_marker=None
+        self.current_snap=None
+        self.edit_uid=''
+        self.edit_handles=[]
         self.layers_tree=None
         self.current_polygon:list[tuple[float,float]]=[]
         self.polygon_code='5216'
@@ -94,6 +160,12 @@ class GeoStudioWindow(QMainWindow):
         self.map_scene.selectionChanged.connect(self.on_selection)
         self.view=MapView(self.map_scene)
         self.view.coordinate.connect(self.on_coordinate)
+        self.view.canvas_click.connect(self.select_at)
+        self.view.polygon_hover.connect(self.preview_polygon)
+        self.view.vertex_hover.connect(self.preview_vertex)
+        self.view.vertex_commit.connect(self.commit_vertex)
+        self.view.cancel_action.connect(self.cancel_edit)
+        self.view.zoom_changed.connect(self.update_label_visibility)
         self.view.point_for_polygon.connect(self.add_polygon_point)
         self.view.finish_polygon.connect(self.finish_polygon)
         self.setCentralWidget(self.view)
@@ -118,6 +190,8 @@ class GeoStudioWindow(QMainWindow):
         fm.addSeparator();fm.addAction(self._action('Zakończ',self.close,'Ctrl+Q'))
         em=self.menuBar().addMenu('&Edycja')
         em.addAction(self._action('Rysuj poligon',self.start_polygon,'P'))
+        em.addAction(self._action('Edytuj wierzchołki poligonu',self.start_vertex_edit,'E'))
+        em.addAction(self._action('Zakończ / anuluj narzędzie',self.cancel_edit,'Esc'))
         em.addAction(self._action('Edytuj atrybut zaznaczonego obiektu…',self.edit_selected,'F2'))
         vm=self.menuBar().addMenu('&Widok')
         vm.addAction(self._action('Dopasuj widok do mapy',self.fit_all,'Ctrl+0'))
@@ -125,7 +199,7 @@ class GeoStudioWindow(QMainWindow):
         toolbar.setMovable(False)
         self.addToolBar(toolbar)
         for label,fn in [('📂 Otwórz',self.open_map),('💾 Zapisz jako',self.save_map),
-                         ('◎ Cała mapa',self.fit_all),('⬡ Poligon',self.start_polygon),
+                         ('◎ Cała mapa',self.fit_all),('⬡ Poligon',self.start_polygon),('✥ Edytuj wierzchołki',self.start_vertex_edit),
                          ('▧ Raster',self.add_raster),('↗ DXF',self.export_dxf),('⬇ Obraz',self.export_image)]:
             toolbar.addAction(self._action(label,fn))
 
@@ -151,9 +225,10 @@ class GeoStudioWindow(QMainWindow):
     def _help_dock(self):
         dock=QDockWidget('Informacja',self)
         dock.setMaximumHeight(110)
-        label=QLabel('Wersja eksperymentalna. Kody, geometria i atrybuty są odczytywane z pliku. '
-                     'Symbole i style GEO-MAP nie są jeszcze odwzorowane w 100%. '
-                     'Rysowanie: klikaj wierzchołki, zakończ prawym przyciskiem myszy.')
+        label=QLabel('Kliknij działkę, Alt+klik przełącza obiekty pod kursorem. '
+                     'P: nowy poligon (wierzchołki przyciągają się do punktów i krawędzi). '
+                     'E: przesuwaj wierzchołki wybranego poligonu. Esc: zakończ narzędzie. '
+                     'Style GEO-MAP nadal są przybliżone.')
         label.setWordWrap(True)
         dock.setWidget(label)
         return dock
@@ -194,44 +269,196 @@ class GeoStudioWindow(QMainWindow):
             self.status.showMessage(f'Załadowano {len(files)} bibliotek; {len(self.catalog)} zdefiniowanych kodów warstw')
         except Exception as exc: QMessageBox.critical(self,'Błąd bibliotek',str(exc))
 
-    def rebuild_scene(self):
-        if not self.doc:return
-        self.map_scene.clear(); self.graphics_for_uid={}; self.items_by_layer=defaultdict(list)
+    @staticmethod
+    def _path_for(obj, points_override=None):
+        points = points_override if points_override is not None else [(p.x, p.y) for p in obj.points]
+        if not points:
+            return QPainterPath()
+        path = QPainterPath(QPointF(points[0][0], -points[0][1]))
+        for x, y in points[1:]:
+            path.lineTo(x, -y)
+        return path
+
+    @staticmethod
+    def _label_anchor(obj):
+        """Area centroid for closed geometry, midpoint for other paths."""
+        pts = obj.points[:-1] if obj.is_closed else obj.points
+        if not pts:
+            return None
+        if not obj.is_closed or len(pts) < 3:
+            return (sum(p.x for p in pts)/len(pts), sum(p.y for p in pts)/len(pts))
+        x0, y0 = pts[0].x, pts[0].y
+        double_area, cx, cy = 0.0, 0.0, 0.0
+        for i, a in enumerate(pts):
+            b = pts[(i+1) % len(pts)]
+            ax, ay, bx, by = a.x-x0, a.y-y0, b.x-x0, b.y-y0
+            cross = ax*by - bx*ay
+            double_area += cross
+            cx += (ax+bx)*cross
+            cy += (ay+by)*cross
+        if abs(double_area) < 1e-10:
+            return (sum(p.x for p in pts)/len(pts), sum(p.y for p in pts)/len(pts))
+        return (x0 + cx/(3*double_area), y0 + cy/(3*double_area))
+
+    def rebuild_scene(self, *, fit=True, reselect=''):
+        if not self.doc:
+            return
+        self.map_scene.clear()
+        self.graphics_for_uid = {}
+        self.items_by_layer = defaultdict(list)
+        self.labels = []
+        self.highlight_item = None
+        self.draft_item = None
+        self.snap_marker = None
+        self.edit_handles = []
+        self.current_snap = None
         for obj in self.doc.objects:
-            if not obj.points:continue
-            layer=resolve_layer(self.catalog,obj.code)
-            color=QColor(*obj.colorref)
-            pen=QPen(color if obj.colorref!=(0,0,0) else QColor('#31455d'))
-            pen.setCosmetic(True);pen.setWidth(1)
-            if len(obj.points)==1:
-                item=QGraphicsEllipseItem(-2.5,-2.5,5,5)
-                item.setPos(obj.points[0].x,-obj.points[0].y)
-                item.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIgnoresTransformations,True)
+            if not obj.points:
+                continue
+            layer = resolve_layer(self.catalog, obj.code)
+            color = QColor(*obj.colorref)
+            pen = QPen(color if obj.colorref != (0,0,0) else QColor('#31455d'))
+            pen.setCosmetic(True)
+            pen.setWidth(1)
+            if len(obj.points) == 1:
+                item = QGraphicsEllipseItem(-2.5, -2.5, 5, 5)
+                item.setPos(obj.points[0].x, -obj.points[0].y)
+                item.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIgnoresTransformations, True)
                 item.setBrush(QBrush(color))
             else:
-                path=QPainterPath(QPointF(obj.points[0].x,-obj.points[0].y))
-                for p in obj.points[1:]:path.lineTo(p.x,-p.y)
-                item=QGraphicsPathItem(path)
-                if obj.is_closed:item.setBrush(QBrush(QColor(color.red(),color.green(),color.blue(),18)))
+                item = QGraphicsPathItem(self._path_for(obj))
+                if obj.is_closed:
+                    item.setBrush(QBrush(QColor(color.red(),color.green(),color.blue(),18)))
             item.setPen(pen)
-            item.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsSelectable,True)
-            item.setData(0,obj.uid or f'index:{obj.start}')
+            # We handle picking ourselves; Qt's default selection draws an
+            # unwanted bounding RECTANGLE instead of the exact contour.
+            item.setAcceptedMouseButtons(Qt.NoButton)
+            item.setData(0, obj.uid or f'index:{obj.start}')
             item.setToolTip(f'Kod {obj.code} • {self.symbols.get(obj.code,layer)}\n{obj.fields.get("A2","")}')
             self.map_scene.addItem(item)
             self.items_by_layer[layer].append(item)
-            if obj.uid:self.graphics_for_uid[obj.uid]=item
-            # Approximate placement of explicit text objects. Full cartographic
-            # rendering of font, size, angle and anchors still needs work.
-            if obj.code.startswith('7') and obj.fields.get('TX'):
-                text=obj.fields['TX'].replace('||','\n').replace('|',' ')
-                text_item=QGraphicsSimpleTextItem(text)
-                text_item.setBrush(QBrush(color))
-                text_item.setPos(obj.points[0].x,-obj.points[0].y)
-                text_item.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIgnoresTransformations,True)
-                text_item.setZValue(10)
-                self.map_scene.addItem(text_item)
-                self.items_by_layer[layer].append(text_item)
-        self._populate_layers();self.fit_all()
+            if obj.uid:
+                self.graphics_for_uid[obj.uid] = item
+            label_text = ''
+            if obj.code == '5310':
+                label_text = '\n'.join(v for v in (obj.fields.get('A1',''), obj.fields.get('A2','')) if v)
+            elif obj.code in {'5216', '5230'}:
+                label_text = obj.fields.get('A2', '')
+            elif obj.code.startswith('7') and obj.fields.get('TX'):
+                label_text = obj.fields['TX'].replace('||','\n').replace('|',' ')
+            if label_text:
+                anchor = self._label_anchor(obj)
+                if anchor:
+                    text_item = QGraphicsSimpleTextItem(label_text)
+                    text_item.setFont(QFont('Segoe UI', 9))
+                    text_item.setBrush(QBrush(QColor('#21374c')))
+                    text_item.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIgnoresTransformations, True)
+                    text_item.setAcceptedMouseButtons(Qt.NoButton)
+                    bounds = text_item.boundingRect()
+                    text_item.setPos(anchor[0], -anchor[1])
+                    # Local offset remains centered at any zoom level.
+                    text_item.setTransform(QTransform().translate(-bounds.width()/2, -bounds.height()/2))
+                    text_item.setZValue(20)
+                    self.map_scene.addItem(text_item)
+                    self.items_by_layer[layer].append(text_item)
+                    self.labels.append(text_item)
+        self._populate_layers()
+        if fit:
+            self.fit_all()
+        else:
+            self.map_scene.setSceneRect(self.map_scene.itemsBoundingRect().adjusted(-15,-15,15,15))
+            self.update_label_visibility()
+        if reselect:
+            self._select_uid(reselect)
+
+    def update_label_visibility(self):
+        # Avoid unreadable text clouds at the initial whole-map scale.
+        visible = abs(self.view.transform().m11()) >= 0.75
+        for item in self.labels:
+            item.setVisible(visible)
+
+    def _select_uid(self, uid):
+        self.selected_uid = uid if self.doc and uid in self.doc.by_id else ''
+        self.props.clear()
+        if self.highlight_item:
+            self.map_scene.removeItem(self.highlight_item)
+            self.highlight_item = None
+        if not self.selected_uid:
+            return
+        obj = self.doc.by_id[self.selected_uid]
+        self.highlight_item = QGraphicsPathItem(self._path_for(obj))
+        outline = QPen(QColor('#ffb000'), 3)
+        outline.setCosmetic(True)
+        self.highlight_item.setPen(outline)
+        self.highlight_item.setBrush(QBrush(Qt.NoBrush))
+        self.highlight_item.setZValue(1000)
+        self.highlight_item.setAcceptedMouseButtons(Qt.NoButton)
+        self.map_scene.addItem(self.highlight_item)
+        entries = [('Kod',obj.code),('Nazwa symbolu',self.symbols.get(obj.code,'—')),
+                   ('Warstwa',resolve_layer(self.catalog,obj.code)),('ID',obj.uid),
+                   ('Wierzchołki',str(len(obj.points)))]
+        if obj.area_m2 is not None:
+            entries.append(('Pole geometryczne',f'{obj.area_m2:,.3f} m² / {obj.area_m2/10000:,.4f} ha'))
+        entries.extend((k,v) for k,v in obj.fields.items() if k!='ID')
+        for k,v in entries:
+            self.props.addTopLevelItem(QTreeWidgetItem([k,v]))
+
+    def select_at(self, x, y, cycle=False):
+        if not self.doc:
+            return
+        hits = self.map_scene.items(QPointF(x, -y))
+        uids = list(dict.fromkeys(item.data(0) for item in hits if item.data(0) in self.doc.by_id))
+        # Parcels are preferred even when land-use polygons overlap exactly.
+        uids.sort(key=lambda uid: (0 if self.doc.by_id[uid].code=='5216' else
+                                   1 if self.doc.by_id[uid].code=='5230' else 2, uid))
+        if not uids:
+            self._select_uid('')
+            return
+        if cycle and self.selected_uid in uids:
+            index = (uids.index(self.selected_uid)+1) % len(uids)
+        else:
+            index = 0
+        self._select_uid(uids[index])
+        if len(uids)>1:
+            self.status.showMessage(f'Wybrano {self.doc.by_id[uids[index]].code}. Alt+klik: następny obiekt ({index+1}/{len(uids)})')
+
+    def _snap(self, x, y, *, exclude_uid=None):
+        if not self.doc:
+            return None
+        origin = self.view.mapToScene(QPoint(0,0))
+        other = self.view.mapToScene(QPoint(12,0))
+        radius = abs(other.x() - origin.x())
+        if radius <= 0:
+            return None
+        rect = QRectF(x-radius, -y-radius, radius*2, radius*2)
+        objects = []
+        uids = set()
+        for item in self.map_scene.items(rect):
+            uid = item.data(0)
+            if uid in self.doc.by_id and uid not in uids:
+                uids.add(uid)
+                objects.append(self.doc.by_id[uid])
+        return find_snap(x, y, objects, radius, exclude_uid=exclude_uid)
+
+    def _ensure_feedback_items(self):
+        if self.draft_item is None:
+            self.draft_item = QGraphicsPathItem()
+            pen = QPen(QColor('#13a89e'), 2, Qt.DashLine)
+            pen.setCosmetic(True)
+            self.draft_item.setPen(pen)
+            self.draft_item.setBrush(QBrush(Qt.NoBrush))
+            self.draft_item.setZValue(1100)
+            self.draft_item.setAcceptedMouseButtons(Qt.NoButton)
+            self.map_scene.addItem(self.draft_item)
+        if self.snap_marker is None:
+            self.snap_marker = QGraphicsEllipseItem(-5,-5,10,10)
+            self.snap_marker.setPen(QPen(QColor('#0d8079'),2))
+            self.snap_marker.setBrush(QBrush(QColor('#9ae6d8')))
+            self.snap_marker.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIgnoresTransformations, True)
+            self.snap_marker.setZValue(1101)
+            self.snap_marker.setAcceptedMouseButtons(Qt.NoButton)
+            self.map_scene.addItem(self.snap_marker)
+            self.snap_marker.setVisible(False)
 
     def _populate_layers(self):
         self.layers_tree.blockSignals(True)
@@ -244,20 +471,6 @@ class GeoStudioWindow(QMainWindow):
     def on_layer_toggle(self,item,column):
         state=item.checkState(0)==Qt.Checked
         for graphic in self.items_by_layer.get(item.text(0),[]):graphic.setVisible(state)
-
-    def on_selection(self):
-        selected=self.map_scene.selectedItems();self.props.clear();self.selected_uid=''
-        if not selected or not self.doc:return
-        uid=selected[0].data(0)
-        if uid not in self.doc.by_id:return
-        obj=self.doc.by_id[uid];self.selected_uid=uid
-        entries=[('Kod',obj.code),('Nazwa symbolu',self.symbols.get(obj.code,'—')),
-                 ('Warstwa',resolve_layer(self.catalog,obj.code)),('ID',obj.uid),
-                 ('Wierzchołki',str(len(obj.points)))]
-        if obj.area_m2 is not None:
-            entries.append(('Pole geometryczne',f'{obj.area_m2:,.3f} m² / {obj.area_m2/10000:,.4f} ha'))
-        entries.extend((k,v) for k,v in obj.fields.items() if k!='ID')
-        for k,v in entries:self.props.addTopLevelItem(QTreeWidgetItem([k,v]))
 
     def edit_property(self,item,column):
         if item.text(0) in {'A1','A2','A3','A4','A5','A6','TX','MP','KR'}:
@@ -277,9 +490,7 @@ class GeoStudioWindow(QMainWindow):
         try:
             uid=self.selected_uid
             self.doc.update_field(uid,key,text)
-            self.map_scene.clearSelection()
-            if uid in self.graphics_for_uid:
-                self.graphics_for_uid[uid].setSelected(True)
+            self.rebuild_scene(fit=False, reselect=uid)
             self.status.showMessage('Zmieniono '+key+' w pamięci. Użyj „Zapisz jako”, by utworzyć nowy plik.')
         except Exception as exc:QMessageBox.warning(self,'Nie udało się zmienić atrybutu',str(exc))
 
@@ -302,40 +513,153 @@ class GeoStudioWindow(QMainWindow):
         if rect.isEmpty():return
         self.map_scene.setSceneRect(rect.adjusted(-15,-15,15,15))
         self.view.fitInView(self.map_scene.sceneRect(),Qt.KeepAspectRatio)
+        self.update_label_visibility()
 
     def on_coordinate(self,x,y):
         self.status.showMessage(f'Współrzędne źródłowe: X={x:.3f} | Y={y:.3f} | {"tryb rysowania" if self.view.draw_mode else "tryb zaznaczania"}')
 
-    def start_polygon(self):
-        if not self.doc:return
-        code,ok=QInputDialog.getText(self,'Nowy poligon','Kod GEO-MAP:',text='5216')
-        if not ok:return
-        if not code.isdigit() or len(code)!=4:
-            QMessageBox.warning(self,'Kod','Kod musi składać się z czterech cyfr');return
-        self.polygon_code=code
-        self.current_polygon=[]
-        self.view.draw_mode=True
-        self.view.setDragMode(QGraphicsView.NoDrag)
-        self.status.showMessage('Kliknij co najmniej 3 wierzchołki. Prawy przycisk kończy poligon.')
+    def cancel_edit(self):
+        self.view.draw_mode = False
+        self.view.edit_mode = False
+        self.view.dragged_vertex = None
+        self.view.edit_points = []
+        self.view.setDragMode(QGraphicsView.ScrollHandDrag)
+        self.current_polygon = []
+        self.edit_uid = ''
+        if self.draft_item:
+            self.map_scene.removeItem(self.draft_item)
+            self.draft_item = None
+        if self.snap_marker:
+            self.map_scene.removeItem(self.snap_marker)
+            self.snap_marker = None
+        for handle in self.edit_handles:
+            self.map_scene.removeItem(handle)
+        self.edit_handles = []
+        self.status.showMessage('Tryb zaznaczania. Kliknij działkę; Alt+klik wybiera następny obiekt.')
 
-    def add_polygon_point(self,x,y):
-        self.current_polygon.append((x,y))
-        self.status.showMessage(f'Nowy poligon: {len(self.current_polygon)} wierzchołków; prawy przycisk kończy.')
+    def start_polygon(self):
+        if not self.doc:
+            return
+        self.cancel_edit()
+        code,ok = QInputDialog.getText(self,'Nowy poligon','Kod GEO-MAP:',text='5216')
+        if not ok:
+            return
+        if not code.isdigit() or len(code)!=4:
+            QMessageBox.warning(self,'Kod','Kod musi składać się z czterech cyfr')
+            return
+        self.polygon_code = code
+        self.current_polygon = []
+        self.view.draw_mode = True
+        self.view.setDragMode(QGraphicsView.NoDrag)
+        self._ensure_feedback_items()
+        self.status.showMessage('Klikaj wierzchołki; przyciąganie do punktów i odcinków. Prawy przycisk kończy, Esc anuluje.')
+
+    def preview_polygon(self, x, y):
+        if not self.view.draw_mode:
+            return
+        self._ensure_feedback_items()
+        snap = self._snap(x, y)
+        self.current_snap = snap
+        px, py = (snap.x, snap.y) if snap else (x, y)
+        pts = self.current_polygon + [(px,py)]
+        if pts:
+            path = QPainterPath(QPointF(pts[0][0], -pts[0][1]))
+            for vx, vy in pts[1:]:
+                path.lineTo(vx,-vy)
+            self.draft_item.setPath(path)
+        self.snap_marker.setVisible(bool(snap))
+        if snap:
+            self.snap_marker.setPos(snap.x, -snap.y)
+
+    def add_polygon_point(self, x, y):
+        snap = self._snap(x, y)
+        px, py = (snap.x, snap.y) if snap else (x, y)
+        if self.current_polygon and self.current_polygon[-1] == (px,py):
+            return
+        self.current_polygon.append((px,py))
+        self.preview_polygon(px, py)
+        self.status.showMessage(f'Poligon: {len(self.current_polygon)} wierzchołków; prawy przycisk zamyka, Esc anuluje.')
 
     def finish_polygon(self):
-        self.view.draw_mode=False
-        self.view.setDragMode(QGraphicsView.ScrollHandDrag)
-        if not self.doc or len(self.current_polygon)<3:
-            self.current_polygon=[];return
+        if not self.view.draw_mode:
+            return
+        points = self.current_polygon[:]
+        if len(points)>1 and points[0]==points[-1]:
+            points.pop()
+        if not polygon_is_valid(points):
+            QMessageBox.warning(self,'Poligon','Wymagane co najmniej 3 różne, niewspółliniowe punkty.')
+            return
         label,ok=QInputDialog.getText(self,'Nowy poligon','Numer / opis (A2):')
-        if not ok:self.current_polygon=[];return
+        if not ok:
+            return
         try:
-            uid=self.doc.append_polygon(self.current_polygon,self.polygon_code,label)
-            self.rebuild_scene()
-            if uid in self.graphics_for_uid:self.graphics_for_uid[uid].setSelected(True)
-            self.status.showMessage('Dodano poligon (tryb eksperymentalny). Zapisz jako nowy plik.')
-        except Exception as exc:QMessageBox.warning(self,'Błąd rysowania',str(exc))
-        self.current_polygon=[]
+            uid=self.doc.append_polygon(points,self.polygon_code,label)
+            self.cancel_edit()
+            self.rebuild_scene(fit=False,reselect=uid)
+            self.status.showMessage('Dodano poligon. Zapisz jako NOWY plik MAP; sprawdź wynik w GEO-MAP.')
+        except Exception as exc:
+            QMessageBox.warning(self,'Błąd rysowania',str(exc))
+
+    def start_vertex_edit(self):
+        if not self.doc or not self.selected_uid:
+            QMessageBox.information(self,'Edycja wierzchołków','Zaznacz najpierw poligon (np. działkę 5216).')
+            return
+        obj = self.doc.by_id[self.selected_uid]
+        if not obj.is_closed:
+            QMessageBox.warning(self,'Edycja','Wybrany obiekt nie jest zamkniętym poligonem.')
+            return
+        uid = self.selected_uid
+        self.cancel_edit()
+        self.edit_uid = uid
+        self.view.edit_mode = True
+        self.view.edit_points = [(p.x,p.y) for p in obj.points[:-1]]
+        self.view.setDragMode(QGraphicsView.NoDrag)
+        self._ensure_feedback_items()
+        self.draft_item.setPath(self._path_for(obj))
+        for px,py in self.view.edit_points:
+            handle = QGraphicsEllipseItem(-4,-4,8,8)
+            handle.setPos(px,-py)
+            handle.setPen(QPen(QColor('#ffffff'),1))
+            handle.setBrush(QBrush(QColor('#0d9a90')))
+            handle.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIgnoresTransformations,True)
+            handle.setAcceptedMouseButtons(Qt.NoButton)
+            handle.setZValue(1200)
+            self.map_scene.addItem(handle)
+            self.edit_handles.append(handle)
+        self.status.showMessage('Tryb edycji wierzchołków: przeciągnij punkt poligonu. Przyciąganie do innych obiektów. Esc kończy.')
+
+    def preview_vertex(self, x, y, index):
+        if not self.view.edit_mode or not self.edit_uid:
+            return
+        snap = self._snap(x, y, exclude_uid=self.edit_uid)
+        px, py = (snap.x,snap.y) if snap else (x,y)
+        pts = self.view.edit_points[:]
+        if not 0 <= index < len(pts):
+            return
+        pts[index] = (px,py)
+        if index < len(self.edit_handles):
+            self.edit_handles[index].setPos(px,-py)
+        self._ensure_feedback_items()
+        self.draft_item.setPath(self._path_for(self.doc.by_id[self.edit_uid], pts + [pts[0]]))
+        self.snap_marker.setVisible(True)
+        self.snap_marker.setPos(px, -py)
+
+    def commit_vertex(self, x, y, index):
+        if not self.view.edit_mode or not self.edit_uid:
+            return
+        snap = self._snap(x, y, exclude_uid=self.edit_uid)
+        px, py = (snap.x,snap.y) if snap else (x,y)
+        try:
+            uid = self.edit_uid
+            self.doc.move_polygon_vertex(uid,index,px,py)
+            # Preserve current scale/position; do not zoom out after every edit.
+            self.cancel_edit()
+            self.rebuild_scene(fit=False,reselect=uid)
+            self.status.showMessage('Wierzchołek przesunięty. Zapisz jako kopię i zweryfikuj plik w GEO-MAP.')
+        except Exception as exc:
+            QMessageBox.warning(self,'Nie zmieniono geometrii',str(exc))
+            self.cancel_edit()
+            self.rebuild_scene(fit=False,reselect=self.selected_uid)
 
     def add_raster(self):
         file,_=QFileDialog.getOpenFileName(self,'Otwórz raster z georeferencją',str(Path.home()),'Obrazy (*.png *.jpg *.jpeg *.tif *.tiff)')
