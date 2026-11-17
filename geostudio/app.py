@@ -27,6 +27,8 @@ except ImportError as exc:
 from .geomap import GeoMap, GeoObject, library_layers, library_symbols, library_colors, resolve_layer
 from .interactions import find_snap, polygon_is_valid, closest_point_on_edge
 from .geometry_index import GeometryIndex
+from .map_layout import (detect_source_compilation_scale, validated_compilation_scale,
+    label_ratio, source_text_height, text_line_offset, DEFAULT_SCALE)
 from .coordinates import (CRS_CHOICES, MODERN_EPSG, transform_xy,
     transform_map_copy, output_prj_text, transform_label_positions,
     detected_crs_from_prj)
@@ -252,11 +254,13 @@ class MapView(QGraphicsView):
 class GeoStudioWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle('GeoStudio v0.13 — eksperymentalny edytor GEO-MAP')
+        self.setWindowTitle('GeoStudio v0.14 — eksperymentalny edytor GEO-MAP')
         self.resize(1450, 900)
         self.settings = QSettings('GeoStudio', 'GeoStudio')
         self.doc: GeoMap | None=None
         self.current_crs_epsg = None  # Never guess source CRS from raw coordinates.
+        self.source_compilation_scale = DEFAULT_SCALE
+        self.compilation_scale = DEFAULT_SCALE
         self.catalog: dict[str,str]={}
         self.symbols: dict[str,str]={}
         self.palette: dict[str,tuple[int,int,int]]={}
@@ -362,6 +366,8 @@ class GeoStudioWindow(QMainWindow):
         self.view_menu = vm
         vm.addAction(self._action('Dopasuj widok do mapy',self.fit_all,'Ctrl+0'))
         vm.addAction(self._action('Ustaw skalę widoku 1:N…', self.ask_view_scale, 'Ctrl+M'))
+        vm.addAction(self._action(
+            'Skala opracowania 1:N…', self.ask_compilation_scale, 'Ctrl+F5'))
         orientation_menu = vm.addMenu('Orientacja i obrót mapy')
         orientation_menu.addAction(self._action(
             'Orientacja GEO-MAP (geodezyjna X/Y)',self.reset_orientation,'Ctrl+Alt+0'))
@@ -726,6 +732,10 @@ class GeoStudioWindow(QMainWindow):
             self.settings.setValue('last_map_dir', str(Path(file).parent))
             self.visual_styles = load_styles(file)
             self.label_positions = load_label_positions(file)
+            self.source_compilation_scale = detect_source_compilation_scale(doc.objects)
+            saved = self.settings.value(self._compilation_scale_key(file), None)
+            self.compilation_scale = validated_compilation_scale(
+                saved, default=self.source_compilation_scale)
             self.selected_uids = []
             self._auto_copy_path = None
             self._auto_copy_digest = None
@@ -734,7 +744,8 @@ class GeoStudioWindow(QMainWindow):
             self._last_pick_candidates = ()
             self._look_for_libraries(Path(file).parent)
             self.rebuild_scene()
-            self.setWindowTitle('GeoStudio v0.13 — '+Path(file).name)
+            self._update_compilation_scale_indicator()
+            self.setWindowTitle('GeoStudio v0.14 — '+Path(file).name)
             self.status.showMessage(f'{len(doc.objects)} obiektów, {len(doc.lines)} wierszy | {file}')
         except Exception as exc: QMessageBox.critical(self,'Błąd odczytu mapy',str(exc))
 
@@ -1045,16 +1056,12 @@ class GeoStudioWindow(QMainWindow):
                     else:
                         font.setFamily('Segoe UI')
                     color=QColor('#111111')
-                    try:
-                        native_height = float(obj.fields.get('A1','15'))
-                    except ValueError:
-                        native_height = 15
-                    if not math.isfinite(native_height):
-                        native_height=15
-                    # GEO-MAP stores a map-unit text height in A1. Use
-                    # the source's height rather than the same tiny 11 px
-                    # scale for titles, compass letters and legend captions.
-                    ratio = min(15., max(.3, 2.1 * max(5,native_height) / 24))
+                    # A1 height is in the map's coordinate units. In v0.13
+                    # it was MULTIPLIED by 2.1, so independent title rows
+                    # overlapped even though their geographic P anchors
+                    # were correct. Set the drawn glyph's actual height to
+                    # A1 instead; compilation scale controls an independent
+                    # magnification factor for map presentation.
                 else:
                     font.setPixelSize(11)
                     color=QColor('#58686F')
@@ -1063,6 +1070,9 @@ class GeoStudioWindow(QMainWindow):
                 label.setBrush(QBrush(color))
                 label.setAcceptedMouseButtons(Qt.NoButton)
                 bounds=label.boundingRect()
+                ratio=label_ratio(obj.code,obj.fields,bounds.height(),
+                                  self.compilation_scale,
+                                  self.source_compilation_scale)
                 custom=self.label_positions.get(obj.uid,{}).get(field)
                 x,y = custom if custom else anchor
                 label.setPos(x,-y)
@@ -1073,11 +1083,12 @@ class GeoStudioWindow(QMainWindow):
                     offset= (-bounds.height()*.6 if field=='A1'
                              else bounds.height()*.6)
                 elif obj.code in {'7900','6000','6301'} and not custom:
-                    offset=(line_index-(line_count-1)/2)*bounds.height()*1.25
+                    offset=text_line_offset(line_index,line_count,bounds.height())
                 label.setData(0,obj.uid)
                 label.setData(1,field)
                 label.setData(2,offset)
                 label.setData(3,ratio)
+                label.setData(4,ratio/(self.compilation_scale/self.source_compilation_scale))
                 label.setZValue(1300)
                 self.map_scene.addItem(label)
                 self.items_by_layer[layer].append(label)
@@ -1136,8 +1147,11 @@ class GeoStudioWindow(QMainWindow):
         if not self.doc or not hasattr(self,'labels_action'):
             return
         transform=self.view.transform()
+        scale_factor=self.compilation_scale/self.source_compilation_scale
         for item in self.labels:
-            ratio=float(item.data(3) or .55)
+            base_ratio=float(item.data(4) or .55)
+            ratio=base_ratio*scale_factor
+            item.setData(3,ratio)
             offset=float(item.data(2) or 0)
             item.setTransform(self._upright_map_text_transform(
                 transform,item.boundingRect(),ratio,offset))
@@ -1693,6 +1707,54 @@ class GeoStudioWindow(QMainWindow):
         self.scale_combo.activated.connect(lambda _idx: self.apply_view_scale())
         self.scale_combo.lineEdit().returnPressed.connect(self.apply_view_scale)
         self.status.addPermanentWidget(self.scale_combo)
+        self.compilation_label=QLabel(self)
+        self.compilation_label.setObjectName('GeoStudioCompilationScale')
+        self.status.addPermanentWidget(self.compilation_label)
+        self._update_compilation_scale_indicator()
+
+    @staticmethod
+    def _compilation_scale_key(path):
+        """Per-file local setting: does not modify source MAP or GEO-MAP data."""
+        return 'compilation_scale/' + hashlib.sha256(
+            str(Path(path).resolve()).encode('utf-8')).hexdigest()
+
+    def _update_compilation_scale_indicator(self):
+        if not hasattr(self,'compilation_label'):
+            return
+        self.compilation_label.setText(f'Opracowanie 1:{self.compilation_scale}')
+        self.compilation_label.setToolTip(
+            f'Skala prezentacji symboli i napisów, niezależna od skali '
+            f'widoku. Skala odczytana z legendy: 1:{self.source_compilation_scale}. '
+            'Ctrl+F5 zmienia ustawienie w GeoStudio (nie oryginalny MAP).')
+
+    def set_compilation_scale(self, denominator: int):
+        """Update the cartographic presentation scale without map geometry edits."""
+        denominator = validated_compilation_scale(denominator)
+        if denominator is None:
+            raise ValueError('Skala opracowania 1:N musi być od 1:100 do 1:1000000.')
+        self.compilation_scale=denominator
+        if self.doc and self.doc.filename:
+            self.settings.setValue(
+                self._compilation_scale_key(self.doc.filename),denominator)
+        self._update_compilation_scale_indicator()
+        self.update_label_visibility()
+        self.status.showMessage(
+            f'Skala opracowania GeoStudio ustawiona na 1:{denominator}. '
+            'Zmienia prezentację napisów, nie skalę widoku ani danych GEO-MAP.')
+
+    def ask_compilation_scale(self):
+        if not self.doc:
+            QMessageBox.information(self,'Skala opracowania',
+                                   'Najpierw otwórz mapę MAP.')
+            return
+        value, accepted = QInputDialog.getInt(
+            self,'Skala opracowania (Ctrl+F5)',
+            'Skala opracowania 1:N — rozmiar napisów i opisu arkusza.\\n'
+            'Skala widoku w dolnym pasku jest niezależna.\\n'
+            'To ustawienie GeoStudio, nie modyfikuje oryginalnej MAP:',
+            self.compilation_scale,100,1_000_000,100)
+        if accepted:
+            self.set_compilation_scale(value)
 
     def _view_pixel_scale(self):
         t = self.view.transform()
