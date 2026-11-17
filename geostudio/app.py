@@ -18,7 +18,8 @@ try:
     from PySide6.QtWidgets import (QApplication, QMainWindow, QFileDialog, QGraphicsView, QGraphicsScene,
         QGraphicsPathItem, QGraphicsEllipseItem, QGraphicsPixmapItem, QGraphicsSimpleTextItem, QGraphicsItem, QDockWidget,
         QTreeWidget, QTreeWidgetItem, QToolBar, QMessageBox, QStatusBar, QInputDialog, QMenu,
-        QLabel, QWidget, QVBoxLayout, QHeaderView, QSplitter, QComboBox)
+        QLabel, QWidget, QVBoxLayout, QHeaderView, QSplitter, QComboBox,
+        QDialog, QDialogButtonBox, QFormLayout, QLineEdit)
 except ImportError as exc:
     raise SystemExit('Zainstaluj GUI: python -m pip install -e .\nBrakuje PySide6') from exc
 
@@ -84,16 +85,28 @@ class MapView(QGraphicsView):
         return pt.x(), -pt.y()
 
     def wheelEvent(self, event):
-        # Use the same anchor and controlled scaling in every tool.
+        """Zoom at cursor, independent of the active map tool or Qt anchor state."""
         delta = event.angleDelta().y()
         if not delta:
             event.accept()
             return
-        factor = 1.2 if delta > 0 else 1 / 1.2
+        factor = 1.2 ** (delta / 120.0)
         current = abs(self.transform().m11())
-        if 1e-5 <= current * factor <= 4000:
-            self.scale(factor, factor)
-            self.zoom_changed.emit()
+        if not (1e-5 <= current * factor <= 4000):
+            event.accept()
+            return
+        cursor = event.position().toPoint()
+        fixed_scene_point = self.mapToScene(cursor)
+        self.setTransformationAnchor(QGraphicsView.NoAnchor)
+        self.scale(factor, factor)
+        # Scrollbar correction is explicit: map the same world point after
+        # scaling, then bring it back under the original cursor pixel.
+        shifted = self.mapFromScene(fixed_scene_point)
+        self.horizontalScrollBar().setValue(
+            self.horizontalScrollBar().value() + shifted.x() - cursor.x())
+        self.verticalScrollBar().setValue(
+            self.verticalScrollBar().value() + shifted.y() - cursor.y())
+        self.zoom_changed.emit()
         event.accept()
 
     def scrollContentsBy(self, dx, dy):
@@ -193,7 +206,7 @@ class MapView(QGraphicsView):
 class GeoStudioWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle('GeoStudio v0.4 — eksperymentalny edytor GEO-MAP')
+        self.setWindowTitle('GeoStudio v0.5 — eksperymentalny edytor GEO-MAP')
         self.resize(1450, 900)
         self.doc: GeoMap | None=None
         self.catalog: dict[str,str]={}
@@ -203,6 +216,7 @@ class GeoStudioWindow(QMainWindow):
         self.graphics_for_uid={}
         self.labels=[]
         self.labels_enabled = True
+        self.hide_multipart_connectors = True
         self.layer_for_uid = {}
         self.hidden_layers = set()
         self.geometry_index = GeometryIndex(())
@@ -265,8 +279,14 @@ class GeoStudioWindow(QMainWindow):
         self.finish_action.setEnabled(False)
         em.addAction(self._action('Zakończ / anuluj narzędzie',self.cancel_edit,'Esc'))
         em.addAction(self._action('Edytuj atrybut zaznaczonego obiektu…',self.edit_selected,'F2'))
+        self.delete_action = self._action('Usuń zaznaczony obiekt', self.delete_selected, 'Delete')
+        em.addAction(self.delete_action)
         vm=self.menuBar().addMenu('&Widok')
         vm.addAction(self._action('Dopasuj widok do mapy',self.fit_all,'Ctrl+0'))
+        self.multipart_action = vm.addAction('Ukryj łączniki między częściami obiektu (P 0)')
+        self.multipart_action.setCheckable(True)
+        self.multipart_action.setChecked(True)
+        self.multipart_action.toggled.connect(self.toggle_multipart_connectors)
         self.labels_action = vm.addAction('Podpisy A1/A2 (widoczność)')
         self.labels_action.setCheckable(True)
         self.labels_action.setChecked(True)
@@ -386,14 +406,30 @@ class GeoStudioWindow(QMainWindow):
         except Exception as exc: QMessageBox.critical(self,'Błąd bibliotek',str(exc))
 
     @staticmethod
-    def _path_for(obj, points_override=None):
+    def _path_for(obj, points_override=None, *, hide_connectors=False):
         points = points_override if points_override is not None else [(p.x, p.y) for p in obj.points]
         if not points:
             return QPainterPath()
         path = QPainterPath(QPointF(points[0][0], -points[0][1]))
-        for x, y in points[1:]:
-            path.lineTo(x, -y)
+        previous = obj.points[0] if obj.points else None
+        for i, (x, y) in enumerate(points[1:], 1):
+            if (hide_connectors and points_override is None and previous is not None
+                    and previous.point_type == 0):
+                path.moveTo(x, -y)
+            else:
+                path.lineTo(x, -y)
+            if points_override is None:
+                previous = obj.points[i]
         return path
+
+    def toggle_multipart_connectors(self, checked):
+        self.hide_multipart_connectors = bool(checked)
+        selected = self.selected_uid
+        if self.doc:
+            self.rebuild_scene(fit=False, reselect=selected)
+        self.status.showMessage('Łączniki między częściami mapy: ' +
+                                ('ukryte' if checked else 'widoczne') +
+                                '. Zmiana jest tylko wizualna; plik MAP pozostaje bez zmian.')
 
     @staticmethod
     def _label_anchor(obj):
@@ -420,7 +456,7 @@ class GeoStudioWindow(QMainWindow):
         if not self.doc:
             return
         self.map_scene.clear()
-        self.geometry_index = GeometryIndex(self.doc.objects)
+        self.geometry_index = GeometryIndex(self.doc.objects, hide_connectors=self.hide_multipart_connectors)
         self.layer_for_uid = {}
         self.graphics_for_uid = {}
         self.items_by_layer = defaultdict(list)
@@ -446,7 +482,7 @@ class GeoStudioWindow(QMainWindow):
                 item.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIgnoresTransformations, True)
                 item.setBrush(QBrush(color))
             else:
-                item = QGraphicsPathItem(self._path_for(obj))
+                item = QGraphicsPathItem(self._path_for(obj, hide_connectors=self.hide_multipart_connectors))
                 if obj.is_closed:
                     item.setBrush(QBrush(QColor(color.red(),color.green(),color.blue(),18)))
             item.setPen(pen)
@@ -487,7 +523,7 @@ class GeoStudioWindow(QMainWindow):
         if fit:
             self.fit_all()
         else:
-            self.map_scene.setSceneRect(self._world_scene_rect())
+            self.map_scene.setSceneRect(self._navigation_scene_rect())
             self.update_label_visibility()
         if reselect:
             self._select_uid(reselect)
@@ -598,7 +634,7 @@ class GeoStudioWindow(QMainWindow):
             self.update_label_visibility()
             return
         obj = self.doc.by_id[self.selected_uid]
-        self.highlight_item = QGraphicsPathItem(self._path_for(obj))
+        self.highlight_item = QGraphicsPathItem(self._path_for(obj, hide_connectors=self.hide_multipart_connectors))
         outline = QPen(QColor('#ffb000'), 3)
         outline.setCosmetic(True)
         self.highlight_item.setPen(outline)
@@ -651,7 +687,8 @@ class GeoStudioWindow(QMainWindow):
             return None
         candidates = [obj for obj in self.geometry_index.nearby(x, y, radius)
                       if self.layer_for_uid.get(obj.uid, '') not in self.hidden_layers]
-        return find_snap(x, y, candidates, radius, exclude_uid=exclude_uid)
+        return find_snap(x, y, candidates, radius, exclude_uid=exclude_uid,
+                         hide_connectors=self.hide_multipart_connectors)
 
     def _ensure_feedback_items(self):
         if self.draft_item is None:
@@ -710,6 +747,31 @@ class GeoStudioWindow(QMainWindow):
             self.status.showMessage('Zmieniono '+key+' w pamięci. Użyj „Zapisz jako”, by utworzyć nowy plik.')
         except Exception as exc:QMessageBox.warning(self,'Nie udało się zmienić atrybutu',str(exc))
 
+    def delete_selected(self):
+        """Delete whole GEO-MAP feature, never individual shared boundary points."""
+        if not self.doc or not self.selected_uid:
+            self.status.showMessage('Najpierw zaznacz obiekt, który chcesz usunąć.')
+            return
+        uid = self.selected_uid
+        obj = self.doc.by_id[uid]
+        prompt = (f'Usunąć obiekt {obj.code}, A1={obj.fields.get("A1", "")}, '
+                  f'A2={obj.fields.get("A2", "")}?\\n'
+                  'Usunięcie dotyczy CAŁEGO rekordu, także wszystkich jego części.\\n'
+                  'Nie ma jeszcze Cofnij. Oryginalny MAP pozostanie bez zmian.')
+        answer = QMessageBox.question(self, 'Potwierdź usunięcie', prompt,
+                                      QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
+        if answer != QMessageBox.Yes:
+            return
+        self.cancel_edit()
+        self.doc.delete_object(uid)
+        self.selected_uid = ''
+        self._last_pick_pos = None
+        self._last_pick_candidates = ()
+        self.rebuild_scene(fit=False)
+        saved = self._autosave_work_copy()
+        self.status.showMessage('Usunięto obiekt z mapy.' +
+            (f' Kopia robocza: {saved}' if saved else ' Zapisz jako nową mapę.'))
+
     def save_map(self):
         if not self.doc:return
         source=Path(self.doc.filename) if self.doc.filename else Path.home()/'mapa.MAP'
@@ -737,13 +799,21 @@ class GeoStudioWindow(QMainWindow):
         return QRectF(xmin - padding, -(ymax + padding),
                       xmax - xmin + 2 * padding, ymax - ymin + 2 * padding)
 
+    def _navigation_scene_rect(self):
+        """Provide pan margin so wheel zoom can stay anchored even near map edges."""
+        rect = self._world_scene_rect()
+        if rect.isEmpty():
+            return rect
+        margin = max(rect.width(), rect.height(), 10.0)
+        return rect.adjusted(-margin, -margin, margin, margin)
+
     def fit_all(self):
         if not self.doc:
             return
         rect = self._world_scene_rect()
         if rect.isEmpty():
             return
-        self.map_scene.setSceneRect(rect)
+        self.map_scene.setSceneRect(self._navigation_scene_rect())
         self.view.fitInView(rect, Qt.KeepAspectRatio)
         self.update_label_visibility()
 
@@ -858,27 +928,60 @@ class GeoStudioWindow(QMainWindow):
         self.preview_polygon(px, py)
         self.status.showMessage(f'Poligon: {len(self.current_polygon)} punkty. Kliknij początek, Enter, prawy przycisk lub ✓ Zakończ.')
 
+    def _ask_polygon_attributes(self):
+        """Full form for new-object attributes; blanks are stored as editable empty fields."""
+        dialog = QDialog(self)
+        dialog.setWindowTitle(f'Nowy poligon {self.polygon_code} — atrybuty')
+        dialog.resize(560, 480)
+        layout = QFormLayout(dialog)
+        entries = {}
+        for key, title in (
+            ('A1', 'A1 — atrybut 1'),
+            ('A2', 'A2 — numer / opis'),
+            ('A3', 'A3 — identyfikator'),
+            ('A4', 'A4 — informacje'),
+            ('A5', 'A5 — dodatkowe dane'),
+            ('A6', 'A6 — powierzchnie / użytki'),
+            ('TX', 'TX — uwagi'),
+            ('MP', 'MP — parametr'),
+            ('DT', 'DT — data'),
+            ('KR', 'KR — referencje'),
+        ):
+            entry = QLineEdit(dialog)
+            entry.setText('0' if key == 'MP' else '')
+            entry.setPlaceholderText('Wpisz wartość (może pozostać puste)')
+            layout.addRow(title, entry)
+            entries[key] = entry
+        buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        buttons.accepted.connect(dialog.accept)
+        buttons.rejected.connect(dialog.reject)
+        layout.addRow(buttons)
+        if dialog.exec() != QDialog.Accepted:
+            return None
+        return {key: widget.text() for key, widget in entries.items()}
+
     def finish_polygon(self):
         if not self.view.draw_mode:
             return
         points = self.current_polygon[:]
-        if len(points)>1 and points[0]==points[-1]:
+        if len(points) > 1 and points[0] == points[-1]:
             points.pop()
         if not polygon_is_valid(points):
-            QMessageBox.warning(self,'Poligon','Wymagane co najmniej 3 różne, niewspółliniowe punkty.')
+            QMessageBox.warning(self, 'Poligon',
+                'Wymagane co najmniej 3 różne, niewspółliniowe punkty.')
             return
-        label,ok=QInputDialog.getText(self,'Nowy poligon','Numer / opis (A2):')
-        if not ok:
+        attrs = self._ask_polygon_attributes()
+        if attrs is None:
             return
         try:
-            uid=self.doc.append_polygon(points,self.polygon_code,label)
+            uid = self.doc.append_polygon(points, self.polygon_code, fields=attrs)
             self.cancel_edit()
-            self.rebuild_scene(fit=False,reselect=uid)
+            self.rebuild_scene(fit=False, reselect=uid)
             saved = self._autosave_work_copy()
-            self.status.showMessage('Zamknięto poligon.' +
+            self.status.showMessage('Zamknięto poligon i zapisano pola A1–A6, TX i metadane.' +
                 (f' Kopia robocza: {saved}' if saved else ' Użyj Zapisz jako, by zapisać kopię mapy.'))
         except Exception as exc:
-            QMessageBox.warning(self,'Błąd rysowania',str(exc))
+            QMessageBox.warning(self, 'Błąd rysowania', str(exc))
 
     def _autosave_work_copy(self):
         """Automatically persist edits to a NEW work-copy, never the source file.

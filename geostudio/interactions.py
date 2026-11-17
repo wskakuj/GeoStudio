@@ -32,7 +32,7 @@ def closest_point_on_edge(x: float, y: float, ax: float, ay: float, bx: float, b
 
 
 def find_snap(x: float, y: float, objects: Iterable[GeoObject], radius: float,
-              *, exclude_uid: str | None = None) -> SnapResult | None:
+              *, exclude_uid: str | None = None, hide_connectors=False) -> SnapResult | None:
     """Snap to the nearest vertex; otherwise use the nearest line segment.
 
     Vertex snaps take precedence over edges within the tolerance, including
@@ -50,6 +50,8 @@ def find_snap(x: float, y: float, objects: Iterable[GeoObject], radius: float,
             if d <= radius and (best_vertex is None or d < best_vertex.distance):
                 best_vertex = SnapResult(p.x, p.y, 'vertex', obj.uid, obj.code, d)
         for a, b in zip(obj.points, obj.points[1:]):
+            if hide_connectors and a.point_type == 0:
+                continue  # never snap to an invisible connector
             if a.x == b.x and a.y == b.y:
                 continue
             cx, cy = closest_point_on_edge(x, y, a.x, a.y, b.x, b.y)

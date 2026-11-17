@@ -1,6 +1,6 @@
 # GeoStudio — projekt nowoczesnego edytora map geodezyjnych
 
-**Wczesny prototyp v0.3.0 — wersja testowa, nie do dokumentacji urzędowej ani produkcyjnej.**
+**Wczesny prototyp v0.5.0 — wersja testowa, nie do dokumentacji urzędowej ani produkcyjnej.**
 
 GeoStudio ma docelowo umożliwiać edycję plików GEO-MAP `.MAP` z zachowaniem
 katalogów `.SYM`, `.LAY`, `.CDF`, a także pomiary, rastry, eksporty DXF/VAL
@@ -173,3 +173,29 @@ cd GeoStudio
 ```
 
 Przy kolejnych wersjach uruchamiaj tylko `update_windows.bat` — skrypt wykonuje bezpieczne `git pull --ff-only`, aktualizuje zależności i uruchamia program. Kopie pobrane przez **Download ZIP nie zawierają `.git`** i nie mogą korzystać z `git pull`; w takim przypadku zacznij od powyższego `git clone`.
+
+## v0.5 — dopracowanie edycji, atrybutów i wieloczęściowych obiektów
+
+- **Przybliżanie przy kursorze:** rolka zachowuje współrzędne punktu pod myszką,
+  również w trybie zaznaczania, rysowania i edycji.
+- **Nowy poligon:** po zakończeniu rysowania otwierany jest formularz z polami
+  A1–A6, TX, MP, DT i KR. Możesz zostawić je puste, a po zapisie uzupełnić je
+  przez panel atrybutów. Tylko kopia robocza jest zapisywana automatycznie.
+- **Delete:** zaznacz obiekt w trybie S, naciśnij Delete i potwierdź usunięcie
+  całego rekordu. Obecnie nie ma Ctrl+Z, dlatego zachowuj oryginalny MAP.
+- **Widok → Ukryj łączniki między częściami obiektu (P 0):** domyślnie włączone.
+  W formacie GEO-MAP P 0 może kończyć podścieżkę obiektu. Dotychczas GeoStudio
+  błędnie łączył ją z kolejną podścieżką. Przełącznik wpływa wyłącznie na
+  renderowanie, wybieranie i przyciąganie, nie na zapis oryginalnego pliku.
+  Przykład: obiekt 5220, A1=105, A2=RV w MOKRA WIEŚ.MAP.
+- **Punkt kontrolny:** po każdym usunięciu lub dodaniu obiektu sprawdź kopię
+  w oryginalnym GEO-MAP. Nie ma jeszcze gwarancji pełnej zgodności topologii,
+  numeracji, powierzchni i atrybutów urzędowych.
+
+**Uwaga:** usuwanie obiektu nie usuwa wspólnych wierzchołków z sąsiednich
+obiektów. Nie są także automatycznie przeliczane urzędowe pola A6.
+
+### Aktualizacja programu
+
+Instalacja sklonowana przez Git: uruchom `update_windows.bat`.
+Po pobraniu ZIP musisz pobrać ZIP nowej wersji i ponownie zainstalować zależności.
