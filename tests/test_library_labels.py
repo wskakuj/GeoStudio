@@ -84,7 +84,11 @@ def test_labels_A1_A2_independent_and_preserved_on_layer_toggle(gui, tmp_path):
     gui.start_label_edit()
     item=gui.label_items[(uid,'A1')]
     pos=item.pos()
-    gui.begin_label_drag(pos.x(),-pos.y())
+    # Hit the rendered A1 glyph, not the shared A1/A2 geographic anchor.
+    centre=item.deviceTransform(gui.view.viewportTransform()).mapRect(
+        item.boundingRect()).center().toPoint()
+    scene=gui.view.mapToScene(centre)
+    gui.begin_label_drag(scene.x(),-scene.y())
     assert gui._active_label is item
     gui.move_label(pos.x()+2,-pos.y()+1)
     gui.end_label_drag(pos.x()+2,-pos.y()+1)
