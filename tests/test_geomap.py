@@ -91,3 +91,58 @@ def test_insert_polygon_vertex_on_last_closing_edge():
     assert obj.points[-2].x == pytest.approx(.5)
     assert obj.points[-2].y == pytest.approx(.5)
     assert obj.area_m2 == pytest.approx(.5)
+
+def test_new_polygon_has_full_editable_fields():
+    doc = GeoMap(fixture_map())
+    fields = {'A1':'105','A2':'RV','A3':'143411_5.0014','A4':'','A5':'',
+              'A6':'','TX':'próba','MP':'0','DT':'','KR':''}
+    uid = doc.append_polygon([(2,2),(4,2),(4,4)],'5220',fields=fields)
+    again = GeoMap(doc.to_bytes())
+    assert again.checksum_valid
+    assert again.declared_lines == len(again.lines)
+    assert again.by_id[uid].fields['A1'] == '105'
+    assert again.by_id[uid].fields['A4'] == ''
+    assert again.by_id[uid].fields['TX'] == 'próba'
+    assert again.by_id[uid].is_closed
+
+
+def test_delete_object_removes_record_not_neighbors():
+    doc = GeoMap(fixture_map())
+    original = doc.to_bytes()
+    uid = doc.append_polygon([(2,2),(4,2),(4,4)],'5220','RV')
+    assert len(doc.objects) == 2
+    doc.delete_object(uid)
+    verified = GeoMap(doc.to_bytes())
+    assert verified.checksum_valid
+    assert verified.declared_lines == len(verified.lines)
+    assert verified.to_bytes() == original
+    assert len(verified.objects) == 1
+    with pytest.raises(KeyError):
+        doc.delete_object(uid)
+
+
+def test_multipart_p0_marks_breaks_without_changing_original_bytes():
+    # A real GEO-MAP multipart object has P 0 after each component.
+    body = (
+        b';# EXT 3500 0 0 20 20\\r\\n'
+        b'*5220 32768  16          0\\r\\n'
+        b':ID[MULTI]\\r\\n:A1[105]\\r\\n:A2[RV]\\r\\n'
+        b'P 1   0.000   0.000\\r\\n'
+        b'P 1   1.000   0.000\\r\\n'
+        b'P 1   1.000   1.000\\r\\n'
+        b'P 0   0.000   0.000\\r\\n'
+        b'P 1   10.000   10.000\\r\\n'
+        b'P 1   11.000   10.000\\r\\n'
+        b'P 1   11.000   11.000\\r\\n'
+        b'P 0   10.000   10.000\\r\\n'
+    )
+    first = (b';# Plik danych systemu GEO-MAP ver=[ 8.00]  N=[          13] CHK=['
+             + hashlib.md5(body).hexdigest().encode() + b']\\r\\n')
+    data = first + body
+    doc = GeoMap(data)
+    assert doc.checksum_valid
+    assert doc.to_bytes() == data
+    obj = doc.by_id['MULTI']
+    assert [len(part) for part in obj.display_parts] == [4, 4]
+    assert obj.points[3].point_type == 0
+    assert obj.points[4].point_type == 1
