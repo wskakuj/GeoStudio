@@ -240,6 +240,7 @@ class GeoStudioWindow(QMainWindow):
         self._last_pick_candidates = ()
         self._auto_copy_path = None
         self._auto_copy_digest = None
+        self._auto_style_digest = None
         self.highlight_item=None
         self.draft_item=None
         self.snap_marker=None
@@ -506,6 +507,7 @@ class GeoStudioWindow(QMainWindow):
             self.selected_uids = []
             self._auto_copy_path = None
             self._auto_copy_digest = None
+            self._auto_style_digest = None
             self._last_pick_pos = None
             self._last_pick_candidates = ()
             self._look_for_libraries(Path(file).parent)
@@ -1113,17 +1115,28 @@ class GeoStudioWindow(QMainWindow):
             (f' Kopia robocza: {saved}' if saved else ' Zapisz jako nową mapę.'))
 
     def save_map(self):
-        if not self.doc:return
-        source=Path(self.doc.filename) if self.doc.filename else Path.home()/'mapa.MAP'
-        default=source.with_name(source.stem+'_GeoStudio.MAP')
-        file,_=QFileDialog.getSaveFileName(self,'Zapisz zmodyfikowaną MAP (nowy plik)',str(default),'GEO-MAP (*.MAP)')
-        if not file:return
+        if not self.doc:
+            return
+        source = Path(self.doc.filename) if self.doc.filename else Path.home() / 'mapa.MAP'
+        default = source.with_name(source.stem + '_GeoStudio.MAP')
+        file, _ = QFileDialog.getSaveFileName(self,
+            'Zapisz zmodyfikowaną MAP (nowy plik)', str(default),
+            'GEO-MAP (*.MAP)')
+        if not file:
+            return
         try:
+            if self.visual_styles and sidecar_path(file).exists():
+                raise FileExistsError('Plik stylów o tej nazwie już istnieje.')
             self.doc.save_as(file)
-            QMessageBox.information(self,'Zapisano eksperymentalną MAP',
-                'Zapisano nowy plik z przeliczonym CHK i N. Przed użyciem operacyjnym sprawdź go w GEO-MAP. '
-                'Oryginał pozostał niezmieniony.')
-        except Exception as exc:QMessageBox.warning(self,'Zapis przerwany',str(exc))
+            if self.visual_styles:
+                write_styles(file, self.visual_styles)
+            QMessageBox.information(self, 'Zapisano eksperymentalną MAP',
+                'Utworzono nowy plik MAP. Osobne wypełnienia (jeśli używane) '
+                'są zapisane w towarzyszącym pliku *.geostudio.json i nie '
+                'są interpretowane przez GEO-MAP. Sprawdź kopię w GEO-MAP. '
+                'Oryginał nie został nadpisany.')
+        except Exception as exc:
+            QMessageBox.warning(self, 'Zapis przerwany', str(exc))
 
     def _world_scene_rect(self):
         """Fit real map geometry, never pixel-sized labels or edit markers."""
@@ -1347,6 +1360,22 @@ class GeoStudioWindow(QMainWindow):
         except Exception as exc:
             QMessageBox.warning(self, 'Błąd rysowania', str(exc))
 
+    def _persist_work_copy_styles(self):
+        """Protect app-owned style sidecars against out-of-band edits."""
+        if not self._auto_copy_path:
+            return
+        target = sidecar_path(self._auto_copy_path)
+        if not self.visual_styles and self._auto_style_digest is None:
+            return
+        if self._auto_style_digest is None:
+            write_styles(self._auto_copy_path, self.visual_styles, overwrite=False)
+        else:
+            if not target.is_file() or hashlib.sha256(
+                    target.read_bytes()).digest() != self._auto_style_digest:
+                raise RuntimeError('Plik stylów zmieniono poza GeoStudio; nie nadpisuję go.')
+            write_styles(self._auto_copy_path, self.visual_styles, overwrite=True)
+        self._auto_style_digest = hashlib.sha256(target.read_bytes()).digest()
+
     def _autosave_work_copy(self):
         """Automatically persist edits to a NEW work-copy, never the source file.
 
@@ -1390,6 +1419,7 @@ class GeoStudioWindow(QMainWindow):
                 finally:
                     if os.path.exists(temporary):
                         os.unlink(temporary)
+            self._persist_work_copy_styles()
             return self._auto_copy_path
         except (OSError, ValueError, RuntimeError) as exc:
             QMessageBox.warning(self,'Kopia robocza nie została zapisana',
@@ -1568,6 +1598,8 @@ def main():
         path=Path(sys.argv[1])
         if path.exists():
             window.doc=GeoMap.open(path)
+            window.visual_styles=load_styles(path)
+            window.settings.setValue('last_map_dir',str(path.parent))
             window._look_for_libraries(path.parent)
             window.rebuild_scene()
     sys.exit(app.exec())
