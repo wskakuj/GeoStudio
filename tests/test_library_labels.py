@@ -163,3 +163,33 @@ def test_label_layer_toggle_visibility_is_reversible(gui):
     gui._select_uid(uid)
     assert gui.label_items[(uid,'A1')].isVisible()
     assert gui.label_items[(uid,'A2')].isVisible()
+
+
+def test_real_mouse_drag_moves_A2_not_A1(gui, tmp_path):
+    from geostudio.geomap import GeoMap
+    from test_geomap import fixture_map
+    from PySide6.QtTest import QTest
+    from PySide6.QtCore import Qt, QPoint
+    f=tmp_path/'mapa.MAP'
+    f.write_bytes(fixture_map())
+    gui.doc=GeoMap.open(f)
+    uid=gui.doc.append_polygon([(5,5),(10,5),(5,10)],'5310',
+        fields={'A1':'a', 'A2':'b'})
+    gui.rebuild_scene()
+    gui._select_uid(uid)
+    gui.start_label_edit()
+    item=gui.label_items[(uid,'A2')]
+    pos=gui.view.mapFromScene(item.pos())
+    box=item.boundingRect()
+    tr=item.transform()
+    click=pos + QPoint(round(tr.dx()+box.width()/2),
+                       round(tr.dy()+box.height()/2))
+    QTest.mousePress(gui.view.viewport(),Qt.LeftButton,pos=click)
+    assert gui._active_label is item
+    new=click+QPoint(22,12)
+    QTest.mouseMove(gui.view.viewport(),pos=new)
+    QTest.mouseRelease(gui.view.viewport(),Qt.LeftButton,pos=new)
+    assert 'A2' in gui.label_positions[uid]
+    assert 'A1' not in gui.label_positions[uid]
+    assert gui._auto_copy_path is not None
+    assert load_label_positions(gui._auto_copy_path)[uid]['A2']==gui.label_positions[uid]['A2']
