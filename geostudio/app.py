@@ -946,13 +946,20 @@ class GeoStudioWindow(QMainWindow):
                 # All boundary lines are placed ABOVE every filled polygon.
                 # Parcel boundaries must stay visible even under opaque
                 # forestry / land-use polygons, irrespective of object order.
-                item.setZValue(180 if obj.code=='5216' else
+                item.setZValue(220 if obj.code=='5214' else
+                               180 if obj.code=='5216' else
                                130 if obj.code in {'5220','5230'} else 100)
                 parts = obj.display_parts
                 is_multipart_area = bool(parts) and all(
                     len(part) >= 4 and (part[0].x,part[0].y) ==
                     (part[-1].x,part[-1].y) for part in parts)
                 if obj.is_closed or is_multipart_area:
+                    # The 5200 triangular objects with FA=0 form the black
+                    # quarters of the map's compass rose. Do not fill all
+                    # 5200 legends/boxes: only the explicit source triangles.
+                    if (obj.code == '5200' and len(obj.points)==4
+                            and obj.fields.get('FA')=='0'):
+                        fill_brush=QBrush(QColor('#111111'))
                     fill_item = QGraphicsPathItem(path)
                     fill_item.setBrush(fill_brush)
                     fill_item.setPen(QPen(Qt.NoPen))
@@ -965,6 +972,11 @@ class GeoStudioWindow(QMainWindow):
                     self.items_by_layer[layer].append(fill_item)
                     if obj.uid:
                         self.fill_items_for_uid[obj.uid] = fill_item
+            # Text-only map annotation codes carry a P-to-P baseline,
+            # not a printed line. Drawing that baseline caused long black
+            # strokes through the title, legend and agency captions.
+            if obj.code in {'6900','7900','6000','6301'} and obj.fields.get('TX'):
+                pen=QPen(Qt.NoPen)
             item.setPen(pen)
             # We handle picking ourselves; Qt's default selection draws an
             # unwanted bounding RECTANGLE instead of the exact contour.
