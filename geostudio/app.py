@@ -25,7 +25,7 @@ except ImportError as exc:
     raise SystemExit('Zainstaluj GUI: python -m pip install -e .\nBrakuje PySide6') from exc
 
 from .geomap import GeoMap, GeoObject, library_layers, library_symbols, library_colors, resolve_layer
-from .interactions import find_snap, polygon_is_valid, closest_point_on_edge
+from .interactions import polygon_is_valid, closest_point_on_edge
 from .geometry_index import GeometryIndex
 from .scene_builder import RenderContext, build_scene, label_anchor, object_path
 from .map_tools import MapView
