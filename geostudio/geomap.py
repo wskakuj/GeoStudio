@@ -30,6 +30,7 @@ class GeoPoint:
     x: float
     y: float
     label: str = ""
+    point_type: int = 1  # GEO-MAP P 0 ends a component; P 1 draws its contour
 
 
 @dataclass(slots=True)
@@ -45,6 +46,25 @@ class GeoObject:
     @property
     def is_closed(self) -> bool:
         return len(self.points) >= 4 and abs(self.points[0].x-self.points[-1].x)<1e-7 and abs(self.points[0].y-self.points[-1].y)<1e-7
+
+    @property
+    def display_parts(self) -> list[list[GeoPoint]]:
+        """Separate visible components at P 0 terminators (no connector to next P 1).
+
+        A closing P 0 remains the endpoint of the preceding contour. Never
+        change the underlying P records or their sequence.
+        """
+        parts: list[list[GeoPoint]] = []
+        current: list[GeoPoint] = []
+        for point in self.points:
+            current.append(point)
+            if point.point_type == 0:
+                if len(current) >= 2:
+                    parts.append(current)
+                current = []
+        if current:
+            parts.append(current)
+        return parts
 
     @property
     def area_m2(self) -> float | None:
@@ -98,7 +118,7 @@ class GeoMap:
             if point:
                 label=decode(point.group(4)).strip()
                 if label.startswith(','): label=label[1:].strip()
-                obj.points.append(GeoPoint(float(point.group(2)),float(point.group(3)),label))
+                obj.points.append(GeoPoint(float(point.group(2)),float(point.group(3)),label,int(point.group(1))))
 
     @property
     def checksum_valid(self) -> bool:
@@ -231,21 +251,49 @@ class GeoMap:
         self.lines.insert(after_line, new_line)
         self._parse()
 
-    def append_polygon(self, points: list[tuple[float,float]], code='5216', label='') -> str:
-        if len(points)<3:raise ValueError('A polygon needs at least three vertices')
-        if not re.fullmatch(r'\d{4}',code):raise ValueError('Code must have exactly four digits')
-        if any(not (-1e9<x<1e9 and -1e9<y<1e9) for x,y in points):
+    def delete_object(self, uid: str) -> None:
+        """Remove one object record only; never remove shared boundary points in other objects."""
+        obj = self.by_id.get(uid)
+        if obj is None:
+            raise KeyError(uid)
+        del self.lines[obj.start:obj.end]
+        self._parse()
+
+    def append_polygon(self, points: list[tuple[float,float]], code='5216',
+                       label='', fields: dict[str, str] | None = None) -> str:
+        if len(points) < 3:
+            raise ValueError('A polygon needs at least three vertices')
+        if not re.fullmatch(r'\d{4}', code):
+            raise ValueError('Code must have exactly four digits')
+        from math import isfinite
+        if any(not (isfinite(x) and isfinite(y) and -1e9 < x < 1e9 and -1e9 < y < 1e9)
+               for x, y in points):
             raise ValueError('Invalid coordinates')
-        if points[0]!=points[-1]: points=points+[points[0]]
-        uid=str(uuid.uuid4()).upper()
-        # Based on observed GEO-MAP v8 record layout. Experimental until roundtrip tested.
-        records=[f'*{code} 8553090  15          0',f':ID[{uid}]']
-        if label: records.append(f':A2[{label}]')
-        records.extend([':MP[0]',':FA[-1]'])
-        records.extend(f'P 1   {x:.3f}   {y:.3f}' for x,y in points)
-        if self.lines and not self.lines[-1].endswith((b'\r',b'\n')):
-            self.lines[-1]+=b'\r\n'
-        self.lines.extend((x+'\r\n').encode('cp1250',errors='strict') for x in records)
+        if points[0] != points[-1]:
+            points = points + [points[0]]
+        attrs = dict(fields or {})
+        if label and 'A2' not in attrs:
+            attrs['A2'] = label
+        allowed = {'A1','A2','A3','A4','A5','A6','TX','MP','DT','KR'}
+        if any(key not in allowed for key in attrs):
+            raise ValueError('Unsupported new-object attribute')
+        # Validate and encode before mutating the map.
+        for value in attrs.values():
+            if any(ch in value for ch in '\r\n]'):
+                raise ValueError('Attributes cannot include a newline or ]')
+        uid = str(uuid.uuid4()).upper()
+        records = [f'*{code} 8553090  15          0', f':ID[{uid}]']
+        for key in ('A1','A2','A3','A4','A5','A6','TX','MP','DT','KR'):
+            if key in attrs:
+                records.append(f':{key}[{attrs[key]}]')
+        if 'MP' not in attrs:
+            records.append(':MP[0]')
+        records.append(':FA[-1]')
+        records.extend(f'P 1   {x:.3f}   {y:.3f}' for x, y in points)
+        encoded = [(line + '\r\n').encode('cp1250', errors='strict') for line in records]
+        if self.lines and not self.lines[-1].endswith((b'\r', b'\n')):
+            self.lines[-1] += b'\r\n'
+        self.lines.extend(encoded)
         self._parse()
         return uid
 
