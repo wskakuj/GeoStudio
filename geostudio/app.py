@@ -687,6 +687,7 @@ class GeoStudioWindow(QMainWindow):
         self.graphics_for_uid = {}
         self.items_by_layer = defaultdict(list)
         self.labels = []
+        self.label_items = {}
         self.label_world_span = {}
         self.highlight_item = None
         self.draft_item = None
@@ -732,46 +733,61 @@ class GeoStudioWindow(QMainWindow):
             self.items_by_layer[layer].append(item)
             if obj.uid:
                 self.graphics_for_uid[obj.uid] = item
-            label_text = ''
+            # A1 and A2 are independent labels: each can be dragged in tool L.
+            # Keep the field metadata separate so hiding one must never erase
+            # the other or accidentally move map geometry.
+            label_fields = []
             if obj.code == '5310':
-                label_text = '\n'.join(v for v in (obj.fields.get('A1',''), obj.fields.get('A2','')) if v)
-            elif obj.code == '5216':
-                label_text = obj.fields.get('A2', '')
-            elif obj.code in {'5220', '5230'}:
-                label_text = obj.fields.get('A2', '')
+                label_fields = [(key, obj.fields[key]) for key in ('A1','A2')
+                                if obj.fields.get(key)]
+            elif obj.code in {'5216','5220','5230'} and obj.fields.get('A2'):
+                label_fields = [('A2',obj.fields['A2'])]
             elif obj.code.startswith('7') and obj.fields.get('TX'):
-                label_text = obj.fields['TX'].replace('||','\n').replace('|',' ')
-            if label_text:
-                anchor = self._label_anchor(obj)
-                if anchor:
-                    text_item = QGraphicsSimpleTextItem(label_text)
-                    if obj.code == '5310':
-                        text_item.setFont(QFont('Segoe UI', 12, QFont.Bold))
-                        text_item.setBrush(QBrush(QColor('#C31E2B')))
-                    elif obj.code == '5216':
-                        text_item.setFont(QFont('Segoe UI', 9))
-                        text_item.setBrush(QBrush(QColor('#21374c')))
-                    else:
-                        text_item.setFont(QFont('Segoe UI', 8))
-                        muted = QColor('#587280')
-                        muted.setAlpha(170)
-                        text_item.setBrush(QBrush(muted))
-                    text_item.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIgnoresTransformations, True)
-                    text_item.setAcceptedMouseButtons(Qt.NoButton)
-                    bounds = text_item.boundingRect()
-                    text_item.setPos(anchor[0], -anchor[1])
-                    # Local offset remains centered at any zoom level.
-                    text_item.setTransform(QTransform().translate(-bounds.width()/2, -bounds.height()/2))
-                    text_item.setData(0, obj.uid)
-                    text_item.setZValue(20)
-                    self.map_scene.addItem(text_item)
-                    self.items_by_layer[layer].append(text_item)
-                    self.labels.append(text_item)
-                    if obj.uid and obj.points:
-                        xs = [pt.x for pt in obj.points]
-                        ys = [pt.y for pt in obj.points]
-                        self.label_world_span[obj.uid] = max(
-                            max(xs) - min(xs), max(ys) - min(ys))
+                label_fields = [('TX',obj.fields['TX'].replace('||','\\n').replace('|',' '))]
+            if not label_fields:
+                continue
+            anchor = self._label_anchor(obj)
+            if not anchor:
+                continue
+            if obj.uid and obj.points:
+                xs = [pt.x for pt in obj.points]
+                ys = [pt.y for pt in obj.points]
+                self.label_world_span[obj.uid] = max(
+                    max(xs) - min(xs), max(ys) - min(ys))
+            for field, content in label_fields:
+                label = QGraphicsSimpleTextItem(content)
+                if obj.code == '5310':
+                    label.setFont(QFont('Segoe UI', 12, QFont.Bold))
+                    label.setBrush(QBrush(QColor('#C31E2B')))
+                elif obj.code == '5216':
+                    label.setFont(QFont('Segoe UI', 9))
+                    label.setBrush(QBrush(QColor('#21374c')))
+                else:
+                    label.setFont(QFont('Segoe UI', 8))
+                    muted = QColor('#587280')
+                    muted.setAlpha(170)
+                    label.setBrush(QBrush(muted))
+                label.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIgnoresTransformations, True)
+                label.setAcceptedMouseButtons(Qt.NoButton)
+                bounds = label.boundingRect()
+                custom = self.label_positions.get(obj.uid,{}).get(field)
+                x,y = custom if custom else anchor
+                label.setPos(x,-y)
+                offset = 0
+                if not custom and obj.code == '5310':
+                    offset = (-bounds.height()/2 if field == 'A1'
+                              else bounds.height()/2)
+                label.setTransform(QTransform().translate(
+                    -bounds.width()/2, -bounds.height()/2 + offset))
+                label.setData(0, obj.uid)
+                label.setData(1, field)
+                # Put the text above highlight contours so selected labels
+                # are not accidentally obscured by the yellow overlay.
+                label.setZValue(1300)
+                self.map_scene.addItem(label)
+                self.items_by_layer[layer].append(label)
+                self.labels.append(label)
+                self.label_items[(obj.uid, field)] = label
         self._populate_layers()
         if fit:
             self.fit_all()
