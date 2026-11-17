@@ -59,7 +59,7 @@ def test_coordinate_converter_rejects_bad_source_or_unsupported_whole_map():
     with pytest.raises(ValueError):
         transform_map_copy(doc,2180,2180)
     broken=GeoMap(fixture_map())
-    broken.lines[-1] = broken.lines[-1].replace(b'0',b'1',1)
+    broken.lines[-1] += b'X'  # guaranteed checksum mismatch, even if no digit 0
     with pytest.raises(ValueError):
         transform_map_copy(broken,2180,2178)
 
