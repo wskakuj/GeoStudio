@@ -828,7 +828,7 @@ class GeoStudioWindow(QMainWindow):
             return []
         origin = self.view.mapToScene(QPoint(0, 0))
         offset = self.view.mapToScene(QPoint(8, 0))
-        radius = max(abs(offset.x() - origin.x()), 1e-8)
+        radius = max(math.hypot(offset.x() - origin.x(), offset.y() - origin.y()), 1e-8)
         hits = self.geometry_index.pick(x, y, radius,
                   visible=self._visible_uids(),code_filter=self.select_code_filter)
         return [hit.obj for hit in hits if hit.obj.uid in self.doc.by_id]
@@ -965,7 +965,7 @@ class GeoStudioWindow(QMainWindow):
             return None
         origin = self.view.mapToScene(QPoint(0,0))
         other = self.view.mapToScene(QPoint(12,0))
-        radius = abs(other.x() - origin.x())
+        radius = math.hypot(other.x() - origin.x(), other.y() - origin.y())
         if radius <= 0:
             return None
         candidates = [obj for obj in self.geometry_index.nearby(x, y, radius)
@@ -1538,7 +1538,7 @@ class GeoStudioWindow(QMainWindow):
             return
         origin = self.view.mapToScene(QPoint(0, 0))
         edge = self.view.mapToScene(QPoint(14, 0))
-        tolerance = abs(edge.x() - origin.x())
+        tolerance = math.hypot(edge.x() - origin.x(), edge.y() - origin.y())
         best = None
         for i, (a, b) in enumerate(zip(obj.points, obj.points[1:])):
             px, py = closest_point_on_edge(x, y, a.x, a.y, b.x, b.y)
