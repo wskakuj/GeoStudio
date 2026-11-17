@@ -1,6 +1,6 @@
 # GeoStudio — projekt nowoczesnego edytora map geodezyjnych
 
-**Wczesny prototyp v0.6.0 — wersja testowa, nie do dokumentacji urzędowej ani produkcyjnej.**
+**Wczesny prototyp v0.7.0 — wersja testowa, nie do dokumentacji urzędowej ani produkcyjnej.**
 
 GeoStudio ma docelowo umożliwiać edycję plików GEO-MAP `.MAP` z zachowaniem
 katalogów `.SYM`, `.LAY`, `.CDF`, a także pomiary, rastry, eksporty DXF/VAL
@@ -252,3 +252,49 @@ w eksporcie DXF/innym programie.
 6. Usuń grupę tylko z **kopii mapy** i sprawdź ją w oryginalnym GEO-MAP.
 
 **To nadal prototyp, nie certyfikowany edytor geodezyjny.**
+
+## GeoStudio v0.7 — kierunek osi jak w GEO-MAP i kontrola etykiet
+
+Porównanie widoków w oryginalnym GEO-MAP i GeoStudio ujawniło zamianę osi
+geodezyjnych: oryginalny plik zapisuje X=northing (północ), Y=easting (wschód),
+a starszy ekran GeoStudio rysował scenę według X w poziomie, -Y w pionie.
+
+- **Domyślny widok zgodny z GEO-MAP:** ekranowa oś pozioma to Y (wschód), oś
+  pionowa skierowana ku górze to X (północ). Zrealizowano to **wyłącznie
+  transformacją widoku**, bez przeliczenia punktów, kątów, pól, atrybutów,
+  geometrii czy zapisywanego pliku MAP.
+- **Obracanie mapy:** w głównym pasku narzędzi są przyciski obrotu **o 15°
+  w lewo/prawo** oraz **N ↑ GEO-MAP** (powrót do orientacji geodezyjnej).
+  W menu **Widok → Orientacja i obrót mapy** dostępny jest również obrót
+  o 90°, starsza orientacja GeoStudio i reset. Skróty:
+  `Ctrl+Alt+←`, `Ctrl+Alt+→`, `Ctrl+Alt+0`. Obrót zachowuje środek
+  widoku i aktualne powiększenie.
+- **Zoom pod kursorem:** obliczenia powiększenia korzystają z długości
+  przekształconej jednostki, nie ze współczynnika `m11`, który przy
+  obrocie 90° jest równy 0. Działa również przy ukośnej orientacji.
+- **Narzędzia GIS:** promień wybierania, przyciągania i dodawania
+  wierzchołków obliczany jest z rzeczywistej odległości na ekranie,
+  niezależnie od kąta obrotu.
+- **Etykiety zależne od skali:** przy oddaleniu napisów 5310 (A1/A2) oraz
+  numerów działek nie wyświetla się, dopóki ich geometria nie osiągnie
+  wystarczającego rozmiaru na ekranie. Uproszczone wykrywanie kolizji
+  uwzględnia wielkość całego tekstu, zamiast pojedynczych komórek 90×26.
+  Wybrany obiekt nadal pokazuje etykietę, a **Pokaż wszystkie podpisy**
+  umożliwia ręczne wyłączenie ograniczeń.
+- **Ograniczenie:** pozostają różnice względem GEO-MAP w rysowaniu
+  symboli z SYM, warstw i wypełnień z LAY/CDF, oraz przygotowaniu
+  tytułów, tabel i legend. Sama orientacja i skalowanie etykiet nie
+  są jeszcze wiernym rendererem tego programu.
+
+### Szybki test
+
+1. Otwórz kopię `MOKRA WIEŚ.MAP`, ustaw **N ↑ GEO-MAP** i **Cała mapa**.
+   Porównaj orientację z GEO-MAP na tych samych danych.
+2. Obróć ±15° i 90°, następnie zresetuj. Rolką przybliż pod kursor.
+3. Przy całej mapie podpisy 5310 nie powinny jej zasłaniać. Po
+   przybliżeniu mają stopniowo się pojawiać. Wyszukany/zaznaczony
+   obiekt powinien mieć widoczny opis nawet przy oddaleniu.
+4. Sprawdź zaznaczanie pod użytkami, przesuwanie węzłów i przyciąganie
+   po zmianie orientacji.
+5. Jak dotychczas testuj edycję wyłącznie na kopiach; transformacja widoku
+   nie wpływa na wartości zapisanych współrzędnych.

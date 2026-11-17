@@ -80,6 +80,11 @@ class MapView(QGraphicsView):
         self.setViewportUpdateMode(QGraphicsView.BoundingRectViewportUpdate)
         self.setBackgroundBrush(QBrush(QColor('#f7f9fb')))
         self.setTransformationAnchor(QGraphicsView.AnchorUnderMouse)
+        # The GEO-MAP file stores X (northing) before Y (easting).
+        # Existing scene uses (X, -Y); geodetic orientation on screen is
+        # (Y, -X). Swapping the axes here preserves all scene geometry,
+        # snapping, area calculations and original MAP record coordinates.
+        self.setTransform(QTransform(0, -1, -1, 0, 0, 0))
         self.setMouseTracking(True)
         self.setFocusPolicy(Qt.StrongFocus)
         self.setCursor(Qt.ArrowCursor)
@@ -95,7 +100,10 @@ class MapView(QGraphicsView):
             event.accept()
             return
         factor = 1.2 ** (delta / 120.0)
-        current = abs(self.transform().m11())
+        # m11 can be ZERO at a correct 90-degree rotation. Its absolute
+        # value is not a zoom factor. Use the length of a transformed unit.
+        transform = self.transform()
+        current = math.hypot(transform.m11(), transform.m12())
         if not (1e-5 <= current * factor <= 4000):
             event.accept()
             return
@@ -217,7 +225,7 @@ class MapView(QGraphicsView):
 class GeoStudioWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle('GeoStudio v0.6 — eksperymentalny edytor GEO-MAP')
+        self.setWindowTitle('GeoStudio v0.7 — eksperymentalny edytor GEO-MAP')
         self.resize(1450, 900)
         self.settings = QSettings('GeoStudio', 'GeoStudio')
         self.doc: GeoMap | None=None
@@ -230,8 +238,11 @@ class GeoStudioWindow(QMainWindow):
         self.selected_uids = []
         self.highlight_items = []
         self.labels=[]
+        self.label_world_span = {}
         self.labels_enabled = True
         self.hide_multipart_connectors = True
+        self.orientation_is_geodetic = True
+        self.view_rotation_degrees = 0
         self.layer_for_uid = {}
         self.hidden_layers = set()
         self.geometry_index = GeometryIndex(())
@@ -303,6 +314,20 @@ class GeoStudioWindow(QMainWindow):
         vm=self.menuBar().addMenu('&Widok')
         self.view_menu = vm
         vm.addAction(self._action('Dopasuj widok do mapy',self.fit_all,'Ctrl+0'))
+        orientation_menu = vm.addMenu('Orientacja i obrót mapy')
+        orientation_menu.addAction(self._action(
+            'Orientacja GEO-MAP (geodezyjna X/Y)',self.reset_orientation,'Ctrl+Alt+0'))
+        orientation_menu.addAction(self._action(
+            'Orientacja dawna GeoStudio (techniczna)',self.legacy_orientation))
+        orientation_menu.addSeparator()
+        orientation_menu.addAction(self._action(
+            'Obróć w lewo 15°',lambda: self.rotate_view(-15),'Ctrl+Alt+Left'))
+        orientation_menu.addAction(self._action(
+            'Obróć w prawo 15°',lambda: self.rotate_view(15),'Ctrl+Alt+Right'))
+        orientation_menu.addAction(self._action(
+            'Obróć w lewo 90°',lambda: self.rotate_view(-90)))
+        orientation_menu.addAction(self._action(
+            'Obróć w prawo 90°',lambda: self.rotate_view(90)))
         self.multipart_action = vm.addAction('Ukryj łączniki między częściami obiektu (P 0)')
         self.multipart_action.setCheckable(True)
         self.multipart_action.setChecked(True)
@@ -324,7 +349,10 @@ class GeoStudioWindow(QMainWindow):
         self.addToolBar(toolbar)
         for label,fn in [('📂 Otwórz',self.open_map),('💾 Zapisz jako',self.save_map),
                          ('◎ Cała mapa',self.fit_all), ('▧ Raster',self.add_raster),
-                         ('↗ DXF',self.export_dxf), ('⬇ Obraz',self.export_image)]:
+                         ('↗ DXF',self.export_dxf), ('⬇ Obraz',self.export_image),
+                         ('⟲ 15°',lambda: self.rotate_view(-15)),
+                         ('⟳ 15°',lambda: self.rotate_view(15)),
+                         ('N ↑ GEO-MAP',self.reset_orientation)]:
             toolbar.addAction(self._action(label,fn))
         toolbar.addSeparator()
         self.tool_actions = {}
@@ -512,7 +540,7 @@ class GeoStudioWindow(QMainWindow):
             self._last_pick_candidates = ()
             self._look_for_libraries(Path(file).parent)
             self.rebuild_scene()
-            self.setWindowTitle('GeoStudio v0.6 — '+Path(file).name)
+            self.setWindowTitle('GeoStudio v0.7 — '+Path(file).name)
             self.status.showMessage(f'{len(doc.objects)} obiektów, {len(doc.lines)} wierszy | {file}')
         except Exception as exc: QMessageBox.critical(self,'Błąd odczytu mapy',str(exc))
 
@@ -560,9 +588,10 @@ class GeoStudioWindow(QMainWindow):
 
     def toggle_multipart_connectors(self, checked):
         self.hide_multipart_connectors = bool(checked)
-        selected = set(self.selected_uids)
+        selected = list(self.selected_uids)
         if self.doc:
-            self.rebuild_scene(fit=False, reselect=selected)
+            self.rebuild_scene(fit=False)
+            self._set_selected_uids(selected)
         self.status.showMessage('Łączniki między częściami mapy: ' +
                                 ('ukryte' if checked else 'widoczne') +
                                 '. Zmiana jest tylko wizualna; plik MAP pozostaje bez zmian.')
@@ -597,6 +626,7 @@ class GeoStudioWindow(QMainWindow):
         self.graphics_for_uid = {}
         self.items_by_layer = defaultdict(list)
         self.labels = []
+        self.label_world_span = {}
         self.highlight_item = None
         self.draft_item = None
         self.snap_marker = None
@@ -676,6 +706,11 @@ class GeoStudioWindow(QMainWindow):
                     self.map_scene.addItem(text_item)
                     self.items_by_layer[layer].append(text_item)
                     self.labels.append(text_item)
+                    if obj.uid and obj.points:
+                        xs = [pt.x for pt in obj.points]
+                        ys = [pt.y for pt in obj.points]
+                        self.label_world_span[obj.uid] = max(
+                            max(xs) - min(xs), max(ys) - min(ys))
         self._populate_layers()
         if fit:
             self.fit_all()
@@ -696,55 +731,86 @@ class GeoStudioWindow(QMainWindow):
         self._select_uid('')
 
     def update_label_visibility(self):
-        """Screen-space label decluttering: no arbitrary zoom cutoff.
+        """Zoom-adaptive, collision-aware GIS labeling in screen pixels.
 
-        A label may be omitted at full extent if it would overlap an existing
-        one, but the selected feature's label is always displayed. Zooming
-        reveals more labels; the toolbar allows toggling them explicitly.
+        ItemIgnoresTransformations keeps lettering upright under rotation.
+        Without scale thresholds, 5310 text stays huge when an entire
+        village is fitted on screen; this method hides such labels until
+        objects are large enough to read.
         """
         if not hasattr(self, 'labels_action'):
             return
-        if not self.labels_enabled:
+        if not self.labels_enabled or not self.doc:
             for item in self.labels:
                 item.setVisible(False)
             return
-        viewport = self.view.viewport().rect()
-        occupied = set()
-        selected = self.selected_uid
-        # Parcel labels take priority over land-use labels, selected above all.
+
+        view = self.view
+        viewport = view.viewport().rect().adjusted(-10, -10, 10, 10)
+        transform = view.transform()
+        px_per_map_unit = math.hypot(transform.m11(), transform.m12())
+        selected = set(self.selected_uids)
+        force_all = self.all_labels_action.isChecked()
+        occupied: set[tuple[int,int]] = set()
+
         def priority(item):
             uid = item.data(0)
-            obj = self.doc.by_id.get(uid) if self.doc else None
-            return (0 if uid in selected else
-                    1 if obj and obj.code == '5310' else
-                    2 if obj and obj.code == '5216' else 3)
+            obj = self.doc.by_id.get(uid)
+            if uid in selected:
+                return (0, uid)
+            if obj is None:
+                return (5, uid)
+            return ({'5310': 1, '5216': 2, '5220': 3,
+                     '5230': 3}.get(obj.code, 4), uid)
+
         for item in sorted(self.labels, key=priority):
             uid = item.data(0)
-            layer = self.layer_for_uid.get(uid, '')
-            if layer in self.hidden_layers:
+            obj = self.doc.by_id.get(uid)
+            if obj is None or self.layer_for_uid.get(uid,'') in self.hidden_layers:
                 item.setVisible(False)
                 continue
-            center = self.view.mapFromScene(item.pos())
-            if not viewport.adjusted(-80,-80,80,80).contains(center):
+
+            center = view.mapFromScene(item.pos())
+            if not viewport.contains(center):
                 item.setVisible(False)
                 continue
-            if uid in selected:
-                item.setVisible(True)
+
+            is_selected = uid in selected
+            if not (is_selected or force_all):
+                # The display is 1:1 in the map's metre-based source units.
+                # At overview scales keep 5310 A1/A2 from covering the map.
+                scale_threshold = ({'5310': 0.75, '5216': 0.38,
+                                    '5220': 0.65, '5230': 0.65}
+                                   .get(obj.code, 0.65))
+                if px_per_map_unit < scale_threshold:
+                    item.setVisible(False)
+                    continue
+                # Label only when the source object occupies enough pixels.
+                projected_span = self.label_world_span.get(uid, 0) * px_per_map_unit
+                min_span = 34 if obj.code == '5310' else 18
+                if projected_span < min_span:
+                    item.setVisible(False)
+                    continue
+
+            bounds = item.boundingRect()
+            w = max(8.0, bounds.width()) + 8
+            h = max(8.0, bounds.height()) + 6
+            left = center.x() - w/2
+            top = center.y() - h/2
+            right = left + w
+            bottom = top + h
+            rect_cells = [
+                (cx, cy)
+                for cx in range(math.floor(left / 38), math.floor(right / 38) + 1)
+                for cy in range(math.floor(top / 24), math.floor(bottom / 24) + 1)
+            ]
+            if not (is_selected or force_all) and any(
+                    cell in occupied for cell in rect_cells):
+                item.setVisible(False)
                 continue
-            # Map appearance is prioritized over flooding the canvas with
-            # thousands of overlaid strings at the original whole-map scale.
-            font_size = item.boundingRect().size()
-            w = max(100, round(font_size.width() + 12))
-            h = max(26, round(font_size.height() + 6))
-            # Declutter via occupancy of 90 x 26 px cells. Only labels actually
-            # visible on the screen participate.
-            col = center.x() // 90
-            row = center.y() // 26
-            key = (col, row)
-            visible = self.all_labels_action.isChecked() or key not in occupied
-            item.setVisible(visible)
-            if visible:
-                occupied.add(key)
+            item.setVisible(True)
+            if not force_all:
+                occupied.update(rect_cells)
 
     def start_pan(self):
         self.cancel_edit()
@@ -763,7 +829,7 @@ class GeoStudioWindow(QMainWindow):
             return []
         origin = self.view.mapToScene(QPoint(0, 0))
         offset = self.view.mapToScene(QPoint(8, 0))
-        radius = max(abs(offset.x() - origin.x()), 1e-8)
+        radius = max(math.hypot(offset.x() - origin.x(), offset.y() - origin.y()), 1e-8)
         hits = self.geometry_index.pick(x, y, radius,
                   visible=self._visible_uids(),code_filter=self.select_code_filter)
         return [hit.obj for hit in hits if hit.obj.uid in self.doc.by_id]
@@ -900,7 +966,7 @@ class GeoStudioWindow(QMainWindow):
             return None
         origin = self.view.mapToScene(QPoint(0,0))
         other = self.view.mapToScene(QPoint(12,0))
-        radius = abs(other.x() - origin.x())
+        radius = math.hypot(other.x() - origin.x(), other.y() - origin.y())
         if radius <= 0:
             return None
         candidates = [obj for obj in self.geometry_index.nearby(x, y, radius)
@@ -1159,6 +1225,47 @@ class GeoStudioWindow(QMainWindow):
             return rect
         margin = max(rect.width(), rect.height(), 10.0)
         return rect.adjusted(-margin, -margin, margin, margin)
+
+    @staticmethod
+    def _geodetic_transform():
+        """View-space correction: scene (X,-Y) -> screen (Y,-X)."""
+        return QTransform(0, -1, -1, 0, 0, 0)
+
+    def _apply_orientation(self, transform, *, geodetic, rotation):
+        if self.view.draw_mode or self.view.edit_mode:
+            # Changing view orientation mid-edit is safe geometrically,
+            # but disorienting; first exit the active interaction mode.
+            self.cancel_edit()
+        center = self.view.mapToScene(self.view.viewport().rect().center())
+        existing = self.view.transform()
+        zoom = math.hypot(existing.m11(), existing.m12())
+        # Resetting orientation should not throw the user back to another zoom.
+        self.view.setTransform(transform.scale(zoom, zoom))
+        self.view.centerOn(center)
+        self.orientation_is_geodetic = geodetic
+        self.view_rotation_degrees = rotation % 360
+        self.update_label_visibility()
+        self.status.showMessage(
+            f'Orientacja: {"GEO-MAP" if geodetic else "techniczna"}'
+            f' • obrót {self.view_rotation_degrees}°. Współrzędne MAP nie są zmieniane.')
+
+    def reset_orientation(self):
+        self._apply_orientation(self._geodetic_transform(), geodetic=True,
+                                rotation=0)
+
+    def legacy_orientation(self):
+        self._apply_orientation(QTransform(), geodetic=False, rotation=0)
+
+    def rotate_view(self, degrees):
+        """Rotate the viewport about its center, not the stored world coords."""
+        center = self.view.mapToScene(self.view.viewport().rect().center())
+        self.view.rotate(degrees)
+        self.view.centerOn(center)
+        self.view_rotation_degrees = (self.view_rotation_degrees + degrees) % 360
+        self.update_label_visibility()
+        self.status.showMessage(
+            f'Obrót widoku: {self.view_rotation_degrees}°. '
+            'Obiekty i zapisane współrzędne pozostają bez zmian.')
 
     def fit_all(self):
         if not self.doc:
@@ -1435,7 +1542,7 @@ class GeoStudioWindow(QMainWindow):
             return
         origin = self.view.mapToScene(QPoint(0, 0))
         edge = self.view.mapToScene(QPoint(14, 0))
-        tolerance = abs(edge.x() - origin.x())
+        tolerance = math.hypot(edge.x() - origin.x(), edge.y() - origin.y())
         best = None
         for i, (a, b) in enumerate(zip(obj.points, obj.points[1:])):
             px, py = closest_point_on_edge(x, y, a.x, a.y, b.x, b.y)
