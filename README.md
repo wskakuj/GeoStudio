@@ -1,6 +1,6 @@
 # GeoStudio — projekt nowoczesnego edytora map geodezyjnych
 
-**Wczesny prototyp v0.8.0 — wersja testowa, nie do dokumentacji urzędowej ani produkcyjnej.**
+**Wczesny prototyp v0.9.0 — wersja testowa, nie do dokumentacji urzędowej ani produkcyjnej.**
 
 GeoStudio ma docelowo umożliwiać edycję plików GEO-MAP `.MAP` z zachowaniem
 katalogów `.SYM`, `.LAY`, `.CDF`, a także pomiary, rastry, eksporty DXF/VAL
@@ -362,3 +362,34 @@ geodezyjne i zapisane kopie weryfikuj w oryginalnym GEO-MAP.
 4. Porównaj obiekty z wypełnieniami `5310` i klasyfikację z oryginalnym
    GEO-MAP. Jeśli różnica dotyczy szrafury, symbolu lub legendy, zapisz
    zrzut obu programów przy tej samej skali i orientacji.
+
+
+## GeoStudio v0.9 — stały rozmiar napisów i dokładniejsze kolory
+
+- **Wielkość napisów na ekranie jest stała podczas przybliżania i oddalania**
+  mapy — tekst pozostaje w pikselowym rozmiarze i nie jest skalowany razem
+  z geometrią (Qt `ItemIgnoresTransformations` + `QFont.setPixelSize`).
+  Budynki 5310 mają czerwone, pogrubione podpisy A1/A2 (16 px),
+  działki 5216 mają neutralne numery (12 px), użytki 5220/5230
+  zielone, subtelniejsze opisy (11 px). Dotyczy widoku; nie modyfikuje
+  formatowania oryginalnego GEO-MAP.
+- Aby napisy **nie zasłaniały mapy przy oddaleniu**, silnik nadal ogranicza
+  **liczbę widocznych napisów** zależnie od powiększenia i kolizji.
+  To nie jest zmiana wielkości czcionki. Wybrany obiekt zachowuje etykietę.
+  W menu Widok → `Pokaż wszystkie podpisy` można wyłączyć ograniczenie.
+- Kontury z definicji CDF uwzględniają szerokość linii ograniczoną do
+  bezpiecznego zakresu 0.8–3 px, bez zwiększania szerokości podczas zoomu.
+  Dotychczasowe natywne wypełnienia, RGB i częściowe szrafury z CDF/SYM
+  pozostają włączone.
+- **Wierność wyglądu jest nadal częściowa**: oznaczenia w SYM, style
+  linii w LAY, drukowane legendy i skomplikowane szrafury potrzebują dalszej
+  implementacji oraz porównania z oryginalnym GEO-MAP.
+- Test automatyczny w Qt sprawdza identyczny wymiar ekranu napisu przy
+  zoomie 3× i 0.11× oraz kolory/pióra odczytane z CDF.
+
+### Sprawdź w Windows
+1. Otwórz `MOKRA WIEŚ.MAP` z tymi samymi bibliotekami.
+2. Powiększ i pomniejsz obiekt 5310: wielkość jego A1/A2 powinna być
+   taka sama w pikselach, choć liczba widocznych podpisów może się zmieniać.
+3. Zweryfikuj kolor zielonych użytków, czerwonych budynków i grubości konturów
+   względem mapy otwartej w GEO-MAP. Oryginalne pliki pozostają nietknięte.
