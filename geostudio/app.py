@@ -498,6 +498,7 @@ class GeoStudioWindow(QMainWindow):
                 answer=QMessageBox.warning(self,'Suma kontrolna','Suma MD5 pliku nie zgadza się z nagłówkiem. Otworzyć tylko do podglądu?',QMessageBox.Yes|QMessageBox.No)
                 if answer!=QMessageBox.Yes:return
             self.doc=doc
+            self.selected_uid = ''
             self.settings.setValue('last_map_dir', str(Path(file).parent))
             self.visual_styles = load_styles(file)
             self.selected_uids = []
@@ -555,7 +556,7 @@ class GeoStudioWindow(QMainWindow):
 
     def toggle_multipart_connectors(self, checked):
         self.hide_multipart_connectors = bool(checked)
-        selected = self.selected_uid
+        selected = set(self.selected_uids)
         if self.doc:
             self.rebuild_scene(fit=False, reselect=selected)
         self.status.showMessage('Łączniki między częściami mapy: ' +
@@ -604,6 +605,12 @@ class GeoStudioWindow(QMainWindow):
             layer = resolve_layer(self.catalog, obj.code)
             self.layer_for_uid[obj.uid] = layer
             color = QColor(*obj.colorref)
+            fill_style = self.visual_styles.get(obj.uid)
+            if fill_style:
+                fill_color = QColor(fill_style['fill'])
+                fill_color.setAlpha(round(fill_style['opacity'] * 255 / 100))
+            else:
+                fill_color = QColor(color.red(), color.green(), color.blue(), 18)
             pen = QPen(color if obj.colorref != (0,0,0) else QColor('#31455d'))
             pen.setCosmetic(True)
             pen.setWidth(1)
@@ -614,8 +621,12 @@ class GeoStudioWindow(QMainWindow):
                 item.setBrush(QBrush(color))
             else:
                 item = QGraphicsPathItem(self._path_for(obj, hide_connectors=self.hide_multipart_connectors))
-                if obj.is_closed:
-                    item.setBrush(QBrush(QColor(color.red(),color.green(),color.blue(),18)))
+                parts = obj.display_parts
+                is_multipart_area = bool(parts) and all(
+                    len(part) >= 4 and (part[0].x, part[0].y) == (part[-1].x, part[-1].y)
+                    for part in parts)
+                if obj.is_closed or is_multipart_area:
+                    item.setBrush(QBrush(fill_color))
             item.setPen(pen)
             # We handle picking ourselves; Qt's default selection draws an
             # unwanted bounding RECTANGLE instead of the exact contour.
@@ -629,7 +640,9 @@ class GeoStudioWindow(QMainWindow):
             label_text = ''
             if obj.code == '5310':
                 label_text = '\n'.join(v for v in (obj.fields.get('A1',''), obj.fields.get('A2','')) if v)
-            elif obj.code in {'5216', '5230'}:
+            elif obj.code == '5216':
+                label_text = obj.fields.get('A2', '')
+            elif obj.code in {'5220', '5230'}:
                 label_text = obj.fields.get('A2', '')
             elif obj.code.startswith('7') and obj.fields.get('TX'):
                 label_text = obj.fields['TX'].replace('||','\n').replace('|',' ')
@@ -637,8 +650,17 @@ class GeoStudioWindow(QMainWindow):
                 anchor = self._label_anchor(obj)
                 if anchor:
                     text_item = QGraphicsSimpleTextItem(label_text)
-                    text_item.setFont(QFont('Segoe UI', 9))
-                    text_item.setBrush(QBrush(QColor('#21374c')))
+                    if obj.code == '5310':
+                        text_item.setFont(QFont('Segoe UI', 12, QFont.Bold))
+                        text_item.setBrush(QBrush(QColor('#C31E2B')))
+                    elif obj.code == '5216':
+                        text_item.setFont(QFont('Segoe UI', 9))
+                        text_item.setBrush(QBrush(QColor('#21374c')))
+                    else:
+                        text_item.setFont(QFont('Segoe UI', 8))
+                        muted = QColor('#587280')
+                        muted.setAlpha(170)
+                        text_item.setBrush(QBrush(muted))
                     text_item.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIgnoresTransformations, True)
                     text_item.setAcceptedMouseButtons(Qt.NoButton)
                     bounds = text_item.boundingRect()
@@ -689,7 +711,7 @@ class GeoStudioWindow(QMainWindow):
         def priority(item):
             uid = item.data(0)
             obj = self.doc.by_id.get(uid) if self.doc else None
-            return (0 if uid == selected else
+            return (0 if uid in selected else
                     1 if obj and obj.code == '5310' else
                     2 if obj and obj.code == '5216' else 3)
         for item in sorted(self.labels, key=priority):
@@ -702,7 +724,7 @@ class GeoStudioWindow(QMainWindow):
             if not viewport.adjusted(-80,-80,80,80).contains(center):
                 item.setVisible(False)
                 continue
-            if uid == selected:
+            if uid in selected:
                 item.setVisible(True)
                 continue
             # Map appearance is prioritized over flooding the canvas with
@@ -755,17 +777,29 @@ class GeoStudioWindow(QMainWindow):
         pos = self.view.mapFromScene(QPointF(x,-y))
         menu.exec(self.view.viewport().mapToGlobal(pos))
 
-    def _select_uid(self, uid):
-        self.selected_uid = uid if self.doc and uid in self.doc.by_id else ''
+    def _set_selected_uids(self, uids):
+        """One highlight path can outline thousands of selected objects efficiently."""
+        if not self.doc:
+            return
+        self.selected_uids = list(dict.fromkeys(uid for uid in uids if uid in self.doc.by_id))
+        self.selected_uid = self.selected_uids[-1] if self.selected_uids else ''
         self.props.clear()
-        if self.highlight_item:
+        if self.highlight_item is not None:
             self.map_scene.removeItem(self.highlight_item)
             self.highlight_item = None
-        if not self.selected_uid:
+        self.selected_count_label.setText(
+            f'Zaznaczono: {len(self.selected_uids)} obiektów' if self.selected_uids
+            else 'Brak zaznaczenia')
+        if not self.selected_uids:
             self.update_label_visibility()
             return
-        obj = self.doc.by_id[self.selected_uid]
-        self.highlight_item = QGraphicsPathItem(self._path_for(obj, hide_connectors=self.hide_multipart_connectors))
+        combined = QPainterPath()
+        for uid in self.selected_uids:
+            obj = self.doc.by_id[uid]
+            if obj.points:
+                combined.addPath(self._path_for(
+                    obj, hide_connectors=self.hide_multipart_connectors))
+        self.highlight_item = QGraphicsPathItem(combined)
         outline = QPen(QColor('#ffb000'), 3)
         outline.setCosmetic(True)
         self.highlight_item.setPen(outline)
@@ -773,17 +807,43 @@ class GeoStudioWindow(QMainWindow):
         self.highlight_item.setZValue(1000)
         self.highlight_item.setAcceptedMouseButtons(Qt.NoButton)
         self.map_scene.addItem(self.highlight_item)
-        entries = [('Kod',obj.code),('Nazwa symbolu',self.symbols.get(obj.code,'—')),
-                   ('Warstwa',resolve_layer(self.catalog,obj.code)),('ID',obj.uid),
-                   ('Wierzchołki',str(len(obj.points)))]
-        if obj.area_m2 is not None:
-            entries.append(('Pole geometryczne',f'{obj.area_m2:,.3f} m² / {obj.area_m2/10000:,.4f} ha'))
-        entries.extend((k,v) for k,v in obj.fields.items() if k!='ID')
-        for k,v in entries:
-            self.props.addTopLevelItem(QTreeWidgetItem([k,v]))
+        obj = self.doc.by_id[self.selected_uid]
+        if len(self.selected_uids) > 1:
+            codes = sorted({self.doc.by_id[uid].code for uid in self.selected_uids})
+            entries = [('Zaznaczono', str(len(self.selected_uids))),
+                       ('Kody', ', '.join(codes)),
+                       ('Operacje', 'Delete usuwa zaznaczone; Zastosuj zmienia wypełnienie')]
+        else:
+            entries = [('Kod', obj.code),
+                       ('Nazwa symbolu', self.symbols.get(obj.code, '—')),
+                       ('Warstwa', resolve_layer(self.catalog, obj.code)),
+                       ('ID', obj.uid), ('Wierzchołki', str(len(obj.points)))]
+            if obj.area_m2 is not None:
+                entries.append(('Pole geometryczne',
+                    f'{obj.area_m2:,.3f} m² / {obj.area_m2/10000:,.4f} ha'))
+            # Show editable fields even when absent from the source record.
+            for key in ('A1','A2','A3','A4','A5','A6','TX','MP','KR'):
+                entries.append((key, obj.fields.get(key, '')))
+            entries.extend((k,v) for k,v in obj.fields.items()
+                           if k not in {'ID','A1','A2','A3','A4','A5','A6','TX','MP','KR'})
+        for key, value in entries:
+            self.props.addTopLevelItem(QTreeWidgetItem([key, str(value)]))
+        current = self.visual_styles.get(self.selected_uid)
+        if current:
+            color_code = fill_code(current['fill'], current['opacity'])
+            opacity = current['opacity']
+        else:
+            base = QColor(*obj.colorref)
+            color_code = fill_code(base.name().upper(), 7)
+            opacity = 7
+        self.fill_entry.setText(color_code)
+        self.opacity_spin.setValue(opacity)
         self.update_label_visibility()
 
-    def select_at(self, x, y, cycle=False):
+    def _select_uid(self, uid):
+        self._set_selected_uids([uid] if uid else [])
+
+    def select_at(self, x, y, cycle=False, additive=False):
         if not self.doc:
             return
         candidates = self._pick_candidates(x, y)
@@ -791,7 +851,8 @@ class GeoStudioWindow(QMainWindow):
         if not uids:
             self._last_pick_pos = None
             self._last_pick_candidates = ()
-            self._select_uid('')
+            if not additive:
+                self._set_selected_uids([])
             return
         screen = self.view.mapFromScene(QPointF(x, -y))
         repeat = (self._last_pick_pos is not None and
@@ -799,14 +860,36 @@ class GeoStudioWindow(QMainWindow):
                   tuple(uids) == self._last_pick_candidates)
         self._last_pick_pos = screen
         self._last_pick_candidates = tuple(uids)
-        if (cycle or repeat) and self.selected_uid in uids:
-            idx = (uids.index(self.selected_uid) + 1) % len(uids)
+        current = self.selected_uid
+        if (cycle or repeat) and current in uids:
+            idx = (uids.index(current) + 1) % len(uids)
         else:
             idx = 0
-        self._select_uid(uids[idx])
-        obj = self.doc.by_id[uids[idx]]
-        self.status.showMessage(f'Wybrano {obj.code} / {obj.fields.get("A2", "")}. '
-                                f'Kliknij ponownie w tym miejscu, aby przełączyć obiekt ({idx+1}/{len(uids)}).')
+        uid = uids[idx]
+        if additive:
+            updated = [x for x in self.selected_uids if x != uid]
+            if uid not in self.selected_uids:
+                updated.append(uid)
+            self._set_selected_uids(updated)
+        else:
+            self._select_uid(uid)
+        self.status.showMessage(
+            f'Wybrano kod {self.doc.by_id[uid].code}. '
+            f'Łącznie zaznaczono: {len(self.selected_uids)}. '
+            'Ctrl+klik dodaje/usuwa, Ctrl+H zaznacza cały kod.')
+
+    def select_all_same_code(self):
+        if not self.doc or not self.selected_uid:
+            self.status.showMessage('Zaznacz najpierw jeden obiekt, następnie naciśnij Ctrl+H.')
+            return
+        code = self.doc.by_id[self.selected_uid].code
+        uids = [obj.uid for obj in self.doc.objects
+                if obj.uid and obj.code == code
+                and self.layer_for_uid.get(obj.uid, '') not in self.hidden_layers]
+        self._set_selected_uids(uids)
+        self.status.showMessage(
+            f'Zaznaczono {len(uids)} obiektów kodu {code}. '
+            'Delete usuwa wszystkie po potwierdzeniu; Zastosuj zmienia wypełnienie.')
 
     def _snap(self, x, y, *, exclude_uid=None):
         if not self.doc or not self.snap_action.isChecked():
