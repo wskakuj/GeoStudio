@@ -318,6 +318,7 @@ class GeoStudioWindow(QMainWindow):
         self._setup_docks()
         self._load_saved_libraries()
         self.status=QStatusBar();self.setStatusBar(self.status)
+        self._setup_scale_widget()
         self.status.showMessage('Otwórz mapę GEO-MAP, aby rozpocząć. Zapis odbywa się tylko do nowego pliku.')
         self.setStyleSheet(APP_QSS)
 
@@ -352,6 +353,7 @@ class GeoStudioWindow(QMainWindow):
         vm=self.menuBar().addMenu('&Widok')
         self.view_menu = vm
         vm.addAction(self._action('Dopasuj widok do mapy',self.fit_all,'Ctrl+0'))
+        vm.addAction(self._action('Ustaw skalę widoku 1:N…', self.ask_view_scale, 'Ctrl+M'))
         orientation_menu = vm.addMenu('Orientacja i obrót mapy')
         orientation_menu.addAction(self._action(
             'Orientacja GEO-MAP (geodezyjna X/Y)',self.reset_orientation,'Ctrl+Alt+0'))
@@ -1463,6 +1465,78 @@ class GeoStudioWindow(QMainWindow):
         self.status.showMessage(
             f'Obrót widoku: {self.view_rotation_degrees}°. '
             'Obiekty i zapisane współrzędne pozostają bez zmian.')
+
+    def _setup_scale_widget(self):
+        """Visible map scale, estimated from Qt's logical screen DPI."""
+        self.status.addPermanentWidget(QLabel('Skala widoku:'))
+        self.scale_combo = QComboBox(self)
+        self.scale_combo.setObjectName('GeoStudioScale')
+        self.scale_combo.setEditable(True)
+        self.scale_combo.setMinimumWidth(115)
+        self.scale_combo.addItems(['1:500', '1:1000', '1:2000', '1:5000',
+                                   '1:10000', '1:25000'])
+        self.scale_combo.setCurrentText('1:1000')
+        self.scale_combo.activated.connect(lambda _idx: self.apply_view_scale())
+        self.scale_combo.lineEdit().returnPressed.connect(self.apply_view_scale)
+        self.status.addPermanentWidget(self.scale_combo)
+
+    def _view_pixel_scale(self):
+        t = self.view.transform()
+        return math.hypot(t.m11(), t.m12())
+
+    def _display_denominator(self):
+        px_per_m = self._view_pixel_scale()
+        if px_per_m < 1e-8:
+            return 0
+        # 1 m in projected coordinates is 1000 mm on the ground.
+        # pixel units are Qt logical screen pixels, not printer resolution.
+        return self.view.logicalDpiX() / 0.0254 / px_per_m
+
+    def update_view_scale_indicator(self):
+        if not hasattr(self, 'scale_combo') or not self.doc:
+            return
+        den = self._display_denominator()
+        if not (math.isfinite(den) and 1 <= den <= 1e9):
+            return
+        self.scale_combo.blockSignals(True)
+        self.scale_combo.setCurrentText(f'1:{round(den):d}')
+        self.scale_combo.blockSignals(False)
+
+    def apply_view_scale(self):
+        if not self.doc:
+            return
+        raw = self.scale_combo.currentText().strip().replace(' ', '').replace(',', '.')
+        try:
+            denominator = float(raw.split(':')[-1])
+            if len(raw.split(':')) > 2 or not (10 <= denominator <= 10000000):
+                raise ValueError('Skala 1:N musi być między 1:10 a 1:10000000')
+            if not math.isfinite(denominator):
+                raise ValueError('Wybierz poprawny mianownik skali')
+            current = self._view_pixel_scale()
+            target = self.view.logicalDpiX() / .0254 / denominator
+            factor = target / current
+            if not (1e-5 <= current * factor <= 4000):
+                raise ValueError('Ta skala wykracza poza zakres wyświetlania')
+            center = self.view.mapToScene(self.view.viewport().rect().center())
+            self.view.scale(factor, factor)
+            self.view.centerOn(center)
+            self.update_label_visibility()
+            self.status.showMessage(
+                f'Ustawiono przybliżoną skalę ekranu 1:{denominator:g}. '
+                'Nie zmieniono współrzędnych ani skali wydruku GEO-MAP.')
+        except (ValueError,ZeroDivisionError) as exc:
+            QMessageBox.warning(self,'Nieprawidłowa skala',str(exc))
+            self.update_view_scale_indicator()
+
+    def ask_view_scale(self):
+        if not self.doc:
+            return
+        value, ok = QInputDialog.getText(
+            self,'Skala widoku', 'Podaj skalę 1:N, np. 1:2000',
+            text=self.scale_combo.currentText())
+        if ok:
+            self.scale_combo.setCurrentText(value)
+            self.apply_view_scale()
 
     def fit_all(self):
         if not self.doc:
