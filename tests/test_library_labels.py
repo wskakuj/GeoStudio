@@ -128,7 +128,7 @@ def test_native_polygon_fill_and_cdf_palette(gui, tmp_path):
     parcel = gui.doc.by_id['DEMO-01']
     parcel.style = '255 24 8499682'
     gui.rebuild_scene()
-    item = gui.graphics_for_uid['DEMO-01']
+    item = gui.fill_items_for_uid['DEMO-01']
     assert item.brush().color().getRgb()[:3] == (226,177,129)
     assert item.brush().color().alpha() == 255
 
@@ -138,9 +138,9 @@ def test_native_polygon_fill_and_cdf_palette(gui, tmp_path):
     cdf.write_bytes(b'5216 10 200 100 0 10 20 30 1.0 test\r\n')
     gui.load_library(cdf,'palette')
     gui.rebuild_scene()
-    item = gui.graphics_for_uid['DEMO-01']
+    item = gui.fill_items_for_uid['DEMO-01']
     assert item.brush().color().getRgb()[:3] == (10,200,100)
-    assert item.pen().color().getRgb()[:3] == (10,20,30)
+    assert gui.graphics_for_uid['DEMO-01'].pen().color().getRgb()[:3] == (10,20,30)
 
 
 def test_label_layer_toggle_visibility_is_reversible(gui):
@@ -236,4 +236,52 @@ def test_geo_map_text_palette_and_pen_width(gui, tmp_path):
         gui.label_items[(uid2,'A2')].brush().color().red())
     poly=gui.graphics_for_uid[uid2]
     assert poly.pen().widthF() == pytest.approx(2.25)
-    assert poly.brush().color().getRgb()[:3] == (20,150,90)
+    assert gui.fill_items_for_uid[uid2].brush().color().getRgb()[:3] == (20,150,90)
+
+
+def test_parcel_lines_are_above_filled_forest_polygons(gui):
+    """Regression from MOKRA WIEŚ screenshots: fills obscured subdivisions."""
+    from geostudio.geomap import GeoMap
+    from test_geomap import fixture_map
+    from PySide6.QtCore import Qt
+    gui.doc=GeoMap(fixture_map())
+    uid=gui.doc.append_polygon(
+        [(0,0),(2,0),(2,2),(0,2)],'5310',
+        fields={'A1':'a','A2':'So80'})
+    gui.doc.by_id[uid].style = '255 24 15461219'  # opaque cyan test colour
+    gui.rebuild_scene()
+    parcel=gui.graphics_for_uid['DEMO-01']
+    forest=gui.graphics_for_uid[uid]
+    fill=gui.fill_items_for_uid[uid]
+    assert fill.brush().color().alpha() == 255
+    assert fill.zValue() < parcel.zValue()
+    assert fill.zValue() < forest.zValue()
+    assert parcel.zValue() > forest.zValue()
+    assert forest.brush().style() == Qt.NoBrush
+    assert parcel.brush().style() == Qt.NoBrush
+    assert fill in gui.items_by_layer[gui.layer_for_uid[uid]]
+    gui.layers_tree.blockSignals(True)
+    gui.layers_tree.clear()
+    gui.layers_tree.blockSignals(False)
+
+
+def test_lay_pen_and_sym_granicznik_arcs(tmp_path):
+    from geostudio.library_render import (
+        parse_lay_pen_styles, lay_for_code, parse_sym_primitives,
+        simple_point_circles)
+    lay=tmp_path/'x.lay'
+    lay.write_bytes(
+        b'* 0 2.002 "Dzialki"\r\n'
+        b' 5216 8553090 23.023 1 standard 2.0 15 0\r\n'
+        b' 5220 32768 2.008 1 standard 2.5 15 0\r\n')
+    styles=parse_lay_pen_styles(lay)
+    assert lay_for_code(styles,'5216').line_id=='23.023'
+    assert lay_for_code(styles,'5220').line_id=='2.008'
+    sym=tmp_path/'x.sym'
+    sym.write_bytes(
+        b'*1246 granicznik\r\n'
+        b' A 0 0 0.50 0 0 360\r\n'
+        b' A 0 0 0.05 0 0 360\r\n'
+        b' T 2 3 1 6246.01 0 0\r\n')
+    assert simple_point_circles(parse_sym_primitives(sym)['1246']) == [
+        (0.0,0.0,0.5),(0.0,0.0,0.05)]
