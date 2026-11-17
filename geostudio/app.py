@@ -237,6 +237,10 @@ class GeoStudioWindow(QMainWindow):
         self.labels_action.setCheckable(True)
         self.labels_action.setChecked(True)
         self.labels_action.toggled.connect(self.set_labels_enabled)
+        self.all_labels_action = vm.addAction('Pokaż wszystkie podpisy (również nakładające się)')
+        self.all_labels_action.setCheckable(True)
+        self.all_labels_action.setChecked(False)
+        self.all_labels_action.toggled.connect(lambda _checked: self.update_label_visibility())
         self.snap_action = em.addAction('Przyciąganie do punktów i odcinków')
         self.snap_action.setCheckable(True)
         self.snap_action.setChecked(True)
@@ -476,8 +480,8 @@ class GeoStudioWindow(QMainWindow):
             uid = item.data(0)
             obj = self.doc.by_id.get(uid) if self.doc else None
             return (0 if uid == selected else
-                    1 if obj and obj.code == '5216' else
-                    2 if obj and obj.code == '5310' else 3)
+                    1 if obj and obj.code == '5310' else
+                    2 if obj and obj.code == '5216' else 3)
         for item in sorted(self.labels, key=priority):
             uid = item.data(0)
             layer = self.layer_for_uid.get(uid, '')
@@ -501,7 +505,7 @@ class GeoStudioWindow(QMainWindow):
             col = center.x() // 90
             row = center.y() // 26
             key = (col, row)
-            visible = key not in occupied
+            visible = self.all_labels_action.isChecked() or key not in occupied
             item.setVisible(visible)
             if visible:
                 occupied.add(key)

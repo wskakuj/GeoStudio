@@ -133,3 +133,39 @@ def test_drawing_real_viewport_mouse_events(qt_app,monkeypatch):
     assert len(window.doc.objects)==2
     assert not window.view.draw_mode
     window.close()
+
+
+def test_edit_vertex_using_actual_mouse_drag(qt_app):
+    from PySide6.QtTest import QTest
+    from PySide6.QtCore import Qt
+    window = GeoStudioWindow()
+    window.show()
+    window.doc = GeoMap(fixture_map())
+    window.rebuild_scene()
+    qt_app.processEvents()
+    window._select_uid('DEMO-01')
+    window.start_vertex_edit()
+    assert window.view.edit_mode
+    start = window.view.mapFromScene(QPointF(1, 0))
+    end = window.view.mapFromScene(QPointF(.8, -.12))
+    QTest.mousePress(window.view.viewport(), Qt.LeftButton, pos=start)
+    QTest.mouseMove(window.view.viewport(), pos=end)
+    QTest.mouseRelease(window.view.viewport(), Qt.LeftButton, pos=end)
+    assert not window.view.edit_mode
+    edited = window.doc.by_id['DEMO-01']
+    assert edited.points[1].x == pytest.approx(.8, abs=.01)
+    assert edited.is_closed
+    window.close()
+
+
+def test_all_labels_toggle(qt_app):
+    window = GeoStudioWindow()
+    window.show()
+    window.doc = GeoMap(fixture_map())
+    window.rebuild_scene()
+    qt_app.processEvents()
+    assert window.labels_action.isChecked()
+    window.all_labels_action.setChecked(True)
+    assert all(label.isVisible() for label in window.labels)
+    window.all_labels_action.setChecked(False)
+    window.close()

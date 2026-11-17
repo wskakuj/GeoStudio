@@ -129,7 +129,9 @@ Testy na plikach użytkownika potwierdziły zachowanie checksum `CHK`, zamknięc
   A1+A2, `5216` i `5230` pokazują A2, o ile pole występuje w pliku. Podpisy
   nie znikają na podstawie arbitralnego współczynnika zoom. Widoczne etykiety
   są rozrzedzane, żeby się nie nakładały; podpis zaznaczonego obiektu ma priorytet.
-  Ich styl i położenie nie są jeszcze zgodne 1:1 z GEO-MAP.
+  W menu Widok jest dodatkowe polecenie „Pokaż wszystkie podpisy”, które
+  wyłącza rozrzedzanie (może powodować nakładanie tekstu). Ich styl i położenie
+  nie są jeszcze zgodne 1:1 z GEO-MAP.
 - **Dopasuj mapę** — bierze pod uwagę geometrię, a nie wielkości podpisów w
   pikselach; poprawia również wiarygodność testów kliknięć.
 
