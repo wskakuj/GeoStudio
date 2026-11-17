@@ -188,6 +188,49 @@ class GeoMap:
             self.lines[line_no] = prefix + f'{x:.3f}'.encode() + b'   ' + f'{y:.3f}'.encode() + suffix + eol
         self._parse()
 
+    def insert_polygon_vertex(self, uid: str, segment_index: int, x: float, y: float):
+        """Split a polygon edge by inserting one GEO-MAP P record.
+
+        Other bytes, including all attributes, identifiers, point labels,
+        styles and unknown records, are left untouched. The inserted point
+        must lie on the selected segment to millimetre precision.
+        """
+        from math import hypot, isfinite
+        from .interactions import closest_point_on_edge, polygon_is_valid
+        if uid not in self.by_id:
+            raise KeyError(uid)
+        obj = self.by_id[uid]
+        if not obj.is_closed:
+            raise ValueError('Only closed polygons can be edited')
+        if not 0 <= segment_index < len(obj.points) - 1:
+            raise IndexError('Segment outside polygon')
+        if not all(isfinite(v) for v in (x, y)):
+            raise ValueError('Invalid coordinates')
+        a, b = obj.points[segment_index:segment_index + 2]
+        px, py = closest_point_on_edge(x, y, a.x, a.y, b.x, b.y)
+        if hypot(x - px, y - py) > 0.005:
+            raise ValueError('New vertex must be on the selected edge')
+        x, y = round(px, 3), round(py, 3)
+        if min(hypot(x-a.x, y-a.y), hypot(x-b.x, y-b.y)) < 0.002:
+            raise ValueError('New vertex is too close to an existing vertex')
+        coords = [(p.x, p.y) for p in obj.points[:-1]]
+        coords.insert(segment_index+1, (x, y))
+        if not polygon_is_valid(coords):
+            raise ValueError('Resulting polygon is invalid')
+        record_lines = [(i, POINT_RE.match(raw.rstrip(b'\r\n')))
+                        for i, raw in enumerate(self.lines[obj.start+1:obj.end],obj.start+1)]
+        record_lines = [(i, m) for i, m in record_lines if m]
+        if len(record_lines) != len(obj.points):
+            raise ValueError('Unexpected P record count; refusing to insert')
+        before_line, before_match = record_lines[segment_index]
+        after_line, _ = record_lines[segment_index+1]
+        before = self.lines[before_line]
+        eol = b'\r\n' if before.endswith(b'\r\n') else b'\n'
+        point_type = before_match.group(1).decode('ascii')
+        new_line = f'P {point_type}   {x:.3f}   {y:.3f}'.encode('ascii') + eol
+        self.lines.insert(after_line, new_line)
+        self._parse()
+
     def append_polygon(self, points: list[tuple[float,float]], code='5216', label='') -> str:
         if len(points)<3:raise ValueError('A polygon needs at least three vertices')
         if not re.fullmatch(r'\d{4}',code):raise ValueError('Code must have exactly four digits')

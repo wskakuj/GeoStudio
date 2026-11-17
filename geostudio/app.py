@@ -6,6 +6,9 @@ Full symbol / raster / export parity with GEO-MAP is NOT implemented.
 from __future__ import annotations
 import sys
 import math
+import os
+import tempfile
+import hashlib
 from pathlib import Path
 from collections import defaultdict
 
@@ -20,7 +23,7 @@ except ImportError as exc:
     raise SystemExit('Zainstaluj GUI: python -m pip install -e .\nBrakuje PySide6') from exc
 
 from .geomap import GeoMap, GeoObject, library_layers, library_symbols, library_colors, resolve_layer
-from .interactions import find_snap, polygon_is_valid
+from .interactions import find_snap, polygon_is_valid, closest_point_on_edge
 from .geometry_index import GeometryIndex
 
 APP_QSS = """
@@ -55,6 +58,7 @@ class MapView(QGraphicsView):
     cancel_action = Signal()
     vertex_hover = Signal(float, float, int)
     vertex_commit = Signal(float, float, int)
+    edge_insert = Signal(float, float)
     zoom_changed = Signal()
 
     def __init__(self, scene):
@@ -64,6 +68,8 @@ class MapView(QGraphicsView):
         self.pan_mode = False
         self.edit_points = []
         self.dragged_vertex = None
+        self._pan_button = None
+        self._pan_last = None
         self.setRenderHint(QPainter.Antialiasing)
         self.setDragMode(QGraphicsView.NoDrag)
         self.setViewportUpdateMode(QGraphicsView.BoundingRectViewportUpdate)
@@ -78,75 +84,91 @@ class MapView(QGraphicsView):
         return pt.x(), -pt.y()
 
     def wheelEvent(self, event):
-        factor = 1.2 if event.angleDelta().y() > 0 else 1/1.2
-        self.scale(factor, factor)
-        self.zoom_changed.emit()
+        # Use the same anchor and controlled scaling in every tool.
+        delta = event.angleDelta().y()
+        if not delta:
+            event.accept()
+            return
+        factor = 1.2 if delta > 0 else 1 / 1.2
+        current = abs(self.transform().m11())
+        if 1e-5 <= current * factor <= 4000:
+            self.scale(factor, factor)
+            self.zoom_changed.emit()
         event.accept()
 
     def scrollContentsBy(self, dx, dy):
+        # Panning moves scrollbars many times; it is NOT a zoom change.
+        # Calling the expensive label layout here made wheel/pan unstable.
         super().scrollContentsBy(dx, dy)
-        self.zoom_changed.emit()
 
     def mouseMoveEvent(self, event):
+        if self._pan_button is not None:
+            # Middle-button drag is temporary pan in SELECT/DRAW/EDIT/PAN.
+            pos = event.position().toPoint()
+            step = pos - self._pan_last
+            self._pan_last = pos
+            self.horizontalScrollBar().setValue(self.horizontalScrollBar().value() - step.x())
+            self.verticalScrollBar().setValue(self.verticalScrollBar().value() - step.y())
+            event.accept()
+            return
         x, y = self._position(event)
         self.coordinate.emit(x, y)
         if self.draw_mode:
             self.polygon_hover.emit(x, y)
-            event.accept()
-            return
-        if self.edit_mode and self.dragged_vertex is not None:
+        elif self.edit_mode and self.dragged_vertex is not None:
             self.vertex_hover.emit(x, y, self.dragged_vertex)
-            event.accept()
-            return
-        if self.pan_mode:
-            super().mouseMoveEvent(event)
-        else:
-            event.accept()
+        event.accept()
 
     def mousePressEvent(self, event):
         self.setFocus()
+        # Consistent explicit mouse handling avoids QGraphicsView.ScrollHandDrag
+        # swallowing selection clicks and unexpectedly altering wheel anchors.
+        if event.button() == Qt.MiddleButton or (self.pan_mode and event.button() == Qt.LeftButton):
+            self._pan_button = event.button()
+            self._pan_last = event.position().toPoint()
+            self.setCursor(Qt.ClosedHandCursor)
+            event.accept()
+            return
         x, y = self._position(event)
         if self.draw_mode:
             if event.button() == Qt.RightButton:
                 self.finish_polygon.emit()
             elif event.button() == Qt.LeftButton:
                 self.point_for_polygon.emit(x, y)
-            event.accept()
-            return
-        if self.edit_mode:
+        elif self.edit_mode:
             if event.button() == Qt.LeftButton:
                 pos = event.position().toPoint()
-                distances = [(self.mapFromScene(QPointF(px, -py))-pos).manhattanLength()
+                distances = [(self.mapFromScene(QPointF(px, -py)) - pos).manhattanLength()
                              for px, py in self.edit_points]
                 if distances:
                     idx = min(range(len(distances)), key=distances.__getitem__)
-                    if distances[idx] <= 20:
+                    if distances[idx] <= 18:
                         self.dragged_vertex = idx
                         self.vertex_hover.emit(x, y, idx)
-            event.accept()
-            return
-        if self.pan_mode:
-            super().mousePressEvent(event)
-            return
-        if event.button() == Qt.RightButton:
+                    else:
+                        self.edge_insert.emit(x, y)
+                else:
+                    self.edge_insert.emit(x, y)
+        elif event.button() == Qt.RightButton:
             self.canvas_context.emit(x, y)
         elif event.button() == Qt.LeftButton:
             self.canvas_click.emit(x, y, bool(event.modifiers() & Qt.AltModifier))
         event.accept()
 
     def mouseReleaseEvent(self, event):
-        if self.edit_mode:
-            if self.dragged_vertex is not None and event.button() == Qt.LeftButton:
-                x, y = self._position(event)
-                idx = self.dragged_vertex
-                self.dragged_vertex = None
-                self.vertex_commit.emit(x, y, idx)
+        if self._pan_button is not None and event.button() == self._pan_button:
+            self._pan_button = None
+            self._pan_last = None
+            self.setCursor(Qt.OpenHandCursor if self.pan_mode else
+                           Qt.CrossCursor if (self.draw_mode or self.edit_mode) else Qt.ArrowCursor)
             event.accept()
             return
-        if self.pan_mode:
-            super().mouseReleaseEvent(event)
-        else:
-            event.accept()
+        if self.edit_mode and self.dragged_vertex is not None and event.button() == Qt.LeftButton:
+            x, y = self._position(event)
+            idx = self.dragged_vertex
+            self.dragged_vertex = None
+            self.vertex_commit.emit(x, y, idx)
+        event.accept()
 
     def mouseDoubleClickEvent(self, event):
         if self.draw_mode:
@@ -157,6 +179,10 @@ class MapView(QGraphicsView):
             event.accept()
 
     def keyPressEvent(self, event):
+        if event.key() in (Qt.Key_Return, Qt.Key_Enter) and self.draw_mode:
+            self.finish_polygon.emit()
+            event.accept()
+            return
         if event.key() == Qt.Key_Escape and (self.draw_mode or self.edit_mode or self.pan_mode):
             self.cancel_action.emit()
             event.accept()
@@ -167,7 +193,7 @@ class MapView(QGraphicsView):
 class GeoStudioWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle('GeoStudio — eksperymentalny edytor GEO-MAP')
+        self.setWindowTitle('GeoStudio v0.4 — eksperymentalny edytor GEO-MAP')
         self.resize(1450, 900)
         self.doc: GeoMap | None=None
         self.catalog: dict[str,str]={}
@@ -181,6 +207,10 @@ class GeoStudioWindow(QMainWindow):
         self.hidden_layers = set()
         self.geometry_index = GeometryIndex(())
         self.select_code_filter = None
+        self._last_pick_pos = None
+        self._last_pick_candidates = ()
+        self._auto_copy_path = None
+        self._auto_copy_digest = None
         self.highlight_item=None
         self.draft_item=None
         self.snap_marker=None
@@ -200,6 +230,7 @@ class GeoStudioWindow(QMainWindow):
         self.view.polygon_hover.connect(self.preview_polygon)
         self.view.vertex_hover.connect(self.preview_vertex)
         self.view.vertex_commit.connect(self.commit_vertex)
+        self.view.edge_insert.connect(self.insert_vertex_at)
         self.view.cancel_action.connect(self.cancel_edit)
         self.view.zoom_changed.connect(self.update_label_visibility)
         self.view.point_for_polygon.connect(self.add_polygon_point)
@@ -229,6 +260,9 @@ class GeoStudioWindow(QMainWindow):
         em.addAction(self._action('Przesuwanie mapy',self.start_pan,'H'))
         em.addAction(self._action('Rysuj poligon',self.start_polygon,'P'))
         em.addAction(self._action('Edytuj wierzchołki poligonu',self.start_vertex_edit,'E'))
+        self.finish_action = self._action('Zakończ i zapisz poligon',self.finish_polygon,'Return')
+        em.addAction(self.finish_action)
+        self.finish_action.setEnabled(False)
         em.addAction(self._action('Zakończ / anuluj narzędzie',self.cancel_edit,'Esc'))
         em.addAction(self._action('Edytuj atrybut zaznaczonego obiektu…',self.edit_selected,'F2'))
         vm=self.menuBar().addMenu('&Widok')
@@ -267,6 +301,9 @@ class GeoStudioWindow(QMainWindow):
             toolbar.addAction(action)
             self.tool_actions[key] = action
         self.tool_actions['select'].setChecked(True)
+        self.finish_toolbar_action = self._action('✓ Zakończ poligon [Enter]', self.finish_polygon)
+        toolbar.addAction(self.finish_toolbar_action)
+        self.finish_toolbar_action.setVisible(False)
         toolbar.addSeparator()
         toolbar.addAction(self.snap_action)
         toolbar.addAction(self.labels_action)
@@ -300,9 +337,9 @@ class GeoStudioWindow(QMainWindow):
     def _help_dock(self):
         dock=QDockWidget('Informacja',self)
         dock.setMaximumHeight(110)
-        label=QLabel('S: wybierz obiekt, H: przesuń mapę, P: poligon, E: edytuj wierzchołki. Alt+klik lub prawy przycisk: nakładające się obiekty. '
-                     'P: nowy poligon (wierzchołki przyciągają się do punktów i krawędzi). '
-                     'E: przesuwaj wierzchołki wybranego poligonu. Esc: zakończ narzędzie. '
+        label=QLabel('S: zaznacz, H: przesuń; środkowy przycisk przesuwa mapę zawsze. Kolejne kliknięcia przełączają nakładające się obiekty. '
+                     'P: nowy poligon (kliknij pierwszy punkt lub Enter, aby zamknąć). '
+                     'E: przeciągaj wierzchołki albo kliknij krawędź, aby wstawić nowy. Esc: zakończ. '
                      'Style GEO-MAP nadal są przybliżone.')
         label.setWordWrap(True)
         dock.setWidget(label)
@@ -317,9 +354,13 @@ class GeoStudioWindow(QMainWindow):
                 answer=QMessageBox.warning(self,'Suma kontrolna','Suma MD5 pliku nie zgadza się z nagłówkiem. Otworzyć tylko do podglądu?',QMessageBox.Yes|QMessageBox.No)
                 if answer!=QMessageBox.Yes:return
             self.doc=doc
+            self._auto_copy_path = None
+            self._auto_copy_digest = None
+            self._last_pick_pos = None
+            self._last_pick_candidates = ()
             self._look_for_libraries(Path(file).parent)
             self.rebuild_scene()
-            self.setWindowTitle('GeoStudio — '+Path(file).name)
+            self.setWindowTitle('GeoStudio v0.4 — '+Path(file).name)
             self.status.showMessage(f'{len(doc.objects)} obiektów, {len(doc.lines)} wierszy | {file}')
         except Exception as exc: QMessageBox.critical(self,'Błąd odczytu mapy',str(exc))
 
@@ -457,6 +498,8 @@ class GeoStudioWindow(QMainWindow):
 
     def change_select_filter(self, _index):
         self.select_code_filter = self.selector.currentData()
+        self._last_pick_pos = None
+        self._last_pick_candidates = ()
         self._select_uid('')
 
     def update_label_visibility(self):
@@ -513,7 +556,7 @@ class GeoStudioWindow(QMainWindow):
     def start_pan(self):
         self.cancel_edit()
         self.view.pan_mode = True
-        self.view.setDragMode(QGraphicsView.ScrollHandDrag)
+        self.view.setDragMode(QGraphicsView.NoDrag)
         self.view.setCursor(Qt.OpenHandCursor)
         self.tool_actions['pan'].setChecked(True)
         self.status.showMessage('Tryb przesuwania mapy (H). S lub Esc: powrót do zaznaczania.')
@@ -579,16 +622,24 @@ class GeoStudioWindow(QMainWindow):
         candidates = self._pick_candidates(x, y)
         uids = [obj.uid for obj in candidates]
         if not uids:
+            self._last_pick_pos = None
+            self._last_pick_candidates = ()
             self._select_uid('')
             return
-        if cycle and self.selected_uid in uids:
+        screen = self.view.mapFromScene(QPointF(x, -y))
+        repeat = (self._last_pick_pos is not None and
+                  (screen - self._last_pick_pos).manhattanLength() <= 12 and
+                  tuple(uids) == self._last_pick_candidates)
+        self._last_pick_pos = screen
+        self._last_pick_candidates = tuple(uids)
+        if (cycle or repeat) and self.selected_uid in uids:
             idx = (uids.index(self.selected_uid) + 1) % len(uids)
         else:
             idx = 0
         self._select_uid(uids[idx])
         obj = self.doc.by_id[uids[idx]]
         self.status.showMessage(f'Wybrano {obj.code} / {obj.fields.get("A2", "")}. '
-                                f'Alt+klik lub prawy przycisk: inne obiekty ({idx+1}/{len(uids)}).')
+                                f'Kliknij ponownie w tym miejscu, aby przełączyć obiekt ({idx+1}/{len(uids)}).')
 
     def _snap(self, x, y, *, exclude_uid=None):
         if not self.doc or not self.snap_action.isChecked():
@@ -708,7 +759,12 @@ class GeoStudioWindow(QMainWindow):
             self.tool_actions["select"].setChecked(True)
         self.view.dragged_vertex = None
         self.view.edit_points = []
-        self.view.setDragMode(QGraphicsView.ScrollHandDrag)
+        self.view.setDragMode(QGraphicsView.NoDrag)
+        self.view._pan_button = None
+        self.view._pan_last = None
+        if hasattr(self, 'finish_toolbar_action'):
+            self.finish_toolbar_action.setVisible(False)
+            self.finish_action.setEnabled(False)
         self.current_polygon = []
         self.edit_uid = ''
         if self.draft_item:
@@ -742,7 +798,9 @@ class GeoStudioWindow(QMainWindow):
         self.tool_actions['draw'].setChecked(True)
         self.view.setDragMode(QGraphicsView.NoDrag)
         self._ensure_feedback_items()
-        self.status.showMessage('Rysowanie [P]: lewy = dodaj wierzchołek, prawy = zakończ, Esc = anuluj; przyciąganie włączone.')
+        self.finish_toolbar_action.setVisible(True)
+        self.finish_action.setEnabled(True)
+        self.status.showMessage('Poligon: klikaj wierzchołki, kliknij PIERWSZY punkt lub Enter/prawy przycisk, aby zakończyć i zapisać kopię.')
 
     def preview_polygon(self, x, y):
         if not self.view.draw_mode:
@@ -751,6 +809,12 @@ class GeoStudioWindow(QMainWindow):
         snap = self._snap(x, y)
         self.current_snap = snap
         px, py = (snap.x, snap.y) if snap else (x, y)
+        if len(self.current_polygon) >= 3:
+            start = self.current_polygon[0]
+            cursor = self.view.mapFromScene(QPointF(x, -y))
+            anchor = self.view.mapFromScene(QPointF(start[0], -start[1]))
+            if math.hypot(cursor.x() - anchor.x(), cursor.y() - anchor.y()) <= 14:
+                px, py = start
         pts = self.current_polygon + [(px,py)]
         if pts:
             path = QPainterPath(QPointF(pts[0][0], -pts[0][1]))
@@ -762,8 +826,21 @@ class GeoStudioWindow(QMainWindow):
             self.snap_marker.setPos(snap.x, -snap.y)
 
     def add_polygon_point(self, x, y):
+        # Close on a click within a 14-pixel radius of the FIRST point.
+        # Screen coordinates are essential: one fixed map-unit tolerance
+        # would behave unpredictably when the user zooms.
+        if len(self.current_polygon) >= 3:
+            initial = self.current_polygon[0]
+            cursor = self.view.mapFromScene(QPointF(x, -y))
+            anchor = self.view.mapFromScene(QPointF(initial[0], -initial[1]))
+            if math.hypot(cursor.x() - anchor.x(), cursor.y() - anchor.y()) <= 14:
+                self.finish_polygon()
+                return
         snap = self._snap(x, y)
         px, py = (snap.x, snap.y) if snap else (x, y)
+        if len(self.current_polygon) >= 3 and (px, py) == self.current_polygon[0]:
+            self.finish_polygon()
+            return
         if self.current_polygon and self.current_polygon[-1] == (px,py):
             return
         self.current_polygon.append((px,py))
@@ -779,7 +856,7 @@ class GeoStudioWindow(QMainWindow):
         self.map_scene.addItem(dot)
         self.draft_points.append(dot)
         self.preview_polygon(px, py)
-        self.status.showMessage(f'Poligon: {len(self.current_polygon)} wierzchołki; prawy = zapisz, Esc = anuluj.')
+        self.status.showMessage(f'Poligon: {len(self.current_polygon)} punkty. Kliknij początek, Enter, prawy przycisk lub ✓ Zakończ.')
 
     def finish_polygon(self):
         if not self.view.draw_mode:
@@ -797,9 +874,91 @@ class GeoStudioWindow(QMainWindow):
             uid=self.doc.append_polygon(points,self.polygon_code,label)
             self.cancel_edit()
             self.rebuild_scene(fit=False,reselect=uid)
-            self.status.showMessage('Dodano poligon. Zapisz jako NOWY plik MAP; sprawdź wynik w GEO-MAP.')
+            saved = self._autosave_work_copy()
+            self.status.showMessage('Zamknięto poligon.' +
+                (f' Kopia robocza: {saved}' if saved else ' Użyj Zapisz jako, by zapisać kopię mapy.'))
         except Exception as exc:
             QMessageBox.warning(self,'Błąd rysowania',str(exc))
+
+    def _autosave_work_copy(self):
+        """Automatically persist edits to a NEW work-copy, never the source file.
+
+        Rewrites ONLY a copy generated by this application instance; atomic
+        replace protects against interruption. User-supplied .MAP is untouched.
+        """
+        if not self.doc or not self.doc.filename:
+            return None
+        source = Path(self.doc.filename).resolve()
+        encoded = self.doc.to_bytes()
+        try:
+            if self._auto_copy_path is None:
+                # Exclusive creation avoids overwriting any existing user file.
+                for number in range(1, 1000):
+                    suffix = '' if number == 1 else f'_{number}'
+                    candidate = source.with_name(source.stem + '_GeoStudio_robocza' + suffix + source.suffix)
+                    try:
+                        with candidate.open('xb') as output:
+                            output.write(encoded)
+                        self._auto_copy_path = candidate
+                        self._auto_copy_digest = hashlib.sha256(encoded).digest()
+                        break
+                    except FileExistsError:
+                        continue
+                else:
+                    raise FileExistsError('Brak wolnej nazwy kopii roboczej')
+            else:
+                target = self._auto_copy_path
+                if not target.is_file() or target.resolve() == source:
+                    raise RuntimeError('Kopia robocza została przeniesiona; ponowny zapis zablokowany')
+                if hashlib.sha256(target.read_bytes()).digest() != self._auto_copy_digest:
+                    raise RuntimeError('Kopia robocza została zmieniona poza GeoStudio; odmawiam nadpisania')
+                fd, temporary = tempfile.mkstemp(prefix='.geostudio-', suffix='.tmp', dir=target.parent)
+                try:
+                    with os.fdopen(fd, 'wb') as output:
+                        output.write(encoded)
+                        output.flush()
+                        os.fsync(output.fileno())
+                    os.replace(temporary, target)
+                    self._auto_copy_digest = hashlib.sha256(encoded).digest()
+                finally:
+                    if os.path.exists(temporary):
+                        os.unlink(temporary)
+            return self._auto_copy_path
+        except (OSError, ValueError, RuntimeError) as exc:
+            QMessageBox.warning(self,'Kopia robocza nie została zapisana',
+                f'Zmiana pozostaje w pamięci. Zapisz ją ręcznie przez Zapisz jako.\n{exc}')
+            return None
+
+    def insert_vertex_at(self, x, y):
+        """Click near an edge in E mode: split its segment with a new vertex."""
+        if not self.view.edit_mode or not self.edit_uid or not self.doc:
+            return
+        obj = self.doc.by_id.get(self.edit_uid)
+        if not obj or not obj.is_closed:
+            return
+        origin = self.view.mapToScene(QPoint(0, 0))
+        edge = self.view.mapToScene(QPoint(14, 0))
+        tolerance = abs(edge.x() - origin.x())
+        best = None
+        for i, (a, b) in enumerate(zip(obj.points, obj.points[1:])):
+            px, py = closest_point_on_edge(x, y, a.x, a.y, b.x, b.y)
+            dist = math.hypot(x - px, y - py)
+            if dist <= tolerance and (best is None or dist < best[0]):
+                best = (dist, i, px, py)
+        if best is None:
+            return
+        _dist, index, px, py = best
+        uid = self.edit_uid
+        try:
+            self.doc.insert_polygon_vertex(uid, index, px, py)
+            self.cancel_edit()
+            self.rebuild_scene(fit=False, reselect=uid)
+            self.start_vertex_edit()
+            saved = self._autosave_work_copy()
+            self.status.showMessage('Dodano wierzchołek na krawędzi.' +
+                                    (f' Kopia: {saved}' if saved else ' Zapisz jako nowy MAP.'))
+        except (ValueError, IndexError) as exc:
+            self.status.showMessage('Nie wstawiono wierzchołka: ' + str(exc))
 
     def start_vertex_edit(self):
         if not self.doc or not self.selected_uid:
@@ -858,7 +1017,10 @@ class GeoStudioWindow(QMainWindow):
             # Preserve current scale/position; do not zoom out after every edit.
             self.cancel_edit()
             self.rebuild_scene(fit=False,reselect=uid)
-            self.status.showMessage('Wierzchołek przesunięty. Zapisz jako kopię i zweryfikuj plik w GEO-MAP.')
+            self.start_vertex_edit()
+            saved = self._autosave_work_copy()
+            self.status.showMessage('Wierzchołek przesunięty.' +
+                                    (f' Kopia: {saved}' if saved else ' Zapisz jako nowy MAP.'))
         except Exception as exc:
             QMessageBox.warning(self,'Nie zmieniono geometrii',str(exc))
             self.cancel_edit()
