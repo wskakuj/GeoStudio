@@ -285,3 +285,41 @@ def test_lay_pen_and_sym_granicznik_arcs(tmp_path):
         b' T 2 3 1 6246.01 0 0\r\n')
     assert simple_point_circles(parse_sym_primitives(sym)['1246']) == [
         (0.0,0.0,0.5),(0.0,0.0,0.05)]
+
+
+def test_sym_400x_line_styles_follow_object_macro_references(tmp_path):
+    from geostudio.library_render import (
+        parse_sym_primitives, parse_sym_line_patterns, object_sym_line_pattern)
+    f=tmp_path/'symbols.sym'
+    f.write_bytes(
+        b'*4001 solid\r\n 1 1.00 0.00 0 0 0 0\r\n'
+        b'*4002 1,-1\r\n 2 1.00 -1.00 0 0 0 0\r\n'
+        b'*4003 2,-1\r\n 2 2.00 -1.00 0 0 0 0\r\n'
+        b'*4216 granica dzialki\r\n L 4001.00 0 0 0.5 0 0\r\n'
+        b'*5216 dzialka\r\n O 4216.00 0 0 0 0 0\r\n'
+        b'*5220 kontur\r\n O 4003.00 0 0 0 0 0\r\n'
+        b'*5230 uzytek\r\n O 4002.00 0 0 0 0 0\r\n')
+    primitives=parse_sym_primitives(f)
+    patterns=parse_sym_line_patterns(f)
+    assert patterns['4003']==(2,1)
+    assert object_sym_line_pattern(primitives,patterns,'5216')==()
+    assert object_sym_line_pattern(primitives,patterns,'5220')==(2,1)
+    assert object_sym_line_pattern(primitives,patterns,'5230')==(1,1)
+
+
+def test_contour_pen_dashes_come_from_sym(gui, tmp_path):
+    from geostudio.geomap import GeoMap
+    from test_geomap import fixture_map
+    from PySide6.QtCore import Qt
+    gui.doc=GeoMap(fixture_map())
+    uid=gui.doc.append_polygon([(4,4),(6,4),(5,7)],'5220',
+                                fields={'A2':'RV'})
+    lib=tmp_path/'sample.sym'
+    lib.write_bytes(
+        b'*4003 dashed\r\n 2 2.00 -1.00 0 0 0 0\r\n'
+        b'*5220 kontur klasyfikacyjny\r\n O 4003 0 0 0 0 0\r\n')
+    gui.load_library(lib,'symbols')
+    gui.rebuild_scene()
+    item=gui.graphics_for_uid[uid]
+    assert item.pen().style()==Qt.CustomDashLine
+    assert item.pen().dashPattern()==pytest.approx([6.0,3.0])
