@@ -246,7 +246,7 @@ class MapView(QGraphicsView):
 class GeoStudioWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle('GeoStudio v0.8 — eksperymentalny edytor GEO-MAP')
+        self.setWindowTitle('GeoStudio v0.9 — eksperymentalny edytor GEO-MAP')
         self.resize(1450, 900)
         self.settings = QSettings('GeoStudio', 'GeoStudio')
         self.doc: GeoMap | None=None
@@ -574,7 +574,7 @@ class GeoStudioWindow(QMainWindow):
             self._last_pick_candidates = ()
             self._look_for_libraries(Path(file).parent)
             self.rebuild_scene()
-            self.setWindowTitle('GeoStudio v0.8 — '+Path(file).name)
+            self.setWindowTitle('GeoStudio v0.9 — '+Path(file).name)
             self.status.showMessage(f'{len(doc.objects)} obiektów, {len(doc.lines)} wierszy | {file}')
         except Exception as exc: QMessageBox.critical(self,'Błąd odczytu mapy',str(exc))
 
@@ -711,7 +711,10 @@ class GeoStudioWindow(QMainWindow):
                     color = border
             pen = QPen(color)
             pen.setCosmetic(True)
-            pen.setWidthF(1.0)
+            # Device-pixel width is independent from the map's zoom.
+            # Use the CDF border weight when present; protect against
+            # excessively wide vendor pen settings.
+            pen.setWidthF(min(3.0, max(0.8, cdf.width)) if cdf and cdf.width > 0 else 1.0)
             override = self.visual_styles.get(obj.uid)
             native_rgb = native_fill_color(obj.style)
             if override:
@@ -731,6 +734,8 @@ class GeoStudioWindow(QMainWindow):
                          5: Qt.CrossPattern, 6: Qt.BDiagPattern,
                          7: Qt.FDiagPattern, 8: Qt.DiagCrossPattern}.get(
                              cdf.hatch, Qt.SolidPattern)
+                # Qt brush hatches approximatively reproduce CDF pattern types.
+                # Native fully opaque RGB is retained; no washed-out 7% fill.
                 fill_brush = QBrush(fill_color, hatch)
             else:
                 fill_brush = QBrush(Qt.NoBrush)
@@ -793,17 +798,27 @@ class GeoStudioWindow(QMainWindow):
                     max(xs) - min(xs), max(ys) - min(ys))
             for field, content in label_fields:
                 label = QGraphicsSimpleTextItem(content)
+                # A QFont point size is DPI-dependent. Explicit pixel sizes
+                # and ItemIgnoresTransformations guarantee that zoom/rotation
+                # do NOT enlarge or shrink printed map annotations on screen.
+                font = QFont('Segoe UI')
                 if obj.code == '5310':
-                    label.setFont(QFont('Segoe UI', 12, QFont.Bold))
-                    label.setBrush(QBrush(QColor('#C31E2B')))
+                    font.setPixelSize(16)
+                    font.setBold(True)
+                    color = QColor('#CC202C')  # GEO-MAP-style building identifier
                 elif obj.code == '5216':
-                    label.setFont(QFont('Segoe UI', 9))
-                    label.setBrush(QBrush(QColor('#21374c')))
+                    font.setPixelSize(12)
+                    color = QColor('#4A5056')  # quiet parcel numbers
+                elif obj.code in {'5220', '5230'}:
+                    font.setPixelSize(11)
+                    color = QColor('#35753A')  # land use / contours in green
+                    color.setAlpha(190)
                 else:
-                    label.setFont(QFont('Segoe UI', 8))
-                    muted = QColor('#587280')
-                    muted.setAlpha(170)
-                    label.setBrush(QBrush(muted))
+                    font.setPixelSize(11)
+                    color = QColor('#58686F')
+                    color.setAlpha(180)
+                label.setFont(font)
+                label.setBrush(QBrush(color))
                 label.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIgnoresTransformations, True)
                 label.setAcceptedMouseButtons(Qt.NoButton)
                 bounds = label.boundingRect()
