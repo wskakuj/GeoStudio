@@ -80,6 +80,11 @@ class MapView(QGraphicsView):
         self.setViewportUpdateMode(QGraphicsView.BoundingRectViewportUpdate)
         self.setBackgroundBrush(QBrush(QColor('#f7f9fb')))
         self.setTransformationAnchor(QGraphicsView.AnchorUnderMouse)
+        # The GEO-MAP file stores X (northing) before Y (easting).
+        # Existing scene uses (X, -Y); geodetic orientation on screen is
+        # (Y, -X). Swapping the axes here preserves all scene geometry,
+        # snapping, area calculations and original MAP record coordinates.
+        self.setTransform(QTransform(0, -1, -1, 0, 0, 0))
         self.setMouseTracking(True)
         self.setFocusPolicy(Qt.StrongFocus)
         self.setCursor(Qt.ArrowCursor)
@@ -95,7 +100,10 @@ class MapView(QGraphicsView):
             event.accept()
             return
         factor = 1.2 ** (delta / 120.0)
-        current = abs(self.transform().m11())
+        # m11 can be ZERO at a correct 90-degree rotation. Its absolute
+        # value is not a zoom factor. Use the length of a transformed unit.
+        transform = self.transform()
+        current = math.hypot(transform.m11(), transform.m12())
         if not (1e-5 <= current * factor <= 4000):
             event.accept()
             return
@@ -217,7 +225,7 @@ class MapView(QGraphicsView):
 class GeoStudioWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle('GeoStudio v0.6 — eksperymentalny edytor GEO-MAP')
+        self.setWindowTitle('GeoStudio v0.7 — eksperymentalny edytor GEO-MAP')
         self.resize(1450, 900)
         self.settings = QSettings('GeoStudio', 'GeoStudio')
         self.doc: GeoMap | None=None
@@ -232,6 +240,8 @@ class GeoStudioWindow(QMainWindow):
         self.labels=[]
         self.labels_enabled = True
         self.hide_multipart_connectors = True
+        self.orientation_is_geodetic = True
+        self.view_rotation_degrees = 0
         self.layer_for_uid = {}
         self.hidden_layers = set()
         self.geometry_index = GeometryIndex(())
@@ -303,6 +313,20 @@ class GeoStudioWindow(QMainWindow):
         vm=self.menuBar().addMenu('&Widok')
         self.view_menu = vm
         vm.addAction(self._action('Dopasuj widok do mapy',self.fit_all,'Ctrl+0'))
+        orientation_menu = vm.addMenu('Orientacja i obrót mapy')
+        orientation_menu.addAction(self._action(
+            'Orientacja GEO-MAP (geodezyjna X/Y)',self.reset_orientation,'Ctrl+Alt+0'))
+        orientation_menu.addAction(self._action(
+            'Orientacja dawna GeoStudio (techniczna)',self.legacy_orientation))
+        orientation_menu.addSeparator()
+        orientation_menu.addAction(self._action(
+            'Obróć w lewo 15°',lambda: self.rotate_view(-15),'Ctrl+Alt+Left'))
+        orientation_menu.addAction(self._action(
+            'Obróć w prawo 15°',lambda: self.rotate_view(15),'Ctrl+Alt+Right'))
+        orientation_menu.addAction(self._action(
+            'Obróć w lewo 90°',lambda: self.rotate_view(-90)))
+        orientation_menu.addAction(self._action(
+            'Obróć w prawo 90°',lambda: self.rotate_view(90)))
         self.multipart_action = vm.addAction('Ukryj łączniki między częściami obiektu (P 0)')
         self.multipart_action.setCheckable(True)
         self.multipart_action.setChecked(True)
@@ -324,7 +348,10 @@ class GeoStudioWindow(QMainWindow):
         self.addToolBar(toolbar)
         for label,fn in [('📂 Otwórz',self.open_map),('💾 Zapisz jako',self.save_map),
                          ('◎ Cała mapa',self.fit_all), ('▧ Raster',self.add_raster),
-                         ('↗ DXF',self.export_dxf), ('⬇ Obraz',self.export_image)]:
+                         ('↗ DXF',self.export_dxf), ('⬇ Obraz',self.export_image),
+                         ('⟲ 15°',lambda: self.rotate_view(-15)),
+                         ('⟳ 15°',lambda: self.rotate_view(15)),
+                         ('N ↑ GEO-MAP',self.reset_orientation)]:
             toolbar.addAction(self._action(label,fn))
         toolbar.addSeparator()
         self.tool_actions = {}
@@ -512,7 +539,7 @@ class GeoStudioWindow(QMainWindow):
             self._last_pick_candidates = ()
             self._look_for_libraries(Path(file).parent)
             self.rebuild_scene()
-            self.setWindowTitle('GeoStudio v0.6 — '+Path(file).name)
+            self.setWindowTitle('GeoStudio v0.7 — '+Path(file).name)
             self.status.showMessage(f'{len(doc.objects)} obiektów, {len(doc.lines)} wierszy | {file}')
         except Exception as exc: QMessageBox.critical(self,'Błąd odczytu mapy',str(exc))
 
@@ -1159,6 +1186,44 @@ class GeoStudioWindow(QMainWindow):
             return rect
         margin = max(rect.width(), rect.height(), 10.0)
         return rect.adjusted(-margin, -margin, margin, margin)
+
+    @staticmethod
+    def _geodetic_transform():
+        """View-space correction: scene (X,-Y) -> screen (Y,-X)."""
+        return QTransform(0, -1, -1, 0, 0, 0)
+
+    def _apply_orientation(self, transform, *, geodetic, rotation):
+        if self.view.draw_mode or self.view.edit_mode:
+            # Changing view orientation mid-edit is safe geometrically,
+            # but disorienting; first exit the active interaction mode.
+            self.cancel_edit()
+        center = self.view.mapToScene(self.view.viewport().rect().center())
+        self.view.setTransform(transform)
+        self.view.centerOn(center)
+        self.orientation_is_geodetic = geodetic
+        self.view_rotation_degrees = rotation % 360
+        self.update_label_visibility()
+        self.status.showMessage(
+            f'Orientacja: {"GEO-MAP" if geodetic else "techniczna"}'
+            f' • obrót {self.view_rotation_degrees}°. Współrzędne MAP nie są zmieniane.')
+
+    def reset_orientation(self):
+        self._apply_orientation(self._geodetic_transform(), geodetic=True,
+                                rotation=0)
+
+    def legacy_orientation(self):
+        self._apply_orientation(QTransform(), geodetic=False, rotation=0)
+
+    def rotate_view(self, degrees):
+        """Rotate the viewport about its center, not the stored world coords."""
+        center = self.view.mapToScene(self.view.viewport().rect().center())
+        self.view.rotate(degrees)
+        self.view.centerOn(center)
+        self.view_rotation_degrees = (self.view_rotation_degrees + degrees) % 360
+        self.update_label_visibility()
+        self.status.showMessage(
+            f'Obrót widoku: {self.view_rotation_degrees}°. '
+            'Obiekty i zapisane współrzędne pozostają bez zmian.')
 
     def fit_all(self):
         if not self.doc:
