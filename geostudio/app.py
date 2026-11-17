@@ -30,7 +30,10 @@ from .geometry_index import GeometryIndex
 from .object_search import search_objects
 from .visual_styles import (parse_fill_code, fill_code, load_styles,
     load_label_positions, write_styles, sidecar_path)
-from .library_render import parse_cdf, parse_sym_primitives, cdf_for_object, native_fill_color, simple_point_segments
+from .library_render import (parse_cdf, parse_sym_primitives, cdf_for_object,
+    native_fill_color, simple_point_segments, simple_point_circles,
+    parse_lay_pen_styles, lay_for_code,
+    parse_sym_line_patterns, object_sym_line_pattern)
 
 APP_QSS = """
 QMainWindow, QDockWidget, QWidget { background-color: #101826; color: #dce7f5; font: 10pt 'Segoe UI'; }
@@ -246,7 +249,7 @@ class MapView(QGraphicsView):
 class GeoStudioWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle('GeoStudio v0.9 — eksperymentalny edytor GEO-MAP')
+        self.setWindowTitle('GeoStudio v0.10 — eksperymentalny edytor GEO-MAP')
         self.resize(1450, 900)
         self.settings = QSettings('GeoStudio', 'GeoStudio')
         self.doc: GeoMap | None=None
@@ -255,6 +258,9 @@ class GeoStudioWindow(QMainWindow):
         self.palette: dict[str,tuple[int,int,int]]={}
         self.cdf_styles = {}
         self.sym_primitives = {}
+        self.lay_pen_styles = {}
+        self.sym_line_patterns = {}
+        self.fill_items_for_uid = {}
         self.library_paths = {}
         self.label_positions = {}
         self.label_items = {}
@@ -574,7 +580,7 @@ class GeoStudioWindow(QMainWindow):
             self._last_pick_candidates = ()
             self._look_for_libraries(Path(file).parent)
             self.rebuild_scene()
-            self.setWindowTitle('GeoStudio v0.9 — '+Path(file).name)
+            self.setWindowTitle('GeoStudio v0.10 — '+Path(file).name)
             self.status.showMessage(f'{len(doc.objects)} obiektów, {len(doc.lines)} wierszy | {file}')
         except Exception as exc: QMessageBox.critical(self,'Błąd odczytu mapy',str(exc))
 
@@ -603,9 +609,11 @@ class GeoStudioWindow(QMainWindow):
         path = Path(path).resolve()
         if kind == 'layers':
             _, self.catalog = library_layers(path)
+            self.lay_pen_styles = parse_lay_pen_styles(path)
         elif kind == 'symbols':
             self.symbols = library_symbols(path)
             self.sym_primitives = parse_sym_primitives(path)
+            self.sym_line_patterns = parse_sym_line_patterns(path)
         elif kind == 'palette':
             self.palette = library_colors(path)
             self.cdf_styles = parse_cdf(path)
@@ -685,6 +693,7 @@ class GeoStudioWindow(QMainWindow):
         self.geometry_index = GeometryIndex(self.doc.objects, hide_connectors=self.hide_multipart_connectors)
         self.layer_for_uid = {}
         self.graphics_for_uid = {}
+        self.fill_items_for_uid = {}
         self.items_by_layer = defaultdict(list)
         self.labels = []
         self.label_items = {}
@@ -711,6 +720,18 @@ class GeoStudioWindow(QMainWindow):
                     color = border
             pen = QPen(color)
             pen.setCosmetic(True)
+            lay_style = lay_for_code(self.lay_pen_styles, obj.code)
+            # GEO-MAP's SYM macros define real dash/gap ratios:
+            # *4002 (1,-1), *4003 (2,-1), O 4003 in 5220, O 4002 in 5230.
+            # Resolve that definition first, then approximate LAY fallback.
+            sym_dash = object_sym_line_pattern(
+                self.sym_primitives, self.sym_line_patterns, obj.code)
+            if sym_dash:
+                pen.setStyle(Qt.CustomDashLine)
+                pen.setDashPattern([max(.5, sym_dash[0]*3),
+                                    max(.5, sym_dash[1]*3)])
+            elif sym_dash is None and lay_style and lay_style.line_id.endswith('.008'):
+                pen.setStyle(Qt.DashLine)
             # Device-pixel width is independent from the map's zoom.
             # Use the CDF border weight when present; protect against
             # excessively wide vendor pen settings.
@@ -741,36 +762,63 @@ class GeoStudioWindow(QMainWindow):
                 fill_brush = QBrush(Qt.NoBrush)
 
             if len(obj.points) == 1:
-                # Direct line primitives in SYM are rendered for point symbols.
-                # O/T references and curves remain unsupported (no guessed art).
+                # SYM full-circle A instructions describe boundary markers.
+                # Draw actual double rings instead of thousands of generic,
+                # oversized black dots on every surveyed boundary.
                 primitives = self.sym_primitives.get(obj.code, [])
                 segments = simple_point_segments(primitives)
-                if segments:
-                    path = QPainterPath()
+                circles = simple_point_circles(primitives)
+                if segments or circles:
+                    point_path = QPainterPath()
                     for x1,y1,x2,y2 in segments:
-                        path.moveTo(x1 * 5, -y1 * 5)
-                        path.lineTo(x2 * 5, -y2 * 5)
-                    item = QGraphicsPathItem(path)
+                        point_path.moveTo(x1 * 5, -y1 * 5)
+                        point_path.lineTo(x2 * 5, -y2 * 5)
+                    for cx,cy,radius in circles:
+                        radius_px=radius*5
+                        point_path.addEllipse(QPointF(cx*5,-cy*5),
+                                              radius_px,radius_px)
+                    item = QGraphicsPathItem(point_path)
                 else:
-                    item = QGraphicsEllipseItem(-2.5, -2.5, 5, 5)
+                    # Fallback is deliberately smaller than the old 5 px disc.
+                    item = QGraphicsEllipseItem(-1.0,-1.0,2.0,2.0)
                     item.setBrush(QBrush(color))
                 item.setPos(obj.points[0].x, -obj.points[0].y)
                 item.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIgnoresTransformations, True)
+                item.setZValue(250)
             else:
-                item = QGraphicsPathItem(
-                    self._path_for(obj, hide_connectors=self.hide_multipart_connectors))
+                path = self._path_for(obj,hide_connectors=self.hide_multipart_connectors)
+                item = QGraphicsPathItem(path)
+                item.setBrush(QBrush(Qt.NoBrush))
+                # All boundary lines are placed ABOVE every filled polygon.
+                # Parcel boundaries must stay visible even under opaque
+                # forestry / land-use polygons, irrespective of object order.
+                item.setZValue(180 if obj.code=='5216' else
+                               130 if obj.code in {'5220','5230'} else 100)
                 parts = obj.display_parts
                 is_multipart_area = bool(parts) and all(
-                    len(part) >= 4 and (part[0].x, part[0].y) == (part[-1].x, part[-1].y)
-                    for part in parts)
+                    len(part) >= 4 and (part[0].x,part[0].y) ==
+                    (part[-1].x,part[-1].y) for part in parts)
                 if obj.is_closed or is_multipart_area:
-                    item.setBrush(fill_brush)
+                    fill_item = QGraphicsPathItem(path)
+                    fill_item.setBrush(fill_brush)
+                    fill_item.setPen(QPen(Qt.NoPen))
+                    # Independent fill stage; never paint parcel strokes over
+                    # the wrong RGB just because a later feature comes next.
+                    fill_item.setZValue(-100)
+                    fill_item.setAcceptedMouseButtons(Qt.NoButton)
+                    fill_item.setData(0,obj.uid or f'index:{obj.start}')
+                    self.map_scene.addItem(fill_item)
+                    self.items_by_layer[layer].append(fill_item)
+                    if obj.uid:
+                        self.fill_items_for_uid[obj.uid] = fill_item
             item.setPen(pen)
             # We handle picking ourselves; Qt's default selection draws an
             # unwanted bounding RECTANGLE instead of the exact contour.
             item.setAcceptedMouseButtons(Qt.NoButton)
             item.setData(0, obj.uid or f'index:{obj.start}')
-            item.setToolTip(f'Kod {obj.code} • {self.symbols.get(obj.code,layer)}\n{obj.fields.get("A2","")}')
+            item.setToolTip(
+                f'Kod {obj.code} • {self.symbols.get(obj.code,layer)}\\n'
+                f'{obj.fields.get("A2","")}')
             self.map_scene.addItem(item)
             self.items_by_layer[layer].append(item)
             if obj.uid:

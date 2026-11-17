@@ -121,3 +121,126 @@ def simple_point_segments(primitives: list[SymbolPrimitive]) -> list[tuple[float
     return [(p.parameters[0],p.parameters[1],p.parameters[2],p.parameters[3])
             for p in primitives if p.kind=='L' and
             (p.parameters[0],p.parameters[1])!=(p.parameters[2],p.parameters[3])]
+
+
+@dataclass(frozen=True)
+class LAYPenStyle:
+    """Layer line color and basic pattern ID as recorded in .LAY."""
+    colorref: int
+    line_id: str
+    width_mm: float
+
+
+def parse_lay_pen_styles(path: str | Path) -> dict[str,LAYPenStyle]:
+    """Parse named GEO-MAP overlay codes without modifying the .LAY library.
+
+    Standard rows:  5220 32768 2.008 1 standard 2.5 ...
+    2.008 represents the line catalogue ID; exact visual parity still needs
+    its own line-pattern definition. Only known 008 is drawn dashed.
+    """
+    result={}
+    for line in Path(path).read_bytes().decode('cp1250',errors='replace').splitlines():
+        if not line.strip() or line.lstrip().startswith((';','*')):
+            continue
+        match=re.match(r'^\s*([0-9?]{4})\s+(\d+)\s+([0-9]+\.[0-9]+)\s+\d+\s+\S+\s+([\d.]+)',line)
+        if not match:
+            continue
+        code, colorref, line_id, width = match.groups()
+        try:
+            result[code]=LAYPenStyle(int(colorref),line_id,float(width))
+        except ValueError:
+            continue
+    return result
+
+
+def lay_for_code(styles: dict[str,LAYPenStyle],code: str) -> LAYPenStyle|None:
+    if code in styles:
+        return styles[code]
+    candidates=[(pattern, value) for pattern,value in styles.items()
+                if len(pattern)==len(code)
+                and '?' in pattern
+                and all(a=='?' or a==b for a,b in zip(pattern,code))]
+    if not candidates:
+        return None
+    return sorted(candidates,key=lambda pair:pair[0].count('?'))[0][1]
+
+
+def simple_point_circles(primitives: list[SymbolPrimitive]) -> list[tuple[float,float,float]]:
+    """Render verified full-circle A instructions for point symbols.
+
+    A centreX centreY radiusX radiusY startAngle endAngle.
+    Unknown arc geometries are NOT approximated.
+    """
+    result=[]
+    for primitive in primitives:
+        if primitive.kind != 'A':
+            continue
+        cx,cy,rx,ry,start,end=primitive.parameters
+        if abs(start)<1e-5 and abs(end-360)<1e-5 and rx>0 and abs(ry)<1e-5:
+            result.append((cx,cy,rx))
+    return result
+
+
+def parse_sym_line_patterns(path: str | Path) -> dict[str,tuple[float,...]]:
+    """Read confirmed 400x-line catalogue dash/gap sequences in SYM.
+
+    Examples from GEO-MAP's standard library:
+    *4001 -> '1 1 0 ...' (solid), *4002 -> '2 1 -1 ...' (1:1 dash),
+    *4003 -> '2 2 -1 ...' (2:1 dash).
+    A richer pattern grammar must be decoded for other symbol types.
+    """
+    result={}
+    current=None
+    for line in Path(path).read_bytes().decode('cp1250','replace').splitlines():
+        m=re.match(r'^\*(400\d)\s',line)
+        if m:
+            current=m.group(1)
+            continue
+        if line.startswith('*'):
+            current=None
+            continue
+        if current is None or line.lstrip().startswith(';'):
+            continue
+        tokens=line.split()
+        if len(tokens)<3:
+            continue
+        try:
+            count=int(tokens[0])
+            on=float(tokens[1])
+            off=float(tokens[2])
+        except ValueError:
+            continue
+        if count==1 and on>0 and off==0:
+            result[current]=()
+        elif count==2 and on>0 and off<0:
+            result[current]=(on,abs(off))
+        current=None
+    return result
+
+
+def object_sym_line_pattern(sym_primitives: dict[str,list[SymbolPrimitive]],
+                            line_patterns: dict[str,tuple[float,...]],
+                            code: str) -> tuple[float,...] | None:
+    """Follow the top-level O or L symbol reference to a 400x pattern.
+
+    Returns empty tuple for an explicit continuous stroke, None for an
+    unsupported reference. One nested reference level covers 5216→4216→4001.
+    """
+    refs=[code]
+    seen=set()
+    for _ in range(3):
+        if not refs:
+            break
+        symbol=refs.pop(0)
+        if symbol in seen:
+            continue
+        seen.add(symbol)
+        if symbol in line_patterns:
+            return line_patterns[symbol]
+        for primitive in sym_primitives.get(symbol,()):
+            if primitive.kind not in {'O','L'}:
+                continue
+            ref=round(primitive.parameters[0])
+            if 4000 <= ref <= 4999:
+                refs.append(str(ref))
+    return None

@@ -1,6 +1,6 @@
 # GeoStudio — projekt nowoczesnego edytora map geodezyjnych
 
-**Wczesny prototyp v0.9.0 — wersja testowa, nie do dokumentacji urzędowej ani produkcyjnej.**
+**Wczesny prototyp v0.10.0 — wersja testowa, nie do dokumentacji urzędowej ani produkcyjnej.**
 
 GeoStudio ma docelowo umożliwiać edycję plików GEO-MAP `.MAP` z zachowaniem
 katalogów `.SYM`, `.LAY`, `.CDF`, a także pomiary, rastry, eksporty DXF/VAL
@@ -393,3 +393,44 @@ geodezyjne i zapisane kopie weryfikuj w oryginalnym GEO-MAP.
    taka sama w pikselach, choć liczba widocznych podpisów może się zmieniać.
 3. Zweryfikuj kolor zielonych użytków, czerwonych budynków i grubości konturów
    względem mapy otwartej w GEO-MAP. Oryginalne pliki pozostają nietknięte.
+
+
+## GeoStudio v0.10 — granice działek nad wydzieleniami
+
+Porównanie zrzutów MOKRA WIEŚ.MAP w GEO-MAP i GeoStudio wykazało
+problem kolejności malowania: wcześniej kolor dużego wydzielenia był
+nakładany zgodnie z kolejnością rekordów MAP i zasłaniał linie działek.
+
+- Renderowanie odbywa się teraz w osobnych płaszczyznach:
+  **wypełnienia poligonów** są rysowane pod spodem, **kontury**
+  nad nimi, z pierwszeństwem granic działek 5216. Następnie znaki
+  punktowe i napisy A1/A2. Włączanie/wyłączanie warstw ukrywa
+  zarówno wypełnienia, powiązane linie, jak i etykiety.
+- Granice działek 5216 pozostają widoczne nawet pod całkowicie
+  nieprzezroczystym wydzieleniem 5310.
+- LAY pozostaje źródłem parametrów pióra; dokładniejszy wzór konturu
+  jest teraz odczytywany z makr SYM: 5220 przez O 4003, 5230 przez
+  O 4002, 5216 przez 4216 → 4001. W prostych przykładach kreski i
+  przerwy mają proporcje 2:1 lub 1:1; rzeczywiste odstępy w pikselach
+  pozostają przybliżone. Gdy biblioteka SYM nie podaje rozpoznawalnego
+  wzoru, dla LAY 2.008 pozostaje awaryjna linia przerywana Qt.
+- Symbole z SYM: rysowanie zweryfikowanych instrukcji A pełnych
+  okręgów, np. dwóch współśrodkowych pierścieni dla granicznika
+  1246. Zmniejszono wielkość domyślnych kropek, gdzie nie
+  rozpoznano znaku.
+- Zmiany **nie modyfikują danych MAP, geometrii ani powierzchni**
+  i nie zmieniają plików bibliotecznych.
+
+### Sprawdź na Twojej mapie
+1. Uruchom GeoStudio v0.10 i załaduj MOKRA WIEŚ.MAP z bibliotekami
+   SYM, LAY, CDF (zapamiętanymi przez GeoStudio).
+2. Odszukaj dużą jednolicie wypełnioną powierzchnię na zrzutach.
+   **Linie działek powinny pozostać na wierzchu**.
+3. Wyłącz i włącz warstwy działek oraz wydzieleń. Sprawdź zaznaczanie
+   i przyciąganie oraz odczyt mapy w oryginalnym GEO-MAP.
+4. Porównaj graniczniki 1246 i kontury klasyfikacyjne 5220.
+
+**Ograniczenia:** Kolory części wydzieleń mogą się jeszcze różnić
+od oryginalnego GEO-MAP. Złożone makra O / opisy T z SYM, pełne
+legendy, arkusze i nieudokumentowane style linii nie zostały
+odtworzone w tej wersji.
