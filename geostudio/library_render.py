@@ -182,7 +182,7 @@ def simple_point_circles(primitives: list[SymbolPrimitive]) -> list[tuple[float,
 
 
 def parse_sym_line_patterns(path: str | Path) -> dict[str,tuple[float,...]]:
-    """Read confirmed 400x-line catalogue dash/gap sequences in SYM.
+    """Read confirmed 400x/401x catalogue dash/gap sequences in SYM.
 
     Examples from GEO-MAP's standard library:
     *4001 -> '1 1 0 ...' (solid), *4002 -> '2 1 -1 ...' (1:1 dash),
@@ -192,7 +192,7 @@ def parse_sym_line_patterns(path: str | Path) -> dict[str,tuple[float,...]]:
     result={}
     current=None
     for line in Path(path).read_bytes().decode('cp1250','replace').splitlines():
-        m=re.match(r'^\*(400\d)\s',line)
+        m=re.match(r'^\*(40\d{2})\s',line)
         if m:
             current=m.group(1)
             continue

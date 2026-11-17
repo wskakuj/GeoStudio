@@ -252,7 +252,7 @@ class MapView(QGraphicsView):
 class GeoStudioWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle('GeoStudio v0.12 — eksperymentalny edytor GEO-MAP')
+        self.setWindowTitle('GeoStudio v0.13 — eksperymentalny edytor GEO-MAP')
         self.resize(1450, 900)
         self.settings = QSettings('GeoStudio', 'GeoStudio')
         self.doc: GeoMap | None=None
@@ -734,7 +734,7 @@ class GeoStudioWindow(QMainWindow):
             self._last_pick_candidates = ()
             self._look_for_libraries(Path(file).parent)
             self.rebuild_scene()
-            self.setWindowTitle('GeoStudio v0.12 — '+Path(file).name)
+            self.setWindowTitle('GeoStudio v0.13 — '+Path(file).name)
             self.status.showMessage(f'{len(doc.objects)} obiektów, {len(doc.lines)} wierszy | {file}')
         except Exception as exc: QMessageBox.critical(self,'Błąd odczytu mapy',str(exc))
 
@@ -946,13 +946,20 @@ class GeoStudioWindow(QMainWindow):
                 # All boundary lines are placed ABOVE every filled polygon.
                 # Parcel boundaries must stay visible even under opaque
                 # forestry / land-use polygons, irrespective of object order.
-                item.setZValue(180 if obj.code=='5216' else
+                item.setZValue(220 if obj.code=='5214' else
+                               180 if obj.code=='5216' else
                                130 if obj.code in {'5220','5230'} else 100)
                 parts = obj.display_parts
                 is_multipart_area = bool(parts) and all(
                     len(part) >= 4 and (part[0].x,part[0].y) ==
                     (part[-1].x,part[-1].y) for part in parts)
                 if obj.is_closed or is_multipart_area:
+                    # The 5200 triangular objects with FA=0 form the black
+                    # quarters of the map's compass rose. Do not fill all
+                    # 5200 legends/boxes: only the explicit source triangles.
+                    if (obj.code == '5200' and len(obj.points)==4
+                            and obj.fields.get('FA')=='0'):
+                        fill_brush=QBrush(QColor('#111111'))
                     fill_item = QGraphicsPathItem(path)
                     fill_item.setBrush(fill_brush)
                     fill_item.setPen(QPen(Qt.NoPen))
@@ -965,6 +972,11 @@ class GeoStudioWindow(QMainWindow):
                     self.items_by_layer[layer].append(fill_item)
                     if obj.uid:
                         self.fill_items_for_uid[obj.uid] = fill_item
+            # Text-only map annotation codes carry a P-to-P baseline,
+            # not a printed line. Drawing that baseline caused long black
+            # strokes through the title, legend and agency captions.
+            if obj.code in {'6900','7900','6000','6301'} and obj.fields.get('TX'):
+                pen=QPen(Qt.NoPen)
             item.setPen(pen)
             # We handle picking ourselves; Qt's default selection draws an
             # unwanted bounding RECTANGLE instead of the exact contour.
@@ -977,80 +989,100 @@ class GeoStudioWindow(QMainWindow):
             self.items_by_layer[layer].append(item)
             if obj.uid:
                 self.graphics_for_uid[obj.uid] = item
-            # A1 and A2 are independent labels: each can be dragged in tool L.
-            # Keep the field metadata separate so hiding one must never erase
-            # the other or accidentally move map geometry.
-            label_fields = []
+            # Compose annotations only from source records. 6900 stores
+            # directional letters / map-sheet numbers (N/S/E/W/1/2/3).
+            # 7900 stores map title, legend headings and agency names;
+            # 6000/6301 store the textual legend. These objects provide two
+            # P anchors, NOT strokes: render the text, not their baseline.
+            labels = []
             if obj.code == '5310':
-                label_fields = [(key, obj.fields[key]) for key in ('A1','A2')
-                                if obj.fields.get(key)]
+                labels = [(field,obj.fields[field]) for field in ('A1','A2')
+                          if obj.fields.get(field)]
             elif obj.code in {'5216','5220','5230'} and obj.fields.get('A2'):
-                label_fields = [('A2',obj.fields['A2'])]
+                labels = [('A2',obj.fields['A2'])]
+            elif obj.code == '5214' and obj.fields.get('A3'):
+                # The precinct title is a source attribute, not invented text.
+                labels = [('A3',obj.fields['A3'])]
+            elif obj.code in {'6900','7900','6000','6301'} and obj.fields.get('TX'):
+                texts = [v.strip() for v in obj.fields['TX'].split('||') if v.strip()]
+                labels = [(f'TX{index}',line) for index,line in enumerate(texts)]
             elif obj.code.startswith('7') and obj.fields.get('TX'):
-                label_fields = [('TX',obj.fields['TX'].replace('||','\\n').replace('|',' '))]
-            if not label_fields:
+                labels = [('TX',obj.fields['TX'].replace('||',' '))]
+            if not labels:
                 continue
             anchor = self._label_anchor(obj)
-            if not anchor:
+            if anchor is None:
                 continue
             if obj.uid and obj.points:
                 xs = [pt.x for pt in obj.points]
                 ys = [pt.y for pt in obj.points]
                 self.label_world_span[obj.uid] = max(
                     max(xs) - min(xs), max(ys) - min(ys))
-            for field, content in label_fields:
+            line_count=len(labels)
+            for line_index, (field,content) in enumerate(labels):
                 label = QGraphicsSimpleTextItem(content)
-                # Draw text upright even when the GEO-MAP view swaps and
-                # mirrors geographic axes (or the user rotates the map).
-                # ItemIgnoresTransformations removes the view's rotation and
-                # reflection from the glyphs. update_label_visibility()
-                # applies ONLY the view's magnification to each label so
-                # its size still tracks the underlying map geometry.
                 font = QFont('Segoe UI')
+                ratio = .55
                 if obj.code == '5310':
                     font.setPixelSize(16)
                     font.setBold(True)
-                    color = QColor('#CC202C')
+                    color=QColor('#CC202C')
                 elif obj.code == '5216':
                     font.setPixelSize(12)
-                    color = QColor('#4A5056')
-                elif obj.code in {'5220', '5230'}:
+                    color=QColor('#4A5056')
+                elif obj.code in {'5220','5230'}:
                     font.setPixelSize(11)
-                    color = QColor('#35753A')
+                    color=QColor('#35753A')
                     color.setAlpha(190)
+                elif obj.code == '5214':
+                    font.setPixelSize(14)
+                    color=QColor('#213B8F')
+                elif obj.code in {'6900','7900','6000','6301'}:
+                    font.setPixelSize(24)
+                    if obj.code in {'7900','6900'}:
+                        font.setFamily('Times New Roman')
+                        font.setBold(True)
+                    else:
+                        font.setFamily('Segoe UI')
+                    color=QColor('#111111')
+                    try:
+                        native_height = float(obj.fields.get('A1','15'))
+                    except ValueError:
+                        native_height = 15
+                    if not math.isfinite(native_height):
+                        native_height=15
+                    # GEO-MAP stores a map-unit text height in A1. Use
+                    # the source's height rather than the same tiny 11 px
+                    # scale for titles, compass letters and legend captions.
+                    ratio = min(15., max(.3, 2.1 * max(5,native_height) / 24))
                 else:
                     font.setPixelSize(11)
-                    color = QColor('#58686F')
+                    color=QColor('#58686F')
                     color.setAlpha(180)
                 label.setFont(font)
                 label.setBrush(QBrush(color))
-                label.setFlag(
-                    QGraphicsItem.GraphicsItemFlag.ItemIgnoresTransformations, True)
-                # 0.55 map-metres per font pixel from v0.11. Set the initial
-                # magnification now and refresh after fit/zoom/rotation.
-                zoom = math.hypot(self.view.transform().m11(),
-                                  self.view.transform().m12())
-                label.setScale(0.55 * zoom)
                 label.setAcceptedMouseButtons(Qt.NoButton)
-                bounds = label.boundingRect()
-                custom = self.label_positions.get(obj.uid,{}).get(field)
+                bounds=label.boundingRect()
+                custom=self.label_positions.get(obj.uid,{}).get(field)
                 x,y = custom if custom else anchor
                 label.setPos(x,-y)
-                offset = 0
-                if not custom and obj.code == '5310':
-                    offset = (-bounds.height()/2 if field == 'A1'
-                              else bounds.height()/2)
-                label.setTransform(QTransform().translate(
-                    -bounds.width()/2, -bounds.height()/2 + offset))
-                label.setData(0, obj.uid)
-                label.setData(1, field)
-                # Put the text above highlight contours so selected labels
-                # are not accidentally obscured by the yellow overlay.
+                # Screen-direction offsets are expressed in font pixels.
+                # Their real-world displacement scales with the map.
+                offset=0.
+                if not custom and obj.code=='5310':
+                    offset= (-bounds.height()*.6 if field=='A1'
+                             else bounds.height()*.6)
+                elif obj.code in {'7900','6000','6301'} and not custom:
+                    offset=(line_index-(line_count-1)/2)*bounds.height()*1.25
+                label.setData(0,obj.uid)
+                label.setData(1,field)
+                label.setData(2,offset)
+                label.setData(3,ratio)
                 label.setZValue(1300)
                 self.map_scene.addItem(label)
                 self.items_by_layer[layer].append(label)
                 self.labels.append(label)
-                self.label_items[(obj.uid, field)] = label
+                self.label_items[(obj.uid,field)] = label
         self._populate_layers()
         if fit:
             self.fit_all()
@@ -1070,24 +1102,45 @@ class GeoStudioWindow(QMainWindow):
         self._last_pick_candidates = ()
         self._select_uid('')
 
-    def update_label_visibility(self):
-        """Keep glyphs upright, map-relative in size, and visible at all zooms.
+    @staticmethod
+    def _upright_map_text_transform(view_transform, bounds, ratio, offset=0.0):
+        """Inverse the view's angle/mirror while retaining its zoom.
 
-        Qt's geodetic view transform can mirror and rotate ordinary scene text.
-        We let labels ignore that visual orientation, then apply the magnitude
-        of the current view scale ourselves (independent of angle or mirroring).
-        No collision-based hiding or zoom thresholds: only explicit layer and
-        label-visibility controls may hide a label.
+        When the view changes from A to k*A, QGraphicsItem's scene anchor must
+        stay fixed.  Qt ItemIgnoresTransformations was insufficient: its
+        pixel-space translation shifted labels as zoom changed.  Instead use a
+        local, centred inverse orientation matrix B = |A|*ratio*inverse(A).
+        Thus screen text has transform A*B = |A|*ratio*I; text stays upright,
+        scales with parcel lines, and its geographic scene position never
+        depends on zoom, rotation or the reflection in GEO-MAP orientation.
         """
+        a=view_transform
+        det=a.m11()*a.m22()-a.m12()*a.m21()
+        zoom=math.hypot(a.m11(),a.m12())
+        if abs(det)<1e-20 or not math.isfinite(zoom):
+            return QTransform()
+        factor=zoom*ratio/det
+        b11=a.m22()*factor
+        b12=-a.m12()*factor
+        b21=-a.m21()*factor
+        b22=a.m11()*factor
+        cx=bounds.center().x()
+        # Positive offset means the label is below the map anchor.
+        cy=bounds.center().y()-offset
+        dx=-(b11*cx+b21*cy)
+        dy=-(b12*cx+b22*cy)
+        return QTransform(b11,b12,b21,b22,dx,dy)
+
+    def update_label_visibility(self):
+        """Place all map labels at invariant map coordinates without culling."""
         if not self.doc or not hasattr(self,'labels_action'):
             return
-        transform = self.view.transform()
-        zoom = math.hypot(transform.m11(), transform.m12())
-        # Scale is always positive; Qt owns glyph orientation.
-        label_scale = 0.55 * zoom
+        transform=self.view.transform()
         for item in self.labels:
-            if not math.isclose(item.scale(), label_scale, rel_tol=1e-9, abs_tol=1e-12):
-                item.setScale(label_scale)
+            ratio=float(item.data(3) or .55)
+            offset=float(item.data(2) or 0)
+            item.setTransform(self._upright_map_text_transform(
+                transform,item.boundingRect(),ratio,offset))
             uid=item.data(0)
             item.setVisible(bool(self.labels_enabled and
                 self.layer_for_uid.get(uid,'') not in self.hidden_layers))
@@ -1153,9 +1206,7 @@ class GeoStudioWindow(QMainWindow):
         if not uid or field not in {'A1','A2'}:
             return
         item.setPos(x,-y)
-        bounds = item.boundingRect()
-        item.setTransform(QTransform().translate(
-            -bounds.width()/2, -bounds.height()/2))
+        item.setData(2,0.0)  # explicit dragged position is the new anchor
         self.label_positions.setdefault(uid,{})[field] = [round(x,3),round(y,3)]
         saved = self._autosave_work_copy()
         self.update_label_visibility()

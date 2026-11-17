@@ -133,7 +133,7 @@ def test_geomap_labels_are_never_mirrored_or_rotated_and_track_zoom(viewer):
 
     def check_upright():
         for item in labels:
-            assert item.flags() & QGraphicsItem.GraphicsItemFlag.ItemIgnoresTransformations
+            assert not (item.flags() & QGraphicsItem.GraphicsItemFlag.ItemIgnoresTransformations)
             transform = item.deviceTransform(view.viewportTransform())
             assert transform.determinant() > 0
             assert transform.m11() > 0 and transform.m22() > 0
@@ -182,17 +182,87 @@ def test_wheel_and_scale_entry_refresh_label_screen_size(viewer):
     viewer.rebuild_scene()
     view=viewer.view
     item=viewer.label_items[(uid,'A1')]
-    before=item.scale()
+    before=item.deviceTransform(view.viewportTransform()).m11()
     cursor=QPoint(250,230)
     event=QWheelEvent(
         QPointF(cursor),QPointF(cursor),QPoint(),QPoint(0,120),
         Qt.NoButton,Qt.NoModifier,Qt.NoScrollPhase,False)
     view.wheelEvent(event)
-    assert item.scale() == pytest.approx(before*1.2,rel=1e-4)
+    assert item.deviceTransform(view.viewportTransform()).m11() == pytest.approx(before*1.2,rel=1e-4)
     viewer.scale_combo.setCurrentText('1:2000')
     viewer.apply_view_scale()
-    assert item.scale() == pytest.approx(.55*pps(view),rel=1e-6)
+    assert item.deviceTransform(view.viewportTransform()).m11() == pytest.approx(.55*pps(view),rel=1e-6)
     transform=item.deviceTransform(view.viewportTransform())
     assert transform.m11()>0 and transform.m22()>0
     assert abs(transform.m12()) < 1e-8
     assert item.isVisible()
+
+
+def test_map_label_anchor_is_stationary_under_zoom_rotation_and_orientation(viewer):
+    """One geodetic point anchors each caption independently of viewport scale.
+
+    In v0.12 the item ignored the view transform and was then scaled again,
+    making its centre drift away from the underlying parcel when zooming.
+    """
+    uid=viewer.doc.append_polygon(
+        [(20,20),(35,20),(35,35)],'5310',fields={'A1':'bx','A2':'bud'})
+    parcel=viewer.doc.append_polygon(
+        [(40,40),(55,40),(55,55)],'5216',fields={'A2':'29/16'})
+    viewer.rebuild_scene()
+    view=viewer.view
+    labels=[viewer.label_items[(uid,'A1')],
+            viewer.label_items[(uid,'A2')],
+            viewer.label_items[(parcel,'A2')]]
+
+    def verify():
+        for item in labels:
+            t=item.deviceTransform(view.viewportTransform())
+            center=t.map(item.boundingRect().center())
+            anchor=view.viewportTransform().map(item.pos())
+            q=pps(view)
+            offset=float(item.data(2) or 0)
+            ratio=float(item.data(3) or .55)
+            assert center.x() == pytest.approx(anchor.x(), abs=.02)
+            assert center.y() == pytest.approx(anchor.y()+q*ratio*offset,abs=.02)
+            assert t.m11()==pytest.approx(q*ratio,rel=1e-7)
+            assert t.m22()==pytest.approx(q*ratio,rel=1e-7)
+            assert abs(t.m12()) < 1e-7 and abs(t.m21()) < 1e-7
+
+    verify()
+    view.scale(2.2,2.2)
+    viewer.update_label_visibility()
+    verify()
+    view.scale(.2,.2)
+    viewer.update_label_visibility()
+    verify()
+    viewer.rotate_view(15)
+    verify()
+    viewer.rotate_view(-90)
+    verify()
+    viewer.reset_orientation()
+    verify()
+    viewer.legacy_orientation()
+    verify()
+    viewer.reset_orientation()
+    verify()
+
+
+def test_manual_label_drag_keeps_anchor_exact_after_zoom(viewer):
+    uid=viewer.doc.append_polygon(
+        [(20,20),(35,20),(35,35)],'5310',fields={'A1':'bx','A2':'bud'})
+    viewer.rebuild_scene()
+    item=viewer.label_items[(uid,'A1')]
+    viewer.start_label_edit()
+    pos=item.pos()
+    viewer._active_label=item
+    viewer.end_label_drag(pos.x()+4, -pos.y()+3)
+    assert item.pos().x() == pytest.approx(pos.x()+4)
+    assert item.data(2)==0
+    for factor in (2.0,.1,2.0):
+        viewer.view.scale(factor,factor)
+        viewer.update_label_visibility()
+        center=item.deviceTransform(viewer.view.viewportTransform()).map(
+            item.boundingRect().center())
+        anchor=viewer.view.viewportTransform().map(item.pos())
+        assert center.x() == pytest.approx(anchor.x(),abs=.02)
+        assert center.y() == pytest.approx(anchor.y(),abs=.02)

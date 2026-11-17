@@ -1,6 +1,6 @@
 # GeoStudio — projekt nowoczesnego edytora map geodezyjnych
 
-**Wczesny prototyp v0.12.0 — wersja testowa, nie do dokumentacji urzędowej ani produkcyjnej.**
+**Wczesny prototyp v0.13.0 — wersja testowa, nie do dokumentacji urzędowej ani produkcyjnej.**
 
 GeoStudio ma docelowo umożliwiać edycję plików GEO-MAP `.MAP` z zachowaniem
 katalogów `.SYM`, `.LAY`, `.CDF`, a także pomiary, rastry, eksporty DXF/VAL
@@ -545,3 +545,49 @@ napisy przy poprawnej orientacji geodezyjnej były odwrócone/lustrzane.
    proporcje napisów do geometrii powinny pozostać takie same.
 4. Obróć mapę o 15° i 90°, użyj `N ↑ GEO-MAP` i przesuń A1/A2
    narzędziem L. W razie różnic zrób zrzut ekranu.
+
+
+## GeoStudio v0.13 — zakotwiczone napisy i odtworzenie elementów arkusza
+
+Na podstawie rzeczywistego `MOKRA WIEŚ.MAP` i bibliotek
+`GEO-MAP(3).SYM/.LAY/.CDF` (nieprzekazywanych do repozytorium):
+
+- **Koniec przesuwania się podpisów przy zmianie zoomu.** Każdy podpis
+  A1/A2, numer działki i napis legendy ma punkt zakotwiczenia w
+  współrzędnych mapy. Renderer kompensuje odbicie i obrót wyłącznie
+  w orientacji glifów; tekst nie przeskakuje, pozostaje normalnie
+  czytelny i zmniejsza się/rośnie **razem z mapą**. Nie jest ukrywany
+  automatycznie przy oddalaniu.
+- **5214 (granica obrębu):** odtwarzana jest linia przerywana według
+  makra `4010` z `.SYM` (proporcja kreska/przerwa 3:2).
+  Dodatkowo może być widoczna nazwa obrębu z atrybutu A3.
+- **6900:** napisy `N`, `S`, `E`, `W` oraz oznaczenia `1`,
+  `2`, `3` pojawiają się w miejscu ich rekordów P i mają
+  wielkość wynikającą z źródłowego pola `A1`, zamiast rysowania
+  niewidocznych symboli.
+- **Tytuł, legenda i wykonawca:** kody `7900`, `6000` oraz
+  `6301` używają teraz źródłowej treści `TX` i nominalnej
+  wielkości `A1`; separator `||` wyświetlany jest jako kilka
+  oddzielnie wyśrodkowanych linii. Nie rysuje się już fałszywych
+  kresek pod tekstem pomiędzy dwoma punktami P.
+- **Róża wiatrów:** cztery trójkątne ćwiartki `5200` z
+  `:FA[0]` są wypełnione na ciemno, zamiast pozostawać
+  białymi obrysami.
+
+**Zakres:** poprawiono wyświetlanie w GeoStudio, bez modyfikowania
+oryginalnego `.MAP`. Proporcje/krój tekstów i bardziej złożone
+elementy arkusza wciąż mogą się różnić od oryginalnego GEO-MAP.
+Nie jest to pełny interpreter firmowych makr graficznych.
+
+### Test na Windows
+
+1. Otwórz `MOKRA WIEŚ.MAP`, przybliż i oddal numer działki,
+   `5310` A1/A2 i tytuł arkusza. Zawartość tekstu nie może
+   przesuwać się względem jego współrzędnych (nie licząc
+   zamierzonego odstępu A1/A2).
+2. Porównaj granicę obrębu `5214` (symbol `4010`).
+3. Sprawdź znak północy i duże litery N/S/E/W (`6900`).
+4. Porównaj tytuł, wiersze legendy i podpis agencji (`7900`,
+   `6000`, `6301`). Zwróć uwagę na skalę czcionki i przerwy
+   między wierszami; zrzuty przy tej samej skali pomogą dopracować
+   te parametry.
