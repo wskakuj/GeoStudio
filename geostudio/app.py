@@ -157,7 +157,7 @@ class GeoStudioWindow(QMainWindow):
         self.current_polygon:list[tuple[float,float]]=[]
         self.polygon_code='5216'
         self.map_scene=QGraphicsScene(self)
-        self.map_scene.selectionChanged.connect(self.on_selection)
+        # Selection is handled by canvas_click and exact-outline overlays.
         self.view=MapView(self.map_scene)
         self.view.coordinate.connect(self.on_coordinate)
         self.view.canvas_click.connect(self.select_at)
