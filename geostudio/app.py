@@ -30,7 +30,7 @@ from .geometry_index import GeometryIndex
 from .object_search import search_objects
 from .visual_styles import (parse_fill_code, fill_code, load_styles,
     load_label_positions, write_styles, sidecar_path)
-from .library_render import parse_cdf, parse_sym_primitives, cdf_for_object, native_fill_color, simple_point_segments
+from .library_render import parse_cdf, parse_sym_primitives, cdf_for_object, native_fill_color, simple_point_commands
 from .label_render import map_label_style, display_label_text
 
 APP_QSS = """
@@ -739,15 +739,21 @@ class GeoStudioWindow(QMainWindow):
                 fill_brush = QBrush(Qt.NoBrush)
 
             if len(obj.points) == 1:
-                # Direct line primitives in SYM are rendered for point symbols.
-                # O/T references and curves remain unsupported (no guessed art).
-                primitives = self.sym_primitives.get(obj.code, [])
-                segments = simple_point_segments(primitives)
-                if segments:
+                # Render only the directly understood subset of SYM point
+                # instructions. Keep glyphs legible at all zoom levels.
+                commands = simple_point_commands(
+                    self.sym_primitives.get(obj.code, []))
+                if commands:
                     path = QPainterPath()
-                    for x1,y1,x2,y2 in segments:
-                        path.moveTo(x1 * 5, -y1 * 5)
-                        path.lineTo(x2 * 5, -y2 * 5)
+                    for command in commands:
+                        if command.kind == 'line':
+                            x1,y1,x2,y2 = command.values
+                            path.moveTo(x1 * 5, -y1 * 5)
+                            path.lineTo(x2 * 5, -y2 * 5)
+                        elif command.kind == 'ellipse':
+                            cx,cy,rx,ry = command.values
+                            path.addEllipse(QRectF(
+                                (cx-rx)*5, (-cy-ry)*5, rx*10, ry*10))
                     item = QGraphicsPathItem(path)
                 else:
                     item = QGraphicsEllipseItem(-2.5, -2.5, 5, 5)
