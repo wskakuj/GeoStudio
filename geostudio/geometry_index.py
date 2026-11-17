@@ -45,7 +45,8 @@ class Pick:
 class GeometryIndex:
     """Uniform grid: fast world-coordinate hit tests even for large maps."""
 
-    def __init__(self, objects: Iterable[GeoObject]):
+    def __init__(self, objects: Iterable[GeoObject], *, hide_connectors=False):
+        self.hide_connectors = hide_connectors
         self.objects = [o for o in objects if o.points]
         if not self.objects:
             self.tile = 100.0
@@ -98,9 +99,18 @@ class GeometryIndex:
                 continue
             if code_filter is not None and o.code != code_filter:
                 continue
-            pts = [(p.x, p.y) for p in o.points]
-            distance = boundary_distance(x, y, pts)
-            interior = o.is_closed and point_in_ring(x, y, pts[:-1])
+            if self.hide_connectors:
+                # P 0 closes a component. Do not select empty connector lines
+                # between independent contours of the same GEO-MAP record.
+                parts = [[(p.x, p.y) for p in part] for part in o.display_parts]
+                distance = min((boundary_distance(x, y, part) for part in parts),
+                               default=float('inf'))
+                interior = any(len(part) >= 4 and part[0] == part[-1]
+                               and point_in_ring(x, y, part[:-1]) for part in parts)
+            else:
+                pts = [(p.x, p.y) for p in o.points]
+                distance = boundary_distance(x, y, pts)
+                interior = o.is_closed and point_in_ring(x, y, pts[:-1])
             if not interior and distance > radius:
                 continue
             kind = 'inside' if interior else 'edge'
