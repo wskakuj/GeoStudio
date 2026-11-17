@@ -86,7 +86,7 @@ class MapView(QGraphicsView):
         self.setRenderHint(QPainter.Antialiasing)
         self.setDragMode(QGraphicsView.NoDrag)
         self.setViewportUpdateMode(QGraphicsView.BoundingRectViewportUpdate)
-        self.setBackgroundBrush(QBrush(QColor('#f7f9fb')))
+        self.setBackgroundBrush(QBrush(QColor('#ffffff')))
         self.setTransformationAnchor(QGraphicsView.AnchorUnderMouse)
         # The GEO-MAP file stores X (northing) before Y (easting).
         # Existing scene uses (X, -Y); geodetic orientation on screen is
@@ -712,7 +712,9 @@ class GeoStudioWindow(QMainWindow):
                     color = border
             pen = QPen(color)
             pen.setCosmetic(True)
-            pen.setWidthF(1.0)
+            # GEO-MAP's forestry red and cadastral borders are deliberately
+            # kept distinguishable instead of using one generic line weight.
+            pen.setWidthF(1.35 if obj.code == '5310' else 1.0)
             override = self.visual_styles.get(obj.uid)
             native_rgb = native_fill_color(obj.style)
             if override:
@@ -762,6 +764,27 @@ class GeoStudioWindow(QMainWindow):
                 if obj.is_closed or is_multipart_area:
                     item.setBrush(fill_brush)
             item.setPen(pen)
+            # A fill drawn in record order can conceal the outline of a
+            # feature beneath it. Paint fills behind all map outlines and
+            # mirror the visible contour as a foreground-only path item.
+            # Main graphics_for_uid stays the original geometry item so
+            # existing editors and style controls continue to work.
+            if len(obj.points) > 1 and (obj.is_closed or is_multipart_area):
+                item.setZValue(-30)
+                outline = QGraphicsPathItem(item.path())
+                outline.setPen(pen)
+                outline.setBrush(QBrush(Qt.NoBrush))
+                outline.setZValue({
+                    '5310': 55, '5216': 43, '5220': 33,
+                    '5230': 30,
+                }.get(obj.code, 25))
+                outline.setAcceptedMouseButtons(Qt.NoButton)
+                self.map_scene.addItem(outline)
+                self.items_by_layer[layer].append(outline)
+            elif len(obj.points) > 1:
+                item.setZValue(35)
+            else:
+                item.setZValue(70)
             # We handle picking ourselves; Qt's default selection draws an
             # unwanted bounding RECTANGLE instead of the exact contour.
             item.setAcceptedMouseButtons(Qt.NoButton)
