@@ -252,7 +252,7 @@ class MapView(QGraphicsView):
 class GeoStudioWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle('GeoStudio v0.11 — eksperymentalny edytor GEO-MAP')
+        self.setWindowTitle('GeoStudio v0.12 — eksperymentalny edytor GEO-MAP')
         self.resize(1450, 900)
         self.settings = QSettings('GeoStudio', 'GeoStudio')
         self.doc: GeoMap | None=None
@@ -734,7 +734,7 @@ class GeoStudioWindow(QMainWindow):
             self._last_pick_candidates = ()
             self._look_for_libraries(Path(file).parent)
             self.rebuild_scene()
-            self.setWindowTitle('GeoStudio v0.11 — '+Path(file).name)
+            self.setWindowTitle('GeoStudio v0.12 — '+Path(file).name)
             self.status.showMessage(f'{len(doc.objects)} obiektów, {len(doc.lines)} wierszy | {file}')
         except Exception as exc: QMessageBox.critical(self,'Błąd odczytu mapy',str(exc))
 
@@ -1000,11 +1000,12 @@ class GeoStudioWindow(QMainWindow):
                     max(xs) - min(xs), max(ys) - min(ys))
             for field, content in label_fields:
                 label = QGraphicsSimpleTextItem(content)
-                # GEO-MAP/CAD-like annotation: text has a fixed geographic
-                # (world-coordinate) size. Zooming affects glyph size exactly
-                # as it affects the parcel lines. No screen-pixel override:
-                # the old mode made text appear bigger *relative* to the map
-                # on zoom out. The view never culls individual map labels.
+                # Draw text upright even when the GEO-MAP view swaps and
+                # mirrors geographic axes (or the user rotates the map).
+                # ItemIgnoresTransformations removes the view's rotation and
+                # reflection from the glyphs. update_label_visibility()
+                # applies ONLY the view's magnification to each label so
+                # its size still tracks the underlying map geometry.
                 font = QFont('Segoe UI')
                 if obj.code == '5310':
                     font.setPixelSize(16)
@@ -1023,9 +1024,13 @@ class GeoStudioWindow(QMainWindow):
                     color.setAlpha(180)
                 label.setFont(font)
                 label.setBrush(QBrush(color))
-                # 0.55 map-metres per font pixel; label dimensions are
-                # real geographic map units and rotate with the map.
-                label.setScale(0.55)
+                label.setFlag(
+                    QGraphicsItem.GraphicsItemFlag.ItemIgnoresTransformations, True)
+                # 0.55 map-metres per font pixel from v0.11. Set the initial
+                # magnification now and refresh after fit/zoom/rotation.
+                zoom = math.hypot(self.view.transform().m11(),
+                                  self.view.transform().m12())
+                label.setScale(0.55 * zoom)
                 label.setAcceptedMouseButtons(Qt.NoButton)
                 bounds = label.boundingRect()
                 custom = self.label_positions.get(obj.uid,{}).get(field)
@@ -1066,15 +1071,23 @@ class GeoStudioWindow(QMainWindow):
         self._select_uid('')
 
     def update_label_visibility(self):
-        """Never hide labels merely because of zoom or collisions.
+        """Keep glyphs upright, map-relative in size, and visible at all zooms.
 
-        All texts are real geographic-size graphics (not fixed device pixels).
-        They become proportionally smaller when zoomed out, exactly like parcel
-        geometry. Layer toggles and the explicit global label checkbox remain.
+        Qt's geodetic view transform can mirror and rotate ordinary scene text.
+        We let labels ignore that visual orientation, then apply the magnitude
+        of the current view scale ourselves (independent of angle or mirroring).
+        No collision-based hiding or zoom thresholds: only explicit layer and
+        label-visibility controls may hide a label.
         """
         if not self.doc or not hasattr(self,'labels_action'):
             return
+        transform = self.view.transform()
+        zoom = math.hypot(transform.m11(), transform.m12())
+        # Scale is always positive; Qt owns glyph orientation.
+        label_scale = 0.55 * zoom
         for item in self.labels:
+            if not math.isclose(item.scale(), label_scale, rel_tol=1e-9, abs_tol=1e-12):
+                item.setScale(label_scale)
             uid=item.data(0)
             item.setVisible(bool(self.labels_enabled and
                 self.layer_for_uid.get(uid,'') not in self.hidden_layers))
