@@ -23,6 +23,21 @@ from geostudio.library_render import parse_cdf, parse_sym_primitives
 # to keep the golden file readable.
 PRECISION = 6
 
+# Qt resolves "Segoe UI" differently on Windows and on Linux, so anything the
+# renderer derives from glyph metrics changes between machines. Those values
+# are therefore recorded in a font-independent form instead of raw:
+#
+#   offsetPerHeight   setData(2) / measured text height
+#                     -> +-0.6 for 5310, the line leading for sheet codes, 0 elsewhere
+#   ratioRule         sheet codes: setData(3) * height / scale factor, i.e. the
+#                     nominal A1 height in map units
+#                     other codes: setData(3) unchanged, a constant 0.55
+#
+# Both forms are exactly reconstructible from the renderer's own rule, so the
+# snapshot is identical on every platform while still catching any change to
+# label sizing or placement.
+SHEET_CODES = frozenset(("7900", "6900", "6000", "6301"))
+
 
 def _f(value: float) -> float:
     return round(float(value), PRECISION)
@@ -116,7 +131,13 @@ def _path_data(path: QPainterPath) -> dict:
     return {"elements": elements, "fillRule": int(path.fillRule().value)}
 
 
-def _item_data(item) -> dict:
+def _item_data(item, *, code: str | None = None, scale_factor: float = 1.0) -> dict:
+    """One item as plain data.
+
+    Keys ``data0``/``data1`` (object id and field name) are exact. The values
+    the renderer stores under ``setData(2..4)`` are font-metric offsets, so
+    they are recorded as dimensionless ratios to the item's own text height.
+    """
     record = {
         "kind": type(item).__name__,
         "z": _f(item.zValue()),
@@ -125,7 +146,8 @@ def _item_data(item) -> dict:
         "ignoresTransformations": bool(
             item.flags() & item.GraphicsItemFlag.ItemIgnoresTransformations),
         "tooltip": item.toolTip(),
-        "data": [item.data(index) for index in range(5)],
+        "data0": item.data(0),
+        "data1": item.data(1),
     }
     pen = getattr(item, "pen", None)
     pen = pen() if callable(pen) else pen
@@ -142,6 +164,19 @@ def _item_data(item) -> dict:
     if callable(path):
         record["path"] = _path_data(item.path())
     if isinstance(item, QGraphicsSimpleTextItem):
+        height = item.boundingRect().height()
+        metrics = {}
+        if height > 0:
+            offset = item.data(2)
+            ratio = item.data(3)
+            if offset is not None:
+                metrics["offsetPerHeight"] = _f(offset / height)
+            if ratio is not None:
+                if code in SHEET_CODES:
+                    metrics["ratioRule"] = _f(ratio * height / scale_factor)
+                else:
+                    metrics["ratioRule"] = _f(ratio)
+        record["metrics"] = metrics
         font = item.font()
         record["text"] = {
             "content": item.text(),
@@ -154,8 +189,24 @@ def _item_data(item) -> dict:
 
 
 def serialize_scene(window: GeoStudioWindow) -> dict:
-    """Snapshot of every item in the scene plus the maps rebuild_scene fills in."""
-    items = [_item_data(item) for item in window.map_scene.items()]
+    """Snapshot of every item in the scene plus the maps rebuild_scene fills in.
+
+    Items are listed in paint order (bottom to top), which is what the user
+    sees: a change in stacking or in the order equal-z items are added shows
+    up as a reordered list.
+    """
+    ordered = window.map_scene.items(Qt.AscendingOrder)
+    scale_factor = ((window.compilation_scale or 1.0)
+                    / (window.source_compilation_scale or 1.0))
+    doc = window.doc
+    items = []
+    for index, item in enumerate(ordered):
+        uid = item.data(0)
+        obj = doc.by_id.get(uid) if (doc is not None and isinstance(uid, str)) else None
+        record = _item_data(item, code=obj.code if obj else None,
+                            scale_factor=scale_factor)
+        record["paintIndex"] = index
+        items.append(record)
     return {
         "items": items,
         "itemCount": len(items),
@@ -168,6 +219,8 @@ def serialize_scene(window: GeoStudioWindow) -> dict:
         "labelKeys": sorted(f"{uid}|{field}" for uid, field in window.label_items),
         "labelWorldSpan": {uid: _f(span)
                            for uid, span in sorted(window.label_world_span.items())},
+        "labelPositions": {f"{uid}|{field}": [_f(item.pos().x()), _f(item.pos().y())]
+                           for (uid, field), item in sorted(window.label_items.items())},
     }
 
 

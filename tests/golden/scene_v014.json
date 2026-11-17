@@ -23,490 +23,66 @@
   {
    "brush": {
     "color": [
-     17,
-     17,
-     17,
+     0,
+     0,
+     0,
      255
     ],
-    "style": 1
+    "style": 0
    },
-   "data": [
-    "NORTH",
-    "TX0",
+   "data0": "PARCEL",
+   "data1": null,
+   "ignoresTransformations": false,
+   "kind": "QGraphicsPathItem",
+   "paintIndex": 0,
+   "path": {
+    "elements": [
+     [
+      0,
+      500100.0,
+      -6500100.0
+     ],
+     [
+      1,
+      500200.0,
+      -6500100.0
+     ],
+     [
+      1,
+      500200.0,
+      -6500200.0
+     ],
+     [
+      1,
+      500100.0,
+      -6500200.0
+     ],
+     [
+      1,
+      500100.0,
+      -6500100.0
+     ]
+    ],
+    "fillRule": 0
+   },
+   "pen": {
+    "color": [
+     0,
+     0,
+     0,
+     255
+    ],
+    "dash": [],
+    "style": 0,
+    "widthF": 1.0
+   },
+   "pos": [
     0.0,
-    0.8888888888888888,
-    0.4444444444444444
+    0.0
    ],
-   "ignoresTransformations": false,
-   "kind": "QGraphicsSimpleTextItem",
-   "pen": {
-    "color": [
-     0,
-     0,
-     0,
-     255
-    ],
-    "dash": [],
-    "style": 0,
-    "widthF": 1.0
-   },
-   "pos": [
-    500420.0,
-    -6500430.0
-   ],
-   "text": {
-    "bold": true,
-    "brush": [
-     17,
-     17,
-     17,
-     255
-    ],
-    "content": "N",
-    "family": "Times New Roman",
-    "pixelSize": 24
-   },
    "tooltip": "",
    "visible": true,
-   "z": 1300.0
-  },
-  {
-   "brush": {
-    "color": [
-     17,
-     17,
-     17,
-     255
-    ],
-    "style": 1
-   },
-   "data": [
-    "TITLE",
-    "TX1",
-    15.93,
-    0.8888888888888888,
-    0.4444444444444444
-   ],
-   "ignoresTransformations": false,
-   "kind": "QGraphicsSimpleTextItem",
-   "pen": {
-    "color": [
-     0,
-     0,
-     0,
-     255
-    ],
-    "dash": [],
-    "style": 0,
-    "widthF": 1.0
-   },
-   "pos": [
-    500250.0,
-    -6500450.0
-   ],
-   "text": {
-    "bold": true,
-    "brush": [
-     17,
-     17,
-     17,
-     255
-    ],
-    "content": "skala 1:1000",
-    "family": "Times New Roman",
-    "pixelSize": 24
-   },
-   "tooltip": "",
-   "visible": true,
-   "z": 1300.0
-  },
-  {
-   "brush": {
-    "color": [
-     17,
-     17,
-     17,
-     255
-    ],
-    "style": 1
-   },
-   "data": [
-    "TITLE",
-    "TX0",
-    -15.93,
-    0.8888888888888888,
-    0.4444444444444444
-   ],
-   "ignoresTransformations": false,
-   "kind": "QGraphicsSimpleTextItem",
-   "pen": {
-    "color": [
-     0,
-     0,
-     0,
-     255
-    ],
-    "dash": [],
-    "style": 0,
-    "widthF": 1.0
-   },
-   "pos": [
-    500250.0,
-    -6500450.0
-   ],
-   "text": {
-    "bold": true,
-    "brush": [
-     17,
-     17,
-     17,
-     255
-    ],
-    "content": "MAPA ZASADNICZA",
-    "family": "Times New Roman",
-    "pixelSize": 24
-   },
-   "tooltip": "",
-   "visible": true,
-   "z": 1300.0
-  },
-  {
-   "brush": {
-    "color": [
-     204,
-     32,
-     44,
-     255
-    ],
-    "style": 1
-   },
-   "data": [
-    "BUILDING",
-    "A2",
-    13.2,
-    1.1,
-    0.55
-   ],
-   "ignoresTransformations": false,
-   "kind": "QGraphicsSimpleTextItem",
-   "pen": {
-    "color": [
-     0,
-     0,
-     0,
-     255
-    ],
-    "dash": [],
-    "style": 0,
-    "widthF": 1.0
-   },
-   "pos": [
-    500150.0,
-    -6500250.0
-   ],
-   "text": {
-    "bold": true,
-    "brush": [
-     204,
-     32,
-     44,
-     255
-    ],
-    "content": "Budynek",
-    "family": "Segoe UI",
-    "pixelSize": 16
-   },
-   "tooltip": "",
-   "visible": true,
-   "z": 1300.0
-  },
-  {
-   "brush": {
-    "color": [
-     204,
-     32,
-     44,
-     255
-    ],
-    "style": 1
-   },
-   "data": [
-    "BUILDING",
-    "A1",
-    -13.2,
-    1.1,
-    0.55
-   ],
-   "ignoresTransformations": false,
-   "kind": "QGraphicsSimpleTextItem",
-   "pen": {
-    "color": [
-     0,
-     0,
-     0,
-     255
-    ],
-    "dash": [],
-    "style": 0,
-    "widthF": 1.0
-   },
-   "pos": [
-    500150.0,
-    -6500250.0
-   ],
-   "text": {
-    "bold": true,
-    "brush": [
-     204,
-     32,
-     44,
-     255
-    ],
-    "content": "101",
-    "family": "Segoe UI",
-    "pixelSize": 16
-   },
-   "tooltip": "",
-   "visible": true,
-   "z": 1300.0
-  },
-  {
-   "brush": {
-    "color": [
-     53,
-     117,
-     58,
-     190
-    ],
-    "style": 1
-   },
-   "data": [
-    "MEADOW",
-    "A2",
-    0.0,
-    1.1,
-    0.55
-   ],
-   "ignoresTransformations": false,
-   "kind": "QGraphicsSimpleTextItem",
-   "pen": {
-    "color": [
-     0,
-     0,
-     0,
-     255
-    ],
-    "dash": [],
-    "style": 0,
-    "widthF": 1.0
-   },
-   "pos": [
-    500360.0,
-    -6500340.0
-   ],
-   "text": {
-    "bold": false,
-    "brush": [
-     53,
-     117,
-     58,
-     190
-    ],
-    "content": "R",
-    "family": "Segoe UI",
-    "pixelSize": 11
-   },
-   "tooltip": "",
-   "visible": true,
-   "z": 1300.0
-  },
-  {
-   "brush": {
-    "color": [
-     53,
-     117,
-     58,
-     190
-    ],
-    "style": 1
-   },
-   "data": [
-    "FOREST",
-    "A2",
-    0.0,
-    1.1,
-    0.55
-   ],
-   "ignoresTransformations": false,
-   "kind": "QGraphicsSimpleTextItem",
-   "pen": {
-    "color": [
-     0,
-     0,
-     0,
-     255
-    ],
-    "dash": [],
-    "style": 0,
-    "widthF": 1.0
-   },
-   "pos": [
-    500160.0,
-    -6500140.0
-   ],
-   "text": {
-    "bold": false,
-    "brush": [
-     53,
-     117,
-     58,
-     190
-    ],
-    "content": "Ls",
-    "family": "Segoe UI",
-    "pixelSize": 11
-   },
-   "tooltip": "",
-   "visible": true,
-   "z": 1300.0
-  },
-  {
-   "brush": {
-    "color": [
-     33,
-     59,
-     143,
-     255
-    ],
-    "style": 1
-   },
-   "data": [
-    "PRECINCT",
-    "A3",
-    0.0,
-    1.1,
-    0.55
-   ],
-   "ignoresTransformations": false,
-   "kind": "QGraphicsSimpleTextItem",
-   "pen": {
-    "color": [
-     0,
-     0,
-     0,
-     255
-    ],
-    "dash": [],
-    "style": 0,
-    "widthF": 1.0
-   },
-   "pos": [
-    500150.0,
-    -6500150.0
-   ],
-   "text": {
-    "bold": false,
-    "brush": [
-     33,
-     59,
-     143,
-     255
-    ],
-    "content": "OBRĘB 0001",
-    "family": "Segoe UI",
-    "pixelSize": 14
-   },
-   "tooltip": "",
-   "visible": true,
-   "z": 1300.0
-  },
-  {
-   "brush": {
-    "color": [
-     74,
-     80,
-     86,
-     255
-    ],
-    "style": 1
-   },
-   "data": [
-    "PARCEL",
-    "A2",
-    0.0,
-    1.1,
-    0.55
-   ],
-   "ignoresTransformations": false,
-   "kind": "QGraphicsSimpleTextItem",
-   "pen": {
-    "color": [
-     0,
-     0,
-     0,
-     255
-    ],
-    "dash": [],
-    "style": 0,
-    "widthF": 1.0
-   },
-   "pos": [
-    500160.0,
-    -6500160.0
-   ],
-   "text": {
-    "bold": false,
-    "brush": [
-     74,
-     80,
-     86,
-     255
-    ],
-    "content": "12/3",
-    "family": "Segoe UI",
-    "pixelSize": 12
-   },
-   "tooltip": "",
-   "visible": true,
-   "z": 1300.0
-  },
-  {
-   "brush": {
-    "color": [
-     130,
-     130,
-     130,
-     255
-    ],
-    "style": 1
-   },
-   "data": [
-    "BUILDING",
-    null,
-    null,
-    null,
-    null
-   ],
-   "ignoresTransformations": true,
-   "kind": "QGraphicsEllipseItem",
-   "pen": {
-    "color": [
-     130,
-     130,
-     130,
-     255
-    ],
-    "dash": [],
-    "style": 1,
-    "widthF": 1.0
-   },
-   "pos": [
-    500150.0,
-    -6500250.0
-   ],
-   "tooltip": "Kod 5310 • budynek\\nBudynek",
-   "visible": true,
-   "z": 250.0
+   "z": -100.0
   },
   {
    "brush": {
@@ -518,15 +94,11 @@
     ],
     "style": 0
    },
-   "data": [
-    "PRECINCT",
-    null,
-    null,
-    null,
-    null
-   ],
+   "data0": "PRECINCT",
+   "data1": null,
    "ignoresTransformations": false,
    "kind": "QGraphicsPathItem",
+   "paintIndex": 1,
    "path": {
     "elements": [
      [
@@ -559,22 +131,199 @@
    },
    "pen": {
     "color": [
-     130,
-     130,
-     130,
+     0,
+     0,
+     0,
      255
     ],
     "dash": [],
-    "style": 1,
+    "style": 0,
     "widthF": 1.0
    },
    "pos": [
     0.0,
     0.0
    ],
-   "tooltip": "Kod 5214 • Obręby\\n",
+   "tooltip": "",
    "visible": true,
-   "z": 220.0
+   "z": -100.0
+  },
+  {
+   "brush": {
+    "color": [
+     120,
+     200,
+     120,
+     255
+    ],
+    "style": 1
+   },
+   "data0": "FOREST",
+   "data1": null,
+   "ignoresTransformations": false,
+   "kind": "QGraphicsPathItem",
+   "paintIndex": 2,
+   "path": {
+    "elements": [
+     [
+      0,
+      500120.0,
+      -6500120.0
+     ],
+     [
+      1,
+      500180.0,
+      -6500120.0
+     ],
+     [
+      1,
+      500180.0,
+      -6500180.0
+     ],
+     [
+      1,
+      500120.0,
+      -6500120.0
+     ]
+    ],
+    "fillRule": 0
+   },
+   "pen": {
+    "color": [
+     0,
+     0,
+     0,
+     255
+    ],
+    "dash": [],
+    "style": 0,
+    "widthF": 1.0
+   },
+   "pos": [
+    0.0,
+    0.0
+   ],
+   "tooltip": "",
+   "visible": true,
+   "z": -100.0
+  },
+  {
+   "brush": {
+    "color": [
+     170,
+     187,
+     204,
+     94
+    ],
+    "style": 1
+   },
+   "data0": "MEADOW",
+   "data1": null,
+   "ignoresTransformations": false,
+   "kind": "QGraphicsPathItem",
+   "paintIndex": 3,
+   "path": {
+    "elements": [
+     [
+      0,
+      500320.0,
+      -6500320.0
+     ],
+     [
+      1,
+      500380.0,
+      -6500320.0
+     ],
+     [
+      1,
+      500380.0,
+      -6500380.0
+     ],
+     [
+      1,
+      500320.0,
+      -6500320.0
+     ]
+    ],
+    "fillRule": 0
+   },
+   "pen": {
+    "color": [
+     0,
+     0,
+     0,
+     255
+    ],
+    "dash": [],
+    "style": 0,
+    "widthF": 1.0
+   },
+   "pos": [
+    0.0,
+    0.0
+   ],
+   "tooltip": "",
+   "visible": true,
+   "z": -100.0
+  },
+  {
+   "brush": {
+    "color": [
+     17,
+     17,
+     17,
+     255
+    ],
+    "style": 1
+   },
+   "data0": "COMPASS",
+   "data1": null,
+   "ignoresTransformations": false,
+   "kind": "QGraphicsPathItem",
+   "paintIndex": 4,
+   "path": {
+    "elements": [
+     [
+      0,
+      500400.0,
+      -6500400.0
+     ],
+     [
+      1,
+      500440.0,
+      -6500400.0
+     ],
+     [
+      1,
+      500400.0,
+      -6500440.0
+     ],
+     [
+      1,
+      500400.0,
+      -6500400.0
+     ]
+    ],
+    "fillRule": 0
+   },
+   "pen": {
+    "color": [
+     0,
+     0,
+     0,
+     255
+    ],
+    "dash": [],
+    "style": 0,
+    "widthF": 1.0
+   },
+   "pos": [
+    0.0,
+    0.0
+   ],
+   "tooltip": "",
+   "visible": true,
+   "z": -100.0
   },
   {
    "brush": {
@@ -586,31 +335,130 @@
     ],
     "style": 0
    },
-   "data": [
-    "OPEN",
-    null,
-    null,
-    null,
-    null
-   ],
+   "data0": "TITLE",
+   "data1": null,
    "ignoresTransformations": false,
    "kind": "QGraphicsPathItem",
+   "paintIndex": 5,
    "path": {
     "elements": [
      [
       0,
-      500250.0,
+      500050.0,
       -6500450.0
      ],
      [
       1,
-      500300.0,
-      -6500480.0
+      500450.0,
+      -6500450.0
+     ]
+    ],
+    "fillRule": 0
+   },
+   "pen": {
+    "color": [
+     0,
+     0,
+     0,
+     255
+    ],
+    "dash": [],
+    "style": 0,
+    "widthF": 1.0
+   },
+   "pos": [
+    0.0,
+    0.0
+   ],
+   "tooltip": "Kod 7900 • Opisy\\n",
+   "visible": true,
+   "z": 100.0
+  },
+  {
+   "brush": {
+    "color": [
+     0,
+     0,
+     0,
+     255
+    ],
+    "style": 0
+   },
+   "data0": "NORTH",
+   "data1": null,
+   "ignoresTransformations": false,
+   "kind": "QGraphicsPathItem",
+   "paintIndex": 6,
+   "path": {
+    "elements": [
+     [
+      0,
+      500420.0,
+      -6500420.0
      ],
      [
       1,
-      500350.0,
-      -6500450.0
+      500420.0,
+      -6500440.0
+     ]
+    ],
+    "fillRule": 0
+   },
+   "pen": {
+    "color": [
+     0,
+     0,
+     0,
+     255
+    ],
+    "dash": [],
+    "style": 0,
+    "widthF": 1.0
+   },
+   "pos": [
+    0.0,
+    0.0
+   ],
+   "tooltip": "Kod 6900 • Opisy\\n",
+   "visible": true,
+   "z": 100.0
+  },
+  {
+   "brush": {
+    "color": [
+     0,
+     0,
+     0,
+     255
+    ],
+    "style": 0
+   },
+   "data0": "COMPASS",
+   "data1": null,
+   "ignoresTransformations": false,
+   "kind": "QGraphicsPathItem",
+   "paintIndex": 7,
+   "path": {
+    "elements": [
+     [
+      0,
+      500400.0,
+      -6500400.0
+     ],
+     [
+      1,
+      500440.0,
+      -6500400.0
+     ],
+     [
+      1,
+      500400.0,
+      -6500440.0
+     ],
+     [
+      1,
+      500400.0,
+      -6500400.0
      ]
     ],
     "fillRule": 0
@@ -630,7 +478,189 @@
     0.0,
     0.0
    ],
-   "tooltip": "Kod 5216 • granica\\n",
+   "tooltip": "Kod 5200 • Inne / kod 5200\\n",
+   "visible": true,
+   "z": 100.0
+  },
+  {
+   "brush": {
+    "color": [
+     0,
+     0,
+     0,
+     255
+    ],
+    "style": 0
+   },
+   "data0": "FOREST",
+   "data1": null,
+   "ignoresTransformations": false,
+   "kind": "QGraphicsPathItem",
+   "paintIndex": 8,
+   "path": {
+    "elements": [
+     [
+      0,
+      500120.0,
+      -6500120.0
+     ],
+     [
+      1,
+      500180.0,
+      -6500120.0
+     ],
+     [
+      1,
+      500180.0,
+      -6500180.0
+     ],
+     [
+      1,
+      500120.0,
+      -6500120.0
+     ]
+    ],
+    "fillRule": 0
+   },
+   "pen": {
+    "color": [
+     40,
+     90,
+     40,
+     255
+    ],
+    "dash": [],
+    "style": 1,
+    "widthF": 1.4
+   },
+   "pos": [
+    0.0,
+    0.0
+   ],
+   "tooltip": "Kod 5220 • Inne / kod 5220\\nLs",
+   "visible": true,
+   "z": 130.0
+  },
+  {
+   "brush": {
+    "color": [
+     0,
+     0,
+     0,
+     255
+    ],
+    "style": 0
+   },
+   "data0": "MEADOW",
+   "data1": null,
+   "ignoresTransformations": false,
+   "kind": "QGraphicsPathItem",
+   "paintIndex": 9,
+   "path": {
+    "elements": [
+     [
+      0,
+      500320.0,
+      -6500320.0
+     ],
+     [
+      1,
+      500380.0,
+      -6500320.0
+     ],
+     [
+      1,
+      500380.0,
+      -6500380.0
+     ],
+     [
+      1,
+      500320.0,
+      -6500320.0
+     ]
+    ],
+    "fillRule": 0
+   },
+   "pen": {
+    "color": [
+     60,
+     120,
+     60,
+     255
+    ],
+    "dash": [],
+    "style": 1,
+    "widthF": 0.9
+   },
+   "pos": [
+    0.0,
+    0.0
+   ],
+   "tooltip": "Kod 5230 • Inne / kod 5230\\nR",
+   "visible": true,
+   "z": 130.0
+  },
+  {
+   "brush": {
+    "color": [
+     0,
+     0,
+     0,
+     255
+    ],
+    "style": 0
+   },
+   "data0": "PARCEL",
+   "data1": null,
+   "ignoresTransformations": false,
+   "kind": "QGraphicsPathItem",
+   "paintIndex": 10,
+   "path": {
+    "elements": [
+     [
+      0,
+      500100.0,
+      -6500100.0
+     ],
+     [
+      1,
+      500200.0,
+      -6500100.0
+     ],
+     [
+      1,
+      500200.0,
+      -6500200.0
+     ],
+     [
+      1,
+      500100.0,
+      -6500200.0
+     ],
+     [
+      1,
+      500100.0,
+      -6500100.0
+     ]
+    ],
+    "fillRule": 0
+   },
+   "pen": {
+    "color": [
+     130,
+     130,
+     130,
+     255
+    ],
+    "dash": [],
+    "style": 1,
+    "widthF": 1.0
+   },
+   "pos": [
+    0.0,
+    0.0
+   ],
+   "tooltip": "Kod 5216 • granica\\n12/3",
    "visible": true,
    "z": 180.0
   },
@@ -644,15 +674,11 @@
     ],
     "style": 0
    },
-   "data": [
-    "MULTI",
-    null,
-    null,
-    null,
-    null
-   ],
+   "data0": "MULTI",
+   "data1": null,
    "ignoresTransformations": false,
    "kind": "QGraphicsPathItem",
+   "paintIndex": 11,
    "path": {
     "elements": [
      [
@@ -717,41 +743,27 @@
     ],
     "style": 0
    },
-   "data": [
-    "PARCEL",
-    null,
-    null,
-    null,
-    null
-   ],
+   "data0": "OPEN",
+   "data1": null,
    "ignoresTransformations": false,
    "kind": "QGraphicsPathItem",
+   "paintIndex": 12,
    "path": {
     "elements": [
      [
       0,
-      500100.0,
-      -6500100.0
+      500250.0,
+      -6500450.0
      ],
      [
       1,
-      500200.0,
-      -6500100.0
+      500300.0,
+      -6500480.0
      ],
      [
       1,
-      500200.0,
-      -6500200.0
-     ],
-     [
-      1,
-      500100.0,
-      -6500200.0
-     ],
-     [
-      1,
-      500100.0,
-      -6500100.0
+      500350.0,
+      -6500450.0
      ]
     ],
     "fillRule": 0
@@ -771,7 +783,7 @@
     0.0,
     0.0
    ],
-   "tooltip": "Kod 5216 • granica\\n12/3",
+   "tooltip": "Kod 5216 • granica\\n",
    "visible": true,
    "z": 180.0
   },
@@ -785,162 +797,37 @@
     ],
     "style": 0
    },
-   "data": [
-    "MEADOW",
-    null,
-    null,
-    null,
-    null
-   ],
+   "data0": "PRECINCT",
+   "data1": null,
    "ignoresTransformations": false,
    "kind": "QGraphicsPathItem",
+   "paintIndex": 13,
    "path": {
     "elements": [
      [
       0,
-      500320.0,
-      -6500320.0
+      500000.0,
+      -6500000.0
      ],
      [
       1,
-      500380.0,
-      -6500320.0
+      500300.0,
+      -6500000.0
      ],
      [
       1,
-      500380.0,
-      -6500380.0
+      500300.0,
+      -6500300.0
      ],
      [
       1,
-      500320.0,
-      -6500320.0
-     ]
-    ],
-    "fillRule": 0
-   },
-   "pen": {
-    "color": [
-     60,
-     120,
-     60,
-     255
-    ],
-    "dash": [],
-    "style": 1,
-    "widthF": 0.9
-   },
-   "pos": [
-    0.0,
-    0.0
-   ],
-   "tooltip": "Kod 5230 • Inne / kod 5230\\nR",
-   "visible": true,
-   "z": 130.0
-  },
-  {
-   "brush": {
-    "color": [
-     0,
-     0,
-     0,
-     255
-    ],
-    "style": 0
-   },
-   "data": [
-    "FOREST",
-    null,
-    null,
-    null,
-    null
-   ],
-   "ignoresTransformations": false,
-   "kind": "QGraphicsPathItem",
-   "path": {
-    "elements": [
-     [
-      0,
-      500120.0,
-      -6500120.0
+      500000.0,
+      -6500300.0
      ],
      [
       1,
-      500180.0,
-      -6500120.0
-     ],
-     [
-      1,
-      500180.0,
-      -6500180.0
-     ],
-     [
-      1,
-      500120.0,
-      -6500120.0
-     ]
-    ],
-    "fillRule": 0
-   },
-   "pen": {
-    "color": [
-     40,
-     90,
-     40,
-     255
-    ],
-    "dash": [],
-    "style": 1,
-    "widthF": 1.4
-   },
-   "pos": [
-    0.0,
-    0.0
-   ],
-   "tooltip": "Kod 5220 • Inne / kod 5220\\nLs",
-   "visible": true,
-   "z": 130.0
-  },
-  {
-   "brush": {
-    "color": [
-     0,
-     0,
-     0,
-     255
-    ],
-    "style": 0
-   },
-   "data": [
-    "COMPASS",
-    null,
-    null,
-    null,
-    null
-   ],
-   "ignoresTransformations": false,
-   "kind": "QGraphicsPathItem",
-   "path": {
-    "elements": [
-     [
-      0,
-      500400.0,
-      -6500400.0
-     ],
-     [
-      1,
-      500440.0,
-      -6500400.0
-     ],
-     [
-      1,
-      500400.0,
-      -6500440.0
-     ],
-     [
-      1,
-      500400.0,
-      -6500400.0
+      500000.0,
+      -6500000.0
      ]
     ],
     "fillRule": 0
@@ -960,160 +847,63 @@
     0.0,
     0.0
    ],
-   "tooltip": "Kod 5200 • Inne / kod 5200\\n",
+   "tooltip": "Kod 5214 • Obręby\\n",
    "visible": true,
-   "z": 100.0
+   "z": 220.0
   },
   {
    "brush": {
     "color": [
-     0,
-     0,
-     0,
-     255
-    ],
-    "style": 0
-   },
-   "data": [
-    "NORTH",
-    null,
-    null,
-    null,
-    null
-   ],
-   "ignoresTransformations": false,
-   "kind": "QGraphicsPathItem",
-   "path": {
-    "elements": [
-     [
-      0,
-      500420.0,
-      -6500420.0
-     ],
-     [
-      1,
-      500420.0,
-      -6500440.0
-     ]
-    ],
-    "fillRule": 0
-   },
-   "pen": {
-    "color": [
-     0,
-     0,
-     0,
-     255
-    ],
-    "dash": [],
-    "style": 0,
-    "widthF": 1.0
-   },
-   "pos": [
-    0.0,
-    0.0
-   ],
-   "tooltip": "Kod 6900 • Opisy\\n",
-   "visible": true,
-   "z": 100.0
-  },
-  {
-   "brush": {
-    "color": [
-     0,
-     0,
-     0,
-     255
-    ],
-    "style": 0
-   },
-   "data": [
-    "TITLE",
-    null,
-    null,
-    null,
-    null
-   ],
-   "ignoresTransformations": false,
-   "kind": "QGraphicsPathItem",
-   "path": {
-    "elements": [
-     [
-      0,
-      500050.0,
-      -6500450.0
-     ],
-     [
-      1,
-      500450.0,
-      -6500450.0
-     ]
-    ],
-    "fillRule": 0
-   },
-   "pen": {
-    "color": [
-     0,
-     0,
-     0,
-     255
-    ],
-    "dash": [],
-    "style": 0,
-    "widthF": 1.0
-   },
-   "pos": [
-    0.0,
-    0.0
-   ],
-   "tooltip": "Kod 7900 • Opisy\\n",
-   "visible": true,
-   "z": 100.0
-  },
-  {
-   "brush": {
-    "color": [
-     17,
-     17,
-     17,
+     130,
+     130,
+     130,
      255
     ],
     "style": 1
    },
-   "data": [
-    "COMPASS",
-    null,
-    null,
-    null,
-    null
-   ],
-   "ignoresTransformations": false,
-   "kind": "QGraphicsPathItem",
-   "path": {
-    "elements": [
-     [
-      0,
-      500400.0,
-      -6500400.0
-     ],
-     [
-      1,
-      500440.0,
-      -6500400.0
-     ],
-     [
-      1,
-      500400.0,
-      -6500440.0
-     ],
-     [
-      1,
-      500400.0,
-      -6500400.0
-     ]
+   "data0": "BUILDING",
+   "data1": null,
+   "ignoresTransformations": true,
+   "kind": "QGraphicsEllipseItem",
+   "paintIndex": 14,
+   "pen": {
+    "color": [
+     130,
+     130,
+     130,
+     255
     ],
-    "fillRule": 0
+    "dash": [],
+    "style": 1,
+    "widthF": 1.0
    },
+   "pos": [
+    500150.0,
+    -6500250.0
+   ],
+   "tooltip": "Kod 5310 • budynek\\nBudynek",
+   "visible": true,
+   "z": 250.0
+  },
+  {
+   "brush": {
+    "color": [
+     74,
+     80,
+     86,
+     255
+    ],
+    "style": 1
+   },
+   "data0": "PARCEL",
+   "data1": "A2",
+   "ignoresTransformations": false,
+   "kind": "QGraphicsSimpleTextItem",
+   "metrics": {
+    "offsetPerHeight": 0.0,
+    "ratioRule": 1.1
+   },
+   "paintIndex": 15,
    "pen": {
     "color": [
      0,
@@ -1126,120 +916,194 @@
     "widthF": 1.0
    },
    "pos": [
-    0.0,
-    0.0
+    500160.0,
+    -6500160.0
    ],
+   "text": {
+    "bold": false,
+    "brush": [
+     74,
+     80,
+     86,
+     255
+    ],
+    "content": "12/3",
+    "family": "Segoe UI",
+    "pixelSize": 12
+   },
    "tooltip": "",
    "visible": true,
-   "z": -100.0
+   "z": 1300.0
   },
   {
    "brush": {
     "color": [
-     170,
-     187,
+     33,
+     59,
+     143,
+     255
+    ],
+    "style": 1
+   },
+   "data0": "PRECINCT",
+   "data1": "A3",
+   "ignoresTransformations": false,
+   "kind": "QGraphicsSimpleTextItem",
+   "metrics": {
+    "offsetPerHeight": 0.0,
+    "ratioRule": 1.1
+   },
+   "paintIndex": 16,
+   "pen": {
+    "color": [
+     0,
+     0,
+     0,
+     255
+    ],
+    "dash": [],
+    "style": 0,
+    "widthF": 1.0
+   },
+   "pos": [
+    500150.0,
+    -6500150.0
+   ],
+   "text": {
+    "bold": false,
+    "brush": [
+     33,
+     59,
+     143,
+     255
+    ],
+    "content": "OBRĘB 0001",
+    "family": "Segoe UI",
+    "pixelSize": 14
+   },
+   "tooltip": "",
+   "visible": true,
+   "z": 1300.0
+  },
+  {
+   "brush": {
+    "color": [
+     53,
+     117,
+     58,
+     190
+    ],
+    "style": 1
+   },
+   "data0": "FOREST",
+   "data1": "A2",
+   "ignoresTransformations": false,
+   "kind": "QGraphicsSimpleTextItem",
+   "metrics": {
+    "offsetPerHeight": 0.0,
+    "ratioRule": 1.1
+   },
+   "paintIndex": 17,
+   "pen": {
+    "color": [
+     0,
+     0,
+     0,
+     255
+    ],
+    "dash": [],
+    "style": 0,
+    "widthF": 1.0
+   },
+   "pos": [
+    500160.0,
+    -6500140.0
+   ],
+   "text": {
+    "bold": false,
+    "brush": [
+     53,
+     117,
+     58,
+     190
+    ],
+    "content": "Ls",
+    "family": "Segoe UI",
+    "pixelSize": 11
+   },
+   "tooltip": "",
+   "visible": true,
+   "z": 1300.0
+  },
+  {
+   "brush": {
+    "color": [
+     53,
+     117,
+     58,
+     190
+    ],
+    "style": 1
+   },
+   "data0": "MEADOW",
+   "data1": "A2",
+   "ignoresTransformations": false,
+   "kind": "QGraphicsSimpleTextItem",
+   "metrics": {
+    "offsetPerHeight": 0.0,
+    "ratioRule": 1.1
+   },
+   "paintIndex": 18,
+   "pen": {
+    "color": [
+     0,
+     0,
+     0,
+     255
+    ],
+    "dash": [],
+    "style": 0,
+    "widthF": 1.0
+   },
+   "pos": [
+    500360.0,
+    -6500340.0
+   ],
+   "text": {
+    "bold": false,
+    "brush": [
+     53,
+     117,
+     58,
+     190
+    ],
+    "content": "R",
+    "family": "Segoe UI",
+    "pixelSize": 11
+   },
+   "tooltip": "",
+   "visible": true,
+   "z": 1300.0
+  },
+  {
+   "brush": {
+    "color": [
      204,
-     94
-    ],
-    "style": 1
-   },
-   "data": [
-    "MEADOW",
-    null,
-    null,
-    null,
-    null
-   ],
-   "ignoresTransformations": false,
-   "kind": "QGraphicsPathItem",
-   "path": {
-    "elements": [
-     [
-      0,
-      500320.0,
-      -6500320.0
-     ],
-     [
-      1,
-      500380.0,
-      -6500320.0
-     ],
-     [
-      1,
-      500380.0,
-      -6500380.0
-     ],
-     [
-      1,
-      500320.0,
-      -6500320.0
-     ]
-    ],
-    "fillRule": 0
-   },
-   "pen": {
-    "color": [
-     0,
-     0,
-     0,
-     255
-    ],
-    "dash": [],
-    "style": 0,
-    "widthF": 1.0
-   },
-   "pos": [
-    0.0,
-    0.0
-   ],
-   "tooltip": "",
-   "visible": true,
-   "z": -100.0
-  },
-  {
-   "brush": {
-    "color": [
-     120,
-     200,
-     120,
+     32,
+     44,
      255
     ],
     "style": 1
    },
-   "data": [
-    "FOREST",
-    null,
-    null,
-    null,
-    null
-   ],
+   "data0": "BUILDING",
+   "data1": "A1",
    "ignoresTransformations": false,
-   "kind": "QGraphicsPathItem",
-   "path": {
-    "elements": [
-     [
-      0,
-      500120.0,
-      -6500120.0
-     ],
-     [
-      1,
-      500180.0,
-      -6500120.0
-     ],
-     [
-      1,
-      500180.0,
-      -6500180.0
-     ],
-     [
-      1,
-      500120.0,
-      -6500120.0
-     ]
-    ],
-    "fillRule": 0
+   "kind": "QGraphicsSimpleTextItem",
+   "metrics": {
+    "offsetPerHeight": -0.6,
+    "ratioRule": 1.1
    },
+   "paintIndex": 19,
    "pen": {
     "color": [
      0,
@@ -1252,62 +1116,44 @@
     "widthF": 1.0
    },
    "pos": [
-    0.0,
-    0.0
+    500150.0,
+    -6500250.0
    ],
+   "text": {
+    "bold": true,
+    "brush": [
+     204,
+     32,
+     44,
+     255
+    ],
+    "content": "101",
+    "family": "Segoe UI",
+    "pixelSize": 16
+   },
    "tooltip": "",
    "visible": true,
-   "z": -100.0
+   "z": 1300.0
   },
   {
    "brush": {
     "color": [
-     0,
-     0,
-     0,
+     204,
+     32,
+     44,
      255
     ],
-    "style": 0
+    "style": 1
    },
-   "data": [
-    "PRECINCT",
-    null,
-    null,
-    null,
-    null
-   ],
+   "data0": "BUILDING",
+   "data1": "A2",
    "ignoresTransformations": false,
-   "kind": "QGraphicsPathItem",
-   "path": {
-    "elements": [
-     [
-      0,
-      500000.0,
-      -6500000.0
-     ],
-     [
-      1,
-      500300.0,
-      -6500000.0
-     ],
-     [
-      1,
-      500300.0,
-      -6500300.0
-     ],
-     [
-      1,
-      500000.0,
-      -6500300.0
-     ],
-     [
-      1,
-      500000.0,
-      -6500000.0
-     ]
-    ],
-    "fillRule": 0
+   "kind": "QGraphicsSimpleTextItem",
+   "metrics": {
+    "offsetPerHeight": 0.6,
+    "ratioRule": 1.1
    },
+   "paintIndex": 20,
    "pen": {
     "color": [
      0,
@@ -1320,62 +1166,44 @@
     "widthF": 1.0
    },
    "pos": [
-    0.0,
-    0.0
+    500150.0,
+    -6500250.0
    ],
+   "text": {
+    "bold": true,
+    "brush": [
+     204,
+     32,
+     44,
+     255
+    ],
+    "content": "Budynek",
+    "family": "Segoe UI",
+    "pixelSize": 16
+   },
    "tooltip": "",
    "visible": true,
-   "z": -100.0
+   "z": 1300.0
   },
   {
    "brush": {
     "color": [
-     0,
-     0,
-     0,
+     17,
+     17,
+     17,
      255
     ],
-    "style": 0
+    "style": 1
    },
-   "data": [
-    "PARCEL",
-    null,
-    null,
-    null,
-    null
-   ],
+   "data0": "TITLE",
+   "data1": "TX0",
    "ignoresTransformations": false,
-   "kind": "QGraphicsPathItem",
-   "path": {
-    "elements": [
-     [
-      0,
-      500100.0,
-      -6500100.0
-     ],
-     [
-      1,
-      500200.0,
-      -6500100.0
-     ],
-     [
-      1,
-      500200.0,
-      -6500200.0
-     ],
-     [
-      1,
-      500100.0,
-      -6500200.0
-     ],
-     [
-      1,
-      500100.0,
-      -6500100.0
-     ]
-    ],
-    "fillRule": 0
+   "kind": "QGraphicsSimpleTextItem",
+   "metrics": {
+    "offsetPerHeight": -0.59,
+    "ratioRule": 12.0
    },
+   "paintIndex": 21,
    "pen": {
     "color": [
      0,
@@ -1388,12 +1216,124 @@
     "widthF": 1.0
    },
    "pos": [
-    0.0,
-    0.0
+    500250.0,
+    -6500450.0
    ],
+   "text": {
+    "bold": true,
+    "brush": [
+     17,
+     17,
+     17,
+     255
+    ],
+    "content": "MAPA ZASADNICZA",
+    "family": "Times New Roman",
+    "pixelSize": 24
+   },
    "tooltip": "",
    "visible": true,
-   "z": -100.0
+   "z": 1300.0
+  },
+  {
+   "brush": {
+    "color": [
+     17,
+     17,
+     17,
+     255
+    ],
+    "style": 1
+   },
+   "data0": "TITLE",
+   "data1": "TX1",
+   "ignoresTransformations": false,
+   "kind": "QGraphicsSimpleTextItem",
+   "metrics": {
+    "offsetPerHeight": 0.59,
+    "ratioRule": 12.0
+   },
+   "paintIndex": 22,
+   "pen": {
+    "color": [
+     0,
+     0,
+     0,
+     255
+    ],
+    "dash": [],
+    "style": 0,
+    "widthF": 1.0
+   },
+   "pos": [
+    500250.0,
+    -6500450.0
+   ],
+   "text": {
+    "bold": true,
+    "brush": [
+     17,
+     17,
+     17,
+     255
+    ],
+    "content": "skala 1:1000",
+    "family": "Times New Roman",
+    "pixelSize": 24
+   },
+   "tooltip": "",
+   "visible": true,
+   "z": 1300.0
+  },
+  {
+   "brush": {
+    "color": [
+     17,
+     17,
+     17,
+     255
+    ],
+    "style": 1
+   },
+   "data0": "NORTH",
+   "data1": "TX0",
+   "ignoresTransformations": false,
+   "kind": "QGraphicsSimpleTextItem",
+   "metrics": {
+    "offsetPerHeight": 0.0,
+    "ratioRule": 12.0
+   },
+   "paintIndex": 23,
+   "pen": {
+    "color": [
+     0,
+     0,
+     0,
+     255
+    ],
+    "dash": [],
+    "style": 0,
+    "widthF": 1.0
+   },
+   "pos": [
+    500420.0,
+    -6500430.0
+   ],
+   "text": {
+    "bold": true,
+    "brush": [
+     17,
+     17,
+     17,
+     255
+    ],
+    "content": "N",
+    "family": "Times New Roman",
+    "pixelSize": 24
+   },
+   "tooltip": "",
+   "visible": true,
+   "z": 1300.0
   }
  ],
  "itemsByLayer": {
@@ -1416,6 +1356,44 @@
   "TITLE|TX0",
   "TITLE|TX1"
  ],
+ "labelPositions": {
+  "BUILDING|A1": [
+   500150.0,
+   -6500250.0
+  ],
+  "BUILDING|A2": [
+   500150.0,
+   -6500250.0
+  ],
+  "FOREST|A2": [
+   500160.0,
+   -6500140.0
+  ],
+  "MEADOW|A2": [
+   500360.0,
+   -6500340.0
+  ],
+  "NORTH|TX0": [
+   500420.0,
+   -6500430.0
+  ],
+  "PARCEL|A2": [
+   500160.0,
+   -6500160.0
+  ],
+  "PRECINCT|A3": [
+   500150.0,
+   -6500150.0
+  ],
+  "TITLE|TX0": [
+   500250.0,
+   -6500450.0
+  ],
+  "TITLE|TX1": [
+   500250.0,
+   -6500450.0
+  ]
+ },
  "labelWorldSpan": {
   "BUILDING": 0.0,
   "FOREST": 60.0,
