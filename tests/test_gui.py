@@ -46,7 +46,7 @@ def test_polygon_preview_and_creation(qt_app,monkeypatch):
     window.add_polygon_point(5,8)
     window.preview_polygon(6,7)
     assert window.draft_item.path().elementCount() == 4
-    monkeypatch.setattr(QInputDialog,'getText',staticmethod(lambda *a,**k: ('nowa',True)))
+    monkeypatch.setattr(window, '_ask_polygon_attributes', lambda: {'A1':'', 'A2':'nowa', 'A3':'', 'A4':'', 'A5':'', 'A6':'', 'TX':'', 'MP':'0', 'DT':'', 'KR':''})
     window.finish_polygon()
     assert len(window.doc.objects)==2
     assert window.selected_uid in window.doc.by_id
@@ -127,7 +127,7 @@ def test_drawing_real_viewport_mouse_events(qt_app,monkeypatch):
         QTest.mouseClick(window.view.viewport(), Qt.LeftButton, pos=pos)
     assert len(window.current_polygon)==3
     assert len(window.draft_points)==3
-    monkeypatch.setattr(QInputDialog,'getText',staticmethod(lambda *a,**k: ('test',True)))
+    monkeypatch.setattr(window, '_ask_polygon_attributes', lambda: {'A1':'', 'A2':'test', 'A3':'', 'A4':'', 'A5':'', 'A6':'', 'TX':'', 'MP':'0', 'DT':'', 'KR':''})
     # Qt sends native press to the viewport; the right-click must close it.
     QTest.mouseClick(window.view.viewport(),Qt.RightButton,pos=window.view.mapFromScene(QPointF(.3,-.8)))
     assert len(window.doc.objects)==2
@@ -199,7 +199,7 @@ def test_click_first_vertex_finishes_and_autosaves_work_copy(qt_app, monkeypatch
     window.start_polygon()
     for x, y in ((2,2), (5,2), (3,5)):
         window.add_polygon_point(x, y)
-    monkeypatch.setattr(QInputDialog, 'getText', staticmethod(lambda *a, **k: ('rysunek', True)))
+    monkeypatch.setattr(window, '_ask_polygon_attributes', lambda: {'A1':'', 'A2':'rysunek', 'A3':'', 'A4':'', 'A5':'', 'A6':'', 'TX':'', 'MP':'0', 'DT':'', 'KR':''})
     window.add_polygon_point(2.001, 2.001)
     assert len(window.doc.objects) == 2
     assert not window.view.draw_mode
@@ -289,3 +289,82 @@ def test_wheel_zoom_same_factor_in_all_tools(qt_app, monkeypatch):
         view.wheelEvent(ev)
         assert view.transform().m11() == pytest.approx(before * 1.2)
     window.close()
+
+def test_cursor_zoom_preserves_position(qt_app):
+    from PySide6.QtGui import QWheelEvent
+    from PySide6.QtCore import Qt, QPoint, QPointF
+    window = GeoStudioWindow()
+    window.show()
+    window.doc = GeoMap(fixture_map())
+    window.rebuild_scene()
+    qt_app.processEvents()
+    view = window.view
+    for mode in ('select', 'pan', 'edit'):
+        if mode == 'pan':
+            window.start_pan()
+        elif mode == 'edit':
+            window.cancel_edit()
+            window._select_uid('DEMO-01')
+            window.start_vertex_edit()
+        else:
+            window.cancel_edit()
+        target = QPoint(185, 220)
+        world_before = view.mapToScene(target)
+        event = QWheelEvent(QPointF(target), QPointF(target),
+                            QPoint(), QPoint(0, 120), Qt.NoButton,
+                            Qt.NoModifier, Qt.NoScrollPhase, False)
+        view.wheelEvent(event)
+        world_after = view.mapToScene(target)
+        assert (world_after - world_before).manhattanLength() < 0.02
+    window.close()
+
+
+def test_full_polygon_form_and_delete_work_copy(qt_app, monkeypatch, tmp_path):
+    from PySide6.QtWidgets import QMessageBox
+    original = fixture_map()
+    file = tmp_path / 'sample.MAP'
+    file.write_bytes(original)
+    window = GeoStudioWindow()
+    window.doc = GeoMap.open(file)
+    window.rebuild_scene()
+    monkeypatch.setattr(QInputDialog, 'getText', staticmethod(lambda *a, **k: ('5230', True)))
+    window.start_polygon()
+    window.add_polygon_point(5, 5)
+    window.add_polygon_point(8, 5)
+    window.add_polygon_point(5, 8)
+    monkeypatch.setattr(window, '_ask_polygon_attributes', lambda: {
+        'A1':'105','A2':'RV','A3':'143411_5.0014','A4':'','A5':'','A6':'',
+        'TX':'uwagi','MP':'0','DT':'','KR':''
+    })
+    window.finish_polygon()
+    created = window.selected_uid
+    assert window.doc.by_id[created].fields['A1'] == '105'
+    assert window.doc.by_id[created].fields['A2'] == 'RV'
+    assert window.doc.by_id[created].fields['A4'] == ''
+    assert window.doc.by_id[created].fields['TX'] == 'uwagi'
+    monkeypatch.setattr(QMessageBox, 'question', staticmethod(
+        lambda *a, **k: QMessageBox.Yes))
+    window.delete_selected()
+    assert created not in window.doc.by_id
+    assert len(window.doc.objects) == 1
+    assert file.read_bytes() == original
+    saved = GeoMap.open(window._auto_copy_path)
+    assert saved.checksum_valid and saved.declared_lines == len(saved.lines)
+    assert len(saved.objects) == 1
+    window.close()
+
+
+def test_hide_multipart_connectors_is_visual_only(qt_app):
+    from PySide6.QtGui import QPainterPath
+    doc = GeoMap(fixture_map())
+    obj = doc.objects[0]
+    from geostudio.geomap import GeoPoint
+    obj.points = [
+        GeoPoint(0,0),GeoPoint(1,0),GeoPoint(1,1),
+        GeoPoint(0,0,point_type=0),
+        GeoPoint(10,10),GeoPoint(11,10),GeoPoint(11,11),
+        GeoPoint(10,10,point_type=0)]
+    path_hidden = GeoStudioWindow._path_for(obj, hide_connectors=True)
+    path_visible = GeoStudioWindow._path_for(obj, hide_connectors=False)
+    assert path_hidden.elementAt(4).type == QPainterPath.MoveToElement
+    assert path_visible.elementAt(4).type == QPainterPath.LineToElement
