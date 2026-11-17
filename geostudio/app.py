@@ -31,6 +31,7 @@ from .object_search import search_objects
 from .visual_styles import (parse_fill_code, fill_code, load_styles,
     load_label_positions, write_styles, sidecar_path)
 from .library_render import parse_cdf, parse_sym_primitives, cdf_for_object, native_fill_color, simple_point_segments
+from .label_render import map_label_style, display_label_text
 
 APP_QSS = """
 QMainWindow, QDockWidget, QWidget { background-color: #101826; color: #dce7f5; font: 10pt 'Segoe UI'; }
@@ -246,7 +247,7 @@ class MapView(QGraphicsView):
 class GeoStudioWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle('GeoStudio v0.8 — eksperymentalny edytor GEO-MAP')
+        self.setWindowTitle('GeoStudio v0.9 — eksperymentalny edytor GEO-MAP')
         self.resize(1450, 900)
         self.settings = QSettings('GeoStudio', 'GeoStudio')
         self.doc: GeoMap | None=None
@@ -574,7 +575,7 @@ class GeoStudioWindow(QMainWindow):
             self._last_pick_candidates = ()
             self._look_for_libraries(Path(file).parent)
             self.rebuild_scene()
-            self.setWindowTitle('GeoStudio v0.8 — '+Path(file).name)
+            self.setWindowTitle('GeoStudio v0.9 — '+Path(file).name)
             self.status.showMessage(f'{len(doc.objects)} obiektów, {len(doc.lines)} wierszy | {file}')
         except Exception as exc: QMessageBox.critical(self,'Błąd odczytu mapy',str(exc))
 
@@ -792,18 +793,19 @@ class GeoStudioWindow(QMainWindow):
                 self.label_world_span[obj.uid] = max(
                     max(xs) - min(xs), max(ys) - min(ys))
             for field, content in label_fields:
-                label = QGraphicsSimpleTextItem(content)
-                if obj.code == '5310':
-                    label.setFont(QFont('Segoe UI', 12, QFont.Bold))
-                    label.setBrush(QBrush(QColor('#C31E2B')))
-                elif obj.code == '5216':
-                    label.setFont(QFont('Segoe UI', 9))
-                    label.setBrush(QBrush(QColor('#21374c')))
-                else:
-                    label.setFont(QFont('Segoe UI', 8))
-                    muted = QColor('#587280')
-                    muted.setAlpha(170)
-                    label.setBrush(QBrush(muted))
+                label = QGraphicsSimpleTextItem(
+                    display_label_text(obj.code, field, content))
+                look = map_label_style(obj.code, field)
+                font = QFont(look.font_family)
+                font.setPixelSize(look.pixel_size)
+                font.setWeight(QFont.Bold if look.bold else QFont.Normal)
+                label.setFont(font)
+                ink = QColor(look.color)
+                ink.setAlpha(look.opacity)
+                label.setBrush(QBrush(ink))
+                # Keep exactly the same on-screen text size at every zoom
+                # and rotation, as requested; never switch pixel size in
+                # update_label_visibility or zoom callbacks.
                 label.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIgnoresTransformations, True)
                 label.setAcceptedMouseButtons(Qt.NoButton)
                 bounds = label.boundingRect()
@@ -890,21 +892,9 @@ class GeoStudioWindow(QMainWindow):
                 continue
 
             is_selected = uid in selected
-            if not (is_selected or force_all):
-                # The display is 1:1 in the map's metre-based source units.
-                # At overview scales keep 5310 A1/A2 from covering the map.
-                scale_threshold = ({'5310': 0.75, '5216': 0.38,
-                                    '5220': 0.65, '5230': 0.65}
-                                   .get(obj.code, 0.65))
-                if px_per_map_unit < scale_threshold:
-                    item.setVisible(False)
-                    continue
-                # Label only when the source object occupies enough pixels.
-                projected_span = self.label_world_span.get(uid, 0) * px_per_map_unit
-                min_span = 34 if obj.code == '5310' else 18
-                if projected_span < min_span:
-                    item.setVisible(False)
-                    continue
+            # The label renderer uses fixed pixel fonts. At broad scale we
+            # preserve the size and only thin overlapping labels below.
+            # Never hide them just because a polygon is small in pixels.
 
             bounds = item.boundingRect()
             w = max(8.0, bounds.width()) + 8
