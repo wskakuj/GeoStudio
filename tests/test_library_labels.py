@@ -195,8 +195,8 @@ def test_real_mouse_drag_moves_A2_not_A1(gui, tmp_path):
     assert load_label_positions(gui._auto_copy_path)[uid]['A2']==gui.label_positions[uid]['A2']
 
 
-def test_map_label_font_is_fixed_in_screen_pixels_at_zoom(gui):
-    """A1/A2 stays 16 px at 1:large and 1:small, not scaled by transform."""
+def test_map_label_font_scales_with_geometry_but_is_never_culled(gui):
+    """GEO-MAP-like annotation is proportional to map zoom, not fixed pixels."""
     from geostudio.geomap import GeoMap
     from test_geomap import fixture_map
     from PySide6.QtWidgets import QGraphicsItem
@@ -206,7 +206,7 @@ def test_map_label_font_is_fixed_in_screen_pixels_at_zoom(gui):
     gui.rebuild_scene()
     item=gui.label_items[(uid,'A1')]
     assert item.font().pixelSize()==16
-    assert item.flags() & QGraphicsItem.GraphicsItemFlag.ItemIgnoresTransformations
+    assert not (item.flags() & QGraphicsItem.GraphicsItemFlag.ItemIgnoresTransformations)
     width=lambda: item.deviceTransform(gui.view.viewportTransform()).mapRect(
         item.boundingRect()).width()
     w0=width()
@@ -214,8 +214,10 @@ def test_map_label_font_is_fixed_in_screen_pixels_at_zoom(gui):
     w1=width()
     gui.view.scale(.11,.11)
     w2=width()
-    assert w1 == pytest.approx(w0, abs=0.1)
-    assert w2 == pytest.approx(w0, abs=0.1)
+    assert w1 == pytest.approx(w0*3, abs=0.15)
+    assert w2 == pytest.approx(w0*.33, abs=0.15)
+    gui.update_label_visibility()
+    assert item.isVisible()
     assert gui.label_items[(uid,'A2')].font().pixelSize()==16
 
 
