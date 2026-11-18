@@ -81,3 +81,16 @@ def test_unknown_workspace_does_not_change_ui(window):
     with pytest.raises(ValueError):
         window.set_workspace('broken')
     assert window.workspace_mode == previous
+
+
+def test_hidpi_toolbar_pictograms_are_not_clipped(qt_app):
+    from PySide6.QtCore import QSize
+    from geostudio.ui_icons import draw_icon
+    image = draw_icon('folder', '#FFFFFF').pixmap(QSize(24, 24)).toImage()
+    visible = [(x, y) for y in range(image.height()) for x in range(image.width())
+               if image.pixelColor(x, y).alpha() > 80]
+    assert len(visible) >= 35
+    minx, maxx = min(x for x, _ in visible), max(x for x, _ in visible)
+    miny, maxy = min(y for _, y in visible), max(y for _, y in visible)
+    assert minx <= 6 and maxx >= image.width() - 6
+    assert miny <= 11 and maxy >= image.height() - 6
