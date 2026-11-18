@@ -116,7 +116,10 @@ class WMSDialog(QDialog):
         root.addWidget(caption)
         form = QFormLayout()
         form.setSpacing(10)
-        self.address = QLineEdit(str(window.settings.value("wms/last_url", "")))
+        # Official GUGiK orthoimagery WMS is a practical starting point in PL.
+        default_wms = ("https://mapy.geoportal.gov.pl/wss/service/"
+                       "PZGIK/ORTO/WMS/StandardResolution")
+        self.address = QLineEdit(str(window.settings.value("wms/last_url", default_wms)))
         self.address.setPlaceholderText("https://.../wms")
         form.addRow("Serwer WMS", self.address)
         self.layer_selector = QComboBox()
@@ -233,6 +236,13 @@ class WMSDialog(QDialog):
         epsg = self.crs_selector.currentData()
         if not epsg:
             QMessageBox.warning(self, "Układ WMS", "Wybierz sprawdzony układ współrzędnych MAP.")
+            return
+        if (self.window.current_crs_epsg is not None and
+                epsg != self.window.current_crs_epsg):
+            QMessageBox.warning(
+                self, "Niezgodny układ",
+                "WMS i dokument MAP muszą mieć ten sam CRS. "
+                f"MAP ma EPSG:{self.window.current_crs_epsg}, wybrano EPSG:{epsg}.")
             return
         layer = self._selected_layer()
         crs = f"EPSG:{epsg}"
