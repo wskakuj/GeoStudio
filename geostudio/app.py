@@ -19,7 +19,7 @@ try:
     from PySide6.QtWidgets import (QApplication, QMainWindow, QFileDialog, QGraphicsView, QGraphicsScene,
         QGraphicsPathItem, QGraphicsEllipseItem, QGraphicsRectItem, QGraphicsPixmapItem, QGraphicsSimpleTextItem, QGraphicsItem, QDockWidget,
         QTreeWidget, QTreeWidgetItem, QToolBar, QMessageBox, QStatusBar, QInputDialog, QMenu,
-        QLabel, QWidget, QVBoxLayout, QHeaderView, QSplitter, QComboBox,
+        QLabel, QWidget, QVBoxLayout, QHeaderView, QSplitter, QComboBox, QTextEdit,
         QDialog, QDialogButtonBox, QFormLayout, QLineEdit, QHBoxLayout, QPushButton, QSpinBox, QSlider, QColorDialog, QToolButton, QFrame, QTabWidget)
 except ImportError as exc:
     raise SystemExit('Zainstaluj GUI: python -m pip install -e .\nBrakuje PySide6') from exc
@@ -30,6 +30,7 @@ from .geometry_index import GeometryIndex, point_in_ring
 from .topology_edit import linked_vertex_moves
 from .scene_builder import RenderContext, build_scene, label_anchor, object_path, object_fill_brush
 from .map_tools import MapView
+from .map_decorations import KINDS, DecorationItem, new_decoration
 from .selection import (SelectionContext, highlight_path, pick_candidates,
                         resolve_click, snap_at, toggle_selection, visible_uids)
 from .exporters import render_scene_image, save_image, write_dxf
@@ -149,6 +150,7 @@ class GeoStudioWindow(QMainWindow):
         self.pinned_uids = []
         self.sync_shared_vertices = True
         self.draw_geometry_kind = "polygon"
+        self.decoration_items = {}
         self.highlight_item=None
         self.draft_item=None
         self.snap_marker=None
@@ -461,7 +463,8 @@ class GeoStudioWindow(QMainWindow):
             self.ribbon.refresh_icons(self.theme_mode)
         for attr, icon_name in (
                 ('orientation_button', 'compass'), ('data_button', 'layers'),
-                ('export_button', 'export'), ('map_settings_button', 'more')):
+                ('export_button', 'export'), ('map_settings_button', 'more'),
+                ('furniture_button', 'properties')):
             button = getattr(self, attr, None)
             if button is not None:
                 button.setIcon(ui_icon(icon_name, self.theme_mode))
@@ -586,6 +589,19 @@ class GeoStudioWindow(QMainWindow):
             action.setShortcutContext(Qt.WidgetWithChildrenShortcut)
             self.view.addAction(action)
             em.addAction(action)
+        self.decoration_menu = self.menuBar().addMenu('&Oprawa mapy')
+        for kind, description in KINDS.items():
+            self.decoration_menu.addAction(
+                self._action('Wstaw: ' + description,
+                             lambda _checked=False, choice=kind:
+                             self.insert_map_decoration(choice)))
+        self.decoration_menu.addSeparator()
+        self.decoration_menu.addAction(
+            self._action('Ukryj zaznaczony dawny element (5200/6000/7900)',
+                         self.hide_selected_legacy_decoration))
+        self.decoration_menu.addAction(
+            self._action('Przywróć ukryte elementy dawnej oprawy',
+                         self.restore_legacy_decorations))
         trans_menu = self.menuBar().addMenu('&Trans')
         trans_menu.addAction(self._action(
             'Przelicz współrzędne / eksportuj kopię MAP…',
@@ -726,6 +742,17 @@ class GeoStudioWindow(QMainWindow):
         self.export_button.setPopupMode(QToolButton.InstantPopup)
         self.export_button.setMenu(export_menu)
         file_toolbar.addWidget(self.export_button)
+
+        self.furniture_button = QToolButton(self)
+        self.furniture_button.setText('Oprawa mapy')
+        self.furniture_button.setIcon(ui_icon('properties', self.theme_mode))
+        self.furniture_button.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
+        self.furniture_button.setPopupMode(QToolButton.InstantPopup)
+        self.furniture_button.setMenu(self.decoration_menu)
+        self.furniture_button.setToolTip(
+            'Dodaj i edytuj ramkę, kompas, metrykę lub legendę. '
+            'Przeciągnij, aby przesunąć, dwuklik do edycji.')
+        file_toolbar.addWidget(self.furniture_button)
 
         self.orientation_button = QToolButton(self)
         self.orientation_button.setText('Orientacja')
@@ -1710,6 +1737,7 @@ class GeoStudioWindow(QMainWindow):
         result = build_scene(self.map_scene, self.doc, self._render_context())
         self._raster_overlay.attach(self.map_scene)
         self._wms_preview.attach(self.map_scene)
+        self._rebuild_map_decorations()
         self._wms_auto.viewport_changed()
         self.geometry_index = result.geometry_index
         self.layer_for_uid = result.layer_for_uid
@@ -1727,6 +1755,18 @@ class GeoStudioWindow(QMainWindow):
         self.edit_handles = []
         self.draft_points = []
         self.current_snap = None
+        # Hide only explicitly chosen old 5200/6000/7900 fragments.
+        # The original MAP records remain byte-identical and can be restored.
+        for key, style in self.visual_styles.items():
+            if key.startswith('legacy-hidden:') and style.get('hidden'):
+                uid = key[len('legacy-hidden:'):]
+                for item in (self.graphics_for_uid.get(uid),
+                             self.fill_items_for_uid.get(uid)):
+                    if item is not None:
+                        item.setVisible(False)
+                for label_key, label in self.label_items.items():
+                    if label_key[0] == uid:
+                        label.setVisible(False)
         # Checkbox state and rendered visibility must always agree,
         # including on the initial open (Graniczniki are off by default).
         for name in self.hidden_layers:
@@ -1916,7 +1956,10 @@ class GeoStudioWindow(QMainWindow):
             hidden_layers=frozenset(self.hidden_layers),
             code_filter=self.select_code_filter,
             hide_connectors=self.hide_multipart_connectors,
-            radius=radius)
+            radius=radius,
+            excluded_uids=frozenset(key[len('legacy-hidden:'):]
+                for key, style in self.visual_styles.items()
+                if key.startswith('legacy-hidden:') and style.get('hidden')))
 
     def _visible_uids(self):
         return visible_uids(self._selection_context(0.0))
@@ -1927,13 +1970,19 @@ class GeoStudioWindow(QMainWindow):
     def show_objects_here(self, x, y):
         """Explicit chooser for all overlapping objects: right-click canvas."""
         candidates = self._pick_candidates(x, y)
-        if not candidates:
-            return
         menu = QMenu(self)
         for obj in candidates[:30]:
             title = f'{obj.code} — {obj.fields.get("A2") or obj.fields.get("A1") or obj.uid[:8]}'
             action = menu.addAction(title)
             action.triggered.connect(lambda checked=False, uid=obj.uid: self._select_uid(uid))
+        if candidates:
+            menu.addSeparator()
+        furniture = menu.addMenu('Wstaw element oprawy w tym miejscu')
+        for kind, description in KINDS.items():
+            action = furniture.addAction(description)
+            action.triggered.connect(
+                lambda _checked=False, choice=kind, px=x, py=y:
+                self.insert_map_decoration(choice, x=px, y=py))
         pos = self.view.mapFromScene(QPointF(x,-y))
         menu.exec(self.view.viewport().mapToGlobal(pos))
 
