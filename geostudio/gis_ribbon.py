@@ -120,6 +120,7 @@ class GISRibbon(QWidget):
         self.setObjectName("GeoStudioGISRibbon")
         self.theme = theme
         self._icons = []
+        self.collapsed = False
         self._pages: dict[str, tuple[QWidget, QHBoxLayout]] = {}
 
         outer = QVBoxLayout(self)
@@ -137,11 +138,29 @@ class GISRibbon(QWidget):
         division = QLabel("GIS  /  EDYTOR MAP")
         division.setObjectName("GeoStudioRibbonSubtitle")
         row.addWidget(division)
+        self.quick_access = QHBoxLayout()
+        self.quick_access.setSpacing(2)
+        row.addLayout(self.quick_access)
         row.addStretch(1)
+        self.command_search = QToolButton(self)
+        self.command_search.setObjectName("GeoStudioCommandSearch")
+        self.command_search.setText("Szukaj poleceń   Ctrl+K")
+        self.command_search.setIcon(ui_icon("search", theme))
+        self.command_search.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
+        self.command_search.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.command_search.setToolTip("Wyszukaj i uruchom dowolne polecenie GeoStudio (Ctrl+K)")
+        row.addWidget(self.command_search)
         self.document_state = QLabel("Brak otwartej mapy")
         self.document_state.setObjectName("GeoStudioRibbonDocument")
         self.document_state.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
         row.addWidget(self.document_state)
+        self.collapse_button = QToolButton(self)
+        self.collapse_button.setObjectName("GeoStudioRibbonCollapse")
+        self.collapse_button.setText("Zwiń")
+        self.collapse_button.setToolTip("Zwiń lub rozwiń wstążkę (Ctrl+F1)")
+        self.collapse_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.collapse_button.clicked.connect(self.toggle_collapsed)
+        row.addWidget(self.collapse_button)
         outer.addWidget(header)
 
         self.tabs = QTabWidget(self)
@@ -150,6 +169,9 @@ class GISRibbon(QWidget):
         self.tabs.setTabPosition(QTabWidget.TabPosition.North)
         self.tabs.setMinimumHeight(151)
         self.tabs.setMaximumHeight(164)
+        self.tabs.tabBarDoubleClicked.connect(
+            lambda index: self.toggle_collapsed() if index >= 0 else None)
+        self.tabs.tabBarClicked.connect(self._on_tab_clicked)
         outer.addWidget(self.tabs)
 
         for title in self.TAB_NAMES:
@@ -169,6 +191,41 @@ class GISRibbon(QWidget):
             self.tabs.addTab(scroll, title)
             self._pages[title] = (surface, groups)
 
+    def add_quick_action(self, action, icon: str):
+        """Reuse an existing QAction in a compact Quick Access Toolbar."""
+        button = QToolButton(self)
+        button.setObjectName("GeoStudioQuickAccessButton")
+        button.setAutoRaise(True)
+        button.setDefaultAction(action)
+        button.setIcon(ui_icon(icon, self.theme))
+        button.setIconSize(QSize(17, 17))
+        button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonIconOnly)
+        button.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._icons.append((button, icon))
+        self.quick_access.addWidget(button)
+        return button
+
+    def set_command_search(self, callback):
+        self.command_search.clicked.connect(callback)
+
+    def _on_tab_clicked(self, index: int):
+        if index >= 0 and self.collapsed:
+            self.set_collapsed(False)
+
+    def toggle_collapsed(self):
+        self.set_collapsed(not self.collapsed)
+
+    def set_collapsed(self, collapsed: bool):
+        """Reduce ribbon height to its tab strip without removing QAction state."""
+        self.collapsed = bool(collapsed)
+        height = 35 if self.collapsed else 151
+        self.tabs.setMinimumHeight(height)
+        self.tabs.setMaximumHeight(36 if self.collapsed else 164)
+        self.collapse_button.setText("Rozwiń" if self.collapsed else "Zwiń")
+        self.collapse_button.setToolTip(
+            "Rozwiń wstążkę (Ctrl+F1)" if self.collapsed
+            else "Zwiń wstążkę (Ctrl+F1)")
+
     def group(self, tab: str, title: str) -> RibbonGroup:
         group = RibbonGroup(title, self)
         self._pages[tab][1].addWidget(group)
@@ -177,6 +234,8 @@ class GISRibbon(QWidget):
     def select_tab(self, title: str):
         if title in self.TAB_NAMES:
             self.tabs.setCurrentIndex(self.TAB_NAMES.index(title))
+            if self.collapsed:
+                self.set_collapsed(False)
 
     def set_document(self, name: str | None, *, dirty: bool = False):
         from pathlib import Path
@@ -188,3 +247,4 @@ class GISRibbon(QWidget):
         self.theme = theme
         for button, name in self._icons:
             button.setIcon(ui_icon(name, theme))
+        self.command_search.setIcon(ui_icon("search", theme))
