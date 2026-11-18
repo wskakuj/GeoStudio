@@ -4,7 +4,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from PySide6.QtCore import QPointF, Qt, Signal
-from PySide6.QtGui import QBrush, QColor, QPen, QPixmap
+from PySide6.QtGui import QBrush, QColor, QPen, QPixmap, QPainter
 from PySide6.QtWidgets import (
     QAbstractItemView, QDialog, QDialogButtonBox, QGraphicsPixmapItem,
     QGraphicsScene, QGraphicsView, QHBoxLayout, QLabel, QListWidget,
@@ -30,7 +30,7 @@ class RasterPixelView(QGraphicsView):
         self.canvas = QGraphicsPixmapItem(image)
         self.scene_image.addItem(self.canvas)
         self.setSceneRect(0, 0, image.width(), image.height())
-        self.setRenderHints(self.renderHints() | self.renderHints().Antialiasing)
+        self.setRenderHint(QPainter.RenderHint.Antialiasing, True)
         self.setTransformationAnchor(QGraphicsView.ViewportAnchor.AnchorUnderMouse)
         self.setDragMode(QGraphicsView.DragMode.NoDrag)
         self.setMouseTracking(True)
@@ -184,6 +184,9 @@ class RasterCalibrationDialog(QDialog):
     def request_map_click(self):
         if self.pending_pixel is None:
             return
+        # MapView sends canvas_click only in selection mode. Changing tools
+        # does not commit or modify any GEO-MAP objects.
+        self.window.cancel_edit()
         self.window._raster_map_picker = self.take_map_coordinate
         self.pending_label.setText(
             "Teraz kliknij odpowiedni punkt na MAPIE w głównym oknie GeoStudio.")
@@ -305,6 +308,7 @@ class RasterLayerPanel(QWidget):
         self.opacity = QSlider(Qt.Orientation.Horizontal)
         self.opacity.setRange(0, 100)
         self.opacity.valueChanged.connect(self.change_opacity)
+        self.opacity.sliderReleased.connect(self._commit_opacity)
         root.addWidget(self.opacity)
         self.refresh()
 
@@ -358,6 +362,14 @@ class RasterLayerPanel(QWidget):
             self.window._raster_overlay.update_layer(layer)
             # Save once the user finishes moving the slider.
             self.window._raster_opacity_pending = True
+
+    def _commit_opacity(self):
+        if getattr(self.window, '_raster_opacity_pending', False):
+            self.window._raster_opacity_pending = False
+            try:
+                self.window._save_raster_settings()
+            except OSError as exc:
+                QMessageBox.warning(self, 'Nie zapisano ustawień', str(exc))
 
     def remove_selected(self):
         layer = self.selected_layer()
