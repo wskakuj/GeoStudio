@@ -2262,9 +2262,8 @@ class GeoStudioWindow(QMainWindow):
 
     def _select_uid(self, uid):
         pinned = [value for value in self.pinned_uids
-                  if self.doc and value in self.doc.by_id]
-        self._set_selected_uids(pinned + [uid] if uid and uid not in pinned
-                                else pinned)
+                  if self.doc and value in self.doc.by_id and value != uid]
+        self._set_selected_uids(pinned + ([uid] if uid else []))
 
     def toggle_pin_active(self):
         """B: keep the current highlighted polygon when choosing the next one."""
