@@ -46,7 +46,7 @@ def test_print_orientation_is_not_raw_scene_orientation(app):
     scene.addRect(QRectF(0, 0, 100, 40), QPen(Qt.NoPen), QBrush(QColor("white")))
     scene.addRect(QRectF(0, 0, 12, 12), QPen(Qt.NoPen), QBrush(QColor("#FF0000")))
     raw = render_print_image(scene, QTransform(), width=1000)
-    geodetic = render_print_image(scene, QTransform(0, -1, -1, 0), width=1000)
+    geodetic = render_print_image(scene, QTransform(0.0, -1.0, -1.0, 0.0, 0.0, 0.0), width=1000)
     assert raw.width() == 1000
     assert raw.height() < raw.width()
     assert geodetic.width() == 1000
