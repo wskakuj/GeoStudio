@@ -42,6 +42,7 @@ from .object_search import search_objects
 from .visual_styles import (parse_fill_code, fill_code, load_styles,
     load_label_positions, write_styles, sidecar_path)
 from .ui_theme import theme_stylesheet, ui_icon
+from .workspace_shell import MapWorkspace
 from .library_render import (parse_cdf, parse_sym_primitives, cdf_for_object,
     native_fill_color, simple_point_segments, simple_point_circles,
     parse_lay_pen_styles, lay_for_code,
@@ -156,8 +157,8 @@ class GeoStudioWindow(QMainWindow):
         self.view.label_press.connect(self.begin_label_drag)
         self.view.label_move.connect(self.move_label)
         self.view.label_drop.connect(self.end_label_drag)
-        self.setCentralWidget(self.view)
         self._setup_menu()
+        self._install_workspace_shell()
         self._setup_docks()
         self.set_workspace('edit', remember=False)
         # The original docks shrink to unreadable widths on Windows HiDPI.
@@ -171,10 +172,28 @@ class GeoStudioWindow(QMainWindow):
         self.setStyleSheet(theme_stylesheet(self.theme_mode))
         self._refresh_toolbar_icons()
 
+    def _install_workspace_shell(self):
+        """Move map tools into a dedicated rail instead of a second ribbon."""
+        self.removeToolBarBreak(self.main_toolbar)
+        self.removeToolBar(self.main_toolbar)
+        self.main_toolbar.setOrientation(Qt.Vertical)
+        self.main_toolbar.setToolButtonStyle(Qt.ToolButtonTextUnderIcon)
+        self.main_toolbar.setIconSize(QSize(25, 25))
+        self.main_toolbar.setObjectName('GeoStudioToolPalette')
+        self.main_toolbar.setFixedWidth(94)
+        self.workspace = MapWorkspace(
+            self.view, self.main_toolbar, self.selector,
+            on_fit=self.fit_all, on_focus=self.toggle_focus_workspace)
+        self.setCentralWidget(self.workspace)
+        self.workspace.set_document(None)
+
     def _update_dirty_title(self):
         mark = ' *' if self.history.is_dirty else ''
         self.setWindowTitle(getattr(self, '_base_title',
                                     'GeoStudio v0.14') + mark)
+        if hasattr(self, 'workspace'):
+            self.workspace.set_document(
+                self.doc.filename if self.doc else None, dirty=self.history.is_dirty)
 
     def _history_changed(self):
         self._update_dirty_title()
@@ -259,6 +278,8 @@ class GeoStudioWindow(QMainWindow):
     def _set_mode_badge(self, text):
         if hasattr(self, 'mode_badge'):
             self.mode_badge.setText(text)
+        if hasattr(self, 'workspace'):
+            self.workspace.set_tool(text)
 
     def _setup_menu(self):
         fm=self.menuBar().addMenu('&Plik')
@@ -432,7 +453,9 @@ class GeoStudioWindow(QMainWindow):
         self.addToolBar(Qt.TopToolBarArea, toolbar)
         caption = QLabel('NARZĘDZIA')
         caption.setObjectName('GeoStudioToolbarCaption')
-        toolbar.addWidget(caption)
+        # The tool category is already presented by the new side rail.
+        # Keep this label for compatibility, but do not spend map space on it.
+        caption.hide()
         self.tool_actions = {}
         group = QActionGroup(self)
         group.setExclusive(True)
@@ -440,7 +463,7 @@ class GeoStudioWindow(QMainWindow):
             ('select', 'Zaznacz', 'select', self.cancel_edit, 'Zaznacz obiekt (S); Ctrl+klik dodaje/usuwa'),
             ('pan', 'Przesuń', 'hand', self.start_pan, 'Przesuwaj mapę (H)'),
             ('draw', 'Poligon', 'polygon', self.start_polygon, 'Narysuj poligon (P)'),
-            ('edit', 'Wierzchołki', 'vertices', self.start_vertex_edit, 'Edytuj wierzchołki (E)'),
+            ('edit', 'Węzły', 'vertices', self.start_vertex_edit, 'Edytuj wierzchołki (E)'),
             ('labels', 'Etykiety', 'label', self.start_label_edit, 'Przesuwaj napisy A1/A2 (L)'),
         ]:
             action = self._decorate_action(self._action(title, fn), glyph, hint)
@@ -483,7 +506,8 @@ class GeoStudioWindow(QMainWindow):
         self.selector.addItem('Działki 5216', '5216')
         self.selector.addItem('Użytki 5230', '5230')
         self.selector.currentIndexChanged.connect(self.change_select_filter)
-        toolbar.addWidget(self.selector)
+        # The selection filter lives in the contextual map header,
+        # so the vertical tool rail remains narrow and legible.
 
     def _setup_docks(self):
         self.selected_uid = ''
@@ -698,6 +722,8 @@ class GeoStudioWindow(QMainWindow):
         if mode != 'map':
             self._last_workspace = mode
         self.workspace_mode = mode
+        if hasattr(self, 'workspace'):
+            self.workspace.set_focus_mode(mode == 'map')
         if mode == 'map':
             for dock in (self.layers_dock, self.properties_dock,
                          self.search_dock, self.info_dock):
