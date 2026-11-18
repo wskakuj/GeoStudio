@@ -41,6 +41,7 @@ class RenderContext:
     sym_primitives: dict[str, Any] = field(default_factory=dict)
     sym_line_patterns: dict[str, Any] = field(default_factory=dict)
     visual_styles: dict[str, Any] = field(default_factory=dict)
+    default_fill_opacity: int = 100
     label_positions: dict[str, Any] = field(default_factory=dict)
     compilation_scale: float = 1000.0
     source_compilation_scale: float = 1000.0
@@ -95,6 +96,46 @@ def label_anchor(obj: GeoObject):
         return (sum(p.x for p in pts)/len(pts), sum(p.y for p in pts)/len(pts))
     return (x0 + cx/(3*double_area), y0 + cy/(3*double_area))
 
+def object_fill_brush(obj: GeoObject, ctx: RenderContext, *, cdf=None) -> QBrush:
+    """Resolve UID override > code override > natural fill, retaining hatch.
+
+    Default alpha is 100% in the plain map, but the window passes 60% when
+    an orthophoto/raster is beneath the vectors so imagery remains visible.
+    The original source style/colour is never changed.
+    """
+    if cdf is None:
+        cdf = cdf_for_object(ctx.cdf_styles, obj.code,
+                             obj.fields.get('A1', ''), obj.fields.get('A2', ''))
+    explicit = ctx.visual_styles.get(obj.uid)
+    if explicit:
+        color = QColor(explicit['fill'])
+        color.setAlpha(round(explicit['opacity'] * 255 / 100))
+        return QBrush(color)
+
+    per_code = ctx.visual_styles.get('code:' + obj.code, {})
+    opacity = per_code.get('opacity', ctx.default_fill_opacity)
+    native = native_fill_color(obj.style)
+    if 'fill' in per_code:
+        color = QColor(per_code['fill'])
+    elif native:
+        color = QColor(*native)
+    elif cdf:
+        color = QColor(*cdf.fill)
+    else:
+        return QBrush(Qt.NoBrush)
+    color.setAlpha(round(max(0, min(100, opacity)) * 255 / 100))
+
+    if native or cdf is None:
+        return QBrush(color)
+    hatch = {0: Qt.SolidPattern,
+             1: Qt.Dense4Pattern, 2: Qt.Dense5Pattern,
+             3: Qt.HorPattern, 4: Qt.VerPattern,
+             5: Qt.CrossPattern, 6: Qt.BDiagPattern,
+             7: Qt.FDiagPattern, 8: Qt.DiagCrossPattern}.get(
+                 cdf.hatch, Qt.SolidPattern)
+    return QBrush(color, hatch)
+
+
 def build_scene(scene: QGraphicsScene, doc: GeoMap, ctx: RenderContext) -> SceneBuildResult:
     """Populate ``scene`` from ``doc`` exactly as v0.14.0 did, and return the tables."""
     result = SceneBuildResult(geometry_index=GeometryIndex(()))
@@ -141,30 +182,7 @@ def build_scene(scene: QGraphicsScene, doc: GeoMap, ctx: RenderContext) -> Scene
         # Use the CDF border weight when present; protect against
         # excessively wide vendor pen settings.
         pen.setWidthF(min(3.0, max(0.8, cdf.width)) if cdf and cdf.width > 0 else 1.0)
-        override = ctx.visual_styles.get(obj.uid)
-        native_rgb = native_fill_color(obj.style)
-        if override:
-            fill_color = QColor(override['fill'])
-            fill_color.setAlpha(round(override['opacity'] * 255 / 100))
-            fill_brush = QBrush(fill_color)
-        elif native_rgb:
-            # GEO-MAP v8 source records may contain an explicit COLORREF
-            # in the third style token; unlike previous 7%-alpha rendering,
-            # respect the native, fully opaque recorded value.
-            fill_brush = QBrush(QColor(*native_rgb))
-        elif cdf:
-            fill_color = QColor(*cdf.fill)
-            hatch = {0: Qt.SolidPattern,
-                     1: Qt.Dense4Pattern, 2: Qt.Dense5Pattern,
-                     3: Qt.HorPattern, 4: Qt.VerPattern,
-                     5: Qt.CrossPattern, 6: Qt.BDiagPattern,
-                     7: Qt.FDiagPattern, 8: Qt.DiagCrossPattern}.get(
-                         cdf.hatch, Qt.SolidPattern)
-            # Qt brush hatches approximatively reproduce CDF pattern types.
-            # Native fully opaque RGB is retained; no washed-out 7% fill.
-            fill_brush = QBrush(fill_color, hatch)
-        else:
-            fill_brush = QBrush(Qt.NoBrush)
+        fill_brush = object_fill_brush(obj, ctx, cdf=cdf)
 
         if len(obj.points) == 1:
             # SYM full-circle A instructions describe boundary markers.

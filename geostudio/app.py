@@ -14,13 +14,13 @@ from pathlib import Path
 from collections import defaultdict
 
 try:
-    from PySide6.QtCore import Qt, QPoint, QPointF, QRectF, QSize, QSettings, Signal
+    from PySide6.QtCore import Qt, QPoint, QPointF, QRectF, QSize, QSettings, Signal, QTimer
     from PySide6.QtGui import QAction, QBrush, QColor, QFont, QPainterPath, QPen, QPixmap, QTransform, QActionGroup
     from PySide6.QtWidgets import (QApplication, QMainWindow, QFileDialog, QGraphicsView, QGraphicsScene,
         QGraphicsPathItem, QGraphicsEllipseItem, QGraphicsPixmapItem, QGraphicsSimpleTextItem, QGraphicsItem, QDockWidget,
         QTreeWidget, QTreeWidgetItem, QToolBar, QMessageBox, QStatusBar, QInputDialog, QMenu,
         QLabel, QWidget, QVBoxLayout, QHeaderView, QSplitter, QComboBox,
-        QDialog, QDialogButtonBox, QFormLayout, QLineEdit, QHBoxLayout, QPushButton, QSpinBox, QColorDialog, QToolButton, QFrame, QTabWidget)
+        QDialog, QDialogButtonBox, QFormLayout, QLineEdit, QHBoxLayout, QPushButton, QSpinBox, QSlider, QColorDialog, QToolButton, QFrame, QTabWidget)
 except ImportError as exc:
     raise SystemExit('Zainstaluj GUI: python -m pip install -e .\nBrakuje PySide6') from exc
 
@@ -28,7 +28,7 @@ from .geomap import GeoMap, GeoObject, library_layers, library_symbols, library_
 from .interactions import polygon_is_valid, closest_point_on_edge
 from .geometry_index import GeometryIndex
 from .topology_edit import linked_vertex_moves
-from .scene_builder import RenderContext, build_scene, label_anchor, object_path
+from .scene_builder import RenderContext, build_scene, label_anchor, object_path, object_fill_brush
 from .map_tools import MapView
 from .selection import (SelectionContext, highlight_path, pick_candidates,
                         resolve_click, snap_at, toggle_selection, visible_uids)
@@ -122,6 +122,7 @@ class GeoStudioWindow(QMainWindow):
         self.items_by_layer:dict[str,list]=defaultdict(list)
         self.graphics_for_uid={}
         self.visual_styles = {}
+        self._last_fill_opacity = None
         self.selected_uids = []
         self.highlight_items = []
         self.labels=[]
@@ -795,6 +796,45 @@ class GeoStudioWindow(QMainWindow):
         self.layers_summary = QLabel('Wczytaj mapę, aby zobaczyć warstwy')
         self.layers_summary.setObjectName('GeoStudioLayerSummary')
         layer_layout.addWidget(self.layers_summary)
+
+        # ArcGIS-style symbology control for the selected feature code.
+        # It is deliberately placed in the left Contents pane and operates
+        # on all polygons sharing that code, without editing source .MAP.
+        style_heading = QLabel('KRYCIE I KOLOR KODU')
+        style_heading.setObjectName('GeoStudioSectionHeading')
+        layer_layout.addWidget(style_heading)
+        self.layer_code_choice = QComboBox()
+        self.layer_code_choice.setObjectName('GeoStudioLayerCodeChoice')
+        self.layer_code_choice.setToolTip(
+            'Zmień wygląd wszystkich poligonów jednego kodu GEO-MAP')
+        self.layer_code_choice.currentIndexChanged.connect(self._select_layer_code_style)
+        layer_layout.addWidget(self.layer_code_choice)
+        opacity_row = QHBoxLayout()
+        self.layer_code_opacity = QSlider(Qt.Horizontal)
+        self.layer_code_opacity.setObjectName('GeoStudioCodeOpacity')
+        self.layer_code_opacity.setRange(0, 100)
+        self.layer_code_opacity.setValue(60)
+        self.layer_code_opacity.valueChanged.connect(self._code_opacity_moved)
+        self.layer_code_opacity.sliderReleased.connect(self._commit_code_opacity)
+        opacity_row.addWidget(self.layer_code_opacity, 1)
+        self.layer_code_opacity_label = QLabel('60%')
+        self.layer_code_opacity_label.setMinimumWidth(38)
+        opacity_row.addWidget(self.layer_code_opacity_label)
+        layer_layout.addLayout(opacity_row)
+        code_buttons = QHBoxLayout()
+        pick_color = QPushButton('Kolor…')
+        pick_color.clicked.connect(self._choose_code_color)
+        code_buttons.addWidget(pick_color)
+        reset_code = QPushButton('Resetuj')
+        reset_code.setToolTip('Usuń ręczne ustawienia kodu — wróć do kolorów GEO-MAP')
+        reset_code.clicked.connect(self._reset_code_style)
+        code_buttons.addWidget(reset_code)
+        layer_layout.addLayout(code_buttons)
+        self._pending_code_style = None
+        self._code_opacity_timer = QTimer(self)
+        self._code_opacity_timer.setSingleShot(True)
+        self._code_opacity_timer.setInterval(300)
+        self._code_opacity_timer.timeout.connect(self._commit_code_opacity)
         # One left dock, two real content tabs. A second QDockWidget would
         # unexpectedly rearrange the unrelated right-side inspector tabs in Qt.
         self.raster_tabs = QTabWidget(self.layers_dock)
@@ -1266,6 +1306,10 @@ class GeoStudioWindow(QMainWindow):
         except Exception as exc: QMessageBox.critical(self,'Błąd odczytu mapy',str(exc))
 
     def _capture_active_map_tab(self):
+        # Commit an unfinished slider gesture to the *previous* document,
+        # not to whichever tab happens to be selected 300 ms later.
+        if getattr(self, '_pending_code_style', None) is not None:
+            self._commit_code_opacity()
         if 0 <= self._active_map_tab < len(self._map_sessions) and self.doc:
             self._map_sessions[self._active_map_tab].capture(self)
 
@@ -1454,6 +1498,7 @@ class GeoStudioWindow(QMainWindow):
             sym_primitives=self.sym_primitives,
             sym_line_patterns=self.sym_line_patterns,
             visual_styles=self.visual_styles,
+            default_fill_opacity=self._default_fill_opacity(),
             label_positions=self.label_positions,
             compilation_scale=self.compilation_scale,
             source_compilation_scale=self.source_compilation_scale,
@@ -1475,6 +1520,7 @@ class GeoStudioWindow(QMainWindow):
         self.layer_for_uid = result.layer_for_uid
         self.graphics_for_uid = result.graphics_for_uid
         self.fill_items_for_uid = result.fill_items_for_uid
+        self._last_fill_opacity = self._default_fill_opacity()
         self.items_by_layer = result.items_by_layer
         self.labels = result.labels
         self.label_items = result.label_items
@@ -1738,6 +1784,10 @@ class GeoStudioWindow(QMainWindow):
         same order, same labels.
         """
         obj = self.doc.by_id[self.selected_uid]
+        if hasattr(self, 'layer_code_choice'):
+            index = self.layer_code_choice.findData(obj.code)
+            if index >= 0 and self.layer_code_choice.currentIndex() != index:
+                self.layer_code_choice.setCurrentIndex(index)
         if len(self.selected_uids) > 1:
             self.object_title.setText(f'{len(self.selected_uids)} zaznaczonych obiektów')
             self.object_details.setText('Możesz usunąć grupę lub zmienić jej wypełnienie.')
@@ -1783,9 +1833,12 @@ class GeoStudioWindow(QMainWindow):
             color_code = fill_code(current['fill'], current['opacity'])
             opacity = current['opacity']
         else:
-            base = QColor(*obj.colorref)
-            color_code = fill_code(base.name().upper(), 7)
-            opacity = 7
+            code_style = self.visual_styles.get('code:' + obj.code, {})
+            native = native_fill_color(obj.style)
+            base = QColor(code_style.get('fill', QColor(
+                *(native if native else obj.colorref)).name()))
+            opacity = code_style.get('opacity', self._default_fill_opacity())
+            color_code = fill_code(base.name().upper(), opacity)
         self.fill_entry.setText(color_code)
         self.opacity_spin.setValue(opacity)
 
@@ -1871,6 +1924,121 @@ class GeoStudioWindow(QMainWindow):
         self.layers_tree.blockSignals(False)
         if hasattr(self, 'layer_filter'):
             self._filter_layer_rows(self.layer_filter.text())
+        self._populate_layer_code_styles()
+
+    def _default_fill_opacity(self):
+        """Let WMS/rasters show through without washing out a plain MAP."""
+        wms_visible = (self._wms_preview.image is not None and
+                       self._wms_preview.visible)
+        raster_visible = any(layer.calibrated and layer.visible
+                             for layer in self._raster_overlay.layers)
+        return 60 if (wms_visible or raster_visible) else 100
+
+    def _populate_layer_code_styles(self):
+        if not hasattr(self, 'layer_code_choice') or not self.doc:
+            return
+        previous = self.layer_code_choice.currentData()
+        counts = defaultdict(int)
+        for obj in self.doc.objects:
+            if obj.is_closed:
+                counts[obj.code] += 1
+        self.layer_code_choice.blockSignals(True)
+        self.layer_code_choice.clear()
+        for code in sorted(counts):
+            self.layer_code_choice.addItem(
+                f'{code} · {self.symbols.get(code, resolve_layer(self.catalog, code))} ({counts[code]})',
+                code)
+        index = self.layer_code_choice.findData(previous)
+        self.layer_code_choice.setCurrentIndex(index if index >= 0 else 0)
+        self.layer_code_choice.blockSignals(False)
+        self._select_layer_code_style()
+
+    def _select_layer_code_style(self, *_args):
+        code = self.layer_code_choice.currentData()
+        if code is None:
+            return
+        current = self.visual_styles.get('code:' + code, {})
+        value = current.get('opacity', self._default_fill_opacity())
+        self.layer_code_opacity.blockSignals(True)
+        self.layer_code_opacity.setValue(value)
+        self.layer_code_opacity.blockSignals(False)
+        self.layer_code_opacity_label.setText(f'{value}%')
+
+    def _code_opacity_moved(self, value):
+        self.layer_code_opacity_label.setText(f'{value}%')
+        code = self.layer_code_choice.currentData()
+        if code is not None and self.doc:
+            self._pending_code_style = (code, value)
+            self._code_opacity_timer.start()
+
+    def _commit_code_opacity(self):
+        self._code_opacity_timer.stop()
+        pending, self._pending_code_style = self._pending_code_style, None
+        if pending is None or not self.doc:
+            return
+        code, opacity = pending
+        key = 'code:' + code
+        before = self.visual_styles.get(key, {})
+        if before.get('opacity', self._default_fill_opacity()) == opacity:
+            return
+        with self.history.begin(f'Krycie poligonów kodu {code}'):
+            self.visual_styles[key] = {**before, 'opacity': opacity}
+        self._history_changed()
+        self._refresh_fill_brushes(code=code, force=True)
+        self._autosave_work_copy()
+        self.status.showMessage(
+            f'Kod {code}: krycie {opacity}%. Styl zapisany w kopii GeoStudio.')
+
+    def _choose_code_color(self):
+        code = self.layer_code_choice.currentData()
+        if not code or not self.doc:
+            return
+        key = 'code:' + code
+        old = self.visual_styles.get(key, {})
+        initial = old.get('fill', '#8AAFC6')
+        color = QColorDialog.getColor(QColor(initial), self, f'Kolor kodu {code}')
+        if not color.isValid():
+            return
+        with self.history.begin(f'Kolor poligonów kodu {code}'):
+            self.visual_styles[key] = {
+                **old, 'opacity': old.get('opacity', self._default_fill_opacity()),
+                'fill': color.name().upper()}
+        self._history_changed()
+        self._refresh_fill_brushes(code=code, force=True)
+        self._autosave_work_copy()
+
+    def _reset_code_style(self):
+        code = self.layer_code_choice.currentData()
+        key = 'code:' + str(code)
+        if not code or key not in self.visual_styles or not self.doc:
+            return
+        with self.history.begin(f'Przywrócenie wyglądu kodu {code}'):
+            self.visual_styles.pop(key, None)
+        self._history_changed()
+        self._select_layer_code_style()
+        self._refresh_fill_brushes(code=code, force=True)
+        self._autosave_work_copy()
+
+    def _refresh_fill_brushes(self, *, code=None, force=False):
+        """Update native/CDF brushes in place; never rebuild the whole map."""
+        if not self.doc or not hasattr(self, 'fill_items_for_uid'):
+            return
+        default = self._default_fill_opacity()
+        if code is None and not force and self._last_fill_opacity == default:
+            return
+        ctx = self._render_context()
+        for obj in self.doc.objects:
+            if code is not None and obj.code != code:
+                continue
+            item = self.fill_items_for_uid.get(obj.uid)
+            if item is None:
+                continue
+            if obj.code == '5200' and len(obj.points) == 4 and obj.fields.get('FA') == '0':
+                continue  # Opaque black parts of the compass rose.
+            item.setBrush(object_fill_brush(obj, ctx))
+        self._last_fill_opacity = default
+        if code is None:
+            self._select_layer_code_style()
 
     def _filter_layer_rows(self, query):
         """Filter the layer list only; never hide geometry on the map."""
@@ -2828,6 +2996,7 @@ class GeoStudioWindow(QMainWindow):
     def _refresh_raster_panel(self):
         if hasattr(self, 'raster_panel'):
             self.raster_panel.refresh()
+        self._refresh_fill_brushes()
 
     def _save_raster_settings(self):
         if self.doc and self.doc.filename:
@@ -2847,11 +3016,13 @@ class GeoStudioWindow(QMainWindow):
         overlay = self._wms_preview
         if overlay.image is None:
             label.hide()
+            self._refresh_fill_brushes()
             return
         name = overlay.title or 'usługa WMS'
         label.setText('WMS: ' + name[:36] + ('…' if len(name) > 36 else ''))
         label.setToolTip('Źródło WMS: ' + name)
         label.show()
+        self._refresh_fill_brushes()
 
     def show_wms_dialog(self):
         if not self.doc:
