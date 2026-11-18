@@ -117,9 +117,11 @@ def _render_decoration(kind, *, details=None, items=None):
     img = QImage(1500, 1000, QImage.Format_RGB32)
     img.fill(Qt.white)
     painter = QPainter(img)
-    painter.setRenderHint(QPainter.Antialiasing)
-    item.paint(painter, None)
-    painter.end()
+    try:
+        painter.setRenderHint(QPainter.Antialiasing)
+        item.paint(painter, None)
+    finally:
+        painter.end()
     return item, img
 
 
@@ -156,9 +158,11 @@ def test_decoration_details_survive_scene_transform_and_render(qt):
                    max(1, int(source.height() * 2)), QImage.Format_RGB32)
     image.fill(Qt.white)
     qp = QPainter(image)
-    scene.render(qp, QRectF(0, 0, image.width(), image.height()),
-                 source, Qt.IgnoreAspectRatio)
-    qp.end()
+    try:
+        scene.render(qp, QRectF(0, 0, image.width(), image.height()),
+                     source, Qt.IgnoreAspectRatio)
+    finally:
+        qp.end()
     # Transform item-local detail bounds into the rendered image coordinates;
     # no reliance on the scene's swapped Y/X geodetic orientation.
     bounds = item.mapRectToScene(QRectF(14, 95, 420, 70)).boundingRect()
