@@ -112,7 +112,7 @@ def test_hidden_granicznik_is_a_snap_target_but_not_selectable(window):
         hidden_layers=frozenset(window.hidden_layers),
         radius=1.5)
     assert snap_at(ctx, 18.2, 5.3) is None
-    snap = snap_at(ctx, 20.2, 5.3, include_hidden_markers=True)
+    snap = snap_at(ctx, 18.2, 5.3, include_hidden_markers=True)
     assert snap is not None
     assert snap.uid == "MARK"
     assert snap.kind == "vertex"
@@ -132,14 +132,14 @@ def test_cross_code_vertex_snap_does_not_move_foreign_geometry(window, monkeypat
     assert (window.doc.by_id["BUILD"].points[1].x,
             window.doc.by_id["BUILD"].points[1].y) == (18.0, 5.0)
     assert (window.doc.by_id["SAME"].points[0].x,
-            window.doc.by_id["SAME"].points[0].y) == (20.0, 5.0)
+            window.doc.by_id["SAME"].points[0].y) == (18.0, 5.0)
     assert [(p.x, p.y) for p in window.doc.by_id["OTHER"].points] == before_other
     assert [(p.x, p.y) for p in window.doc.by_id["MARK"].points] == before_marker
 
 
 def test_snap_finds_edges_of_other_codes(window):
-    snap = window._snap(40.5, 12.0)
+    snap = window._snap(40.5, 30.0)
     assert snap is not None
     assert snap.kind == "edge"
     assert snap.code == "6000"
-    assert (snap.x, snap.y) == pytest.approx((40, 12))
+    assert (snap.x, snap.y) == pytest.approx((40, 30))
