@@ -16,7 +16,9 @@ from PySide6.QtWidgets import (
 )
 
 from .coordinates import CRS_CHOICES
-from .wms_service import google_maps_embed_url, google_maps_reference_url
+from .wms_service import (
+    google_maps_embed_url, google_maps_reference_url, google_earth_browser_url,
+)
 
 
 class GoogleMapsPreviewDialog(QDialog):
@@ -69,9 +71,12 @@ class GoogleMapsPreviewDialog(QDialog):
         open_embed.setObjectName("GeoStudioPrimaryButton")
         open_embed.clicked.connect(self.show_embed)
         buttons.addWidget(open_embed)
-        browser = QPushButton("Otwórz w przeglądarce bez klucza")
+        browser = QPushButton("Google Maps — przeglądarka (bez API)")
         browser.clicked.connect(self.open_browser)
         buttons.addWidget(browser)
+        earth = QPushButton("Google Earth — przeglądarka (bez API)")
+        earth.clicked.connect(self.open_earth)
+        buttons.addWidget(earth)
         root.addLayout(buttons)
 
         self.note = QLabel(
@@ -135,3 +140,14 @@ class GoogleMapsPreviewDialog(QDialog):
                 raise ValueError("Nie udało się otworzyć przeglądarki.")
         except ValueError as exc:
             QMessageBox.warning(self, "Google Maps", str(exc))
+
+
+    def open_earth(self):
+        """Open the official Google Earth site; no key or imagery extraction."""
+        try:
+            x, y, epsg = self._coordinates()
+            link = google_earth_browser_url(x, y, epsg)
+            if not QDesktopServices.openUrl(QUrl(link)):
+                raise ValueError("Nie udało się otworzyć Google Earth.")
+        except ValueError as exc:
+            QMessageBox.warning(self, "Google Earth", str(exc))
