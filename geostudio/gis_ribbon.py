@@ -44,8 +44,12 @@ class RibbonGroup(QFrame):
             Qt.ToolButtonStyle.ToolButtonTextUnderIcon if large
             else Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
         button.setIconSize(QSize(24, 24) if large else QSize(17, 17))
-        button.setMinimumSize(84, 66) if large else button.setMinimumSize(115, 29)
-        button.setMaximumHeight(72 if large else 31)
+        if large:
+            button.setMinimumSize(84, 66)
+            button.setMaximumHeight(72)
+        else:
+            button.setMinimumSize(115, 28)
+            button.setMaximumHeight(30)
         button.setCursor(Qt.CursorShape.PointingHandCursor)
         button.setIcon(ui_icon(icon, self._ribbon.theme))
         self._ribbon._icons.append((button, icon))
@@ -62,8 +66,12 @@ class RibbonGroup(QFrame):
             Qt.ToolButtonStyle.ToolButtonTextUnderIcon if large
             else Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
         button.setIconSize(QSize(24, 24) if large else QSize(17, 17))
-        button.setMinimumSize(84, 66) if large else button.setMinimumSize(115, 29)
-        button.setMaximumHeight(72 if large else 31)
+        if large:
+            button.setMinimumSize(84, 66)
+            button.setMaximumHeight(72)
+        else:
+            button.setMinimumSize(115, 28)
+            button.setMaximumHeight(30)
         button.setCursor(Qt.CursorShape.PointingHandCursor)
         button.setIcon(ui_icon(icon, self._ribbon.theme))
         self._ribbon._icons.append((button, icon))
@@ -86,7 +94,8 @@ class RibbonGroup(QFrame):
             button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
             button.setIconSize(QSize(16, 16))
             button.setMinimumWidth(124)
-            button.setMinimumHeight(29)
+            button.setMinimumHeight(27)
+            button.setMaximumHeight(28)
             button.setCursor(Qt.CursorShape.PointingHandCursor)
             button.setIcon(ui_icon(icon, self._ribbon.theme))
             self._ribbon._icons.append((button, icon))
@@ -139,8 +148,8 @@ class GISRibbon(QWidget):
         self.tabs.setObjectName("GeoStudioRibbonTabs")
         self.tabs.setDocumentMode(True)
         self.tabs.setTabPosition(QTabWidget.TabPosition.North)
-        self.tabs.setMinimumHeight(125)
-        self.tabs.setMaximumHeight(144)
+        self.tabs.setMinimumHeight(151)
+        self.tabs.setMaximumHeight(164)
         outer.addWidget(self.tabs)
 
         for title in self.TAB_NAMES:
