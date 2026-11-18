@@ -2265,6 +2265,7 @@ class GeoStudioWindow(QMainWindow):
             self.finish_action.setEnabled(False)
         self.current_polygon = []
         self.edit_uid = ''
+        self.edit_scope_code = ''
         if hasattr(self, 'undo_toolbar_action'):
             self.undo_toolbar_action.setVisible(False)
         if self.draft_item:
@@ -2644,6 +2645,10 @@ class GeoStudioWindow(QMainWindow):
         if not self.view.edit_mode or not self.edit_uid:
             return
         snap = self._snap(x, y, exclude_uid=self.edit_uid)
+        # A linked neighbor still contains the old shared vertex while
+        # dragging. Do not snap back onto the very corner being moved.
+        if snap and snap.code == self.edit_scope_code:
+            snap = None
         px, py = (snap.x,snap.y) if snap else (x,y)
         pts = self.view.edit_points[:]
         if not 0 <= index < len(pts):
@@ -2660,6 +2665,8 @@ class GeoStudioWindow(QMainWindow):
         if not self.view.edit_mode or not self.edit_uid:
             return
         snap = self._snap(x, y, exclude_uid=self.edit_uid)
+        if snap and snap.code == self.edit_scope_code:
+            snap = None
         px, py = (snap.x,snap.y) if snap else (x,y)
         try:
             uid = self.edit_uid
