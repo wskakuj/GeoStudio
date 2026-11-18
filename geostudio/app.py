@@ -663,7 +663,9 @@ class GeoStudioWindow(QMainWindow):
         self.inspector_tabs.addTab(style_page, 'Wygląd')
         prop_layout.addWidget(self.inspector_tabs, 1)
         self.properties_dock.setWidget(prop_root)
-        self.addDockWidget(Qt.RightDockWidgetArea, self.properties_dock)
+        # Share one contextual sidebar, preserving more horizontal map space.
+        self.addDockWidget(Qt.LeftDockWidgetArea, self.properties_dock)
+        self.tabifyDockWidget(self.layers_dock, self.properties_dock)
         self._update_fill_preview()
 
         self.search_dock = QDockWidget('Wyszukaj obiekty', self)
@@ -702,10 +704,10 @@ class GeoStudioWindow(QMainWindow):
         select_results.clicked.connect(self.select_search_results)
         search_layout.addWidget(select_results)
         self.search_dock.setWidget(search_root)
-        self.addDockWidget(Qt.RightDockWidgetArea, self.search_dock)
+        self.addDockWidget(Qt.LeftDockWidgetArea, self.search_dock)
         # One right-side workspace: the search and inspector occupy tabs,
         # rather than permanently shrinking each other vertically.
-        self.tabifyDockWidget(self.properties_dock, self.search_dock)
+        self.tabifyDockWidget(self.layers_dock, self.search_dock)
         self.properties_dock.raise_()
         self.search_dock.hide()
 
@@ -721,7 +723,10 @@ class GeoStudioWindow(QMainWindow):
         self.panel_toolbar.setIconSize(QSize(23, 23))
         self.panel_toolbar.setFixedWidth(47)
         self.panel_toolbar.setMovable(False)
-        self.addToolBar(Qt.RightToolBarArea, self.panel_toolbar)
+        # The built-in dock tabs provide navigation between contextual panels.
+        # Hide the old redundant icon rail to keep the canvas wider.
+        self.addToolBar(Qt.LeftToolBarArea, self.panel_toolbar)
+        self.panel_toolbar.hide()
         for dock, title, glyph in ((self.layers_dock, 'Warstwy', 'layers'),
                                    (self.properties_dock, 'Atrybuty', 'properties'),
                                    (self.search_dock, 'Szukaj', 'search'),
@@ -749,12 +754,12 @@ class GeoStudioWindow(QMainWindow):
                 dock.hide()
             self.panel_toolbar.hide()
         else:
-            self.panel_toolbar.show()
+            self.panel_toolbar.hide()
             self.layers_dock.show()
             self.info_dock.hide()
             if mode == 'search':
                 if self.search_dock not in self.tabifiedDockWidgets(self.properties_dock):
-                    self.tabifyDockWidget(self.properties_dock, self.search_dock)
+                    self.tabifyDockWidget(self.layers_dock, self.search_dock)
                 self.properties_dock.show()
                 self.search_dock.show()
                 self.search_dock.raise_()
