@@ -107,7 +107,7 @@ def snap_at(ctx: SelectionContext, x: float, y: float, *,
     """Snap to every nearby vertex or edge, regardless of object code.
 
     Hidden ordinary layers stay excluded. An explicit opt-in lets the map
-    editor also snap to one-point survey markers in the normally hidden
+    editor also snap to survey monuments in the normally hidden
     'Graniczniki' layer without making them selectable/rendered.
     ``radius`` is already in map units, derived from screen pixels.
     """
@@ -120,8 +120,8 @@ def snap_at(ctx: SelectionContext, x: float, y: float, *,
     for obj in ctx.geometry_index.nearby(x, y, radius):
         layer = ctx.layer_for_uid.get(obj.uid, '')
         hidden = layer in ctx.hidden_layers
-        marker = (include_hidden_markers and len(obj.points) == 1
-                  and layer.casefold().startswith('granicznik'))
+        marker = (include_hidden_markers and
+                  layer.casefold().startswith('granicznik'))
         if not hidden or marker:
             candidates.append(obj)
     return find_snap(x, y, candidates, radius, exclude_uid=exclude_uid,
