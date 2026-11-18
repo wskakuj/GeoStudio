@@ -137,6 +137,7 @@ def test_kieg_wms_combines_parcel_boundaries_and_numbers(window, monkeypatch):
         monkeypatch.setattr(window._wms_auto, "configure", sources.append)
         dlg.fetch_map()
         assert sources and sources[-1].layer == "dzialki,numery_dzialek"
+        assert window._wms_preview.above_vectors is True
         url = getmap_url(kieg, sources[-1].layer, "EPSG:2180",
                          WMSBounds(100, 200, 150, 260), 512, 512)
         query = parse_qs(urlsplit(url).query, keep_blank_values=True)
@@ -144,6 +145,30 @@ def test_kieg_wms_combines_parcel_boundaries_and_numbers(window, monkeypatch):
         assert query["STYLES"] == [","]
     finally:
         dlg.close()
+
+
+def test_parcel_overlay_is_above_map_fills_but_ortho_is_below(app):
+    from geostudio.wms_qt import WMSPreviewOverlay
+    from geostudio.wms_service import WMSBounds
+    from PySide6.QtCore import QBuffer, QIODevice
+    from PySide6.QtGui import QImage
+    image = QImage(80, 80, QImage.Format_ARGB32)
+    image.fill(QColor(0, 0, 0, 0))
+    buffer = QBuffer()
+    assert buffer.open(QIODevice.WriteOnly)
+    assert image.save(buffer, "PNG")
+    payload = bytes(buffer.data())
+    scene = QGraphicsScene()
+    map_polygon = scene.addRect(0, -10, 10, 10)
+    map_polygon.setZValue(100)
+    overlay = WMSPreviewOverlay()
+    overlay.set_image(payload, WMSBounds(0, 0, 10, 10), "KIEG")
+    overlay.above_vectors = True
+    overlay.attach(scene)
+    assert overlay.item.zValue() > map_polygon.zValue()
+    overlay.above_vectors = False
+    overlay.attach(scene)
+    assert overlay.item.zValue() < map_polygon.zValue()
 
 
 def test_layout_empty_space_does_not_steal_clicks_and_no_group_selection(app):
