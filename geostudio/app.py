@@ -41,7 +41,8 @@ from .coordinates import (CRS_CHOICES, MODERN_EPSG, transform_xy,
     detected_crs_from_prj)
 from .object_search import search_objects
 from .feature_dialogs import (
-    CodePickerDialog, AttributeQueryDialog, ReplaceTextDialog, replacement_plan,
+    CodePickerDialog, AttributeQueryDialog, ReplaceTextDialog, ObjectParametersDialog,
+    replacement_plan,
 )
 from .visual_styles import (parse_fill_code, fill_code, load_styles,
     load_label_positions, write_styles, sidecar_path)
@@ -200,7 +201,7 @@ class GeoStudioWindow(QMainWindow):
         self._load_saved_libraries()
         self.status=QStatusBar();self.setStatusBar(self.status)
         self._setup_scale_widget()
-        self.status.showMessage('Witaj w GeoStudio. Kliknij Otwórz MAP, aby rozpocząć; S/H/P/E/L zmienia narzędzie.')
+        self.status.showMessage('Witaj w GeoStudio. Kliknij Otwórz MAP, aby rozpocząć; S/H/N/P/L zmienia narzędzie. E otwiera parametry obiektu.')
         self.setStyleSheet(theme_stylesheet(self.theme_mode))
         self._refresh_toolbar_icons()
 
@@ -535,14 +536,22 @@ class GeoStudioWindow(QMainWindow):
         em=self.menuBar().addMenu('&Edycja')
         em.addAction(self._action('Zaznacz obiekt',self.cancel_edit,'S'))
         em.addAction(self._action('Przesuwanie mapy',self.start_pan,'H'))
-        em.addAction(self._action('Rysuj poligon',self.start_polygon,'P'))
-        em.addAction(self._action('Edytuj wierzchołki poligonu',self.start_vertex_edit,'E'))
+        # One-letter keys work only while the map has focus: typing in
+        # the inspector or a search field must not switch map tools.
+        for title, callback, shortcut in (
+                ('Rysuj poligon', self.start_polygon, 'N'),
+                ('Edytuj węzły / wierzchołki', self.start_vertex_edit, 'P'),
+                ('Parametry aktywnego obiektu…', self.show_active_object_parameters, 'E')):
+            action = self._action(title, callback, shortcut)
+            action.setShortcutContext(Qt.WidgetWithChildrenShortcut)
+            self.view.addAction(action)
+            em.addAction(action)
         em.addAction(self._action('Przesuń podpis A1 / A2',self.start_label_edit,'L'))
         self.finish_action = self._action('Zakończ i zapisz poligon',self.finish_polygon,'Return')
         em.addAction(self.finish_action)
         self.finish_action.setEnabled(False)
         em.addAction(self._action('Zakończ narzędzie (S)',self.cancel_edit))
-        em.addAction(self._action('Edytuj atrybut zaznaczonego obiektu…',self.edit_selected,'F2'))
+        em.addAction(self._action('Edytuj pojedynczy atrybut…',self.edit_selected,'F2'))
         self.delete_action = self._action('Usuń zaznaczony obiekt', self.delete_selected, 'Delete')
         em.addAction(self.delete_action)
         em.addAction(self._action('Zaawansowane zaznaczanie (kod, A1, A2)…',
@@ -726,8 +735,8 @@ class GeoStudioWindow(QMainWindow):
         for key, title, glyph, fn, hint in [
             ('select', 'Zaznacz', 'select', self.cancel_edit, 'Zaznacz obiekt (S); Ctrl+klik dodaje/usuwa'),
             ('pan', 'Przesuń', 'hand', self.start_pan, 'Przesuwaj mapę (H)'),
-            ('draw', 'Poligon', 'polygon', self.start_polygon, 'Narysuj poligon (P)'),
-            ('edit', 'Węzły', 'vertices', self.start_vertex_edit, 'Edytuj wierzchołki (E)'),
+            ('draw', 'Poligon', 'polygon', self.start_polygon, 'Narysuj poligon (N)'),
+            ('edit', 'Węzły', 'vertices', self.start_vertex_edit, 'Edytuj wierzchołki (P)'),
             ('labels', 'Etykiety', 'label', self.start_label_edit, 'Przesuwaj napisy A1/A2 (L)'),
         ]:
             action = self._decorate_action(self._action(title, fn), glyph, hint)
@@ -748,7 +757,7 @@ class GeoStudioWindow(QMainWindow):
         toolbar.addSeparator()
         self.snap_action.setText('Przyciągaj')
         toolbar.addAction(self._decorate_action(
-            self.snap_action, 'snap', 'Włącz lub wyłącz przyciąganie do punktów i krawędzi'))
+            self.snap_action, 'snap', 'Przyciąganie do węzłów, linii i graniczników, także przy ukrytej warstwie Graniczniki'))
 
         map_settings_menu = QMenu('Opcje mapy', self)
         map_settings_menu.addAction(self.labels_action)
@@ -890,10 +899,10 @@ class GeoStudioWindow(QMainWindow):
         card_layout.addWidget(self.object_metrics)
         quick_actions = QHBoxLayout()
         quick_actions.setSpacing(8)
-        self.edit_object_button = QPushButton('Edytuj atrybut')
+        self.edit_object_button = QPushButton('Parametry [E]')
         self.edit_object_button.setObjectName('GeoStudioQuickEdit')
-        self.edit_object_button.setToolTip('Edytuj atrybut wybranego obiektu (F2)')
-        self.edit_object_button.clicked.connect(self.edit_selected)
+        self.edit_object_button.setToolTip('Otwórz parametry zaznaczonego obiektu (E)')
+        self.edit_object_button.clicked.connect(self.show_active_object_parameters)
         self.edit_object_button.setEnabled(False)
         quick_actions.addWidget(self.edit_object_button, 1)
         self.copy_object_button = QPushButton('Kopiuj ID')
@@ -2065,7 +2074,8 @@ class GeoStudioWindow(QMainWindow):
     def _snap(self, x, y, *, exclude_uid=None):
         return snap_at(self._selection_context(self._map_radius(12)), x, y,
                        exclude_uid=exclude_uid,
-                       enabled=self.snap_action.isChecked())
+                       enabled=self.snap_action.isChecked(),
+                       include_hidden_markers=True)
 
     def _ensure_feedback_items(self):
         if self.draft_item is None:
@@ -2408,6 +2418,38 @@ class GeoStudioWindow(QMainWindow):
     def edit_property(self,item,column):
         if item.text(0) in {'A1','A2','A3','A4','A5','A6','TX','MP','KR'}:
             self._edit_field(item.text(0),item.text(1))
+
+    def show_active_object_parameters(self):
+        """Open E: full attributes and source coordinates for the active object."""
+        if not self.doc or not self.selected_uid:
+            QMessageBox.information(
+                self, 'Parametry aktywnego obiektu',
+                'Zaznacz najpierw obiekt na mapie (S).')
+            return
+        uid = self.selected_uid
+        obj = self.doc.by_id[uid]
+        dialog = ObjectParametersDialog(
+            obj, symbols=self.symbols,
+            layer_name=resolve_layer(self.catalog, obj.code), parent=self)
+        if dialog.exec() != QDialog.Accepted:
+            return
+        changes = dialog.changed_fields()
+        if not changes:
+            return
+        try:
+            with self.history.begin('Parametry obiektu ' + obj.code,
+                                    selection_before=self.selected_uids) as tx:
+                for key, value in changes.items():
+                    self.doc.update_field(uid, key, value)
+                tx.set_selection_after(self.selected_uids)
+            self._history_changed()
+            self.cancel_edit()
+            self.rebuild_scene(fit=False, reselect=uid)
+            self.status.showMessage(
+                f'Zapisano {len(changes)} atrybutów obiektu {obj.code}. '
+                'Ctrl+Z cofa zmianę. Zapisz kopię MAP, aby zachować dane.')
+        except Exception as exc:
+            QMessageBox.warning(self, 'Nie udało się zapisać parametrów', str(exc))
 
     def edit_selected(self):
         if not self.selected_uid:return
@@ -2758,7 +2800,7 @@ class GeoStudioWindow(QMainWindow):
         self.status.showMessage('Zaznaczanie [S]. Prawy przycisk pokazuje listę obiektów w miejscu kliknięcia.')
 
     def start_polygon(self):
-        """Legacy P shortcut / ribbon entry, keeping the simple code prompt."""
+        """N shortcut / ribbon entry for creating a new polygon."""
         if not self.doc:
             return
         code, ok = QInputDialog.getText(
@@ -2850,7 +2892,7 @@ class GeoStudioWindow(QMainWindow):
         if not self.view.draw_mode:
             return
         if not self.current_polygon:
-            self.status.showMessage('Brak punktów do cofnięcia. Narzędzie P nadal aktywne.')
+            self.status.showMessage('Brak punktów do cofnięcia. Narzędzie N nadal aktywne.')
             return
         self.current_polygon.pop()
         if self.draft_points:
@@ -3042,7 +3084,8 @@ class GeoStudioWindow(QMainWindow):
         self._activate_vertex_object(uid)
         self.status.showMessage(
             f'Węzły kodu {code}: przeciągnij dowolny węzeł poligonu o tym kodzie. '
-            'Wspólne węzły sąsiadów zmienią się razem. Esc kończy.')
+            'Wspólne węzły sąsiadów tego samego kodu zmienią się razem. '
+            'Przyciąganie działa do linii i graniczników innych kodów. Esc kończy.')
 
     def _activate_vertex_object(self, uid):
         """Switch active vertex handles without leaving the edit tool."""
@@ -3126,21 +3169,20 @@ class GeoStudioWindow(QMainWindow):
             self._show_selection_properties()
 
     def preview_vertex(self, x, y, index):
-        if not self.view.edit_mode or not self.edit_uid:
+        if (not self.view.edit_mode or not self.edit_uid or
+                not 0 <= index < len(self.view.edit_points)):
             return
         snap = self._snap(x, y, exclude_uid=self.edit_uid)
-        # A polygon being edited is allowed to snap only to its own code.
-        # Never snap to or change neighboring geometry of another code.
-        # Ignore an unchanged shared point, otherwise the drag sticks there.
-        if snap and (snap.code != self.edit_scope_code or
-                     math.hypot(snap.x - self.view.edit_points[index][0],
-                                snap.y - self.view.edit_points[index][1]) <=
-                     self._map_radius(6)):
+        # Snapping may target ANY code, including survey markers. This
+        # determines only the new coordinate; linked_vertex_moves below is
+        # responsible for updating same-code neighbours exclusively.
+        # Ignore an unchanged shared point so the drag does not stick there.
+        if snap and math.hypot(
+                snap.x - self.view.edit_points[index][0],
+                snap.y - self.view.edit_points[index][1]) <= self._map_radius(6):
             snap = None
         px, py = (snap.x,snap.y) if snap else (x,y)
         pts = self.view.edit_points[:]
-        if not 0 <= index < len(pts):
-            return
         pts[index] = (px,py)
         if index < len(self.edit_handles):
             self.edit_handles[index].setPos(px,-py)
@@ -3150,13 +3192,13 @@ class GeoStudioWindow(QMainWindow):
         self.snap_marker.setPos(px, -py)
 
     def commit_vertex(self, x, y, index):
-        if not self.view.edit_mode or not self.edit_uid:
+        if (not self.view.edit_mode or not self.edit_uid or
+                not 0 <= index < len(self.view.edit_points)):
             return
         snap = self._snap(x, y, exclude_uid=self.edit_uid)
-        if snap and (snap.code != self.edit_scope_code or
-                     math.hypot(snap.x - self.view.edit_points[index][0],
-                                snap.y - self.view.edit_points[index][1]) <=
-                     self._map_radius(6)):
+        if snap and math.hypot(
+                snap.x - self.view.edit_points[index][0],
+                snap.y - self.view.edit_points[index][1]) <= self._map_radius(6):
             snap = None
         px, py = (snap.x,snap.y) if snap else (x,y)
         try:
