@@ -8,11 +8,13 @@ from __future__ import annotations
 
 from collections import Counter
 from dataclasses import dataclass
+from math import hypot
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QCheckBox, QComboBox, QDialog, QDialogButtonBox, QFormLayout,
     QHBoxLayout, QLabel, QLineEdit, QPushButton, QVBoxLayout, QWidget,
+    QScrollArea, QTabWidget, QTreeWidget, QTreeWidgetItem, QHeaderView,
 )
 
 from .object_search import search_objects
@@ -248,3 +250,99 @@ def replacement_plan(objects, spec: ReplaceSpecification):
         if old != new:
             result[(obj.uid, spec.field)] = new
     return result
+
+
+class ObjectParametersDialog(QDialog):
+    """Parameters for one GEO-MAP object; attributes editable, geometry read-only.
+
+    Coordinates are deliberately not edited here. The P vertex tool applies
+    topology validation and preserves the full undo history.
+    """
+
+    EDITABLE_FIELDS = ("A1", "A2", "A3", "A4", "A5", "A6", "TX", "MP", "KR")
+
+    def __init__(self, obj, *, symbols=None, layer_name="", parent=None):
+        super().__init__(parent)
+        self.setObjectName("GeoStudioObjectParameters")
+        self.setWindowTitle("Parametry aktywnego obiektu")
+        self.resize(640, 600)
+        self._original = {key: obj.fields.get(key, "")
+                          for key in self.EDITABLE_FIELDS}
+        self.entries = {}
+
+        layout = QVBoxLayout(self)
+        layout.setSpacing(12)
+        name = (symbols or {}).get(obj.code, "Obiekt GEO-MAP")
+        header = QLabel(f"<b>Kod {obj.code}</b> — {name}")
+        header.setWordWrap(True)
+        layout.addWidget(header)
+        layer = QLabel(f"Warstwa: {layer_name or 'Nieznana'}    |    ID: {obj.uid or 'brak'}")
+        layer.setWordWrap(True)
+        layout.addWidget(layer)
+
+        perimeter = sum(hypot(b.x - a.x, b.y - a.y)
+                        for a, b in zip(obj.points, obj.points[1:]))
+        metrics = f"Liczba punktów: {len(obj.points)}    |    Długość / obwód: {perimeter:.3f} m"
+        if obj.area_m2 is not None:
+            metrics += f"    |    Pole geometryczne: {obj.area_m2:,.2f} m²"
+        metrics_label = QLabel(metrics)
+        metrics_label.setWordWrap(True)
+        layout.addWidget(metrics_label)
+
+        tabs = QTabWidget(self)
+        tabs.setObjectName("GeoStudioObjectParametersTabs")
+        fields_scroll = QScrollArea(tabs)
+        fields_scroll.setWidgetResizable(True)
+        fields_scroll.setFrameShape(QScrollArea.NoFrame)
+        fields_page = QWidget(fields_scroll)
+        form = QFormLayout(fields_page)
+        form.setSpacing(9)
+        for key in self.EDITABLE_FIELDS:
+            entry = QLineEdit(obj.fields.get(key, ""), fields_page)
+            entry.setObjectName(f"object_field_{key}")
+            entry.setPlaceholderText("—")
+            form.addRow(key, entry)
+            self.entries[key] = entry
+        other = {k: v for k, v in obj.fields.items()
+                 if k not in self.EDITABLE_FIELDS}
+        for key, value in sorted(other.items()):
+            if key == "ID":
+                continue
+            label = QLabel(value)
+            label.setWordWrap(True)
+            label.setTextInteractionFlags(Qt.TextSelectableByMouse)
+            form.addRow(key + " (tylko odczyt)", label)
+        fields_scroll.setWidget(fields_page)
+        tabs.addTab(fields_scroll, "Atrybuty opisowe")
+
+        coords = QTreeWidget(tabs)
+        coords.setObjectName("GeoStudioObjectCoordinates")
+        coords.setHeaderLabels(["Nr", "X", "Y", "P", "Oznaczenie"])
+        coords.setAlternatingRowColors(True)
+        coords.setRootIsDecorated(False)
+        coords.header().setSectionResizeMode(0, QHeaderView.ResizeToContents)
+        coords.header().setSectionResizeMode(1, QHeaderView.ResizeToContents)
+        coords.header().setSectionResizeMode(2, QHeaderView.ResizeToContents)
+        coords.header().setSectionResizeMode(3, QHeaderView.ResizeToContents)
+        coords.header().setSectionResizeMode(4, QHeaderView.Stretch)
+        for idx, point in enumerate(obj.points, 1):
+            QTreeWidgetItem(coords, [str(idx), f"{point.x:.3f}",
+                                     f"{point.y:.3f}", str(point.point_type),
+                                     point.label])
+        tabs.addTab(coords, "Współrzędne punktów")
+        layout.addWidget(tabs, 1)
+        hint = QLabel("Współrzędne zmieniaj narzędziem Węzły [P]. "
+                      "Zmiany atrybutów można cofnąć przez Ctrl+Z.")
+        hint.setWordWrap(True)
+        layout.addWidget(hint)
+        buttons = QDialogButtonBox(QDialogButtonBox.Save |
+                                    QDialogButtonBox.Cancel, parent=self)
+        buttons.button(QDialogButtonBox.Save).setText("Zapisz zmiany")
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        layout.addWidget(buttons)
+
+    def changed_fields(self):
+        """Return only changed supported attributes, never synthetic defaults."""
+        return {key: entry.text() for key, entry in self.entries.items()
+                if entry.text() != self._original[key]}
