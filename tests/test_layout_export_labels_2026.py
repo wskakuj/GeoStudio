@@ -52,8 +52,9 @@ def test_print_orientation_is_not_raw_scene_orientation(app):
     assert geodetic.width() == 1000
     assert geodetic.height() > geodetic.width()
     # Technical top-left goes to geodetic bottom-right after axis swap.
-    assert geodetic.pixelColor(950, geodetic.height() - 80).red() > 180
-    assert geodetic.pixelColor(50, 50).red() == 255
+    colored = geodetic.pixelColor(950, geodetic.height() - 80)
+    assert colored.red() > 180 and colored.green() < 100 and colored.blue() < 100
+    assert geodetic.pixelColor(50, 50).name() == "#ffffff"
 
 
 def test_print_export_rejects_huge_raster_without_allocating(app):
