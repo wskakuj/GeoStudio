@@ -24,6 +24,7 @@ from PySide6.QtWidgets import (QGraphicsEllipseItem, QGraphicsItem,
                                QGraphicsSimpleTextItem, QGraphicsTextItem)
 
 from .geomap import GeoMap, GeoObject, resolve_layer
+from .forest_classes import forest_layer_for_object
 from .geometry_index import GeometryIndex
 from .library_render import (cdf_for_object, lay_for_code, native_fill_color,
                              object_sym_line_pattern, simple_point_circles,
@@ -172,7 +173,7 @@ def build_scene(scene: QGraphicsScene, doc: GeoMap, ctx: RenderContext) -> Scene
     for obj in doc.objects:
         if not obj.points:
             continue
-        layer = resolve_layer(ctx.catalog, obj.code)
+        layer = forest_layer_for_object(obj, ctx.catalog)
         result.layer_for_uid[obj.uid] = layer
         # Preserve GEO-MAP COLORREF for stroke; CDF can override
         # fill and border on exact code/attribute variants.
