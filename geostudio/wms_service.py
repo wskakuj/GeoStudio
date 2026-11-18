@@ -60,6 +60,13 @@ def parse_capabilities(xml: bytes) -> tuple[WMSLayerInfo, ...]:
         root = ET.fromstring(xml)
     except ET.ParseError as exc:
         raise ValueError("Serwer nie zwrócił poprawnego dokumentu GetCapabilities.") from exc
+    # WMS 1.1.x uses ServiceExceptionReport; WMS 1.3.0 commonly reports
+    # an OGC ServiceException, not a list of layers.
+    for element in root.iter():
+        if _tag(element) in {"ServiceException", "ExceptionText"}:
+            detail = (element.text or "").strip()
+            raise ValueError(
+                "Serwer WMS zgłosił błąd: " + (detail[:350] or "nieznany błąd usługi."))
     result: list[WMSLayerInfo] = []
     seen: set[str] = set()
 
@@ -178,3 +185,18 @@ def google_maps_embed_url(map_x: float, map_y: float, source_epsg: int,
             urlencode({"key": api_key.strip(), "center": coordinates,
                        "zoom": str(zoom), "maptype": map_type,
                        "language": "pl"}))
+
+
+def google_earth_browser_url(map_x: float, map_y: float,
+                             source_epsg: int) -> str:
+    """Unofficial deep-link convenience to Google's *official* Earth website.
+
+    Google Earth has no published equivalent to Maps URLs; if search links
+    cease working, the user can still use earth.google.com/web and paste
+    the transformed WGS84 coordinates in its built-in search.
+    This is not a map tile/imagery API.
+    """
+    from urllib.parse import quote
+    maps = google_maps_reference_url(map_x, map_y, source_epsg)
+    lat_lon = maps.split("/@", 1)[1].rsplit(",", 1)[0]
+    return "https://earth.google.com/web/search/" + quote(lat_lon, safe=",") + "/"
