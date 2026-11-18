@@ -1993,8 +1993,11 @@ class GeoStudioWindow(QMainWindow):
         uids = [obj.uid for obj in candidates]
         # A click on an A1/A2 text must select its owner directly. This
         # eliminates repeated cycling through background parcels/land-use.
-        if not additive and not cycle:
-            screen_point = self.view.mapFromScene(QPointF(x, -y))
+        screen_point = self.view.mapFromScene(QPointF(x, -y))
+        same_spot = (self._last_pick_pos is not None and
+                     (screen_point - self._last_pick_pos).manhattanLength() <= 12 and
+                     tuple(uids) == self._last_pick_candidates)
+        if not additive and not cycle and not same_spot:
             for item in self.view.items(screen_point):
                 uid, field = item.data(0), item.data(1)
                 if (field in {'A1', 'A2'} and uid in self.doc.by_id and
@@ -2003,10 +2006,12 @@ class GeoStudioWindow(QMainWindow):
                         self.doc.by_id[uid].is_closed and
                         point_in_ring(x, y, [(p.x, p.y)
                                             for p in self.doc.by_id[uid].points[:-1]])):
-                    self._last_pick_pos = None
-                    self._last_pick_candidates = ()
+                    self._last_pick_pos = screen_point
+                    self._last_pick_candidates = tuple(uids)
                     self._select_uid(uid)
-                    self.status.showMessage(f'Wybrano kod {self.doc.by_id[uid].code} poprzez etykietę {field}.')
+                    self.status.showMessage(
+                        f'Wybrano kod {self.doc.by_id[uid].code} poprzez etykietę {field}. '
+                        'Kliknij ponownie, aby przejść do kolejnego obiektu.')
                     return
         if not uids:
             self._last_pick_pos = None
@@ -2042,7 +2047,7 @@ class GeoStudioWindow(QMainWindow):
         self.status.showMessage(
             f'Wybrano kod {self.doc.by_id[uid].code}. '
             f'Łącznie zaznaczono: {len(self.selected_uids)}. '
-            'Ctrl+klik dodaje/usuwa, Ctrl+H zaznacza cały kod.')
+            'Ctrl+klik dodaje/usuwa, Ctrl+H otwiera wybór po kodzie i atrybutach.')
 
     def select_all_same_code(self):
         if not self.doc or not self.selected_uid:
