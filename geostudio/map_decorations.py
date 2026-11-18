@@ -98,7 +98,10 @@ class DecorationItem(QGraphicsItem):
             if isinstance(rows, list):
                 columns = max(1, ceil(len(rows) / 15))
                 self._width = max(self._width, 365 * columns + 25)
-                self._height = max(150, 115 + 24 * min(len(rows), 15))
+                bottom = 115 + 24 * min(len(rows), 15)
+                if str(data.get("area", "")).strip():
+                    bottom += 40  # Never place the footer over the last symbol.
+                self._height = max(150, bottom)
         elif data["kind"] in {"title", "credits"}:
             # Height must include ALL of the long editable description,
             # even after the user enters several lines and zooms the page.
@@ -167,7 +170,9 @@ class DecorationItem(QGraphicsItem):
                     add_text(entry.get("name", ""), x + 50, y, 13,
                              limit=286)
             else:
-                add_text(self.layout_data.get("details", ""), 14, 93, 14)
+                wrapped = self._wrapped_details(
+                    str(self.layout_data.get("details", "")), self._width - 30)
+                add_text("\n".join(wrapped), 14, 98, 14)
             if self.layout_data.get("area"):
                 add_text(self.layout_data["area"], 14, self._height - 35, 13)
         # The selection/resize handle must be accessible only when selected.
