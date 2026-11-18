@@ -133,6 +133,7 @@ class GeoStudioWindow(QMainWindow):
         self.layers_tree=None
         self.current_polygon:list[tuple[float,float]]=[]
         self.polygon_code='5216'
+        self.geometry_kind='polygon'
         self.history = History(_MapHistoryTarget(self))
         self._label_history = None
         self.map_scene=QGraphicsScene(self)
@@ -267,10 +268,10 @@ class GeoStudioWindow(QMainWindow):
         em=self.menuBar().addMenu('&Edycja')
         em.addAction(self._action('Zaznacz obiekt',self.cancel_edit,'S'))
         em.addAction(self._action('Przesuwanie mapy',self.start_pan,'H'))
-        em.addAction(self._action('Rysuj poligon',self.start_polygon,'P'))
+        em.addAction(self._action('Rysuj obiekt (kod i geometria)…',self.start_geometry,'P'))
         em.addAction(self._action('Edytuj wierzchołki poligonu',self.start_vertex_edit,'E'))
         em.addAction(self._action('Przesuń podpis A1 / A2',self.start_label_edit,'L'))
-        self.finish_action = self._action('Zakończ i zapisz poligon',self.finish_polygon,'Return')
+        self.finish_action = self._action('Zakończ rysowanie i zapisz obiekt',self.finish_polygon,'Return')
         em.addAction(self.finish_action)
         self.finish_action.setEnabled(False)
         em.addAction(self._action('Zakończ narzędzie (S)',self.cancel_edit))
@@ -408,7 +409,7 @@ class GeoStudioWindow(QMainWindow):
         for key, title, glyph, fn, hint in [
             ('select', 'Zaznacz', 'select', self.cancel_edit, 'Zaznacz obiekt (S); Ctrl+klik dodaje/usuwa'),
             ('pan', 'Przesuń', 'hand', self.start_pan, 'Przesuwaj mapę (H)'),
-            ('draw', 'Poligon', 'polygon', self.start_polygon, 'Narysuj poligon (P)'),
+            ('draw', 'Rysuj', 'polygon', self.start_geometry, 'Nowy poligon, linia lub punkt — wybierz kod GEO-MAP (P)'),
             ('edit', 'Wierzchołki', 'vertices', self.start_vertex_edit, 'Edytuj wierzchołki (E)'),
             ('labels', 'Etykiety', 'label', self.start_label_edit, 'Przesuwaj napisy A1/A2 (L)'),
         ]:
@@ -1886,28 +1887,65 @@ class GeoStudioWindow(QMainWindow):
         self.draft_points = []
         self.status.showMessage('Zaznaczanie [S]. Prawy przycisk pokazuje listę obiektów w miejscu kliknięcia.')
 
-    def start_polygon(self):
+    def start_geometry(self):
+        """Ask for geometry type before opening the existing code/attribute flow."""
+        choices = ['Poligon — zamknięty', 'Linia — otwarta', 'Punkt — pojedynczy']
+        answer, accepted = QInputDialog.getItem(
+            self, 'Nowy obiekt GEO-MAP', 'Rodzaj geometrii:',
+            choices, 0, False)
+        if not accepted:
+            return
+        selected = {'Poligon — zamknięty': 'polygon',
+                    'Linia — otwarta': 'line',
+                    'Punkt — pojedynczy': 'point'}[answer]
+        self.start_polygon(kind=selected)
+
+    def start_polygon(self, *, kind='polygon'):
         if not self.doc:
             return
         self.cancel_edit()
-        code,ok = QInputDialog.getText(self,'Nowy poligon','Kod GEO-MAP:',text='5216')
+        if kind not in {'polygon', 'line', 'point'}:
+            raise ValueError('Unknown geometry type')
+        defaults = {'polygon': '5216', 'line': '5214', 'point': '5310'}
+        code,ok = QInputDialog.getText(
+            self, 'Nowy obiekt GEO-MAP', 'Kod obiektu (4 cyfry):',
+            text=defaults[kind])
         if not ok:
             return
         if not code.isdigit() or len(code)!=4:
             QMessageBox.warning(self,'Kod','Kod musi składać się z czterech cyfr')
             return
+        if not any(obj.code == code for obj in self.doc.objects):
+            answer = QMessageBox.question(
+                self, 'Kod bez wzorca stylu',
+                f'W mapie brak obiektu o kodzie {code}. Nowy obiekt otrzyma '
+                'eksperymentalny styl zastępczy, który może różnić się od GEO-MAP. '
+                'Kontynuować i zapisać tylko w kopii?',
+                QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
+            if answer != QMessageBox.Yes:
+                return
         self.polygon_code = code
+        self.geometry_kind = kind
         self.current_polygon = []
         self.view.draw_mode = True
         self.view.setCursor(Qt.CrossCursor)
         self.tool_actions['draw'].setChecked(True)
-        self._set_mode_badge('RYSOWANIE POLIGONU')
+        self._set_mode_badge({
+            'polygon': 'RYSOWANIE POLIGONU', 'line': 'RYSOWANIE LINII',
+            'point': 'DODAWANIE PUNKTU'}[kind])
         self.view.setDragMode(QGraphicsView.NoDrag)
         self._ensure_feedback_items()
         self.finish_toolbar_action.setVisible(True)
         self.undo_toolbar_action.setVisible(True)
         self.finish_action.setEnabled(True)
-        self.status.showMessage('Poligon: klikaj wierzchołki, kliknij PIERWSZY punkt lub Enter/prawy przycisk, aby zakończyć i zapisać kopię.')
+        self.finish_toolbar_action.setText('Zakończ rysowanie')
+        if kind == 'polygon':
+            tip = 'Poligon: dodaj co najmniej 3 punkty; kliknij pierwszy lub Enter/prawy przycisk, aby zamknąć.'
+        elif kind == 'line':
+            tip = 'Linia: dodaj co najmniej 2 punkty; Enter/prawy przycisk kończy OTWARTĄ linię, bez zamykania.'
+        else:
+            tip = 'Punkt: kliknij lokalizację; następnie wprowadź atrybuty obiektu.'
+        self.status.showMessage(tip)
 
     def preview_polygon(self, x, y):
         if not self.view.draw_mode:
@@ -1916,7 +1954,7 @@ class GeoStudioWindow(QMainWindow):
         snap = self._snap(x, y)
         self.current_snap = snap
         px, py = (snap.x, snap.y) if snap else (x, y)
-        if len(self.current_polygon) >= 3:
+        if self.geometry_kind == 'polygon' and len(self.current_polygon) >= 3:
             start = self.current_polygon[0]
             cursor = self.view.mapFromScene(QPointF(x, -y))
             anchor = self.view.mapFromScene(QPointF(start[0], -start[1]))
@@ -1936,7 +1974,7 @@ class GeoStudioWindow(QMainWindow):
         # Close on a click within a 14-pixel radius of the FIRST point.
         # Screen coordinates are essential: one fixed map-unit tolerance
         # would behave unpredictably when the user zooms.
-        if len(self.current_polygon) >= 3:
+        if self.geometry_kind == 'polygon' and len(self.current_polygon) >= 3:
             initial = self.current_polygon[0]
             cursor = self.view.mapFromScene(QPointF(x, -y))
             anchor = self.view.mapFromScene(QPointF(initial[0], -initial[1]))
@@ -1945,7 +1983,7 @@ class GeoStudioWindow(QMainWindow):
                 return
         snap = self._snap(x, y)
         px, py = (snap.x, snap.y) if snap else (x, y)
-        if len(self.current_polygon) >= 3 and (px, py) == self.current_polygon[0]:
+        if self.geometry_kind == 'polygon' and len(self.current_polygon) >= 3 and (px, py) == self.current_polygon[0]:
             self.finish_polygon()
             return
         if self.current_polygon and self.current_polygon[-1] == (px,py):
@@ -1963,7 +2001,14 @@ class GeoStudioWindow(QMainWindow):
         self.map_scene.addItem(dot)
         self.draft_points.append(dot)
         self.preview_polygon(px, py)
-        self.status.showMessage(f'Poligon: {len(self.current_polygon)} punkty. Kliknij początek, Enter, prawy przycisk lub ✓ Zakończ.')
+        if self.geometry_kind == 'point':
+            self.finish_polygon()
+            return
+        instruction = ('Kliknij początek lub Enter, aby zamknąć.'
+                       if self.geometry_kind == 'polygon' else
+                       'Enter lub prawy przycisk kończy otwartą linię.')
+        self.status.showMessage(
+            f'Rysowanie {self.geometry_kind}: {len(self.current_polygon)} punktów. {instruction}')
 
     def undo_last_polygon_point(self):
         """Escape removes one point but leaves the polygon drawing tool active."""
@@ -1989,7 +2034,7 @@ class GeoStudioWindow(QMainWindow):
     def _ask_polygon_attributes(self):
         """Full form for new-object attributes; blanks are stored as editable empty fields."""
         dialog = QDialog(self)
-        dialog.setWindowTitle(f'Nowy poligon {self.polygon_code} — atrybuty')
+        dialog.setWindowTitle(f'Nowy obiekt {self.polygon_code} — atrybuty')
         dialog.resize(560, 480)
         layout = QFormLayout(dialog)
         entries = {}
@@ -2024,21 +2069,35 @@ class GeoStudioWindow(QMainWindow):
         points = self.current_polygon[:]
         if len(points) > 1 and points[0] == points[-1]:
             points.pop()
-        if not polygon_is_valid(points):
-            QMessageBox.warning(self, 'Poligon',
-                'Wymagane co najmniej 3 różne, niewspółliniowe punkty.')
+        kind = self.geometry_kind
+        if kind == 'polygon':
+            valid = polygon_is_valid(points)
+            error = 'Poligon wymaga co najmniej 3 różnych, niewspółliniowych punktów.'
+        elif kind == 'line':
+            valid = len(points) >= 2 and len(set(points)) >= 2
+            error = 'Otwarta linia wymaga co najmniej dwóch różnych punktów.'
+        else:
+            valid = len(points) == 1
+            error = 'Punkt wymaga jednej lokalizacji.'
+        if not valid:
+            QMessageBox.warning(self, 'Geometria obiektu', error)
             return
         attrs = self._ask_polygon_attributes()
         if attrs is None:
             return
         try:
-            with self.history.begin(f'Nowy poligon {self.polygon_code}'):
-                uid = self.doc.append_polygon(points, self.polygon_code, fields=attrs)
+            label = {'polygon': 'poligon', 'line': 'linia', 'point': 'punkt'}[kind]
+            with self.history.begin(f'Nowy {label} {self.polygon_code}'):
+                if kind == 'polygon':
+                    uid = self.doc.append_polygon(points, self.polygon_code, fields=attrs)
+                else:
+                    uid = self.doc.append_geometry(
+                        points, self.polygon_code, kind=kind, fields=attrs)
             self._history_changed()
             self.cancel_edit()
             self.rebuild_scene(fit=False, reselect=uid)
             saved = self._autosave_work_copy()
-            self.status.showMessage('Zamknięto poligon i zapisano pola A1–A6, TX i metadane.' +
+            self.status.showMessage(f'Zapisano obiekt {self.polygon_code} ({label}) i atrybuty.' +
                 (f' Kopia robocza: {saved}' if saved else ' Użyj Zapisz jako, by zapisać kopię mapy.'))
         except Exception as exc:
             QMessageBox.warning(self, 'Błąd rysowania', str(exc))
