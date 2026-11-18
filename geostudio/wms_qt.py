@@ -42,6 +42,9 @@ class WMSPreviewOverlay:
         self.bounds: WMSBounds | None = None
         self.opacity = 0.70
         self.visible = True
+        # EGiB boundaries and parcel numbers must remain legible OVER the
+        # map's colored polygons; aerial photography stays UNDER vectors.
+        self.above_vectors = False
         self.item: QGraphicsPixmapItem | None = None
         self.title = ""
         self.source: WMSMapSource | None = None
@@ -61,6 +64,7 @@ class WMSPreviewOverlay:
         self.bounds = None
         self.title = ""
         self.source = None
+        self.above_vectors = False
 
     def set_image(self, data: bytes, bounds: WMSBounds, title: str):
         pixmap = QPixmap()
@@ -86,7 +90,7 @@ class WMSPreviewOverlay:
         item.setTransform(scene_item_transform(
             self.bounds, self.image.width(), self.image.height()))
         item.setTransformationMode(Qt.TransformationMode.SmoothTransformation)
-        item.setZValue(-50_000)
+        item.setZValue(300 if self.above_vectors else -50_000)
         item.setOpacity(self.opacity)
         item.setAcceptedMouseButtons(Qt.MouseButton.NoButton)
         item.setFlag(item.GraphicsItemFlag.ItemIsSelectable, False)
@@ -386,6 +390,8 @@ class WMSDialog(QDialog):
             return
         self.window.settings.setValue("wms/last_url", self.address.text())
         self.window._wms_preview.opacity = self.opacity.value() / 100.
+        self.window._wms_preview.above_vectors = (
+            "KrajowaIntegracjaEwidencjiGruntow" in self.address.text())
         source = WMSMapSource(
             self.address.text(), layer.name, crs,
             layer.attribution or layer.title)
