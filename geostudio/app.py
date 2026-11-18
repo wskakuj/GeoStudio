@@ -285,7 +285,8 @@ class GeoStudioWindow(QMainWindow):
         rasters.stack(
             (self._action('Kalibruj raster…', self.calibrate_selected_raster),
              'snap', 'Kalibracja GCP'),
-            (self.raster_dock.toggleViewAction(), 'layers', 'Podkłady'),
+            (self._action('Panel podkładów', self.show_raster_panel),
+             'layers', 'Podkłady'),
         )
         coordinates = ribbon.group('Dane', 'Współrzędne')
         coordinates.action(
@@ -757,7 +758,14 @@ class GeoStudioWindow(QMainWindow):
         self.layers_summary = QLabel('Wczytaj mapę, aby zobaczyć warstwy')
         self.layers_summary.setObjectName('GeoStudioLayerSummary')
         layer_layout.addWidget(self.layers_summary)
-        self.layers_dock.setWidget(layer_root)
+        # One left dock, two real content tabs. A second QDockWidget would
+        # unexpectedly rearrange the unrelated right-side inspector tabs in Qt.
+        self.raster_tabs = QTabWidget(self.layers_dock)
+        self.raster_tabs.setObjectName('GeoStudioContentsTabs')
+        self.raster_tabs.addTab(layer_root, 'Warstwy')
+        self.raster_panel = RasterLayerPanel(self)
+        self.raster_tabs.addTab(self.raster_panel, 'Rastry')
+        self.layers_dock.setWidget(self.raster_tabs)
         self.addDockWidget(Qt.LeftDockWidgetArea, self.layers_dock)
 
         self.properties_dock = QDockWidget('Inspektor obiektu', self)
@@ -946,13 +954,6 @@ class GeoStudioWindow(QMainWindow):
         self.view_menu.addAction(self._action('Przywróć wszystkie panele',
                                               self.restore_panels))
 
-        self.raster_dock = QDockWidget('Podkłady rastrowe', self)
-        self.raster_dock.setObjectName('GeoStudioRasterDock')
-        self.raster_panel = RasterLayerPanel(self)
-        self.raster_dock.setWidget(self.raster_panel)
-        self.addDockWidget(Qt.LeftDockWidgetArea, self.raster_dock)
-        self.tabifyDockWidget(self.layers_dock, self.raster_dock)
-        self.layers_dock.raise_()
     def set_workspace(self, mode, *, remember=True):
         """Change only the workspace chrome, never geometry or current edits."""
         if mode not in {'map', 'edit', 'search'}:
@@ -965,14 +966,13 @@ class GeoStudioWindow(QMainWindow):
         if hasattr(self, 'ribbon_toolbar'):
             self.ribbon_toolbar.setVisible(mode != 'map')
         if mode == 'map':
-            for dock in (self.layers_dock, self.raster_dock,
+            for dock in (self.layers_dock,
                          self.properties_dock, self.search_dock, self.info_dock):
                 dock.hide()
             self.panel_toolbar.hide()
         else:
             self.panel_toolbar.hide()  # Pane commands live on the View ribbon.
             self.layers_dock.show()
-            self.raster_dock.show()
             self.info_dock.hide()
             if mode == 'search':
                 if self.search_dock not in self.tabifiedDockWidgets(self.properties_dock):
@@ -2593,10 +2593,9 @@ class GeoStudioWindow(QMainWindow):
         return None
 
     def show_raster_panel(self):
-        """Reveal raster management without changing map or editing modes."""
-        self.raster_dock.show()
+        """Select raster tab inside the existing left contents dock."""
         self.layers_dock.show()
-        self.raster_dock.raise_()
+        self.raster_tabs.setCurrentWidget(self.raster_panel)
         self._refresh_raster_panel()
 
     def add_raster(self):
