@@ -45,6 +45,8 @@ from .ui_theme import theme_stylesheet, ui_icon
 from .workspace_shell import MapWorkspace
 from .gis_ribbon import GISRibbon
 from .command_palette import CommandPalette
+from .raster_overlay import RasterOverlayStore
+from .raster_ui import RasterCalibrationDialog, RasterLayerPanel
 from .library_render import (parse_cdf, parse_sym_primitives, cdf_for_object,
     native_fill_color, simple_point_segments, simple_point_circles,
     parse_lay_pen_styles, lay_for_code,
@@ -140,6 +142,10 @@ class GeoStudioWindow(QMainWindow):
         self.current_polygon:list[tuple[float,float]]=[]
         self.polygon_code='5216'
         self.history = History(_MapHistoryTarget(self))
+        self._raster_overlay = RasterOverlayStore()
+        self._raster_map_picker = None
+        self._raster_calibration_dialog = None
+        self._raster_opacity_pending = False
         self._label_history = None
         self.map_scene=QGraphicsScene(self)
         # Custom feature picking handles overlapping objects without Qt selection.
@@ -276,6 +282,11 @@ class GeoStudioWindow(QMainWindow):
         rasters = ribbon.group('Dane', 'Rastry')
         rasters.action(self._action('Dodaj raster', self.add_raster),
                        'image', large=True, text='Dodaj raster')
+        rasters.stack(
+            (self._action('Kalibruj raster…', self.calibrate_selected_raster),
+             'snap', 'Kalibracja GCP'),
+            (self.raster_dock.toggleViewAction(), 'layers', 'Podkłady'),
+        )
         coordinates = ribbon.group('Dane', 'Współrzędne')
         coordinates.action(
             self._action('Transformuj układ', self.open_crs_converter),
@@ -476,7 +487,10 @@ class GeoStudioWindow(QMainWindow):
     def _setup_menu(self):
         fm=self.menuBar().addMenu('&Plik')
         actions=[('Otwórz MAP…',self.open_map,'Ctrl+O'),('Wczytaj biblioteki SYM/LAY/CDF…',self.open_catalogs,None),
-                 ('Zapisz jako MAP…',self.save_map,'Ctrl+Shift+S'),('Dodaj raster z plikiem world…',self.add_raster,None),
+                 ('Zapisz jako MAP…',self.save_map,'Ctrl+Shift+S'),
+                 ('Dodaj raster / skan…',self.add_raster,None),
+                 ('Kalibruj raster (GCP)…',self.calibrate_selected_raster,None),
+                 ('Panel podkładów rastrowych',self.show_raster_panel,None),
                  ('Eksportuj obraz JPG/PNG/TIFF…',self.export_image,None),('Eksportuj DXF (uproszczony)…',self.export_dxf,None)]
         for label,fn,keys in actions: fm.addAction(self._action(label,fn,keys))
         fm.addSeparator();fm.addAction(self._action('Zakończ',self.close,'Ctrl+Q'))
@@ -745,6 +759,13 @@ class GeoStudioWindow(QMainWindow):
         layer_layout.addWidget(self.layers_summary)
         self.layers_dock.setWidget(layer_root)
         self.addDockWidget(Qt.LeftDockWidgetArea, self.layers_dock)
+        self.raster_dock = QDockWidget('Podkłady rastrowe', self)
+        self.raster_dock.setObjectName('GeoStudioRasterDock')
+        self.raster_panel = RasterLayerPanel(self)
+        self.raster_dock.setWidget(self.raster_panel)
+        self.addDockWidget(Qt.LeftDockWidgetArea, self.raster_dock)
+        self.tabifyDockWidget(self.layers_dock, self.raster_dock)
+        self.layers_dock.raise_()
 
         self.properties_dock = QDockWidget('Inspektor obiektu', self)
         self.properties_dock.setObjectName('GeoStudioPropertiesDock')
@@ -944,13 +965,14 @@ class GeoStudioWindow(QMainWindow):
         if hasattr(self, 'ribbon_toolbar'):
             self.ribbon_toolbar.setVisible(mode != 'map')
         if mode == 'map':
-            for dock in (self.layers_dock, self.properties_dock,
-                         self.search_dock, self.info_dock):
+            for dock in (self.layers_dock, self.raster_dock,
+                         self.properties_dock, self.search_dock, self.info_dock):
                 dock.hide()
             self.panel_toolbar.hide()
         else:
             self.panel_toolbar.hide()  # Pane commands live on the View ribbon.
             self.layers_dock.show()
+            self.raster_dock.show()
             self.info_dock.hide()
             if mode == 'search':
                 if self.search_dock not in self.tabifiedDockWidgets(self.properties_dock):
@@ -1164,6 +1186,15 @@ class GeoStudioWindow(QMainWindow):
             self.settings.setValue('last_map_dir', str(Path(file).parent))
             self.visual_styles = load_styles(file)
             self.label_positions = load_label_positions(file)
+            try:
+                self._raster_overlay.load(file)
+            except (OSError, ValueError, TypeError, KeyError) as raster_error:
+                self._raster_overlay.clear()
+                QMessageBox.warning(
+                    self, 'Podkłady rastrowe',
+                    'Mapa została otwarta, ale ustawienia podkładów są '
+                    f'nieprawidłowe: {raster_error}')
+            self._refresh_raster_panel()
             self.source_compilation_scale = detect_source_compilation_scale(doc.objects)
             saved = self.settings.value(self._compilation_scale_key(file), None)
             self.compilation_scale = validated_compilation_scale(
@@ -1278,7 +1309,11 @@ class GeoStudioWindow(QMainWindow):
     def rebuild_scene(self, *, fit=True, reselect=''):
         if not self.doc:
             return
+        # The renderer clears QGraphicsScene: recreate each background
+        # pixmap after every geometry / label rebuild, never above vectors.
+        self._raster_overlay.clear_items()
         result = build_scene(self.map_scene, self.doc, self._render_context())
+        self._raster_overlay.attach(self.map_scene)
         self.geometry_index = result.geometry_index
         self.layer_for_uid = result.layer_for_uid
         self.graphics_for_uid = result.graphics_for_uid
@@ -1602,6 +1637,11 @@ class GeoStudioWindow(QMainWindow):
 
     def select_at(self, x, y, cycle=False, additive=False):
         if not self.doc:
+            return
+        if self._raster_map_picker is not None:
+            callback = self._raster_map_picker
+            self._raster_map_picker = None
+            callback(x, y)
             return
         candidates = self._pick_candidates(x, y)
         uids = [obj.uid for obj in candidates]
