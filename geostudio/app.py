@@ -2424,7 +2424,7 @@ class GeoStudioWindow(QMainWindow):
             self.object_title.setText(title)
             self.object_title.setToolTip(title)
             self.object_details.setText(
-                f'Kod {obj.code}  ·  {resolve_layer(self.catalog, obj.code)}')
+                f'Kod {obj.code}  ·  {self.layer_for_uid.get(obj.uid) or resolve_layer(self.catalog, obj.code)}')
             area = (f'  •  {obj.area_m2 / 10000:,.4f} ha'
                     if obj.area_m2 is not None else '')
             self.object_metrics.setText(
@@ -2437,7 +2437,8 @@ class GeoStudioWindow(QMainWindow):
         else:
             entries = [('Kod', obj.code),
                        ('Nazwa symbolu', self.symbols.get(obj.code, '—')),
-                       ('Warstwa', resolve_layer(self.catalog, obj.code)),
+                       ('Warstwa', self.layer_for_uid.get(obj.uid) or
+                        resolve_layer(self.catalog, obj.code)),
                        ('ID', obj.uid), ('Wierzchołki', str(len(obj.points)))]
             if obj.area_m2 is not None:
                 entries.append(('Pole geometryczne',
@@ -3258,7 +3259,8 @@ class GeoStudioWindow(QMainWindow):
         obj = self.doc.by_id[uid]
         dialog = ObjectParametersDialog(
             obj, symbols=self.symbols,
-            layer_name=resolve_layer(self.catalog, obj.code), parent=self)
+            layer_name=self.layer_for_uid.get(uid) or
+                       resolve_layer(self.catalog, obj.code), parent=self)
         if dialog.exec() != QDialog.Accepted:
             return
         changes = dialog.changed_fields()
