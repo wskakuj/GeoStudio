@@ -31,7 +31,7 @@ class AttributeLabelsDialog(QDialog):
     def __init__(self, code: str, current: dict | None = None, parent=None):
         super().__init__(parent)
         self.setWindowTitle(f"Etykietowanie atrybutów — kod {code}")
-        self.setMinimumSize(690, 490)
+        self.setMinimumSize(725, 510)
         self.code = code
         current_fields = (current or {}).get("fields", {})
         root = QVBoxLayout(self)
@@ -48,6 +48,8 @@ class AttributeLabelsDialog(QDialog):
         self.table.horizontalHeader().setSectionResizeMode(
             2, QHeaderView.Stretch)
         self.table.verticalHeader().hide()
+        self.table.verticalHeader().setDefaultSectionSize(39)
+        self.table.setWordWrap(False)
         self.table.setAlternatingRowColors(True)
         for row, field in enumerate(ATTRIBUTE_FIELDS):
             saved = current_fields.get(field, {})
@@ -73,20 +75,25 @@ class AttributeLabelsDialog(QDialog):
             color_item.setBackground(color if color.isValid()
                                      else QColor("#243A45"))
             self.table.setItem(row, 4, color_item)
+            picker = QPushButton(color_item.text(), self.table)
+            picker.setObjectName(f"GeoStudioLabelColor_{field}")
+            picker.setToolTip(f"Kliknij, aby wybrać kolor etykiety {field} z palety")
+            picker.setStyleSheet(
+                "QPushButton { background-color: " + color_item.text() +
+                "; color: " + ("#FFFFFF" if color.lightness() < 140 else "#152231") +
+                "; border: 1px solid #738393; border-radius: 5px; padding: 3px; }")
+            picker.clicked.connect(lambda _checked=False, idx=row: self.change_color(idx))
+            self.table.setCellWidget(row, 4, picker)
         root.addWidget(self.table)
-        controls = QHBoxLayout()
-        self.choose_color = QPushButton("Wybierz kolor zaznaczonego pola…")
-        self.choose_color.clicked.connect(self.change_color)
-        controls.addWidget(self.choose_color)
-        root.addLayout(controls)
         buttons = QDialogButtonBox(QDialogButtonBox.Save | QDialogButtonBox.Cancel)
         buttons.button(QDialogButtonBox.Save).setText("Zastosuj etykiety")
         buttons.accepted.connect(self.accept)
         buttons.rejected.connect(self.reject)
         root.addWidget(buttons)
 
-    def change_color(self):
-        row = self.table.currentRow()
+    def change_color(self, row=None):
+        if row is None:
+            row = self.table.currentRow()
         if row < 0:
             return
         item = self.table.item(row, 4)
@@ -96,6 +103,14 @@ class AttributeLabelsDialog(QDialog):
         if color.isValid():
             item.setText(color.name().upper())
             item.setBackground(color)
+            picker = self.table.cellWidget(row, 4)
+            if picker is not None:
+                picker.setText(item.text())
+                picker.setStyleSheet(
+                    "QPushButton { background-color: " + item.text() +
+                    "; color: " + ("#FFFFFF" if color.lightness() < 140
+                                  else "#152231") +
+                    "; border: 1px solid #738393; border-radius: 5px; padding: 3px; }")
 
     def specification(self):
         result = {}

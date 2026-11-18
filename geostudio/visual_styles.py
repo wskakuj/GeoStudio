@@ -116,6 +116,15 @@ def validated_styles(styles: dict) -> dict[str, dict]:
                 entry = {"opacity": opacity}
                 if "fill" in style:
                     entry["fill"] = parse_fill_code(str(style["fill"]))[0]
+                    if style.get("force_fill") is True:
+                        entry["force_fill"] = True
+                if "stroke" in style:
+                    entry["stroke"] = parse_fill_code(str(style["stroke"]))[0]
+                if "stroke_width" in style:
+                    from math import isfinite
+                    width = float(style["stroke_width"])
+                    if isfinite(width):
+                        entry["stroke_width"] = max(0.5, min(12.0, width))
                 cleaned[uid] = entry
             except (KeyError, ValueError, TypeError):
                 continue

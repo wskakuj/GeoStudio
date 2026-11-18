@@ -20,7 +20,7 @@ try:
         QGraphicsPathItem, QGraphicsEllipseItem, QGraphicsRectItem, QGraphicsPixmapItem, QGraphicsSimpleTextItem, QGraphicsItem, QDockWidget,
         QTreeWidget, QTreeWidgetItem, QToolBar, QMessageBox, QStatusBar, QInputDialog, QMenu,
         QLabel, QWidget, QVBoxLayout, QHeaderView, QSplitter, QComboBox, QTextEdit,
-        QDialog, QDialogButtonBox, QFormLayout, QLineEdit, QHBoxLayout, QPushButton, QSpinBox, QSlider, QColorDialog, QToolButton, QFrame, QTabWidget, QTableWidget, QTableWidgetItem, QProgressDialog)
+        QDialog, QDialogButtonBox, QFormLayout, QLineEdit, QHBoxLayout, QPushButton, QSpinBox, QDoubleSpinBox, QSlider, QColorDialog, QToolButton, QFrame, QTabWidget, QTableWidget, QTableWidgetItem, QProgressDialog)
 except ImportError as exc:
     raise SystemExit('Zainstaluj GUI: python -m pip install -e .\nBrakuje PySide6') from exc
 
@@ -1030,6 +1030,30 @@ class GeoStudioWindow(QMainWindow):
         apply_button.setObjectName('GeoStudioPrimaryButton')
         apply_button.clicked.connect(self.apply_fill_style)
         style_layout.addWidget(apply_button)
+        outline_heading = QLabel('OBRYS WSZYSTKICH OBIEKTÓW KODU')
+        outline_heading.setObjectName('GeoStudioSectionHeading')
+        style_layout.addWidget(outline_heading)
+        self.outline_code_label = QLabel('Najpierw wskaż obiekt')
+        style_layout.addWidget(self.outline_code_label)
+        outline_form = QFormLayout()
+        self.outline_color = QColor('#243A45')
+        self.outline_color_button = QPushButton('Kolor linii…')
+        self.outline_color_button.setObjectName('GeoStudioOutlineColor')
+        self.outline_color_button.clicked.connect(self.choose_outline_color)
+        outline_form.addRow('Obrys', self.outline_color_button)
+        self.outline_width = QDoubleSpinBox()
+        self.outline_width.setObjectName('GeoStudioOutlineWidth')
+        self.outline_width.setDecimals(1)
+        self.outline_width.setRange(0.5, 12)
+        self.outline_width.setSingleStep(0.5)
+        self.outline_width.setSuffix(' px')
+        self.outline_width.setValue(1.0)
+        outline_form.addRow('Grubość', self.outline_width)
+        style_layout.addLayout(outline_form)
+        apply_outline = QPushButton('Zastosuj obrys do całego kodu')
+        apply_outline.setObjectName('GeoStudioApplyCodeOutline')
+        apply_outline.clicked.connect(self.apply_code_outline)
+        style_layout.addWidget(apply_outline)
         style_hint = QLabel('Zmiany wyglądu są zapisywane w pliku GeoStudio obok kopii. '
                             'Oryginalny MAP pozostaje nietknięty.')
         style_hint.setWordWrap(True)
@@ -1184,6 +1208,39 @@ class GeoStudioWindow(QMainWindow):
             self.map_scene.addItem(item)
             self.decoration_items[uid] = item
 
+    def _map_legend_entries(self):
+        """Build the legend from codes actually present in this MAP.
+
+        Previously every map got the same seven unrelated sample species.
+        Keep editable, GEO-MAP-independent entries for all real layer codes.
+        """
+        if not self.doc:
+            return []
+        found = {}
+        for obj in self.doc.objects:
+            if not obj.points or obj.code in {"5200", "6000", "6301", "7900"}:
+                continue
+            # Land-use subdivisions have meaningful A1 values.
+            subtype = obj.fields.get("A1", "").strip() if obj.code == "5230" else ""
+            key = (obj.code, subtype.casefold())
+            if key in found:
+                continue
+            name = (self.symbols.get(obj.code)
+                    or resolve_layer(self.catalog, obj.code)
+                    or "Obiekt")
+            label = f"{obj.code}  {name}"
+            if subtype:
+                label += f"  ·  {subtype}"
+            style = self.visual_styles.get("code:" + obj.code, {})
+            native = native_fill_color(obj.style)
+            base = (style.get("fill") or
+                    (QColor(*native).name().upper() if native else
+                     QColor(*obj.colorref).name().upper()))
+            found[key] = {"name": label[:180], "color": base}
+            if len(found) >= 100:
+                break
+        return [found[key] for key in sorted(found)]
+
     def insert_map_decoration(self, kind, *, x=None, y=None):
         """Insert a map-anchored vector template at the cursor or view centre."""
         if not self.doc:
@@ -1193,6 +1250,11 @@ class GeoStudioWindow(QMainWindow):
             centre = self.view.mapToScene(self.view.viewport().rect().center())
             x, y = centre.x(), -centre.y()
         uid, data = new_decoration(kind, x, y)
+        if kind == "legend":
+            entries = self._map_legend_entries()
+            if entries:
+                data["items"] = entries
+                data["details"] = "\n".join(item["name"] for item in entries)
         with self.history.begin('Wstawiono: ' + KINDS[kind],
                                 selection_before=self.selected_uids):
             self.visual_styles[uid] = data
@@ -2377,8 +2439,14 @@ class GeoStudioWindow(QMainWindow):
             row.setToolTip(0, str(key))
             row.setToolTip(1, str(value))
             self.props.addTopLevelItem(row)
+        code_style = self.visual_styles.get('code:' + obj.code, {})
         current = self.visual_styles.get(self.selected_uid)
-        if current:
+        # Bulk layer overrides are intentionally stronger than earlier
+        # individual fills. Reflect the actual paint instead of a stale UID.
+        if code_style.get("force_fill") and "fill" in code_style:
+            opacity = code_style.get("opacity", self._default_fill_opacity())
+            color_code = fill_code(code_style["fill"], opacity)
+        elif current and "fill" in current and "opacity" in current:
             color_code = fill_code(current['fill'], current['opacity'])
             opacity = current['opacity']
         else:
@@ -2388,8 +2456,18 @@ class GeoStudioWindow(QMainWindow):
                 *(native if native else obj.colorref)).name()))
             opacity = code_style.get('opacity', self._default_fill_opacity())
             color_code = fill_code(base.name().upper(), opacity)
-        self.fill_entry.setText(color_code)
-        self.opacity_spin.setValue(opacity)
+        # Avoid cascading textChanged/valueChanged while the inspector is
+        # restoring saved values. The old path sometimes reset % to 100.
+        self.fill_entry.blockSignals(True)
+        self.opacity_spin.blockSignals(True)
+        try:
+            self.fill_entry.setText(color_code)
+            self.opacity_spin.setValue(opacity)
+        finally:
+            self.fill_entry.blockSignals(False)
+            self.opacity_spin.blockSignals(False)
+        self._update_fill_preview()
+        self._update_outline_controls(obj.code)
 
     def _select_uid(self, uid):
         pinned = [value for value in self.pinned_uids
@@ -2638,9 +2716,13 @@ class GeoStudioWindow(QMainWindow):
                 key = "code:" + code
                 self.visual_styles[key] = {
                     **self.visual_styles.get(key, {}),
-                    "fill": chosen.name().upper(), "opacity": opacity}
+                    "fill": chosen.name().upper(), "opacity": opacity,
+                    "force_fill": True}
         self._history_changed()
         self._refresh_fill_brushes(force=True)
+        if self.selected_uid:
+            self.props.clear()
+            self._show_selection_properties()
         self._autosave_work_copy()
         self.status.showMessage(
             f"Nowy kolor warstwy «{layer}» dla {len(codes)} kodów.")
@@ -2862,6 +2944,63 @@ class GeoStudioWindow(QMainWindow):
         if picked.isValid():
             self.fill_entry.setText(fill_code(picked.name().upper(),
                                               self.opacity_spin.value()))
+
+    def _update_outline_controls(self, code):
+        style = self.visual_styles.get("code:" + code, {})
+        self.outline_code_label.setText("Kod " + code)
+        self.outline_color = QColor(style.get("stroke", "#243A45"))
+        if not self.outline_color.isValid():
+            self.outline_color = QColor("#243A45")
+        self.outline_width.setValue(float(style.get("stroke_width", 1.0)))
+        ink = self.outline_color
+        self.outline_color_button.setText("Kolor linii: " + ink.name().upper())
+        self.outline_color_button.setStyleSheet(
+            "background-color: " + ink.name() + "; color: " +
+            ("#FFFFFF" if ink.lightness() < 140 else "#102231") +
+            "; border: 1px solid #8293A2; border-radius: 5px; padding: 6px;")
+
+    def choose_outline_color(self):
+        code = (self.doc.by_id[self.selected_uid].code
+                if self.doc and self.selected_uid else "")
+        if not code:
+            QMessageBox.information(self, "Kolor obrysu", "Wskaż obiekt na mapie.")
+            return
+        chosen = QColorDialog.getColor(
+            self.outline_color, self, "Kolor obrysu kodu " + code)
+        if chosen.isValid():
+            self.outline_color = chosen
+            self.outline_color_button.setText("Kolor linii: " + chosen.name().upper())
+            self.outline_color_button.setStyleSheet(
+                "background-color: " + chosen.name() + "; color: " +
+                ("#FFFFFF" if chosen.lightness() < 140 else "#102231") +
+                "; border: 1px solid #8293A2; border-radius: 5px; padding: 6px;")
+
+    def apply_code_outline(self):
+        if not self.doc or not self.selected_uid:
+            QMessageBox.information(self, "Obrys", "Zaznacz obiekt, aby określić kod.")
+            return
+        code = self.doc.by_id[self.selected_uid].code
+        key = "code:" + code
+        before = self.visual_styles.get(key, {})
+        updated = {
+            **before, "opacity": before.get("opacity", self._default_fill_opacity()),
+            "stroke": self.outline_color.name().upper(),
+            "stroke_width": self.outline_width.value()}
+        if updated == before:
+            return
+        selected = list(self.selected_uids)
+        with self.history.begin("Obrys wszystkich obiektów " + code,
+                                selection_before=selected):
+            self.visual_styles[key] = updated
+        self._history_changed()
+        # Pens are native QGraphicsItems; rebuild to replace every code pen,
+        # retaining each object's unique GEO-MAP geometry and labels.
+        self.rebuild_scene(fit=False)
+        self._set_selected_uids(selected)
+        self._autosave_work_copy()
+        self.status.showMessage(
+            f"Zmieniono kolor i grubość konturu kodu {code} "
+            f"({self.outline_width.value():.1f} px). Ctrl+Z cofa zmianę.")
 
     def copy_fill_code(self):
         try:

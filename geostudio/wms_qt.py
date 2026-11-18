@@ -42,6 +42,9 @@ class WMSPreviewOverlay:
         self.bounds: WMSBounds | None = None
         self.opacity = 0.70
         self.visible = True
+        # EGiB boundaries and parcel numbers must remain legible OVER the
+        # map's colored polygons; aerial photography stays UNDER vectors.
+        self.above_vectors = False
         self.item: QGraphicsPixmapItem | None = None
         self.title = ""
         self.source: WMSMapSource | None = None
@@ -61,6 +64,7 @@ class WMSPreviewOverlay:
         self.bounds = None
         self.title = ""
         self.source = None
+        self.above_vectors = False
 
     def set_image(self, data: bytes, bounds: WMSBounds, title: str):
         pixmap = QPixmap()
@@ -86,7 +90,7 @@ class WMSPreviewOverlay:
         item.setTransform(scene_item_transform(
             self.bounds, self.image.width(), self.image.height()))
         item.setTransformationMode(Qt.TransformationMode.SmoothTransformation)
-        item.setZValue(-50_000)
+        item.setZValue(300 if self.above_vectors else -50_000)
         item.setOpacity(self.opacity)
         item.setAcceptedMouseButtons(Qt.MouseButton.NoButton)
         item.setFlag(item.GraphicsItemFlag.ItemIsSelectable, False)
@@ -129,6 +133,9 @@ class WMSDialog(QDialog):
         self.server_selector.addItem(
             "Geoportal — ortofotomapa wysokiej rozdzielczości",
             "https://mapy.geoportal.gov.pl/wss/service/PZGIK/ORTO/WMS/HighResolution")
+        self.server_selector.addItem(
+            "Działki ewidencyjne + numery (GUGiK KIEG)",
+            "https://integracja.gugik.gov.pl/cgi-bin/KrajowaIntegracjaEwidencjiGruntow")
         self.server_selector.addItem("Własny adres serwera WMS…", "custom")
         self.server_selector.addItem(
             "SmartSDI — dane EGiB/PRG (wtyczka QGIS, nie WMS)", "smartsdi")
@@ -140,7 +147,8 @@ class WMSDialog(QDialog):
         self.address.textEdited.connect(self._custom_address_entered)
         form.addRow("Adres WMS", self.address)
         preset = self.server_selector.findData(self.address.text())
-        self.server_selector.setCurrentIndex(preset if preset >= 0 else 2)
+        self.server_selector.setCurrentIndex(
+            preset if preset >= 0 else self.server_selector.findData("custom"))
         # Ordinary users should select one of the actual server-advertised
         # layers, not guess an internal identifier in an editable text field.
         self.layer_selector = QComboBox()
@@ -173,7 +181,7 @@ class WMSDialog(QDialog):
         self.capabilities_button = QPushButton("Pobierz warstwy")
         self.capabilities_button.clicked.connect(self.fetch_layers)
         controls.addWidget(self.capabilities_button)
-        self.map_button = QPushButton("Pokaż WMS pod mapą")
+        self.map_button = QPushButton("Pokaż wybraną warstwę WMS")
         self.map_button.setObjectName("GeoStudioPrimaryButton")
         self.map_button.clicked.connect(self.fetch_map)
         self.map_button.setEnabled(False)
@@ -217,6 +225,8 @@ class WMSDialog(QDialog):
             self.capabilities_button.setEnabled(True)
         if selected not in ("custom", None):
             self.address.setText(selected)
+        if selected and "KrajowaIntegracjaEwidencjiGruntow" in selected:
+            self.opacity.setValue(100) if hasattr(self, "opacity") else None
         if hasattr(self, "layer_selector"):
             self._show_layers_failure()
 
@@ -308,6 +318,26 @@ class WMSDialog(QDialog):
                     "Serwer odpowiedział, ale nie udostępnił żadnej warstwy WMS. "
                     "Sprawdź adres usługi GetCapabilities.")
                 return
+            # The official GUGiK KIEG publishes the parcel boundaries and
+            # number text as separate WMS layers. A synthetic selection joins
+            # both into ONE GetMap using the standard comma-separated LAYERS.
+            # Only offer the preset when both are advertised by the service.
+            if "KrajowaIntegracjaEwidencjiGruntow" in self.address.text():
+                by_name = {item.name.casefold(): item for item in self._layers}
+                parcels = by_name.get("dzialki")
+                numbers = by_name.get("numery_dzialek")
+                if parcels and numbers:
+                    # Use only CRS codes supported by *both* layers.
+                    common = tuple(sorted(set(parcels.crs) & set(numbers.crs)))
+                    if not parcels.crs or not numbers.crs:
+                        common = parcels.crs or numbers.crs
+                    combo = WMSLayerInfo(
+                        "dzialki,numery_dzialek", "Działki i numery ewidencyjne",
+                        common, "Źródło: GUGiK, KIEG WMS")
+                    self._layers.insert(0, combo)
+                    self.message.setText(
+                        "Działki i numery są warstwą przeglądową WMS, a nie "
+                        "geometrią do edycji. Wybierz zgodny układ MAP i kliknij Pokaż WMS.")
             for info in self._layers:
                 label = info.title if info.title == info.name else f"{info.title}  ({info.name})"
                 self.layer_selector.addItem(label, info.name)
@@ -360,6 +390,8 @@ class WMSDialog(QDialog):
             return
         self.window.settings.setValue("wms/last_url", self.address.text())
         self.window._wms_preview.opacity = self.opacity.value() / 100.
+        self.window._wms_preview.above_vectors = (
+            "KrajowaIntegracjaEwidencjiGruntow" in self.address.text())
         source = WMSMapSource(
             self.address.text(), layer.name, crs,
             layer.attribution or layer.title)
