@@ -30,6 +30,7 @@ class MapView(QGraphicsView):
     undo_polygon_point = Signal()
     cancel_action = Signal()
     vertex_hover = Signal(float, float, int)
+    vertex_activate = Signal(float, float)
     vertex_commit = Signal(float, float, int)
     edge_insert = Signal(float, float)
     label_press = Signal(float, float)
@@ -146,6 +147,14 @@ class MapView(QGraphicsView):
                 pos = event.position().toPoint()
                 distances = [(self.mapFromScene(QPointF(px, -py)) - pos).manhattanLength()
                              for px, py in self.edit_points]
+                near_current = bool(distances) and min(distances) <= 18
+                if not near_current:
+                    # Synchronously switch to a polygon of the *same code*
+                    # under the mouse. The very same press can then begin
+                    # dragging its vertex; a second selection is not required.
+                    self.vertex_activate.emit(x, y)
+                    distances = [(self.mapFromScene(QPointF(px, -py)) - pos).manhattanLength()
+                                 for px, py in self.edit_points]
                 if distances:
                     idx = min(range(len(distances)), key=distances.__getitem__)
                     if distances[idx] <= 18:
