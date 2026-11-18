@@ -55,7 +55,28 @@ def validated_styles(styles: dict) -> dict[str, dict]:
                 if any(ord(c) < 32 and c not in "\n\t" for c in value):
                     value = ""
                 texts[key] = value
-            cleaned[uid] = {"kind": kind, "x": x, "y": y, **texts}
+            try:
+                size = float(style.get("scale", 1.0))
+            except (TypeError, ValueError):
+                size = 1.0
+            if not isfinite(size):
+                size = 1.0
+            size = max(0.25, min(8.0, size))
+            item_rows = []
+            if kind == "legend":
+                for row in style.get("items", [])[:100] if isinstance(style.get("items"), list) else []:
+                    if not isinstance(row, dict):
+                        continue
+                    color = str(row.get("color", "#91ABA7"))
+                    try:
+                        color = parse_fill_code(color)[0]
+                    except ValueError:
+                        color = "#91ABA7"
+                    item_rows.append({"name": str(row.get("name", ""))[:180],
+                                      "color": color})
+            cleaned[uid] = {"kind": kind, "x": x, "y": y, "scale": size, **texts}
+            if kind == "legend" and isinstance(style.get("items"), list):
+                cleaned[uid]["items"] = item_rows
             continue
         if uid.startswith("legacy-hidden:") and len(uid) < 300:
             if style.get("hidden") is True:
