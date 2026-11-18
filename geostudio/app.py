@@ -3192,13 +3192,17 @@ class GeoStudioWindow(QMainWindow):
         self.snap_marker.setPos(px, -py)
 
     def commit_vertex(self, x, y, index):
-        if (not self.view.edit_mode or not self.edit_uid or
-                not 0 <= index < len(self.view.edit_points)):
+        if not self.view.edit_mode or not self.edit_uid or not self.doc:
+            return
+        obj = self.doc.by_id.get(self.edit_uid)
+        if obj is None or not 0 <= index < len(obj.points) - 1:
             return
         snap = self._snap(x, y, exclude_uid=self.edit_uid)
+        # Read the original coordinate from the document, not temporary
+        # handles: mouse-driven edits and undo tests both use this path.
+        old_point = obj.points[index]
         if snap and math.hypot(
-                snap.x - self.view.edit_points[index][0],
-                snap.y - self.view.edit_points[index][1]) <= self._map_radius(6):
+                snap.x - old_point.x, snap.y - old_point.y) <= self._map_radius(6):
             snap = None
         px, py = (snap.x,snap.y) if snap else (x,y)
         try:
