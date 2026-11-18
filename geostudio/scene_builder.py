@@ -18,10 +18,10 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from PySide6.QtCore import QPointF, Qt
-from PySide6.QtGui import QBrush, QColor, QFont, QPainterPath, QPen
+from PySide6.QtGui import QBrush, QColor, QFont, QPainterPath, QPen, QTextOption
 from PySide6.QtWidgets import (QGraphicsEllipseItem, QGraphicsItem,
                                QGraphicsPathItem, QGraphicsScene,
-                               QGraphicsSimpleTextItem)
+                               QGraphicsSimpleTextItem, QGraphicsTextItem)
 
 from .geomap import GeoMap, GeoObject, resolve_layer
 from .geometry_index import GeometryIndex
@@ -271,7 +271,18 @@ def build_scene(scene: QGraphicsScene, doc: GeoMap, ctx: RenderContext) -> Scene
                 max(xs) - min(xs), max(ys) - min(ys))
         line_count=len(labels)
         for line_index, (field,content) in enumerate(labels):
-            label = QGraphicsSimpleTextItem(content)
+            # GEO-MAP uses a vertical bar in building A2 to separate lines:
+            # e.g. "Ol75|II-0.5" is two stacked rows, not literal text.
+            # Keep the whole A2 as *one* graphics item so dragging it and
+            # storing a sidecar position move both rows together.
+            multiline_a2 = obj.code == '5310' and field == 'A2' and '|' in content
+            if multiline_a2:
+                label = QGraphicsTextItem()
+                label.setPlainText(content.replace('|', '\n'))
+                label.document().setDocumentMargin(0)
+                label.document().setDefaultTextOption(QTextOption(Qt.AlignHCenter))
+            else:
+                label = QGraphicsSimpleTextItem(content)
             font = QFont('Segoe UI')
             ratio = .55
             if obj.code == '5310':
@@ -307,7 +318,10 @@ def build_scene(scene: QGraphicsScene, doc: GeoMap, ctx: RenderContext) -> Scene
                 color=QColor('#58686F')
                 color.setAlpha(180)
             label.setFont(font)
-            label.setBrush(QBrush(color))
+            if multiline_a2:
+                label.setDefaultTextColor(color)
+            else:
+                label.setBrush(QBrush(color))
             label.setAcceptedMouseButtons(Qt.NoButton)
             bounds=label.boundingRect()
             ratio=label_ratio(obj.code,obj.fields,bounds.height(),
