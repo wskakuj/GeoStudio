@@ -20,7 +20,7 @@ try:
         QGraphicsPathItem, QGraphicsEllipseItem, QGraphicsRectItem, QGraphicsPixmapItem, QGraphicsSimpleTextItem, QGraphicsItem, QDockWidget,
         QTreeWidget, QTreeWidgetItem, QToolBar, QMessageBox, QStatusBar, QInputDialog, QMenu,
         QLabel, QWidget, QVBoxLayout, QHeaderView, QSplitter, QComboBox, QTextEdit,
-        QDialog, QDialogButtonBox, QFormLayout, QLineEdit, QHBoxLayout, QPushButton, QSpinBox, QSlider, QColorDialog, QToolButton, QFrame, QTabWidget, QTableWidget, QTableWidgetItem)
+        QDialog, QDialogButtonBox, QFormLayout, QLineEdit, QHBoxLayout, QPushButton, QSpinBox, QSlider, QColorDialog, QToolButton, QFrame, QTabWidget, QTableWidget, QTableWidgetItem, QProgressDialog)
 except ImportError as exc:
     raise SystemExit('Zainstaluj GUI: python -m pip install -e .\nBrakuje PySide6') from exc
 
@@ -33,7 +33,7 @@ from .map_tools import MapView
 from .map_decorations import KINDS, DecorationItem, new_decoration
 from .selection import (SelectionContext, highlight_path, pick_candidates,
                         resolve_click, snap_at, toggle_selection, visible_uids)
-from .exporters import render_scene_image, save_image, write_dxf
+from .exporters import render_scene_image, render_print_image, save_image, write_dxf
 from .history import History, HistoryConflict
 from .map_layout import (detect_source_compilation_scale, validated_compilation_scale,
     label_ratio, source_text_height, text_line_offset, DEFAULT_SCALE)
@@ -3769,18 +3769,75 @@ class GeoStudioWindow(QMainWindow):
         dialog.raise_()
 
     def export_image(self):
-        if not self.doc:return
-        file,_=QFileDialog.getSaveFileName(self,'Eksport widoku mapy',str(Path.home()/'mapa.png'),
-            'PNG (*.png);;JPEG (*.jpg);;TIFF (*.tif)')
-        if not file:return
+        """High-quality export of the full map with screen-matching orientation."""
+        if not self.doc:
+            return
+        file, _ = QFileDialog.getSaveFileName(
+            self, "Eksport mapy do wydruku", str(Path.home() / "mapa.png"),
+            "PNG (*.png);;JPEG (*.jpg *.jpeg);;TIFF (*.tif *.tiff)")
+        if not file:
+            return
+        width, ok = QInputDialog.getInt(
+            self, "Rozdzielczość eksportu",
+            "Szerokość gotowego obrazu [px]\n"
+            "2600 — ekran; 6000 — wysoka; 10000 — druk; 14000 — wielki format.\n"
+            "Dla bardzo dużych map limit pamięci może wymagać zmniejszenia wartości.",
+            10000, 1000, 20000, 500)
+        if not ok:
+            return
+        progress = QProgressDialog(
+            "Przygotowywanie eksportu…", "", 0, 100, self)
+        progress.setWindowTitle("Eksport mapy — PNG/JPG/TIFF")
+        progress.setCancelButton(None)
+        progress.setMinimumDuration(0)
+        progress.setWindowModality(Qt.WindowModal)
+        progress.setValue(0)
+        progress.show()
+        def report(percentage, message):
+            progress.setLabelText(message)
+            progress.setValue(percentage)
+            QApplication.processEvents()
+        # Selection edges, edit handles and floating guides are UI aids,
+        # not print content. Restore their original visibility afterwards.
+        print_hidden = []
+        for item in ([self.highlight_item, self.snap_marker, self.draft_item] +
+                     list(self.edit_handles) + list(self._selected_label_frames)):
+            if item is not None and item.isVisible():
+                print_hidden.append(item)
+                item.setVisible(False)
+        selected_decorations = [
+            item for item in self.decoration_items.values() if item.isSelected()]
+        for item in selected_decorations:
+            item.setSelected(False)
         try:
-            img=render_scene_image(self.map_scene)
-            if img is None:return
-            if not save_image(img,file):
-                # TIFF writer availability is platform-dependent.
-                raise RuntimeError('Format niedostępny w tej instalacji Qt; wybierz PNG/JPG.')
-            self.status.showMessage('Zapisano obraz: '+file)
-        except Exception as exc:QMessageBox.warning(self,'Błąd eksportu',str(exc))
+            report(5, "Analiza rozmiaru i orientacji mapy…")
+            image = render_print_image(
+                self.map_scene, self.view.transform(), width=width, progress=report)
+            if image is None:
+                raise ValueError("Mapa jest pusta.")
+            report(88, "Zapisywanie pliku " + Path(file).suffix.upper() + "…")
+            if not save_image(image, file):
+                raise RuntimeError(
+                    "Format niedostępny w tej instalacji Qt; wybierz PNG/JPG. "
+                    "Eksport TIFF wymaga obsługi TIFF w zainstalowanych pluginach Qt.")
+            size = f"{image.width()} × {image.height()} px"
+            report(100, "Eksport zakończony.")
+            self.status.showMessage("Eksport zakończony: " + size + " — " + file)
+            QMessageBox.information(
+                self, "Mapa wyeksportowana",
+                f"Zapisano: {Path(file).name}\nRozdzielczość: {size}\n"
+                "Orientacja zgodna z aktualnym widokiem mapy. "
+                "Metadane drukarskie: 300 DPI.")
+        except Exception as exc:
+            QMessageBox.warning(self, "Błąd eksportu", str(exc))
+        finally:
+            for item in print_hidden:
+                if item.scene() is self.map_scene:
+                    item.setVisible(True)
+            for item in selected_decorations:
+                if item.scene() is self.map_scene:
+                    item.setSelected(True)
+            progress.close()
 
     def export_dxf(self):
         if not self.doc:return
