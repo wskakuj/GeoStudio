@@ -47,6 +47,7 @@ from .gis_ribbon import GISRibbon
 from .command_palette import CommandPalette
 from .wms_qt import WMSPreviewOverlay, WMSDialog
 from .wms_service import google_maps_reference_url
+from .google_preview import GoogleMapsPreviewDialog
 from .library_render import (parse_cdf, parse_sym_primitives, cdf_for_object,
     native_fill_color, simple_point_segments, simple_point_circles,
     parse_lay_pen_styles, lay_for_code,
@@ -144,6 +145,7 @@ class GeoStudioWindow(QMainWindow):
         self.history = History(_MapHistoryTarget(self))
         self._wms_preview = WMSPreviewOverlay()
         self._wms_dialog = None
+        self._google_dialog = None
         self._label_history = None
         self.map_scene=QGraphicsScene(self)
         # Custom feature picking handles overlapping objects without Qt selection.
@@ -2589,27 +2591,14 @@ class GeoStudioWindow(QMainWindow):
         self._wms_dialog.raise_()
 
     def open_google_maps(self):
-        """Official Google Maps browser reference; no third-party tile scraping."""
+        """Open sanctioned Maps Embed API preview, with external fallback."""
         if not self.doc:
             QMessageBox.information(self, 'Google Maps', 'Najpierw otwórz mapę.')
             return
-        epsg = self.current_crs_epsg
-        if epsg is None:
-            options = [text for text, _ in CRS_CHOICES]
-            selected, accepted = QInputDialog.getItem(
-                self, 'Układ źródłowy GEO-MAP',
-                'Wybierz poprawny układ bieżącego MAP:', options, 0, False)
-            if not accepted:
-                return
-            epsg = dict(CRS_CHOICES)[selected]
-        rect = self.view.mapToScene(self.view.viewport().rect()).boundingRect()
-        x, y = rect.center().x(), -rect.center().y()
-        try:
-            url = google_maps_reference_url(x, y, epsg)
-            if not QDesktopServices.openUrl(QUrl(url)):
-                raise ValueError('System nie otworzył przeglądarki.')
-        except Exception as exc:
-            QMessageBox.warning(self, 'Google Maps', str(exc))
+        if self._google_dialog is None:
+            self._google_dialog = GoogleMapsPreviewDialog(self)
+        self._google_dialog.show()
+        self._google_dialog.raise_()
 
     def add_raster(self):
         file,_=QFileDialog.getOpenFileName(self,'Otwórz raster z georeferencją',str(Path.home()),'Obrazy (*.png *.jpg *.jpeg *.tif *.tiff)')
