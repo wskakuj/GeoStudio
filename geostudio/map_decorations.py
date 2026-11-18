@@ -72,7 +72,7 @@ class DecorationItem(QGraphicsItem):
     def __init__(self, uid: str, data: dict, scale: float, *, on_move, on_edit):
         super().__init__()
         self.uid = uid
-        self.data = data
+        self.layout_data = data
         self._on_move = on_move
         self._on_edit = on_edit
         self._drag_origin = QPointF()
@@ -118,15 +118,15 @@ class DecorationItem(QGraphicsItem):
 
     def paint(self, painter, option, widget=None):
         painter.setRenderHint(QPainter.Antialiasing, True)
-        kind = self.data["kind"]
+        kind = self.layout_data["kind"]
         if kind == "north":
             self._paint_north(painter)
             return
         self._panel(painter)
-        title = self.data.get("title", "")
-        subtitle = self.data.get("subtitle", "")
-        details = self.data.get("details", "")
-        area = self.data.get("area", "")
+        title = self.layout_data.get("title", "")
+        subtitle = self.layout_data.get("subtitle", "")
+        details = self.layout_data.get("details", "")
+        area = self.layout_data.get("area", "")
         self._text(painter, "GEOSTUDIO  /  OPRAWA MAPY", 24, 13,
                    self._width - 42, 18, size=10, bold=True, color=ACCENT)
         self._text(painter, title, 24, 38, self._width - 44, 52,
@@ -152,7 +152,7 @@ class DecorationItem(QGraphicsItem):
         painter.setPen(QPen(QColor("#C7D8DF"), 1.3))
         painter.setBrush(QBrush(QColor(255, 255, 255, 240)))
         painter.drawRoundedRect(QRectF(5, 5, 122, 170), 15, 15)
-        self._text(painter, self.data.get("title") or "N", 31, 10, 72, 35,
+        self._text(painter, self.layout_data.get("title") or "N", 31, 10, 72, 35,
                    size=28, bold=True, align=Qt.AlignCenter)
         up = QPainterPath(QPointF(66, 43))
         up.lineTo(34, 124)
