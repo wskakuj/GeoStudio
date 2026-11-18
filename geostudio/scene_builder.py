@@ -103,6 +103,12 @@ def object_fill_brush(obj: GeoObject, ctx: RenderContext, *, cdf=None) -> QBrush
     an orthophoto/raster is beneath the vectors so imagery remains visible.
     The original source style/colour is never changed.
     """
+    # Native land-use exception: 5230 with A1=dr/droga is a road and
+    # must have no fill, even if a whole-code tint is configured. The
+    # geometry and border remain visible, and original MAP is unchanged.
+    land_use = obj.fields.get('A1', '').strip().casefold()
+    if obj.code == '5230' and land_use in {'dr', 'droga'}:
+        return QBrush(Qt.NoBrush)
     if cdf is None:
         cdf = cdf_for_object(ctx.cdf_styles, obj.code,
                              obj.fields.get('A1', ''), obj.fields.get('A2', ''))
@@ -117,6 +123,12 @@ def object_fill_brush(obj: GeoObject, ctx: RenderContext, *, cdf=None) -> QBrush
     native = native_fill_color(obj.style)
     if 'fill' in per_code:
         color = QColor(per_code['fill'])
+    elif obj.code == '5230' and land_use.startswith('ls'):
+        color = QColor('#3D9A62')
+        # Forest land-use stays translucent even without any WMS. A manual
+        # per-code opacity override still has priority over this default.
+        if 'opacity' not in per_code:
+            opacity = 40
     elif native:
         color = QColor(*native)
     elif cdf:
@@ -125,7 +137,7 @@ def object_fill_brush(obj: GeoObject, ctx: RenderContext, *, cdf=None) -> QBrush
         return QBrush(Qt.NoBrush)
     color.setAlpha(round(max(0, min(100, opacity)) * 255 / 100))
 
-    if native or cdf is None:
+    if native or cdf is None or (obj.code == '5230' and land_use.startswith('ls')):
         return QBrush(color)
     hatch = {0: Qt.SolidPattern,
              1: Qt.Dense4Pattern, 2: Qt.Dense5Pattern,

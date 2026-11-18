@@ -17,7 +17,7 @@ try:
     from PySide6.QtCore import Qt, QPoint, QPointF, QRectF, QSize, QSettings, Signal, QTimer
     from PySide6.QtGui import QAction, QBrush, QColor, QFont, QPainterPath, QPen, QPixmap, QTransform, QActionGroup
     from PySide6.QtWidgets import (QApplication, QMainWindow, QFileDialog, QGraphicsView, QGraphicsScene,
-        QGraphicsPathItem, QGraphicsEllipseItem, QGraphicsPixmapItem, QGraphicsSimpleTextItem, QGraphicsItem, QDockWidget,
+        QGraphicsPathItem, QGraphicsEllipseItem, QGraphicsRectItem, QGraphicsPixmapItem, QGraphicsSimpleTextItem, QGraphicsItem, QDockWidget,
         QTreeWidget, QTreeWidgetItem, QToolBar, QMessageBox, QStatusBar, QInputDialog, QMenu,
         QLabel, QWidget, QVBoxLayout, QHeaderView, QSplitter, QComboBox,
         QDialog, QDialogButtonBox, QFormLayout, QLineEdit, QHBoxLayout, QPushButton, QSpinBox, QSlider, QColorDialog, QToolButton, QFrame, QTabWidget)
@@ -26,7 +26,7 @@ except ImportError as exc:
 
 from .geomap import GeoMap, GeoObject, library_layers, library_symbols, library_colors, resolve_layer
 from .interactions import polygon_is_valid, closest_point_on_edge
-from .geometry_index import GeometryIndex
+from .geometry_index import GeometryIndex, point_in_ring
 from .topology_edit import linked_vertex_moves
 from .scene_builder import RenderContext, build_scene, label_anchor, object_path, object_fill_brush
 from .map_tools import MapView
@@ -40,6 +40,9 @@ from .coordinates import (CRS_CHOICES, MODERN_EPSG, transform_xy,
     transform_map_copy, output_prj_text, transform_label_positions,
     detected_crs_from_prj)
 from .object_search import search_objects
+from .feature_dialogs import (
+    CodePickerDialog, AttributeQueryDialog, ReplaceTextDialog, replacement_plan,
+)
 from .visual_styles import (parse_fill_code, fill_code, load_styles,
     load_label_positions, write_styles, sidecar_path)
 from .ui_theme import theme_stylesheet, ui_icon
@@ -125,6 +128,7 @@ class GeoStudioWindow(QMainWindow):
         self._last_fill_opacity = None
         self.selected_uids = []
         self.highlight_items = []
+        self._selected_label_frames = []
         self.labels=[]
         self.label_world_span = {}
         self.labels_enabled = True
@@ -541,8 +545,18 @@ class GeoStudioWindow(QMainWindow):
         em.addAction(self._action('Edytuj atrybut zaznaczonego obiektu…',self.edit_selected,'F2'))
         self.delete_action = self._action('Usuń zaznaczony obiekt', self.delete_selected, 'Delete')
         em.addAction(self.delete_action)
-        em.addAction(self._action('Zaznacz wszystkie obiekty tego kodu', self.select_all_same_code, 'Ctrl+H'))
-        em.addAction(self._action('Szukaj obiektu', self.show_search, 'Ctrl+F'))
+        em.addAction(self._action('Zaawansowane zaznaczanie (kod, A1, A2)…',
+                                  self.open_selection_query, 'Ctrl+H'))
+        em.addAction(self._action('Zamiana frazy w atrybutach…',
+                                  self.open_phrase_replacement, 'Ctrl+F'))
+        for label, callback, shortcut in (
+            ('Utwórz obiekt według kodu…', self.start_code_creation, 'T'),
+            ('Wyszukaj obiekty…', self.open_search_query, 'F'),
+        ):
+            action = self._action(label, callback, shortcut)
+            action.setShortcutContext(Qt.WidgetWithChildrenShortcut)
+            self.view.addAction(action)
+            em.addAction(action)
         trans_menu = self.menuBar().addMenu('&Trans')
         trans_menu.addAction(self._action(
             'Przelicz współrzędne / eksportuj kopię MAP…',
@@ -1077,6 +1091,99 @@ class GeoStudioWindow(QMainWindow):
     def restore_panels(self):
         self.set_workspace('edit')
 
+    def start_code_creation(self):
+        """T: GEO-MAP-style code/name picker before entering drawing mode."""
+        if not self.doc:
+            QMessageBox.information(self, 'Nowy obiekt', 'Najpierw otwórz mapę.')
+            return
+        dialog = CodePickerDialog(
+            self.symbols, self.doc.objects, default=self.polygon_code, parent=self)
+        if dialog.exec() == QDialog.Accepted:
+            self._start_polygon_with_code(dialog.code.text())
+
+    def open_search_query(self):
+        """F: find first matching code/attribute or select all results."""
+        self._run_attribute_dialog(select_all=False)
+
+    def open_selection_query(self):
+        """Ctrl+H: precise selection by code and up to two attributes."""
+        self._run_attribute_dialog(select_all=True)
+
+    def _run_attribute_dialog(self, *, select_all):
+        if not self.doc:
+            QMessageBox.information(self, 'Wyszukiwanie', 'Najpierw otwórz mapę.')
+            return
+        prefilled = self.doc.by_id[self.selected_uid].code if self.selected_uid else ''
+        dialog = AttributeQueryDialog(
+            self.doc.objects, code=prefilled, select_all=select_all, parent=self)
+        if dialog.exec() != QDialog.Accepted:
+            return
+        uids = [obj.uid for obj in dialog.matches if
+                self.layer_for_uid.get(obj.uid, '') not in self.hidden_layers]
+        if not uids:
+            QMessageBox.information(
+                self, 'Wyszukiwanie', 'Nie znaleziono widocznych obiektów spełniających warunki.')
+            return
+        if dialog.select_all.isChecked():
+            if len(uids) > 1000:
+                answer = QMessageBox.question(
+                    self, 'Duża grupa obiektów',
+                    f'Zaznaczyć {len(uids)} obiektów? Może to chwilowo spowolnić mapę.',
+                    QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
+                if answer != QMessageBox.Yes:
+                    return
+            self.cancel_edit()
+            self._set_selected_uids(uids)
+        else:
+            self.select_search_uid(uids[0])
+        self.status.showMessage(
+            f'Znaleziono {len(uids)} obiektów. '
+            f'Zaznaczono {len(self.selected_uids)}.')
+
+    def open_phrase_replacement(self):
+        """Ctrl+F: replace text in an explicit attribute and scope, one Undo."""
+        if not self.doc:
+            QMessageBox.information(self, 'Zamiana frazy', 'Najpierw otwórz mapę.')
+            return
+        dialog = ReplaceTextDialog(has_selection=bool(self.selected_uids), parent=self)
+        if dialog.exec() != QDialog.Accepted:
+            return
+        spec = dialog.specification()
+        objects = (self.doc.objects if spec.all_objects else
+                   [self.doc.by_id[uid] for uid in self.selected_uids])
+        try:
+            updates = replacement_plan(objects, spec)
+        except ValueError as exc:
+            QMessageBox.warning(self, 'Zamiana frazy', str(exc))
+            return
+        if not updates:
+            QMessageBox.information(self, 'Zamiana frazy', 'Nie znaleziono pasujących wartości.')
+            return
+        answer = QMessageBox.question(
+            self, 'Potwierdź zamianę frazy',
+            f'Zamienić „{spec.needle}” na „{spec.replacement}” '
+            f'w polu {spec.field} dla {len(updates)} obiektów?\n'
+            'Wszystkie zmiany będzie można cofnąć jednym Ctrl+Z. '
+            'Oryginalny plik MAP nie zostanie nadpisany.',
+            QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
+        if answer != QMessageBox.Yes:
+            return
+        selection = list(self.selected_uids)
+        try:
+            with self.history.begin(
+                    f'Zamiana frazy w {spec.field} ({len(updates)} obiektów)',
+                    selection_before=selection):
+                self.doc.bulk_update_fields(updates)
+            self._history_changed()
+            self.rebuild_scene(fit=False)
+            self._set_selected_uids(selection)
+            saved = self._autosave_work_copy()
+            self.status.showMessage(
+                f'Zamieniono {len(updates)} wartości pola {spec.field}.' +
+                (f' Kopia: {saved}' if saved else ' Zapisz jako, aby zachować kopię.'))
+        except Exception as exc:
+            QMessageBox.warning(self, 'Nie zmieniono atrybutów', str(exc))
+
     def show_search(self):
         self.set_workspace('search')
         self.search_code.setFocus()
@@ -1265,7 +1372,7 @@ class GeoStudioWindow(QMainWindow):
             self.history = History(_MapHistoryTarget(self))
             self._raster_overlay = RasterOverlayStore()
             self._wms_preview = WMSPreviewOverlay()
-            self.hidden_layers = set()
+            self.hidden_layers = {'Graniczniki'}
             self.select_code_filter = None
             self._update_wms_attribution()
             self.current_crs_epsg = detected_crs_from_prj(file)
@@ -1526,11 +1633,17 @@ class GeoStudioWindow(QMainWindow):
         self.label_items = result.label_items
         self.label_world_span = result.label_world_span
         self.highlight_item = None
+        self._selected_label_frames = []
         self.draft_item = None
         self.snap_marker = None
         self.edit_handles = []
         self.draft_points = []
         self.current_snap = None
+        # Checkbox state and rendered visibility must always agree,
+        # including on the initial open (Graniczniki are off by default).
+        for name in self.hidden_layers:
+            for item in self.items_by_layer.get(name, ()):
+                item.setVisible(False)
         self._populate_layers()
         if fit:
             self.fit_all()
@@ -1747,6 +1860,13 @@ class GeoStudioWindow(QMainWindow):
             return
         self.selected_uids = list(dict.fromkeys(uid for uid in uids if uid in self.doc.by_id))
         self.selected_uid = self.selected_uids[-1] if self.selected_uids else ''
+        for frame in self._selected_label_frames:
+            try:
+                if frame.scene() is self.map_scene:
+                    self.map_scene.removeItem(frame)
+            except RuntimeError:
+                pass
+        self._selected_label_frames = []
         self.props.clear()
         if self.highlight_item is not None:
             self.map_scene.removeItem(self.highlight_item)
@@ -1773,6 +1893,22 @@ class GeoStudioWindow(QMainWindow):
         self.highlight_item.setZValue(1000)
         self.highlight_item.setAcceptedMouseButtons(Qt.NoButton)
         self.map_scene.addItem(self.highlight_item)
+        # The A1 and A2 descriptions belong to the selected GEO-MAP object,
+        # not independent objects. Emphasize both together with its contour.
+        if len(self.selected_uids) == 1:
+            for field in ('A1', 'A2'):
+                label = self.label_items.get((self.selected_uid, field))
+                if label is None:
+                    continue
+                frame = QGraphicsRectItem(
+                    label.boundingRect().adjusted(-3, -2, 3, 2), label)
+                frame.setBrush(QBrush(QColor(255, 190, 25, 72)))
+                border = QPen(QColor(239, 165, 19, 220), 1)
+                border.setCosmetic(True)
+                frame.setPen(border)
+                frame.setZValue(-1)
+                frame.setAcceptedMouseButtons(Qt.NoButton)
+                self._selected_label_frames.append(frame)
         self._show_selection_properties()
         self.update_label_visibility()
 
@@ -1855,12 +1991,48 @@ class GeoStudioWindow(QMainWindow):
             return
         candidates = self._pick_candidates(x, y)
         uids = [obj.uid for obj in candidates]
+        # A click on an A1/A2 text must select its owner directly. This
+        # eliminates repeated cycling through background parcels/land-use.
+        screen_point = self.view.mapFromScene(QPointF(x, -y))
+        same_spot = (self._last_pick_pos is not None and
+                     (screen_point - self._last_pick_pos).manhattanLength() <= 12 and
+                     tuple(uids) == self._last_pick_candidates)
+        if not additive and not cycle and not same_spot:
+            for item in self.view.items(screen_point):
+                uid, field = item.data(0), item.data(1)
+                if (field in {'A1', 'A2'} and uid in self.doc.by_id and
+                        self.doc.by_id[uid].code == '5310' and
+                        self.layer_for_uid.get(uid, '') not in self.hidden_layers and
+                        self.doc.by_id[uid].is_closed and
+                        point_in_ring(x, y, [(p.x, p.y)
+                                            for p in self.doc.by_id[uid].points[:-1]])):
+                    self._last_pick_pos = screen_point
+                    self._last_pick_candidates = tuple(uids)
+                    self._select_uid(uid)
+                    self.status.showMessage(
+                        f'Wybrano kod {self.doc.by_id[uid].code} poprzez etykietę {field}. '
+                        'Kliknij ponownie, aby przejść do kolejnego obiektu.')
+                    return
         if not uids:
             self._last_pick_pos = None
             self._last_pick_candidates = ()
             if not additive:
                 self._set_selected_uids([])
             return
+        # Prefer a small building 5310 over large overlapping land-use and
+        # parcel backgrounds on the first click. Repeated clicks still
+        # cycle the *entire* candidate list, one object per click.
+        if not cycle and not additive and self.selected_uid not in uids:
+            inside_buildings = [
+                uid for uid in uids
+                if (self.doc.by_id[uid].code == '5310' and
+                    self.doc.by_id[uid].is_closed and
+                    point_in_ring(x, y, [(p.x, p.y)
+                                        for p in self.doc.by_id[uid].points[:-1]]))
+            ]
+            if inside_buildings:
+                uids = inside_buildings + [
+                    uid for uid in uids if uid not in inside_buildings]
         screen = self.view.mapFromScene(QPointF(x, -y))
         repeat = (self._last_pick_pos is not None and
                   (screen - self._last_pick_pos).manhattanLength() <= 12 and
@@ -1875,7 +2047,7 @@ class GeoStudioWindow(QMainWindow):
         self.status.showMessage(
             f'Wybrano kod {self.doc.by_id[uid].code}. '
             f'Łącznie zaznaczono: {len(self.selected_uids)}. '
-            'Ctrl+klik dodaje/usuwa, Ctrl+H zaznacza cały kod.')
+            'Ctrl+klik dodaje/usuwa, Ctrl+H otwiera wybór po kodzie i atrybutach.')
 
     def select_all_same_code(self):
         if not self.doc or not self.selected_uid:
@@ -2586,15 +2758,22 @@ class GeoStudioWindow(QMainWindow):
         self.status.showMessage('Zaznaczanie [S]. Prawy przycisk pokazuje listę obiektów w miejscu kliknięcia.')
 
     def start_polygon(self):
+        """Legacy P shortcut / ribbon entry, keeping the simple code prompt."""
         if not self.doc:
             return
+        code, ok = QInputDialog.getText(
+            self, 'Nowy poligon', 'Kod GEO-MAP:', text=self.polygon_code)
+        if ok:
+            self._start_polygon_with_code(code)
+
+    def _start_polygon_with_code(self, code):
+        if not self.doc:
+            return
+        code = str(code).strip()
+        if not code.isdigit() or len(code) != 4:
+            QMessageBox.warning(self, 'Kod', 'Kod musi składać się z czterech cyfr.')
+            return
         self.cancel_edit()
-        code,ok = QInputDialog.getText(self,'Nowy poligon','Kod GEO-MAP:',text='5216')
-        if not ok:
-            return
-        if not code.isdigit() or len(code)!=4:
-            QMessageBox.warning(self,'Kod','Kod musi składać się z czterech cyfr')
-            return
         self.polygon_code = code
         self.current_polygon = []
         self.view.draw_mode = True
@@ -2606,7 +2785,9 @@ class GeoStudioWindow(QMainWindow):
         self.finish_toolbar_action.setVisible(True)
         self.undo_toolbar_action.setVisible(True)
         self.finish_action.setEnabled(True)
-        self.status.showMessage('Poligon: klikaj wierzchołki, kliknij PIERWSZY punkt lub Enter/prawy przycisk, aby zakończyć i zapisać kopię.')
+        self.status.showMessage(
+            f'Rysowanie kodu {code}: klikaj wierzchołki. Enter lub PPM kończy '
+            'poligon; Esc cofa ostatni punkt.')
 
     def preview_polygon(self, x, y):
         if not self.view.draw_mode:
@@ -2948,9 +3129,13 @@ class GeoStudioWindow(QMainWindow):
         if not self.view.edit_mode or not self.edit_uid:
             return
         snap = self._snap(x, y, exclude_uid=self.edit_uid)
-        # A linked neighbor still contains the old shared vertex while
-        # dragging. Do not snap back onto the very corner being moved.
-        if snap and snap.code == self.edit_scope_code:
+        # A polygon being edited is allowed to snap only to its own code.
+        # Never snap to or change neighboring geometry of another code.
+        # Ignore an unchanged shared point, otherwise the drag sticks there.
+        if snap and (snap.code != self.edit_scope_code or
+                     math.hypot(snap.x - self.view.edit_points[index][0],
+                                snap.y - self.view.edit_points[index][1]) <=
+                     self._map_radius(6)):
             snap = None
         px, py = (snap.x,snap.y) if snap else (x,y)
         pts = self.view.edit_points[:]
@@ -2968,7 +3153,10 @@ class GeoStudioWindow(QMainWindow):
         if not self.view.edit_mode or not self.edit_uid:
             return
         snap = self._snap(x, y, exclude_uid=self.edit_uid)
-        if snap and snap.code == self.edit_scope_code:
+        if snap and (snap.code != self.edit_scope_code or
+                     math.hypot(snap.x - self.view.edit_points[index][0],
+                                snap.y - self.view.edit_points[index][1]) <=
+                     self._map_radius(6)):
             snap = None
         px, py = (snap.x,snap.y) if snap else (x,y)
         try:
