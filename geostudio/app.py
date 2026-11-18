@@ -26,7 +26,7 @@ except ImportError as exc:
 
 from .geomap import GeoMap, GeoObject, library_layers, library_symbols, library_colors, resolve_layer
 from .interactions import polygon_is_valid, closest_point_on_edge
-from .geometry_index import GeometryIndex
+from .geometry_index import GeometryIndex, point_in_ring
 from .topology_edit import linked_vertex_moves
 from .scene_builder import RenderContext, build_scene, label_anchor, object_path, object_fill_brush
 from .map_tools import MapView
@@ -1999,7 +1999,10 @@ class GeoStudioWindow(QMainWindow):
                 uid, field = item.data(0), item.data(1)
                 if (field in {'A1', 'A2'} and uid in self.doc.by_id and
                         self.doc.by_id[uid].code == '5310' and
-                        self.layer_for_uid.get(uid, '') not in self.hidden_layers):
+                        self.layer_for_uid.get(uid, '') not in self.hidden_layers and
+                        self.doc.by_id[uid].is_closed and
+                        point_in_ring(x, y, [(p.x, p.y)
+                                            for p in self.doc.by_id[uid].points[:-1]])):
                     self._last_pick_pos = None
                     self._last_pick_candidates = ()
                     self._select_uid(uid)
@@ -2015,9 +2018,16 @@ class GeoStudioWindow(QMainWindow):
         # parcel backgrounds on the first click. Repeated clicks still
         # cycle the *entire* candidate list, one object per click.
         if not cycle and not additive and self.selected_uid not in uids:
-            buildings = [uid for uid in uids if self.doc.by_id[uid].code == '5310']
-            if buildings:
-                uids = buildings + [uid for uid in uids if uid not in buildings]
+            inside_buildings = [
+                uid for uid in uids
+                if (self.doc.by_id[uid].code == '5310' and
+                    self.doc.by_id[uid].is_closed and
+                    point_in_ring(x, y, [(p.x, p.y)
+                                        for p in self.doc.by_id[uid].points[:-1]]))
+            ]
+            if inside_buildings:
+                uids = inside_buildings + [
+                    uid for uid in uids if uid not in inside_buildings]
         screen = self.view.mapFromScene(QPointF(x, -y))
         repeat = (self._last_pick_pos is not None and
                   (screen - self._last_pick_pos).manhattanLength() <= 12 and
