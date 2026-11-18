@@ -31,6 +31,7 @@ from .topology_edit import linked_vertex_moves
 from .scene_builder import RenderContext, build_scene, label_anchor, object_path, object_fill_brush
 from .map_tools import MapView
 from .map_decorations import KINDS, DecorationItem, new_decoration
+from .label_editor import ATTRIBUTE_FIELDS, AttributeLabelsDialog
 from .selection import (SelectionContext, highlight_path, pick_candidates,
                         resolve_click, snap_at, toggle_selection, visible_uids)
 from .exporters import render_scene_image, render_print_image, save_image, write_dxf
@@ -272,6 +273,8 @@ class GeoStudioWindow(QMainWindow):
         search.action(self._action('Znajdź obiekt', self.show_search),
                       'search', large=True, text='Znajdź')
         search.control(self.selector, minimum_width=178)
+        search.action(self.tool_actions['labels'], 'label',
+                      text='Przesuń etykiety [L]')
 
         # Edit tab. All tools remain backed by their original QActionGroup.
         edit = ribbon.group('Edycja', 'Narzędzia edycji')
@@ -553,7 +556,10 @@ class GeoStudioWindow(QMainWindow):
             action.setShortcutContext(Qt.WidgetWithChildrenShortcut)
             self.view.addAction(action)
             em.addAction(action)
-        em.addAction(self._action('Przesuń podpis A1 / A2',self.start_label_edit,'L'))
+        em.addAction(self._action('Przesuń etykiety wszystkich atrybutów',
+                                  self.start_label_edit, 'L'))
+        em.addAction(self._action('Ustaw etykietowanie wybranego kodu…',
+                                  self.open_attribute_label_dialog, 'Ctrl+Alt+L'))
         self.finish_action = self._action('Zakończ i zapisz poligon',self.finish_polygon,'Return')
         em.addAction(self.finish_action)
         self.finish_action.setEnabled(False)
@@ -2071,6 +2077,39 @@ class GeoStudioWindow(QMainWindow):
                 not self.visual_styles.get('legacy-hidden:' + str(uid), {}).get('hidden')))
         self.update_view_scale_indicator()
 
+    def open_attribute_label_dialog(self, code=None):
+        if not self.doc:
+            return
+        if not isinstance(code, str) or len(code) != 4:
+            code = (self.doc.by_id[self.selected_uid].code
+                    if self.selected_uid else None)
+        if code is None:
+            codes = sorted({obj.code for obj in self.doc.objects})
+            if not codes:
+                return
+            code, ok = QInputDialog.getItem(
+                self, "Etykietowanie", "Kod obiektów", codes, 0, False)
+            if not ok:
+                return
+        key = "labels:code:" + code
+        dialog = AttributeLabelsDialog(
+            code, self.visual_styles.get(key), self)
+        if dialog.exec() != QDialog.Accepted:
+            return
+        specification = dialog.specification()
+        if self.visual_styles.get(key) == specification:
+            return
+        with self.history.begin("Etykiety atrybutów kodu " + code,
+                                selection_before=self.selected_uids):
+            self.visual_styles[key] = specification
+        self._history_changed()
+        current = self.selected_uid
+        self.rebuild_scene(fit=False, reselect=current)
+        self._autosave_work_copy()
+        self.status.showMessage(
+            f"Etykiety kodu {code} zapisane. Każdą widoczną etykietę "
+            "można przesuwać narzędziem L obok zaznaczania S.")
+
     def start_label_edit(self):
         if not self.doc:
             return
@@ -2079,10 +2118,10 @@ class GeoStudioWindow(QMainWindow):
         self.view.setCursor(Qt.CrossCursor)
         self.tool_actions['labels'].setChecked(True)
         self._set_mode_badge('PRZESUWANIE ETYKIET')
-        # Moving descriptions must not mutate GEO-MAP geometry or attributes.
         self.status.showMessage(
-            'Tryb L: przeciągnij widoczny napis A1 lub A2. '
-            'Pozycje zapisywane są w pliku GeoStudio obok kopii MAP.')
+            'Tryb L: przeciągnij dowolną widoczną etykietę atrybutu. '
+            'Ctrl+Alt+L otwiera ustawienia etykietowania kodu. '
+            'Pozycje zapisują się w pliku GeoStudio.')
 
     def begin_label_drag(self, x, y):
         self._active_label = None
@@ -2094,7 +2133,9 @@ class GeoStudioWindow(QMainWindow):
             if not item.isVisible():
                 continue
             uid, field = item.data(0), item.data(1)
-            if field not in {'A1','A2'}:
+            if field not in ATTRIBUTE_FIELDS and not (
+                    isinstance(field, str) and field.startswith("TX")
+                    and field[2:].isdigit()):
                 continue
             if self.layer_for_uid.get(uid,'') in self.hidden_layers:
                 continue
@@ -2130,7 +2171,9 @@ class GeoStudioWindow(QMainWindow):
         if item is None:
             return
         uid, field = item.data(0), item.data(1)
-        if not uid or field not in {'A1','A2'}:
+        if not uid or not (field in ATTRIBUTE_FIELDS or (
+                isinstance(field, str) and field.startswith("TX")
+                and field[2:].isdigit())):
             return
         item.setPos(x,-y)
         item.setData(2,0.0)  # explicit dragged position is the new anchor
