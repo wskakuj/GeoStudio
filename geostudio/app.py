@@ -20,7 +20,7 @@ try:
         QGraphicsPathItem, QGraphicsEllipseItem, QGraphicsRectItem, QGraphicsPixmapItem, QGraphicsSimpleTextItem, QGraphicsItem, QDockWidget,
         QTreeWidget, QTreeWidgetItem, QToolBar, QMessageBox, QStatusBar, QInputDialog, QMenu,
         QLabel, QWidget, QVBoxLayout, QHeaderView, QSplitter, QComboBox, QTextEdit,
-        QDialog, QDialogButtonBox, QFormLayout, QLineEdit, QHBoxLayout, QPushButton, QSpinBox, QSlider, QColorDialog, QToolButton, QFrame, QTabWidget)
+        QDialog, QDialogButtonBox, QFormLayout, QLineEdit, QHBoxLayout, QPushButton, QSpinBox, QSlider, QColorDialog, QToolButton, QFrame, QTabWidget, QTableWidget, QTableWidgetItem)
 except ImportError as exc:
     raise SystemExit('Zainstaluj GUI: python -m pip install -e .\nBrakuje PySide6') from exc
 
@@ -1176,7 +1176,8 @@ class GeoStudioWindow(QMainWindow):
             item = DecorationItem(
                 uid, data, factor,
                 on_move=self.move_map_decoration,
-                on_edit=self.edit_map_decoration)
+                on_edit=self.edit_map_decoration,
+                on_resize=self.resize_map_decoration)
             self.map_scene.addItem(item)
             self.decoration_items[uid] = item
 
@@ -1217,6 +1218,17 @@ class GeoStudioWindow(QMainWindow):
         self._autosave_work_copy()
         self.status.showMessage('Przesunięto element oprawy; Ctrl+Z cofa zmianę.')
 
+    def resize_map_decoration(self, uid, scale):
+        before = self.visual_styles.get(uid)
+        if not before or abs(before.get("scale", 1.0) - scale) < 0.0001:
+            return
+        with self.history.begin("Zmiana rozmiaru oprawy mapy",
+                                selection_before=self.selected_uids):
+            self.visual_styles[uid] = {**before, "scale": scale}
+        self._history_changed()
+        self._autosave_work_copy()
+        self.status.showMessage("Zmieniono rozmiar oprawy; Ctrl+Z cofa zmianę.")
+
     def edit_map_decoration(self, uid):
         """Double-click: edit layout text, or explicitly remove this overlay."""
         data = self.visual_styles.get(uid)
@@ -1224,12 +1236,12 @@ class GeoStudioWindow(QMainWindow):
             return
         dialog = QDialog(self)
         dialog.setWindowTitle('Edytuj: ' + KINDS[data['kind']])
-        dialog.resize(545, 440)
+        dialog.resize(625, 565)
         form = QFormLayout(dialog)
         fields = {}
         for key, label in (
                 ('title', 'Nagłówek / N'), ('subtitle', 'Podtytuł'),
-                ('details', 'Opis / pozycje legendy'), ('area', 'Powierzchnia / stopka')):
+                ('details', 'Opis'), ('area', 'Powierzchnia / stopka')):
             if key == 'details':
                 editor = QTextEdit(dialog)
                 editor.setPlainText(data.get(key, ''))
@@ -1237,7 +1249,70 @@ class GeoStudioWindow(QMainWindow):
             else:
                 editor = QLineEdit(data.get(key, ''), dialog)
             fields[key] = editor
+            if data["kind"] == "legend" and key == "details":
+                editor.hide()  # The palette table below replaces the raw list.
+                continue
             form.addRow(label, editor)
+        legend_table = None
+        if data["kind"] == "legend":
+            legend_table = QTableWidget(dialog)
+            legend_table.setObjectName("GeoStudioLegendTable")
+            legend_table.setColumnCount(2)
+            legend_table.setHorizontalHeaderLabels(["Kolor", "Nazwa / oznaczenie"])
+            legend_table.horizontalHeader().setSectionResizeMode(
+                0, QHeaderView.ResizeToContents)
+            legend_table.horizontalHeader().setSectionResizeMode(
+                1, QHeaderView.Stretch)
+            entries = data.get("items")
+            if not isinstance(entries, list):
+                entries = [{"color": "#91ABA7", "name": entry.strip()}
+                           for entry in data.get("details", "").splitlines() if entry.strip()]
+            for entry in entries:
+                row = legend_table.rowCount()
+                legend_table.insertRow(row)
+                color = QColor(entry.get("color", "#91ABA7"))
+                if not color.isValid():
+                    color = QColor("#91ABA7")
+                color_cell = QTableWidgetItem(color.name().upper())
+                color_cell.setBackground(color)
+                legend_table.setItem(row, 0, color_cell)
+                legend_table.setItem(row, 1, QTableWidgetItem(entry.get("name", "")))
+            form.addRow("Elementy legendy", legend_table)
+            row_controls = QWidget(dialog)
+            row_layout = QHBoxLayout(row_controls)
+            row_layout.setContentsMargins(0, 0, 0, 0)
+            add_row = QPushButton("+ Dodaj", row_controls)
+            remove_row = QPushButton("Usuń pozycję", row_controls)
+            choose_color = QPushButton("Zmień kolor…", row_controls)
+            def add_legend_row():
+                row = legend_table.rowCount()
+                legend_table.insertRow(row)
+                legend_table.setItem(row, 0, QTableWidgetItem("#91ABA7"))
+                legend_table.setItem(row, 1, QTableWidgetItem("Nowa pozycja"))
+                legend_table.setCurrentCell(row, 1)
+                legend_table.editItem(legend_table.item(row, 1))
+            def remove_legend_row():
+                row = legend_table.currentRow()
+                if row >= 0:
+                    legend_table.removeRow(row)
+            def edit_legend_color():
+                row = legend_table.currentRow()
+                if row < 0:
+                    return
+                item = legend_table.item(row, 0)
+                previous = QColor(item.text() if item else "#91ABA7")
+                chosen = QColorDialog.getColor(previous, dialog, "Kolor oznaczenia")
+                if chosen.isValid():
+                    cell = QTableWidgetItem(chosen.name().upper())
+                    cell.setBackground(chosen)
+                    legend_table.setItem(row, 0, cell)
+            add_row.clicked.connect(add_legend_row)
+            remove_row.clicked.connect(remove_legend_row)
+            choose_color.clicked.connect(edit_legend_color)
+            row_layout.addWidget(add_row)
+            row_layout.addWidget(remove_row)
+            row_layout.addWidget(choose_color)
+            form.addRow(row_controls)
         note = QLabel('Oprawa mapy jest zapisywana przez GeoStudio w '
                       'towarzyszącym pliku *.geostudio.json. '
                       'GEO-MAP nie interpretuje tych nakładek.')
@@ -1266,6 +1341,19 @@ class GeoStudioWindow(QMainWindow):
                 for key, editor in fields.items():
                     updated[key] = (editor.toPlainText() if key == 'details'
                                     else editor.text())[:3000]
+                if legend_table is not None:
+                    items = []
+                    for row in range(legend_table.rowCount()):
+                        name_item = legend_table.item(row, 1)
+                        color_item = legend_table.item(row, 0)
+                        name = name_item.text().strip() if name_item else ""
+                        color = QColor(color_item.text() if color_item else "")
+                        if name:
+                            items.append({"name": name[:180],
+                                          "color": color.name().upper()
+                                          if color.isValid() else "#91ABA7"})
+                    updated["items"] = items
+                    updated["details"] = "\n".join(row["name"] for row in items)
                 self.visual_styles[uid] = updated
         self._history_changed()
         self._rebuild_map_decorations_in_place()
