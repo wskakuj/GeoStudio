@@ -79,6 +79,10 @@ def test_gui_creates_open_line_without_adding_last_point(monkeypatch, tmp_path):
         lambda *args, **kwargs: ('5214', True)))
     monkeypatch.setattr(QMessageBox, 'question', staticmethod(
         lambda *args, **kwargs: QMessageBox.Yes))
+    monkeypatch.setattr(QMessageBox, 'warning', staticmethod(
+        lambda *args, **kwargs: pytest.fail(
+            'Unexpected modal warning during GUI geometry test: ' +
+            str(args[1:]))))
     monkeypatch.setattr(window, '_ask_polygon_attributes', lambda: {
         'A1': '', 'A2': '', 'A3': 'Granica', 'A4': '', 'A5': '', 'A6': '',
         'TX': '', 'MP': '0', 'DT': '', 'KR': ''})
@@ -113,6 +117,10 @@ def test_gui_text_line_code_6900_uses_selected_geometry(monkeypatch):
         lambda *args, **kwargs: ('6900', True)))
     monkeypatch.setattr(QMessageBox, 'question', staticmethod(
         lambda *args, **kwargs: QMessageBox.Yes))
+    monkeypatch.setattr(QMessageBox, 'warning', staticmethod(
+        lambda *args, **kwargs: pytest.fail(
+            'Unexpected modal warning during GUI geometry test: ' +
+            str(args[1:]))))
     monkeypatch.setattr(window, '_ask_polygon_attributes', lambda: {
         'A1': '12', 'A2': '', 'A3': '', 'A4': '', 'A5': '', 'A6': '',
         'TX': 'N', 'MP': '0', 'DT': '', 'KR': ''})
