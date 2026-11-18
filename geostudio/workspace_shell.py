@@ -121,6 +121,16 @@ class MapWorkspace(QWidget):
 
     def set_tool(self, name: str):
         self.filter_caption.setText(name)
+        instructions = {
+            "ZAZNACZANIE": "Kliknij obiekt, aby zobaczyć szczegóły  ·  Ctrl+klik — wiele obiektów  ·  PPM — wybór spod kursora",
+            "PRZESUWANIE": "Przeciągnij mapę  ·  Rolka — przybliżanie  ·  S — powrót do zaznaczania",
+            "RYSOWANIE POLIGONU": "Klikaj wierzchołki  ·  Enter — zamknij  ·  Esc — cofnij punkt",
+            "RYSOWANIE LINII": "Klikaj punkty linii  ·  Enter — zakończ bez zamykania",
+            "EDYCJA WIERZCHOŁKÓW": "Przeciągnij węzeł lub kliknij krawędź  ·  Esc — zakończ",
+            "PRZESUWANIE ETYKIET": "Przeciągnij napis A1/A2  ·  Po puszczeniu zapisze się nowe położenie",
+        }
+        self.canvas_footer.setText(instructions.get(
+            name, "Środkowy przycisk — przesuwanie  ·  Rolka — przybliżanie"))
 
     def set_focus_mode(self, focused: bool):
         self.tool_rail.setVisible(not focused)
