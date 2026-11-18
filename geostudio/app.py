@@ -2721,6 +2721,7 @@ class GeoStudioWindow(QMainWindow):
         self._history_changed()
         self._refresh_fill_brushes(force=True)
         if self.selected_uid:
+            self.props.clear()
             self._show_selection_properties()
         self._autosave_work_copy()
         self.status.showMessage(
