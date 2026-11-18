@@ -123,7 +123,12 @@ def test_window_selects_building_first_and_highlights_a1_a2(qt_app):
         assert len(window._selected_label_frames) == 2
         window.select_at(7.5, 7.5)
         assert window.selected_uid != b1
-        assert len(window._selected_label_frames) == 0
+        # Parcel and land-use features can have an A2 label of their own.
+        # Old building's A1/A2 frames must be removed rather than left on
+        # screen after switching selection.
+        assert all(
+            frame.parentItem().data(0) == window.selected_uid
+            for frame in window._selected_label_frames)
     finally:
         window.close()
 
