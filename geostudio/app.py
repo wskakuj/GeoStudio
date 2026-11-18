@@ -1091,6 +1091,99 @@ class GeoStudioWindow(QMainWindow):
     def restore_panels(self):
         self.set_workspace('edit')
 
+    def start_code_creation(self):
+        """T: GEO-MAP-style code/name picker before entering drawing mode."""
+        if not self.doc:
+            QMessageBox.information(self, 'Nowy obiekt', 'Najpierw otwórz mapę.')
+            return
+        dialog = CodePickerDialog(
+            self.symbols, self.doc.objects, default=self.polygon_code, parent=self)
+        if dialog.exec() == QDialog.Accepted:
+            self._start_polygon_with_code(dialog.code.text())
+
+    def open_search_query(self):
+        """F: find first matching code/attribute or select all results."""
+        self._run_attribute_dialog(select_all=False)
+
+    def open_selection_query(self):
+        """Ctrl+H: precise selection by code and up to two attributes."""
+        self._run_attribute_dialog(select_all=True)
+
+    def _run_attribute_dialog(self, *, select_all):
+        if not self.doc:
+            QMessageBox.information(self, 'Wyszukiwanie', 'Najpierw otwórz mapę.')
+            return
+        prefilled = self.doc.by_id[self.selected_uid].code if self.selected_uid else ''
+        dialog = AttributeQueryDialog(
+            self.doc.objects, code=prefilled, select_all=select_all, parent=self)
+        if dialog.exec() != QDialog.Accepted:
+            return
+        uids = [obj.uid for obj in dialog.matches if
+                self.layer_for_uid.get(obj.uid, '') not in self.hidden_layers]
+        if not uids:
+            QMessageBox.information(
+                self, 'Wyszukiwanie', 'Nie znaleziono widocznych obiektów spełniających warunki.')
+            return
+        if dialog.select_all.isChecked():
+            if len(uids) > 1000:
+                answer = QMessageBox.question(
+                    self, 'Duża grupa obiektów',
+                    f'Zaznaczyć {len(uids)} obiektów? Może to chwilowo spowolnić mapę.',
+                    QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
+                if answer != QMessageBox.Yes:
+                    return
+            self.cancel_edit()
+            self._set_selected_uids(uids)
+        else:
+            self.select_search_uid(uids[0])
+        self.status.showMessage(
+            f'Znaleziono {len(uids)} obiektów. '
+            f'Zaznaczono {len(self.selected_uids)}.')
+
+    def open_phrase_replacement(self):
+        """Ctrl+F: replace text in an explicit attribute and scope, one Undo."""
+        if not self.doc:
+            QMessageBox.information(self, 'Zamiana frazy', 'Najpierw otwórz mapę.')
+            return
+        dialog = ReplaceTextDialog(has_selection=bool(self.selected_uids), parent=self)
+        if dialog.exec() != QDialog.Accepted:
+            return
+        spec = dialog.specification()
+        objects = (self.doc.objects if spec.all_objects else
+                   [self.doc.by_id[uid] for uid in self.selected_uids])
+        try:
+            updates = replacement_plan(objects, spec)
+        except ValueError as exc:
+            QMessageBox.warning(self, 'Zamiana frazy', str(exc))
+            return
+        if not updates:
+            QMessageBox.information(self, 'Zamiana frazy', 'Nie znaleziono pasujących wartości.')
+            return
+        answer = QMessageBox.question(
+            self, 'Potwierdź zamianę frazy',
+            f'Zamienić „{spec.needle}” na „{spec.replacement}” '
+            f'w polu {spec.field} dla {len(updates)} obiektów?\\n'
+            'Wszystkie zmiany będzie można cofnąć jednym Ctrl+Z. '
+            'Oryginalny plik MAP nie zostanie nadpisany.',
+            QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
+        if answer != QMessageBox.Yes:
+            return
+        selection = list(self.selected_uids)
+        try:
+            with self.history.begin(
+                    f'Zamiana frazy w {spec.field} ({len(updates)} obiektów)',
+                    selection_before=selection):
+                self.doc.bulk_update_fields(updates)
+            self._history_changed()
+            self.rebuild_scene(fit=False)
+            self._set_selected_uids(selection)
+            saved = self._autosave_work_copy()
+            self.status.showMessage(
+                f'Zamieniono {len(updates)} wartości pola {spec.field}.' +
+                (f' Kopia: {saved}' if saved else ' Zapisz jako, aby zachować kopię.'))
+        except Exception as exc:
+            QMessageBox.warning(self, 'Nie zmieniono atrybutów', str(exc))
+
     def show_search(self):
         self.set_workspace('search')
         self.search_code.setFocus()
@@ -2606,15 +2699,22 @@ class GeoStudioWindow(QMainWindow):
         self.status.showMessage('Zaznaczanie [S]. Prawy przycisk pokazuje listę obiektów w miejscu kliknięcia.')
 
     def start_polygon(self):
+        """Legacy P shortcut / ribbon entry, keeping the simple code prompt."""
         if not self.doc:
             return
+        code, ok = QInputDialog.getText(
+            self, 'Nowy poligon', 'Kod GEO-MAP:', text=self.polygon_code)
+        if ok:
+            self._start_polygon_with_code(code)
+
+    def _start_polygon_with_code(self, code):
+        if not self.doc:
+            return
+        code = str(code).strip()
+        if not code.isdigit() or len(code) != 4:
+            QMessageBox.warning(self, 'Kod', 'Kod musi składać się z czterech cyfr.')
+            return
         self.cancel_edit()
-        code,ok = QInputDialog.getText(self,'Nowy poligon','Kod GEO-MAP:',text='5216')
-        if not ok:
-            return
-        if not code.isdigit() or len(code)!=4:
-            QMessageBox.warning(self,'Kod','Kod musi składać się z czterech cyfr')
-            return
         self.polygon_code = code
         self.current_polygon = []
         self.view.draw_mode = True
@@ -2626,7 +2726,9 @@ class GeoStudioWindow(QMainWindow):
         self.finish_toolbar_action.setVisible(True)
         self.undo_toolbar_action.setVisible(True)
         self.finish_action.setEnabled(True)
-        self.status.showMessage('Poligon: klikaj wierzchołki, kliknij PIERWSZY punkt lub Enter/prawy przycisk, aby zakończyć i zapisać kopię.')
+        self.status.showMessage(
+            f'Rysowanie kodu {code}: klikaj wierzchołki. Enter lub PPM kończy '
+            'poligon; Esc cofa ostatni punkt.')
 
     def preview_polygon(self, x, y):
         if not self.view.draw_mode:
