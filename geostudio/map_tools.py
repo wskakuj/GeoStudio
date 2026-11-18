@@ -37,6 +37,7 @@ class MapView(QGraphicsView):
     label_move = Signal(float, float)
     label_drop = Signal(float, float)
     zoom_changed = Signal()
+    viewport_changed = Signal()  # Pan, zoom, resize and programmatic navigation.
 
     def __init__(self, scene):
         super().__init__(scene)
@@ -93,12 +94,20 @@ class MapView(QGraphicsView):
         self.verticalScrollBar().setValue(
             self.verticalScrollBar().value() + shifted.y() - cursor.y())
         self.zoom_changed.emit()
+        self.viewport_changed.emit()
         event.accept()
 
     def scrollContentsBy(self, dx, dy):
         # Panning moves scrollbars many times; it is NOT a zoom change.
-        # Calling the expensive label layout here made wheel/pan unstable.
+        # Emit only a cheap signal; background WMS uses a debounce timer,
+        # never performs HTTP requests directly from this event.
         super().scrollContentsBy(dx, dy)
+        if dx or dy:
+            self.viewport_changed.emit()
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self.viewport_changed.emit()
 
     def mouseMoveEvent(self, event):
         if self._pan_button is not None:
