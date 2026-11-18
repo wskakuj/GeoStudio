@@ -91,7 +91,17 @@ class RasterOverlayStore:
 
     def attach(self, scene: QGraphicsScene):
         """Add raster beneath every vector; never intercept map clicks."""
-        self.clear_items()
+        # Refreshing a calibration is different from build_scene().clear():
+        # remove the previous live underlay, otherwise each Apply adds another
+        # full raster to the scene and darkens the map.
+        for layer in self.layers:
+            if layer.item is not None:
+                try:
+                    if layer.item.scene() is scene:
+                        scene.removeItem(layer.item)
+                except RuntimeError:
+                    pass  # The C++ item was already deleted by scene.clear().
+                layer.item = None
         for order, layer in enumerate(self.layers):
             if not layer.calibrated:
                 continue
