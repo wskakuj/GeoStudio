@@ -558,8 +558,23 @@ class GeoStudioWindow(QMainWindow):
         em.addAction(self._action('Edytuj pojedynczy atrybut…',self.edit_selected,'F2'))
         self.delete_action = self._action('Usuń zaznaczony obiekt', self.delete_selected, 'Delete')
         em.addAction(self.delete_action)
-        em.addAction(self._action('Zaawansowane zaznaczanie (kod, A1, A2)…',
-                                  self.open_selection_query, 'Ctrl+H'))
+        # F remains the only code/attribute search dialog shortcut.
+        # Ctrl+L selects everything of the currently active code.
+        em.addAction(self._action('Zaznacz wszystkie obiekty aktywnego kodu',
+                                  self.select_all_same_code, 'Ctrl+L'))
+        pin = self._action('Utrwal / odłącz aktywny obiekt [B]',
+                           self.toggle_pin_active, 'B')
+        pin.setShortcutContext(Qt.WidgetWithChildrenShortcut)
+        self.view.addAction(pin)
+        em.addAction(pin)
+        em.addAction(self._action('Wyczyść utrwalone zaznaczenie',
+                                  self.clear_pinned_selection, 'Ctrl+Shift+B'))
+        self.shared_vertex_action = self._action(
+            'Przesuwaj wspólne węzły poligonów tego samego kodu',
+            self.set_shared_vertex_sync)
+        self.shared_vertex_action.setCheckable(True)
+        self.shared_vertex_action.setChecked(True)
+        em.addAction(self.shared_vertex_action)
         em.addAction(self._action('Zamiana frazy w atrybutach…',
                                   self.open_phrase_replacement, 'Ctrl+F'))
         for label, callback, shortcut in (
@@ -762,6 +777,9 @@ class GeoStudioWindow(QMainWindow):
         self.snap_action.setText('Przyciągaj')
         toolbar.addAction(self._decorate_action(
             self.snap_action, 'snap', 'Przyciąganie do węzłów, linii i graniczników, także przy ukrytej warstwie Graniczniki'))
+        toolbar.addAction(self._decorate_action(
+            self.shared_vertex_action, 'vertices',
+            'Włącz: przesuwaj także wspólne węzły obiektów tego samego kodu; wyłącz: tylko aktywny poligon'))
 
         map_settings_menu = QMenu('Opcje mapy', self)
         map_settings_menu.addAction(self.labels_action)
@@ -2047,7 +2065,42 @@ class GeoStudioWindow(QMainWindow):
         self.opacity_spin.setValue(opacity)
 
     def _select_uid(self, uid):
-        self._set_selected_uids([uid] if uid else [])
+        pinned = [value for value in self.pinned_uids
+                  if self.doc and value in self.doc.by_id]
+        self._set_selected_uids(pinned + [uid] if uid and uid not in pinned
+                                else pinned)
+
+    def toggle_pin_active(self):
+        """B: keep the current highlighted polygon when choosing the next one."""
+        if not self.doc or not self.selected_uid:
+            self.status.showMessage('Najpierw wskaż poligon, potem naciśnij B.')
+            return
+        uid = self.selected_uid
+        if uid in self.pinned_uids:
+            self.pinned_uids.remove(uid)
+            state = 'Odłączono'
+        else:
+            self.pinned_uids.append(uid)
+            state = 'Utrwalono'
+        self._set_selected_uids(
+            self.pinned_uids + ([uid] if uid not in self.pinned_uids else []))
+        self.status.showMessage(
+            f'{state} obiekt {self.doc.by_id[uid].code}. '
+            f'Utrwalone: {len(self.pinned_uids)}. '
+            'Kliknij następny poligon i naciśnij B. Ctrl+Shift+B czyści blokadę.')
+
+    def clear_pinned_selection(self):
+        self.pinned_uids = []
+        if self.doc:
+            self._set_selected_uids([])
+        self.status.showMessage('Wyczyszczono utrwalone zaznaczenie.')
+
+    def set_shared_vertex_sync(self, enabled):
+        self.sync_shared_vertices = bool(enabled)
+        self.status.showMessage(
+            'Wspólne węzły: ' +
+            ('przesuwaj sąsiadów tego samego kodu.' if enabled else
+             'przesuwaj wyłącznie aktywny poligon.'))
 
     def select_at(self, x, y, cycle=False, additive=False):
         if not self.doc:
@@ -2085,7 +2138,7 @@ class GeoStudioWindow(QMainWindow):
             self._last_pick_pos = None
             self._last_pick_candidates = ()
             if not additive:
-                self._set_selected_uids([])
+                self._set_selected_uids(self.pinned_uids)
             return
         # Prefer a small building 5310 over large overlapping land-use and
         # parcel backgrounds on the first click. Repeated clicks still
@@ -2115,16 +2168,17 @@ class GeoStudioWindow(QMainWindow):
         self.status.showMessage(
             f'Wybrano kod {self.doc.by_id[uid].code}. '
             f'Łącznie zaznaczono: {len(self.selected_uids)}. '
-            'Ctrl+klik dodaje/usuwa, Ctrl+H otwiera wybór po kodzie i atrybutach.')
+            'B utrwala obiekt, Ctrl+L zaznacza cały aktywny kod; F wyszukuje.')
 
     def select_all_same_code(self):
         if not self.doc or not self.selected_uid:
-            self.status.showMessage('Zaznacz najpierw jeden obiekt, następnie naciśnij Ctrl+H.')
+            self.status.showMessage('Wskaż obiekt i użyj Ctrl+L, aby zaznaczyć cały jego kod.')
             return
         code = self.doc.by_id[self.selected_uid].code
         uids = [obj.uid for obj in self.doc.objects
                 if obj.uid and obj.code == code
                 and self.layer_for_uid.get(obj.uid, '') not in self.hidden_layers]
+        self.pinned_uids = []
         self._set_selected_uids(uids)
         self.status.showMessage(
             f'Zaznaczono {len(uids)} obiektów kodu {code}. '
@@ -3267,8 +3321,12 @@ class GeoStudioWindow(QMainWindow):
         px, py = (snap.x,snap.y) if snap else (x,y)
         try:
             uid = self.edit_uid
-            changes = linked_vertex_moves(self.doc, uid, index, px, py)
-            with self.history.begin('Przesunięcie wspólnego węzła',
+            changes = (linked_vertex_moves(self.doc, uid, index, px, py)
+                       if self.sync_shared_vertices
+                       else {uid: {index: (px, py)}})
+            with self.history.begin(
+                    'Przesunięcie wspólnego węzła' if self.sync_shared_vertices
+                    else 'Przesunięcie pojedynczego węzła',
                                     selection_before=[uid]):
                 self.doc.move_polygon_vertices(changes, reparse=False)
             self._history_changed()
