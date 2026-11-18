@@ -35,6 +35,32 @@ def validated_styles(styles: dict) -> dict[str, dict]:
     for uid, style in styles.items():
         if not isinstance(uid, str) or not isinstance(style, dict):
             continue
+        if re.fullmatch(r"layout:[0-9a-f]{32}", uid):
+            # New map furniture shares the same visual sidecar and history;
+            # never appears as a fake object in the original GEO-MAP file.
+            from math import isfinite
+            kind = style.get("kind")
+            if kind not in {"north", "title", "credits", "legend"}:
+                continue
+            try:
+                x, y = float(style["x"]), float(style["y"])
+            except (KeyError, ValueError, TypeError):
+                continue
+            if not (isfinite(x) and isfinite(y) and
+                    abs(x) < 1e9 and abs(y) < 1e9):
+                continue
+            texts = {}
+            for key in ("title", "subtitle", "details", "area"):
+                value = str(style.get(key, ""))[:3000]
+                if any(ord(c) < 32 and c not in "\\n\\t" for c in value):
+                    value = ""
+                texts[key] = value
+            cleaned[uid] = {"kind": kind, "x": x, "y": y, **texts}
+            continue
+        if uid.startswith("legacy-hidden:") and len(uid) < 300:
+            if style.get("hidden") is True:
+                cleaned[uid] = {"hidden": True}
+            continue
         if re.fullmatch(r"code:\d{4}", uid):
             # An opacity override for a whole GEO-MAP code need not change
             # any original per-object CDF/native fill color. Store it in
