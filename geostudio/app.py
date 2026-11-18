@@ -3113,9 +3113,13 @@ class GeoStudioWindow(QMainWindow):
         if not self.view.edit_mode or not self.edit_uid:
             return
         snap = self._snap(x, y, exclude_uid=self.edit_uid)
-        # A linked neighbor still contains the old shared vertex while
-        # dragging. Do not snap back onto the very corner being moved.
-        if snap and snap.code == self.edit_scope_code:
+        # A polygon being edited is allowed to snap only to its own code.
+        # Never snap to or change neighboring geometry of another code.
+        # Ignore an unchanged shared point, otherwise the drag sticks there.
+        if snap and (snap.code != self.edit_scope_code or
+                     math.hypot(snap.x - self.view.edit_points[index][0],
+                                snap.y - self.view.edit_points[index][1]) <=
+                     self._map_radius(6)):
             snap = None
         px, py = (snap.x,snap.y) if snap else (x,y)
         pts = self.view.edit_points[:]
@@ -3133,7 +3137,10 @@ class GeoStudioWindow(QMainWindow):
         if not self.view.edit_mode or not self.edit_uid:
             return
         snap = self._snap(x, y, exclude_uid=self.edit_uid)
-        if snap and snap.code == self.edit_scope_code:
+        if snap and (snap.code != self.edit_scope_code or
+                     math.hypot(snap.x - self.view.edit_points[index][0],
+                                snap.y - self.view.edit_points[index][1]) <=
+                     self._map_radius(6)):
             snap = None
         px, py = (snap.x,snap.y) if snap else (x,y)
         try:
