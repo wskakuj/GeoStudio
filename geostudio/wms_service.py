@@ -162,3 +162,19 @@ def google_maps_reference_url(map_x: float, map_y: float, source_epsg: int,
     if not (-90 <= latitude <= 90 and -180 <= longitude <= 180):
         raise ValueError("Punkt znajduje się poza zakresem współrzędnych geograficznych.")
     return f"https://www.google.com/maps/@{latitude:.7f},{longitude:.7f},{zoom}z"
+
+
+def google_maps_embed_url(map_x: float, map_y: float, source_epsg: int,
+                          api_key: str, zoom: int = 17,
+                          map_type: str = "satellite") -> str:
+    """Official Google Maps Embed API view URL; no unofficial tile endpoints."""
+    if not api_key or not api_key.strip() or len(api_key) > 512:
+        raise ValueError("Podaj klucz Google Maps Embed API.")
+    if map_type not in {"satellite", "roadmap"}:
+        raise ValueError("Dopuszczalny widok Google Maps: satelitarny lub drogowy.")
+    reference = google_maps_reference_url(map_x, map_y, source_epsg, zoom)
+    coordinates = reference.split("/@", 1)[1].rsplit(",", 1)[0]
+    return ("https://www.google.com/maps/embed/v1/view?" +
+            urlencode({"key": api_key.strip(), "center": coordinates,
+                       "zoom": str(zoom), "maptype": map_type,
+                       "language": "pl"}))
