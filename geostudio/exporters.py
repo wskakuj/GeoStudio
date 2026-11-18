@@ -136,9 +136,13 @@ def render_print_image(scene, orientation: QTransform, *, width: int = 10000,
     return result
 
 
-def save_image(image: QImage, path: str | Path) -> bool:
-    """Write the image; False means this Qt build cannot write that format."""
-    return bool(image.save(str(path)))
+def save_image(image: QImage, path: str | Path, *, quality: int | None = None) -> bool:
+    """Write image, optionally with high-quality JPEG encoding.
+
+    The default preserves the historical byte-identical test contract.
+    """
+    return bool(image.save(str(path)) if quality is None
+                else image.save(str(path), None, quality))
 
 
 def sanitise_layer_name(name: str) -> str:
