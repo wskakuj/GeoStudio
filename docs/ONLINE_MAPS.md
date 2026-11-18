@@ -33,3 +33,25 @@ serwer dla wybranej warstwy.
 ebEngine` zależy od aktualnej
 strony Google, wersji Chromium/WebEngine, obsługi GPU i WebGL.
 
+
+
+## Prześwitujące wypełnienia i ustawienia kodów
+
+Gdy w GeoStudio aktywujesz WMS ortofotomapy lub widoczny,
+skalibrowany raster, standardowe kolory zamkniętych poligonów
+automatycznie przyjmują **60% krycia**. Linie graniczne, napisy,
+wierzchołki oraz czarne fragmenty róży kierunków pozostają czytelne.
+Po wyłączeniu ostatniego podkładu GeoStudio wraca do naturalnej
+nieprzezroczystości mapy — chyba że istnieje ręczne ustawienie kodu.
+
+W lewym panelu **Warstwy → KRYCIE I KOLOR KODU**:
+1. Wybierz kod GEO-MAP (np. 5310 lub 5216) albo zaznacz obiekt na mapie.
+2. Przesuń suwak **Krycie** w zakresie 0–100%. Zmiana jest stosowana
+   do wszystkich poligonów tego kodu, bez ponownego renderowania mapy.
+3. **Kolor…** umożliwia zmianę koloru całego kodu; **Resetuj** przywraca
+   kolor źródłowy i domyślne krycie.
+
+Ustawienia pojedynczego poligonu mają pierwszeństwo przed ustawieniem
+kodu. Obie grupy ustawień są zapisywane wyłącznie w kopii roboczej
+GeoStudio i w pliku `*.MAP.geostudio.json`. Plik źródłowy `.MAP`
+pozostaje nietknięty. Zmiany kodu podlegają Undo/Redo.
