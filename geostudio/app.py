@@ -842,6 +842,9 @@ class GeoStudioWindow(QMainWindow):
         self.layers_tree.header().setSectionResizeMode(0, QHeaderView.Stretch)
         self.layers_tree.header().setSectionResizeMode(1, QHeaderView.ResizeToContents)
         self.layers_tree.itemChanged.connect(self.on_layer_toggle)
+        self.layers_tree.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.layers_tree.customContextMenuRequested.connect(
+            self.open_layer_context_menu)
         layer_root = QWidget(self.layers_dock)
         layer_layout = QVBoxLayout(layer_root)
         layer_layout.setContentsMargins(10, 12, 10, 10)
@@ -2491,6 +2494,113 @@ class GeoStudioWindow(QMainWindow):
             self.snap_marker.setAcceptedMouseButtons(Qt.NoButton)
             self.map_scene.addItem(self.snap_marker)
             self.snap_marker.setVisible(False)
+
+    def _objects_in_layer(self, layer):
+        if not self.doc:
+            return []
+        return [obj for obj in self.doc.objects
+                if resolve_layer(self.catalog, obj.code) == layer and obj.uid]
+
+    def open_layer_context_menu(self, pos):
+        """Right-click a layer: operate on every member, with one Undo."""
+        item = self.layers_tree.itemAt(pos)
+        if item is None or not self.doc:
+            return
+        layer = item.text(0)
+        objs = self._objects_in_layer(layer)
+        menu = QMenu(self)
+        select_action = menu.addAction(f"Zaznacz wszystkie ({len(objs)} obiektów)")
+        attributes_action = menu.addAction("Zmień atrybut wszystkich obiektów…")
+        color_action = menu.addAction("Ustaw kolor poligonów całej warstwy…")
+        menu.addSeparator()
+        labels_action = menu.addAction("Ustaw etykiety atrybutów kodu…")
+        chosen = menu.exec(self.layers_tree.viewport().mapToGlobal(pos))
+        if chosen == select_action:
+            if len(objs) > 1000 and QMessageBox.question(
+                self, "Duża warstwa",
+                f"Zaznaczyć {len(objs)} obiektów?",
+                QMessageBox.Yes | QMessageBox.No, QMessageBox.No) != QMessageBox.Yes:
+                return
+            self._set_selected_uids([obj.uid for obj in objs])
+        elif chosen == attributes_action:
+            self.bulk_edit_layer_field(layer, objs)
+        elif chosen == color_action:
+            self.bulk_color_layer(layer, objs)
+        elif chosen == labels_action:
+            codes = sorted({obj.code for obj in objs})
+            if not codes:
+                return
+            code, accepted = QInputDialog.getItem(
+                self, "Etykiety warstwy", "Wybierz kod obiektów",
+                codes, 0, False)
+            if accepted:
+                self.open_attribute_label_dialog(code)
+
+    def bulk_edit_layer_field(self, layer, objects):
+        if not objects:
+            return
+        allowed = ("A1", "A2", "A3", "A4", "A5", "A6", "TX", "MP", "KR")
+        field, ok = QInputDialog.getItem(
+            self, "Atrybut całej warstwy", "Pole atrybutu", list(allowed), 1, False)
+        if not ok:
+            return
+        subset = [obj for obj in objects if field in obj.fields]
+        if not subset:
+            QMessageBox.information(
+                self, "Brak pola", "Żaden obiekt tej warstwy nie ma pola " + field +
+                ". Aby nie dopisywać niezamierzonych rekordów, operacja przerwana.")
+            return
+        value, ok = QInputDialog.getText(
+            self, "Atrybut całej warstwy",
+            f"Wpisz wspólną wartość {field} dla {len(subset)} obiektów "
+            "(zmieni istniejące pola; pozostałe pomija).")
+        if not ok:
+            return
+        if QMessageBox.question(
+            self, "Potwierdź zmianę zbiorczą",
+            f"Zmienić {field} w {len(subset)} obiektach warstwy «{layer}»? "
+            "Zmianę można cofnąć jednym Ctrl+Z.",
+            QMessageBox.Yes | QMessageBox.No, QMessageBox.No) != QMessageBox.Yes:
+            return
+        updates = {(obj.uid, field): value for obj in subset
+                   if obj.fields.get(field) != value}
+        if not updates:
+            return
+        try:
+            with self.history.begin(f"Zmiana {field} warstwy {layer}",
+                                    selection_before=self.selected_uids):
+                self.doc.bulk_update_fields(updates)
+            self._history_changed()
+            self.rebuild_scene(fit=False)
+            self._autosave_work_copy()
+            self.status.showMessage(f"Zmieniono {field} w {len(updates)} obiektach.")
+        except Exception as exc:
+            QMessageBox.warning(self, "Nie udało się zmienić warstwy", str(exc))
+
+    def bulk_color_layer(self, layer, objects):
+        codes = sorted({obj.code for obj in objects if obj.is_closed})
+        if not codes:
+            QMessageBox.information(self, "Kolor warstwy", "Brak poligonów do wypełnienia.")
+            return
+        chosen = QColorDialog.getColor(QColor("#98C6B7"), self, "Kolor całej warstwy")
+        if not chosen.isValid():
+            return
+        opacity, accepted = QInputDialog.getInt(
+            self, "Krycie warstwy", "Krycie [%]", 60, 0, 100)
+        if not accepted:
+            return
+        with self.history.begin(f"Kolor warstwy {layer}",
+                                selection_before=self.selected_uids):
+            for code in codes:
+                key = "code:" + code
+                self.visual_styles[key] = {
+                    **self.visual_styles.get(key, {}),
+                    "fill": chosen.name().upper(), "opacity": opacity}
+        self._history_changed()
+        self._refresh_fill_brushes(force=True)
+        self._autosave_work_copy()
+        self.status.showMessage(
+            f"Nowy kolor warstwy «{layer}» dla {len(codes)} kodów.")
 
     def _populate_layers(self):
         self.layers_tree.blockSignals(True)
