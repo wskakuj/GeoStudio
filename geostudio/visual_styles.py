@@ -35,6 +35,29 @@ def validated_styles(styles: dict) -> dict[str, dict]:
     for uid, style in styles.items():
         if not isinstance(uid, str) or not isinstance(style, dict):
             continue
+        if re.fullmatch(r"labels:code:\d{4}", uid):
+            from .label_editor import ATTRIBUTE_FIELDS
+            fields = style.get("fields", {})
+            if not isinstance(fields, dict):
+                continue
+            clean_fields = {}
+            for field in ATTRIBUTE_FIELDS:
+                entry = fields.get(field)
+                if not isinstance(entry, dict):
+                    continue
+                try:
+                    size = max(6, min(96, int(entry.get("size", 16))))
+                    color = parse_fill_code(str(entry.get("color", "#243A45")))[0]
+                    family = str(entry.get("font", "Segoe UI"))[:100]
+                    if not family:
+                        family = "Segoe UI"
+                except (TypeError, ValueError):
+                    continue
+                clean_fields[field] = {
+                    "visible": bool(entry.get("visible", False)),
+                    "font": family, "size": size, "color": color}
+            cleaned[uid] = {"fields": clean_fields}
+            continue
         if re.fullmatch(r"layout:[0-9a-f]{32}", uid):
             # New map furniture shares the same visual sidecar and history;
             # never appears as a fake object in the original GEO-MAP file.
@@ -118,7 +141,8 @@ def validated_label_positions(positions: dict) -> dict[str, dict[str, list[float
             continue
         valid = {}
         for key, xy in fields.items():
-            if key not in ('A1','A2','TX') or not isinstance(xy, (list, tuple)) or len(xy) != 2:
+            if not (key in ('A1', 'A2', 'A3', 'A4', 'A5', 'A6', 'TX', 'MP', 'KR')
+                    or (key.startswith('TX') and key[2:].isdigit())) or not isinstance(xy, (list, tuple)) or len(xy) != 2:
                 continue
             try:
                 x,y = float(xy[0]), float(xy[1])
