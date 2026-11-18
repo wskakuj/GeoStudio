@@ -759,13 +759,6 @@ class GeoStudioWindow(QMainWindow):
         layer_layout.addWidget(self.layers_summary)
         self.layers_dock.setWidget(layer_root)
         self.addDockWidget(Qt.LeftDockWidgetArea, self.layers_dock)
-        self.raster_dock = QDockWidget('Podkłady rastrowe', self)
-        self.raster_dock.setObjectName('GeoStudioRasterDock')
-        self.raster_panel = RasterLayerPanel(self)
-        self.raster_dock.setWidget(self.raster_panel)
-        self.addDockWidget(Qt.LeftDockWidgetArea, self.raster_dock)
-        self.tabifyDockWidget(self.layers_dock, self.raster_dock)
-        self.layers_dock.raise_()
 
         self.properties_dock = QDockWidget('Inspektor obiektu', self)
         self.properties_dock.setObjectName('GeoStudioPropertiesDock')
@@ -953,6 +946,13 @@ class GeoStudioWindow(QMainWindow):
         self.view_menu.addAction(self._action('Przywróć wszystkie panele',
                                               self.restore_panels))
 
+        self.raster_dock = QDockWidget('Podkłady rastrowe', self)
+        self.raster_dock.setObjectName('GeoStudioRasterDock')
+        self.raster_panel = RasterLayerPanel(self)
+        self.raster_dock.setWidget(self.raster_panel)
+        self.addDockWidget(Qt.LeftDockWidgetArea, self.raster_dock)
+        self.tabifyDockWidget(self.layers_dock, self.raster_dock)
+        self.layers_dock.raise_()
     def set_workspace(self, mode, *, remember=True):
         """Change only the workspace chrome, never geometry or current edits."""
         if mode not in {'map', 'edit', 'search'}:
