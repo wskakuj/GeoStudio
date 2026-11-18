@@ -300,8 +300,8 @@ class GeoStudioWindow(QMainWindow):
         online.stack(
             (self._action('Podgląd WMS…', self.show_wms_dialog),
              'layers', 'WMS — pod mapą'),
-            (self._action('Google Maps', self.open_google_maps),
-             'compass', 'Google Maps ↗'),
+            (self._action('Google Earth w GeoStudio', self.open_google_maps),
+             'compass', 'Google Earth'),
         )
         coordinates = ribbon.group('Dane', 'Współrzędne')
         coordinates.action(
@@ -535,7 +535,7 @@ class GeoStudioWindow(QMainWindow):
         map_sources.addAction(
             self._action('Podgląd warstw WMS…', self.show_wms_dialog))
         map_sources.addAction(
-            self._action('Google Maps — referencyjny podgląd…', self.open_google_maps))
+            self._action('Google Earth — w oknie programu (bez API)…', self.open_google_maps))
         self.command_palette_action = self._action(
             'Znajdź polecenie…', self.show_command_palette, 'Ctrl+K')
         vm.addAction(self.command_palette_action)
@@ -2728,9 +2728,9 @@ class GeoStudioWindow(QMainWindow):
         self._wms_dialog.raise_()
 
     def open_google_maps(self):
-        """Open sanctioned Maps Embed API preview, with external fallback."""
+        """Open the complete Google Earth Web site inside Qt WebEngine."""
         if not self.doc:
-            QMessageBox.information(self, 'Google Maps', 'Najpierw otwórz mapę.')
+            QMessageBox.information(self, 'Google Earth', 'Najpierw otwórz mapę.')
             return
         if self._google_dialog is None:
             self._google_dialog = GoogleMapsPreviewDialog(self)
