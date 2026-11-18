@@ -52,7 +52,7 @@ def validated_styles(styles: dict) -> dict[str, dict]:
             texts = {}
             for key in ("title", "subtitle", "details", "area"):
                 value = str(style.get(key, ""))[:3000]
-                if any(ord(c) < 32 and c not in "\\n\\t" for c in value):
+                if any(ord(c) < 32 and c not in "\n\t" for c in value):
                     value = ""
                 texts[key] = value
             cleaned[uid] = {"kind": kind, "x": x, "y": y, **texts}
