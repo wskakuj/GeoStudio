@@ -44,6 +44,7 @@ from .visual_styles import (parse_fill_code, fill_code, load_styles,
 from .ui_theme import theme_stylesheet, ui_icon
 from .workspace_shell import MapWorkspace
 from .gis_ribbon import GISRibbon
+from .command_palette import CommandPalette
 from .library_render import (parse_cdf, parse_sym_primitives, cdf_for_object,
     native_fill_color, simple_point_segments, simple_point_circles,
     parse_lay_pen_styles, lay_for_code,
@@ -89,6 +90,7 @@ class GeoStudioWindow(QMainWindow):
         if self.theme_mode not in ('light', 'dark'):
             self.theme_mode = 'light'
         self._ui_icon_actions = []
+        self._command_palette = None
         self.workspace_mode = 'edit'
         self._last_workspace = 'edit'
         self.doc: GeoMap | None=None
@@ -198,6 +200,7 @@ class GeoStudioWindow(QMainWindow):
         """
         ribbon = GISRibbon(self.theme_mode, self)
         self.ribbon = ribbon
+        ribbon.set_command_search(self.show_command_palette)
         self.ribbon_toolbar = QToolBar('Wstążka GIS', self)
         self.ribbon_toolbar.setObjectName('GeoStudioRibbonToolbar')
         self.ribbon_toolbar.setMovable(False)
@@ -258,11 +261,11 @@ class GeoStudioWindow(QMainWindow):
             (self.delete_action, 'more', 'Usuń zaznaczone'),
         )
         history = ribbon.group('Edycja', 'Historia')
+        self.ribbon_undo_action = self._action('Cofnij zmianę', self.undo_last_edit)
+        self.ribbon_redo_action = self._action('Ponów zmianę', self.redo_last_edit)
         history.stack(
-            (self._action('Cofnij zmianę', self.undo_last_edit),
-             'undo', 'Cofnij zmianę'),
-            (self._action('Ponów zmianę', self.redo_last_edit),
-             'redo', 'Ponów zmianę'),
+            (self.ribbon_undo_action, 'undo', 'Cofnij zmianę'),
+            (self.ribbon_redo_action, 'redo', 'Ponów zmianę'),
         )
 
         # Data tab keeps import / coordinate tools discoverable.
@@ -311,7 +314,17 @@ class GeoStudioWindow(QMainWindow):
         output.action(self._action('Eksportuj DXF', self.export_dxf),
                       'export', large=True, text='DXF')
 
+        # Compact Quick Access actions are available on every ribbon page.
+        for action, icon in (
+                (self.open_toolbar_action, 'folder'),
+                (self.save_toolbar_action, 'save'),
+                (self.ribbon_undo_action, 'undo'),
+                (self.ribbon_redo_action, 'redo')):
+            ribbon.add_quick_action(action, icon)
         ribbon.set_document(self.doc.filename if self.doc else None)
+        self.ribbon_toggle_action = self._action(
+            'Zwiń / rozwiń wstążkę', ribbon.toggle_collapsed, 'Ctrl+F1')
+        self.addAction(self.ribbon_toggle_action)
 
         # ArcGIS Pro puts editing commands in the ribbon, not a vertical rail.
         self.workspace.tool_rail.hide()
@@ -420,6 +433,46 @@ class GeoStudioWindow(QMainWindow):
                 'EDYCJA WIERZCHOŁKÓW', 'PRZESUWANIE ETYKIET'):
             self.ribbon.select_tab('Edycja')
 
+    def _searchable_actions(self):
+        """Collect existing QAction instances, including nested menus and ribbon."""
+        result = []
+        seen = set()
+
+        def add(action):
+            if action is None:
+                return
+            menu = action.menu()
+            if menu is not None:
+                for child in menu.actions():
+                    add(child)
+                return
+            if action.isSeparator() or not action.text().strip():
+                return
+            if id(action) in seen:
+                return
+            seen.add(id(action))
+            result.append((action.text().replace('&', ''), action))
+
+        for top in self.menuBar().actions():
+            add(top)
+        for action in (self.open_toolbar_action, self.save_toolbar_action,
+                       self.snap_action, self.labels_action, self.delete_action,
+                       getattr(self, 'ribbon_undo_action', None),
+                       getattr(self, 'ribbon_redo_action', None)):
+            add(action)
+        for action in self.tool_actions.values():
+            add(action)
+        if hasattr(self, 'ribbon'):
+            for button in self.ribbon.findChildren(QToolButton):
+                add(button.defaultAction())
+        return result
+
+    def show_command_palette(self):
+        if self._command_palette is None:
+            self._command_palette = CommandPalette(self)
+        self._command_palette.set_commands(self._searchable_actions())
+        self._command_palette.open_palette()
+
     def _setup_menu(self):
         fm=self.menuBar().addMenu('&Plik')
         actions=[('Otwórz MAP…',self.open_map,'Ctrl+O'),('Wczytaj biblioteki SYM/LAY/CDF…',self.open_catalogs,None),
@@ -448,6 +501,10 @@ class GeoStudioWindow(QMainWindow):
             self.open_crs_converter, 'Ctrl+T'))
         vm=self.menuBar().addMenu('&Widok')
         self.view_menu = vm
+        self.command_palette_action = self._action(
+            'Znajdź polecenie…', self.show_command_palette, 'Ctrl+K')
+        vm.addAction(self.command_palette_action)
+        vm.addSeparator()
         themes = vm.addMenu('Motyw interfejsu')
         self.theme_menu = themes
         self.theme_actions = {}
