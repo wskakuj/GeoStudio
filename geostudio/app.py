@@ -20,7 +20,7 @@ try:
         QGraphicsPathItem, QGraphicsEllipseItem, QGraphicsPixmapItem, QGraphicsSimpleTextItem, QGraphicsItem, QDockWidget,
         QTreeWidget, QTreeWidgetItem, QToolBar, QMessageBox, QStatusBar, QInputDialog, QMenu,
         QLabel, QWidget, QVBoxLayout, QHeaderView, QSplitter, QComboBox,
-        QDialog, QDialogButtonBox, QFormLayout, QLineEdit, QHBoxLayout, QPushButton, QSpinBox, QColorDialog)
+        QDialog, QDialogButtonBox, QFormLayout, QLineEdit, QHBoxLayout, QPushButton, QSpinBox, QColorDialog, QToolButton)
 except ImportError as exc:
     raise SystemExit('Zainstaluj GUI: python -m pip install -e .\nBrakuje PySide6') from exc
 
@@ -40,26 +40,13 @@ from .coordinates import (CRS_CHOICES, MODERN_EPSG, transform_xy,
 from .object_search import search_objects
 from .visual_styles import (parse_fill_code, fill_code, load_styles,
     load_label_positions, write_styles, sidecar_path)
+from .ui_theme import theme_stylesheet, ui_icon
 from .library_render import (parse_cdf, parse_sym_primitives, cdf_for_object,
     native_fill_color, simple_point_segments, simple_point_circles,
     parse_lay_pen_styles, lay_for_code,
     parse_sym_line_patterns, object_sym_line_pattern)
 
-APP_QSS = """
-QMainWindow, QDockWidget, QWidget { background-color: #101826; color: #dce7f5; font: 10pt 'Segoe UI'; }
-QMenuBar, QMenu {background: #192437; color: #edf3ff; padding: 5px;}
-QMenu::item:selected { background: #29446a; }
-QToolBar { background: #1a2638; border: none; padding: 5px; spacing: 6px; }
-QToolButton { border: 1px solid #31445d; border-radius: 6px; background: #26364e; color: #f3f7ff; padding: 7px; }
-QToolButton:hover { background: #34527b; }
-QDockWidget::title {background: #1a2638; padding: 9px; font-weight: 600;}
-QTreeWidget {background: #162235; alternate-background-color: #192940; border: 0; selection-background-color: #2b547f; color: #e4ecf6;}
-QHeaderView::section {background: #202f43; color: #cddbf0; padding: 8px; border: none; }
-QStatusBar {background: #182437; color: #cbd8ed;}
-QLabel {padding: 3px;}
-QDialog, QMessageBox {background: #192437;}
-QLineEdit {background: #23364f; color: white; border: 1px solid #466080; padding: 6px;}
-"""
+APP_QSS = theme_stylesheet('light')  # Keep the legacy constant for imports.
 
 
 class GeoStudioWindow(QMainWindow):
@@ -68,6 +55,10 @@ class GeoStudioWindow(QMainWindow):
         self.setWindowTitle('GeoStudio v0.14 — eksperymentalny edytor GEO-MAP')
         self.resize(1450, 900)
         self.settings = QSettings('GeoStudio', 'GeoStudio')
+        self.theme_mode = str(self.settings.value('ui/theme', 'light')).lower()
+        if self.theme_mode not in ('light', 'dark'):
+            self.theme_mode = 'light'
+        self._ui_icon_actions = []
         self.doc: GeoMap | None=None
         self.current_crs_epsg = None  # Never guess source CRS from raw coordinates.
         self.source_compilation_scale = DEFAULT_SCALE
@@ -117,6 +108,7 @@ class GeoStudioWindow(QMainWindow):
         self.map_scene=QGraphicsScene(self)
         # Custom feature picking handles overlapping objects without Qt selection.
         self.view=MapView(self.map_scene)
+        self.view.setObjectName('GeoStudioCanvas')
         self.view.coordinate.connect(self.on_coordinate)
         self.view.canvas_click.connect(self.select_at)
         self.view.canvas_context.connect(self.show_objects_here)
@@ -138,14 +130,45 @@ class GeoStudioWindow(QMainWindow):
         self._load_saved_libraries()
         self.status=QStatusBar();self.setStatusBar(self.status)
         self._setup_scale_widget()
-        self.status.showMessage('Otwórz mapę GEO-MAP. Trans → Przelicz współrzędne; skalę 1:N ustawisz w dolnym pasku.')
-        self.setStyleSheet(APP_QSS)
+        self.status.showMessage('Witaj w GeoStudio. Kliknij Otwórz MAP, aby rozpocząć; S/H/P/E/L zmienia narzędzie.')
+        self.setStyleSheet(theme_stylesheet(self.theme_mode))
+        self._refresh_toolbar_icons()
 
     def _action(self,label,callback,shortcut=None):
         a=QAction(label,self)
         a.triggered.connect(callback)
         if shortcut:a.setShortcut(shortcut)
         return a
+
+    def _decorate_action(self, action, glyph, tooltip=None):
+        """Decorate existing actions without changing their callbacks."""
+        self._ui_icon_actions.append((action, glyph))
+        action.setIcon(ui_icon(glyph, self.theme_mode))
+        if tooltip:
+            action.setToolTip(tooltip)
+            action.setStatusTip(tooltip)
+        return action
+
+    def _refresh_toolbar_icons(self):
+        for action, glyph in self._ui_icon_actions:
+            action.setIcon(ui_icon(glyph, self.theme_mode))
+        if hasattr(self, 'orientation_button'):
+            self.orientation_button.setIcon(ui_icon('⟳', self.theme_mode))
+
+    def set_theme(self, theme):
+        """Change UI chrome, never scene item colours or exported imagery."""
+        if theme not in ('light', 'dark'):
+            raise ValueError('Unknown interface theme')
+        self.theme_mode = theme
+        self.settings.setValue('ui/theme', theme)
+        self.setStyleSheet(theme_stylesheet(theme))
+        self._refresh_toolbar_icons()
+        for key, action in getattr(self, 'theme_actions', {}).items():
+            action.setChecked(key == theme)
+
+    def _set_mode_badge(self, text):
+        if hasattr(self, 'mode_badge'):
+            self.mode_badge.setText(text)
 
     def _setup_menu(self):
         fm=self.menuBar().addMenu('&Plik')
@@ -175,6 +198,18 @@ class GeoStudioWindow(QMainWindow):
             self.open_crs_converter, 'Ctrl+T'))
         vm=self.menuBar().addMenu('&Widok')
         self.view_menu = vm
+        themes = vm.addMenu('Motyw interfejsu')
+        self.theme_actions = {}
+        theme_group = QActionGroup(self)
+        theme_group.setExclusive(True)
+        for mode, title in (('light', 'Jasny — przejrzysty'), ('dark', 'Ciemny — wieczorny')):
+            action = themes.addAction(title)
+            action.setCheckable(True)
+            action.setChecked(self.theme_mode == mode)
+            action.triggered.connect(lambda _checked=False, selected=mode: self.set_theme(selected))
+            theme_group.addAction(action)
+            self.theme_actions[mode] = action
+        vm.addSeparator()
         vm.addAction(self._action('Dopasuj widok do mapy',self.fit_all,'Ctrl+0'))
         vm.addAction(self._action('Ustaw skalę widoku 1:N…', self.ask_view_scale, 'Ctrl+M'))
         vm.addAction(self._action(
@@ -208,45 +243,85 @@ class GeoStudioWindow(QMainWindow):
         self.snap_action = em.addAction('Przyciąganie do punktów i odcinków')
         self.snap_action.setCheckable(True)
         self.snap_action.setChecked(True)
-        toolbar=QToolBar('Narzędzia',self)
-        self.main_toolbar = toolbar
+        # Separate primary file/view actions from mutually exclusive map tools.
+        file_toolbar = QToolBar('Plik i widok', self)
+        file_toolbar.setObjectName('GeoStudioFileToolbar')
+        file_toolbar.setMovable(False)
+        file_toolbar.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
+        self.file_toolbar = file_toolbar
+        self.addToolBar(Qt.TopToolBarArea, file_toolbar)
+        brand = QLabel('GeoStudio')
+        brand.setObjectName('GeoStudioBrand')
+        file_toolbar.addWidget(brand)
+        brand_accent = QLabel('GEO-MAP WORKSPACE')
+        brand_accent.setObjectName('GeoStudioBrandAccent')
+        file_toolbar.addWidget(brand_accent)
+        file_toolbar.addSeparator()
+        for title, glyph, fn, hint in [
+            ('Otwórz MAP', '▣', self.open_map, 'Otwórz plik GEO-MAP (Ctrl+O)'),
+            ('Zapisz jako', '▤', self.save_map, 'Zapisz nową kopię mapy (Ctrl+Shift+S)'),
+            ('Dopasuj', '⤢', self.fit_all, 'Pokaż całą mapę (Ctrl+0)'),
+        ]:
+            file_toolbar.addAction(self._decorate_action(self._action(title, fn), glyph, hint))
+        file_toolbar.addSeparator()
+        for title, glyph, fn, hint in [
+            ('Raster', '▦', self.add_raster, 'Dodaj raster z plikiem world'),
+            ('Obraz', '▧', self.export_image, 'Eksport PNG, JPG lub TIFF'),
+            ('DXF', '↗', self.export_dxf, 'Uproszczony eksport geometrii DXF'),
+        ]:
+            file_toolbar.addAction(self._decorate_action(self._action(title, fn), glyph, hint))
+        file_toolbar.addSeparator()
+        orientation_button = QToolButton(self)
+        orientation_button.setText('Orientacja')
+        orientation_button.setIcon(ui_icon('⟳', self.theme_mode))
+        orientation_button.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
+        orientation_button.setPopupMode(QToolButton.InstantPopup)
+        orientation_button.setMenu(orientation_menu)
+        orientation_button.setToolTip('Obracanie i orientacja widoku — bez zmiany danych MAP')
+        file_toolbar.addWidget(orientation_button)
+        self.orientation_button = orientation_button
+
+        self.addToolBarBreak(Qt.TopToolBarArea)
+        toolbar = QToolBar('Narzędzia mapy', self)
+        toolbar.setObjectName('GeoStudioToolsToolbar')
         toolbar.setMovable(False)
-        self.addToolBar(toolbar)
-        for label,fn in [('📂 Otwórz',self.open_map),('💾 Zapisz jako',self.save_map),
-                         ('◎ Cała mapa',self.fit_all), ('▧ Raster',self.add_raster),
-                         ('↗ DXF',self.export_dxf), ('⬇ Obraz',self.export_image),
-                         ('⟲ 15°',lambda: self.rotate_view(-15)),
-                         ('⟳ 15°',lambda: self.rotate_view(15)),
-                         ('N ↑ GEO-MAP',self.reset_orientation)]:
-            toolbar.addAction(self._action(label,fn))
-        toolbar.addSeparator()
+        toolbar.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
+        self.main_toolbar = toolbar
+        self.addToolBar(Qt.TopToolBarArea, toolbar)
+        caption = QLabel('NARZĘDZIA')
+        caption.setObjectName('GeoStudioToolbarCaption')
+        toolbar.addWidget(caption)
         self.tool_actions = {}
         group = QActionGroup(self)
         group.setExclusive(True)
-        for key, label, fn in [
-            ('select','⌖ Zaznacz [S]',self.cancel_edit),
-            ('pan','✋ Przesuń [H]',self.start_pan),
-            ('draw','⬡ Poligon [P]',self.start_polygon),
-            ('edit','✥ Wierzchołki [E]',self.start_vertex_edit),
-            ('labels','✎ Opisy A1/A2 [L]',self.start_label_edit),
+        for key, title, glyph, fn, hint in [
+            ('select', 'Zaznacz', '◎', self.cancel_edit, 'Zaznacz obiekt (S); Ctrl+klik dodaje/usuwa'),
+            ('pan', 'Przesuń', '✥', self.start_pan, 'Przesuwaj mapę (H)'),
+            ('draw', 'Poligon', '⬡', self.start_polygon, 'Narysuj poligon (P)'),
+            ('edit', 'Wierzchołki', '◇', self.start_vertex_edit, 'Edytuj wierzchołki (E)'),
+            ('labels', 'Etykiety', '✎', self.start_label_edit, 'Przesuwaj napisy A1/A2 (L)'),
         ]:
-            action = self._action(label, fn)
+            action = self._decorate_action(self._action(title, fn), glyph, hint)
             action.setCheckable(True)
             group.addAction(action)
             toolbar.addAction(action)
             self.tool_actions[key] = action
         self.tool_actions['select'].setChecked(True)
-        self.finish_toolbar_action = self._action('✓ Zakończ poligon [Enter]', self.finish_polygon)
+        toolbar.addSeparator()
+        self.finish_toolbar_action = self._decorate_action(
+            self._action('Zakończ poligon', self.finish_polygon), '✓', 'Zamknij poligon (Enter)')
         toolbar.addAction(self.finish_toolbar_action)
         self.finish_toolbar_action.setVisible(False)
-        self.undo_toolbar_action = self._action('↶ Cofnij punkt [Esc]', self.undo_last_polygon_point)
+        self.undo_toolbar_action = self._decorate_action(
+            self._action('Cofnij punkt', self.undo_last_polygon_point), '↶', 'Cofnij punkt szkicu (Esc)')
         toolbar.addAction(self.undo_toolbar_action)
         self.undo_toolbar_action.setVisible(False)
         toolbar.addSeparator()
-        toolbar.addAction(self.snap_action)
-        toolbar.addAction(self.labels_action)
+        toolbar.addAction(self._decorate_action(self.snap_action, '⌖', 'Przyciąganie do punktów i krawędzi'))
+        toolbar.addAction(self._decorate_action(self.labels_action, 'A', 'Pokaż lub ukryj podpisy A1/A2'))
         self.selector = QComboBox()
-        self.selector.setToolTip('Ogranicz zaznaczanie do określonych obiektów, jak w QGIS')
+        self.selector.setToolTip('Filtr obiektów, które można zaznaczyć na mapie')
+        self.selector.setMinimumWidth(160)
         self.selector.addItem('Wszystkie obiekty', None)
         self.selector.addItem('Działki 5216', '5216')
         self.selector.addItem('Użytki 5230', '5230')
