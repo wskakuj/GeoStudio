@@ -574,6 +574,25 @@ class GeoStudioWindow(QMainWindow):
         self.object_details.setObjectName('GeoStudioObjectDetails')
         self.object_details.setWordWrap(True)
         card_layout.addWidget(self.object_details)
+        self.object_metrics = QLabel('Wybierz obiekt, aby zobaczyć jego parametry')
+        self.object_metrics.setObjectName('GeoStudioObjectMetrics')
+        self.object_metrics.setWordWrap(True)
+        card_layout.addWidget(self.object_metrics)
+        quick_actions = QHBoxLayout()
+        quick_actions.setSpacing(8)
+        self.edit_object_button = QPushButton('Edytuj atrybut')
+        self.edit_object_button.setObjectName('GeoStudioQuickEdit')
+        self.edit_object_button.setToolTip('Edytuj atrybut wybranego obiektu (F2)')
+        self.edit_object_button.clicked.connect(self.edit_selected)
+        self.edit_object_button.setEnabled(False)
+        quick_actions.addWidget(self.edit_object_button, 1)
+        self.copy_object_button = QPushButton('Kopiuj ID')
+        self.copy_object_button.setObjectName('GeoStudioQuickCopy')
+        self.copy_object_button.setToolTip('Skopiuj identyfikator zaznaczonego obiektu')
+        self.copy_object_button.clicked.connect(self.copy_selected_uid)
+        self.copy_object_button.setEnabled(False)
+        quick_actions.addWidget(self.copy_object_button)
+        card_layout.addLayout(quick_actions)
         prop_layout.addWidget(selected_card)
 
         # The inspector keeps its existing widget attributes and edit signals,
@@ -1279,6 +1298,11 @@ class GeoStudioWindow(QMainWindow):
         pos = self.view.mapFromScene(QPointF(x,-y))
         menu.exec(self.view.viewport().mapToGlobal(pos))
 
+    def copy_selected_uid(self):
+        if self.selected_uid:
+            QApplication.clipboard().setText(self.selected_uid)
+            self.status.showMessage('Skopiowano identyfikator obiektu.')
+
     def _set_selected_uids(self, uids):
         """One highlight path can outline thousands of selected objects efficiently."""
         if not self.doc:
@@ -1292,9 +1316,13 @@ class GeoStudioWindow(QMainWindow):
         self.selected_count_label.setText(
             f'Zaznaczono: {len(self.selected_uids)} obiektów' if self.selected_uids
             else 'Brak zaznaczenia')
+        if hasattr(self, 'edit_object_button'):
+            self.edit_object_button.setEnabled(bool(self.selected_uids))
+            self.copy_object_button.setEnabled(bool(self.selected_uid))
         if not self.selected_uids:
             self.object_title.setText('Wybierz obiekt na mapie')
             self.object_details.setText('Kliknij działkę, budynek lub inny element.')
+            self.object_metrics.setText('Wybierz obiekt, aby zobaczyć jego parametry')
             self.update_label_visibility()
             return
         combined = highlight_path(self.doc, self.selected_uids,
@@ -1321,6 +1349,9 @@ class GeoStudioWindow(QMainWindow):
         if len(self.selected_uids) > 1:
             self.object_title.setText(f'{len(self.selected_uids)} zaznaczonych obiektów')
             self.object_details.setText('Możesz usunąć grupę lub zmienić jej wypełnienie.')
+            self.object_metrics.setText(
+                f'{len(self.selected_uids)} obiektów  •  '
+                f'{sum(len(self.doc.by_id[uid].points) for uid in self.selected_uids):,} wierzchołków')
         else:
             title = (obj.fields.get('A2') or obj.fields.get('A1') or
                      self.symbols.get(obj.code) or f'Obiekt {obj.code}')
@@ -1328,6 +1359,10 @@ class GeoStudioWindow(QMainWindow):
             self.object_title.setToolTip(title)
             self.object_details.setText(
                 f'Kod {obj.code}  ·  {resolve_layer(self.catalog, obj.code)}')
+            area = (f'  •  {obj.area_m2 / 10000:,.4f} ha'
+                    if obj.area_m2 is not None else '')
+            self.object_metrics.setText(
+                f'{len(obj.points)} wierzchołków' + area)
         if len(self.selected_uids) > 1:
             codes = sorted({self.doc.by_id[uid].code for uid in self.selected_uids})
             entries = [('Zaznaczono', str(len(self.selected_uids))),
