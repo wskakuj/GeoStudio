@@ -29,22 +29,22 @@ PALETTES = {
         "disabled": "#9AABBA",
     },
     "dark": {
-        "window": "#121B28",
-        "surface": "#1D2A39",
-        "toolbar": "#1A2534",
-        "text": "#EDF4FC",
-        "muted": "#B1C0D1",
-        "border": "#394D65",
-        "hover": "#293D55",
-        "accent": "#72BFFF",
-        "accent_hover": "#4BA9F8",
-        "accent_soft": "#244969",
-        "selection": "#305273",
+        "window": "#0E131C",
+        "surface": "#1B2430",
+        "toolbar": "#141C27",
+        "text": "#F0F4FA",
+        "muted": "#A6B5C8",
+        "border": "#334254",
+        "hover": "#26364A",
+        "accent": "#82BDFF",
+        "accent_hover": "#60A8F2",
+        "accent_soft": "#203C58",
+        "selection": "#284661",
         "selection_text": "#FFFFFF",
-        "input": "#182434",
-        "alt": "#233246",
-        "scroll": "#506783",
-        "disabled": "#899CB1",
+        "input": "#17212E",
+        "alt": "#202C3B",
+        "scroll": "#3B5069",
+        "disabled": "#8294A9",
     },
 }
 
@@ -135,6 +135,111 @@ QPushButton#GeoStudioSubtleButton:hover { color: @text@; background: @hover@; }
 QLabel#GeoStudioInspectorHint { color: @muted@; font-size: 9pt; padding: 6px 1px; }
 
 QToolTip { background: @surface@; color: @text@; border: 1px solid @border@; padding: 7px; }
+"""
+    css += """
+/* Modern GIS workspace: structural surfaces and contextual rail */
+QWidget#GeoStudioWorkspace { background: @window@; }
+QFrame#GeoStudioDocumentHeader {
+    background: @surface@; border: 1px solid @border@; border-radius: 12px;
+}
+QLabel#GeoStudioDocumentEyebrow {
+    color: @muted@; font-size: 8pt; letter-spacing: 1px; font-weight: 750;
+}
+QLabel#GeoStudioDocumentName {
+    color: @text@; font-size: 12.5pt; font-weight: 750; padding-top: 2px;
+}
+QLabel#GeoStudioHeaderCaption {
+    color: @muted@; font-size: 8pt; font-weight: 750;
+    padding-right: 4px;
+}
+QComboBox#GeoStudioCanvasFilter {
+    border: 1px solid @border@; background: @alt@; padding: 7px 11px;
+    border-radius: 7px; min-height: 25px;
+}
+QFrame#GeoStudioToolRail {
+    background: @surface@; border: 1px solid @border@; border-radius: 12px;
+}
+QToolBar#GeoStudioToolPalette {
+    background: transparent; padding: 0; margin: 0; spacing: 3px;
+    border: none; min-width: 90px;
+}
+QToolBar#GeoStudioToolPalette QToolButton {
+    background: transparent; border: 1px solid transparent;
+    border-radius: 9px; font-size: 9pt; font-weight: 600;
+    padding: 8px 2px; margin: 0 3px;
+    min-height: 42px; color: @muted@;
+}
+QToolBar#GeoStudioToolPalette QToolButton:hover {
+    background: @hover@; color: @text@; border-color: @border@;
+}
+QToolBar#GeoStudioToolPalette QToolButton:checked {
+    color: @accent@; background: @accent_soft@;
+    border-color: @accent@;
+}
+QToolBar#GeoStudioToolPalette::separator {
+    background: @border@; height: 1px; width: 64px; margin: 5px 10px;
+}
+QLabel#GeoStudioRailFootnote {
+    color: @muted@; font-size: 8pt; border-top: 1px solid @border@;
+    padding: 7px 0; font-weight: 600;
+}
+QFrame#GeoStudioMapSurface {
+    background: #FFFFFF; border: 1px solid @border@; border-radius: 9px;
+}
+QGraphicsView#GeoStudioCanvas {
+    border: none; border-radius: 8px; background: #FFFFFF;
+}
+QLabel#GeoStudioCanvasFooter {
+    color: @muted@; font-size: 8.5pt; padding: 1px 8px;
+}
+QFrame#GeoStudioDocumentHeader QToolButton {
+    color: @text@; background: @alt@; border: 1px solid @border@;
+    border-radius: 8px; padding: 9px 13px; font-size: 9.5pt;
+}
+QFrame#GeoStudioDocumentHeader QToolButton:hover {
+    background: @hover@; border-color: @accent@;
+}
+QToolButton#GeoStudioFocusButton {
+    color: @accent@; background: @accent_soft@;
+    border: 1px solid @accent@; font-weight: 700;
+}
+QToolBar#GeoStudioFileToolbar {
+    padding: 9px 14px; spacing: 6px; background: @toolbar@;
+    border-bottom: 1px solid @border@;
+}
+QToolBar#GeoStudioFileToolbar QToolButton {
+    border-radius: 8px; font-weight: 650; padding: 9px 11px;
+}
+QDockWidget { border: none; background: @surface@; }
+QDockWidget::title {
+    background: @surface@; color: @text@;
+    padding: 14px 13px; font-size: 10pt;
+    border-bottom: 1px solid @border@;
+}
+QTreeView, QTreeWidget, QListWidget {
+    background: @surface@; alternate-background-color: @alt@;
+    border: 1px solid @border@; border-radius: 9px; padding: 4px;
+}
+QHeaderView::section {
+    background: @surface@; border: 0; border-bottom: 1px solid @border@;
+    color: @muted@; padding: 9px; font-size: 9pt; font-weight: 700;
+}
+QFrame#GeoStudioSelectionCard {
+    background: @alt@; border: 1px solid @border@; border-radius: 11px;
+}
+QLineEdit, QSpinBox, QComboBox {
+    border: 1px solid @border@; border-radius: 8px;
+    padding: 9px 10px; background: @input@;
+}
+QPushButton#GeoStudioPrimaryButton {
+    border-radius: 8px; min-height: 24px; padding: 10px 14px;
+    background: @accent@; color: #0C1B2A; font-weight: 750;
+}
+QPushButton#GeoStudioPrimaryButton:hover { background: @accent_hover@; }
+QStatusBar {
+    background: @surface@; color: @muted@;
+    border-top: 1px solid @border@; min-height: 32px;
+}
 """
     for key, value in c.items():
         css = css.replace(f"@{key}@", value)
