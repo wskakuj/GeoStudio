@@ -168,6 +168,40 @@ class GeoMap:
         self.lines.insert(insertion,replacement)
         self._parse()
 
+    def bulk_update_fields(self, values: dict[tuple[str, str], str]):
+        """Apply multiple existing-attribute changes atomically, with one parse.
+
+        Only replaces fields that already exist: a substring-replacement
+        command never creates new attributes and never touches unrelated
+        GEO-MAP records. Validation and cp1250 encoding are completed before
+        modifying source lines.
+        """
+        allowed = {'A1', 'A2', 'A3', 'A4', 'A5', 'A6', 'TX', 'MP', 'KR'}
+        pending: dict[int, bytes] = {}
+        for (uid, field), value in values.items():
+            if field not in allowed or not isinstance(value, str):
+                raise ValueError('Unsupported replacement field')
+            if any(c in value for c in '\\r\\n]'):
+                raise ValueError('Replacement may not contain newlines or closing brackets')
+            obj = self.by_id[uid]
+            prefix = f':{field}['.encode('ascii')
+            found = False
+            for line_no in range(obj.start + 1, obj.end):
+                original = self.lines[line_no]
+                if not original.startswith(prefix):
+                    continue
+                eol = (b'\\r\\n' if original.endswith(b'\\r\\n') else
+                       b'\\n' if original.endswith(b'\\n') else b'')
+                pending[line_no] = prefix + value.encode('cp1250', errors='strict') + b']' + eol
+                found = True
+                break
+            if not found:
+                raise ValueError('Attribute does not exist in GEO-MAP record')
+        for line_no, content in pending.items():
+            self.lines[line_no] = content
+        if pending:
+            self._parse()
+
     def move_polygon_vertices(self, changes: dict[str, dict[int, tuple[float, float]]], *, reparse: bool = True):
         """Move one or more polygon vertices atomically with only ONE parse.
 
