@@ -1301,6 +1301,10 @@ class GeoStudioWindow(QMainWindow):
         except Exception as exc: QMessageBox.critical(self,'Błąd odczytu mapy',str(exc))
 
     def _capture_active_map_tab(self):
+        # Commit an unfinished slider gesture to the *previous* document,
+        # not to whichever tab happens to be selected 300 ms later.
+        if getattr(self, '_pending_code_style', None) is not None:
+            self._commit_code_opacity()
         if 0 <= self._active_map_tab < len(self._map_sessions) and self.doc:
             self._map_sessions[self._active_map_tab].capture(self)
 
@@ -1772,6 +1776,10 @@ class GeoStudioWindow(QMainWindow):
         same order, same labels.
         """
         obj = self.doc.by_id[self.selected_uid]
+        if hasattr(self, 'layer_code_choice'):
+            index = self.layer_code_choice.findData(obj.code)
+            if index >= 0 and self.layer_code_choice.currentIndex() != index:
+                self.layer_code_choice.setCurrentIndex(index)
         if len(self.selected_uids) > 1:
             self.object_title.setText(f'{len(self.selected_uids)} zaznaczonych obiektów')
             self.object_details.setText('Możesz usunąć grupę lub zmienić jej wypełnienie.')
@@ -1817,9 +1825,12 @@ class GeoStudioWindow(QMainWindow):
             color_code = fill_code(current['fill'], current['opacity'])
             opacity = current['opacity']
         else:
-            base = QColor(*obj.colorref)
-            color_code = fill_code(base.name().upper(), 7)
-            opacity = 7
+            code_style = self.visual_styles.get('code:' + obj.code, {})
+            native = native_fill_color(obj.style)
+            base = QColor(code_style.get('fill', QColor(
+                *(native if native else obj.colorref)).name()))
+            opacity = code_style.get('opacity', self._default_fill_opacity())
+            color_code = fill_code(base.name().upper(), opacity)
         self.fill_entry.setText(color_code)
         self.opacity_spin.setValue(opacity)
 
