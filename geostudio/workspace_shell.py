@@ -10,7 +10,7 @@ from pathlib import Path
 
 from PySide6.QtCore import Qt, QSize
 from PySide6.QtWidgets import (QFrame, QWidget, QLabel, QHBoxLayout,
-                               QVBoxLayout, QToolButton, QGraphicsView)
+                               QVBoxLayout, QToolButton, QGraphicsView, QTabBar)
 
 
 class MapWorkspace(QWidget):
@@ -25,6 +25,31 @@ class MapWorkspace(QWidget):
         root = QVBoxLayout(self)
         root.setContentsMargins(0, 0, 0, 0)
         root.setSpacing(0)
+
+        # Document tabs sit immediately below the ribbon, like ArcGIS Pro.
+        # Each tab is a distinct GEO-MAP document session; the parent window
+        # owns individual histories, raster sidecars and view positions.
+        tabs_frame = QFrame(self)
+        tabs_frame.setObjectName("GeoStudioMapTabsFrame")
+        tabs_row = QHBoxLayout(tabs_frame)
+        tabs_row.setContentsMargins(9, 3, 8, 3)
+        tabs_row.setSpacing(6)
+        self.document_tabs = QTabBar(tabs_frame)
+        self.document_tabs.setObjectName("GeoStudioMapDocumentTabs")
+        self.document_tabs.setTabsClosable(True)
+        self.document_tabs.setMovable(False)
+        self.document_tabs.setExpanding(False)
+        self.document_tabs.setUsesScrollButtons(True)
+        self.document_tabs.setDrawBase(False)
+        self.document_tabs.setElideMode(Qt.TextElideMode.ElideRight)
+        self.document_tabs.setMinimumWidth(120)
+        tabs_row.addWidget(self.document_tabs, 1)
+        self.new_map_button = self._button("+", "Otwórz kolejną mapę MAP (Ctrl+O)")
+        self.new_map_button.setObjectName("GeoStudioNewMapTabButton")
+        tabs_row.addWidget(self.new_map_button)
+        tabs_frame.setVisible(False)
+        self.map_tabs_frame = tabs_frame
+        root.addWidget(tabs_frame)
 
         header = QFrame(self)
         header.setObjectName("GeoStudioDocumentHeader")
