@@ -32,6 +32,7 @@ from .map_tools import MapView
 from .selection import (SelectionContext, highlight_path, pick_candidates,
                         resolve_click, snap_at, toggle_selection, visible_uids)
 from .exporters import render_scene_image, save_image, write_dxf
+from .history import History, HistoryConflict
 from .map_layout import (detect_source_compilation_scale, validated_compilation_scale,
     label_ratio, source_text_height, text_line_offset, DEFAULT_SCALE)
 from .coordinates import (CRS_CHOICES, MODERN_EPSG, transform_xy,
@@ -62,10 +63,37 @@ QLineEdit {background: #23364f; color: white; border: 1px solid #466080; padding
 """
 
 
+class _MapHistoryTarget:
+    """Adapts the open GeoMap and the window's sidecar dicts to the history engine.
+
+    The engine only needs the byte lines, the two style dictionaries and a way
+    to rebuild the object model after the lines change.
+    """
+
+    def __init__(self, window):
+        self._window = window
+
+    @property
+    def lines(self) -> list[bytes]:
+        return self._window.doc.lines
+
+    @property
+    def visual_styles(self) -> dict:
+        return self._window.visual_styles
+
+    @property
+    def label_positions(self) -> dict:
+        return self._window.label_positions
+
+    def reparse(self) -> None:
+        self._window.doc._parse()
+
+
 class GeoStudioWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle('GeoStudio v0.14 — eksperymentalny edytor GEO-MAP')
+        self._base_title = 'GeoStudio v0.14 — eksperymentalny edytor GEO-MAP'
+        self.setWindowTitle(self._base_title)
         self.resize(1450, 900)
         self.settings = QSettings('GeoStudio', 'GeoStudio')
         self.doc: GeoMap | None=None
@@ -114,6 +142,8 @@ class GeoStudioWindow(QMainWindow):
         self.layers_tree=None
         self.current_polygon:list[tuple[float,float]]=[]
         self.polygon_code='5216'
+        self.history = History(_MapHistoryTarget(self))
+        self._label_history = None
         self.map_scene=QGraphicsScene(self)
         # Custom feature picking handles overlapping objects without Qt selection.
         self.view=MapView(self.map_scene)
@@ -140,6 +170,55 @@ class GeoStudioWindow(QMainWindow):
         self._setup_scale_widget()
         self.status.showMessage('Otwórz mapę GEO-MAP. Trans → Przelicz współrzędne; skalę 1:N ustawisz w dolnym pasku.')
         self.setStyleSheet(APP_QSS)
+
+    def _update_dirty_title(self):
+        mark = ' *' if self.history.is_dirty else ''
+        self.setWindowTitle(getattr(self, '_base_title',
+                                    'GeoStudio v0.14') + mark)
+
+    def _history_changed(self):
+        self._update_dirty_title()
+
+    def undo_last_edit(self):
+        """Undo one entry. The UI shortcuts are attached in a later stage."""
+        try:
+            entry = self.history.undo()
+        except HistoryConflict as exc:
+            QMessageBox.warning(self, 'Nie można cofnąć', str(exc))
+            return
+        if entry is None:
+            self.status.showMessage('Brak operacji do cofnięcia.')
+            return
+        self._after_history_apply(entry.selection_before,
+                                  f'Cofnięto: {entry.label}')
+
+    def redo_last_edit(self):
+        try:
+            entry = self.history.redo()
+        except HistoryConflict as exc:
+            QMessageBox.warning(self, 'Nie można ponowić', str(exc))
+            return
+        if entry is None:
+            self.status.showMessage('Brak operacji do ponowienia.')
+            return
+        self._after_history_apply(entry.selection_after,
+                                  f'Ponowiono: {entry.label}')
+
+    def _after_history_apply(self, selection, message):
+        """Rebuild the view after undo/redo and keep the work copy in step."""
+        if not self.doc:
+            return
+        self.rebuild_scene(fit=False)
+        self._set_selected_uids(list(selection or []))
+        try:
+            saved = self._autosave_work_copy()
+        except Exception as exc:                      # autosave must not block undo
+            saved = None
+            QMessageBox.warning(self, 'Kopia robocza',
+                'Zmiana została cofnięta w pamięci, ale kopii roboczej nie udało się '
+                f'zaktualizować: {exc}')
+        self._update_dirty_title()
+        self.status.showMessage(message + (f' Kopia robocza: {saved}' if saved else ''))
 
     def _action(self,label,callback,shortcut=None):
         a=QAction(label,self)
@@ -532,6 +611,12 @@ class GeoStudioWindow(QMainWindow):
             self, 'Otwórz mapę GEO-MAP',
             self._recent_folder('last_map_dir'), 'GEO-MAP (*.MAP *.map)')
         if not file:return
+        if self.doc is not None and self.history.is_dirty:
+            answer=QMessageBox.warning(self,'Niezapisane zmiany',
+                'Bieżąca mapa ma zmiany, które nie zostały zapisane. '
+                'Otwarcie innej mapy odrzuci je i wyczyści historię. Kontynuować?',
+                QMessageBox.Yes|QMessageBox.No, QMessageBox.No)
+            if answer!=QMessageBox.Yes:return
         try:
             doc=GeoMap.open(file)
             if not doc.checksum_valid:
@@ -556,7 +641,11 @@ class GeoStudioWindow(QMainWindow):
             self._look_for_libraries(Path(file).parent)
             self.rebuild_scene()
             self._update_compilation_scale_indicator()
-            self.setWindowTitle('GeoStudio v0.14 — '+Path(file).name)
+            # Entries refer to the lines of the previous document.
+            self._label_history = None
+            self.history.clear()
+            self._base_title = 'GeoStudio v0.14 — '+Path(file).name
+            self._update_dirty_title()
             self.status.showMessage(f'{len(doc.objects)} obiektów, {len(doc.lines)} wierszy | {file}')
         except Exception as exc: QMessageBox.critical(self,'Błąd odczytu mapy',str(exc))
 
@@ -772,6 +861,7 @@ class GeoStudioWindow(QMainWindow):
         if found:
             _, item = min(found, key=lambda choice: choice[0])
             self._active_label = item
+            self._begin_label_history(item.data(0), item.data(1))
             self._set_selected_uids([item.data(0)])
             self.view.setCursor(Qt.ClosedHandCursor)
             self.status.showMessage(
@@ -796,11 +886,31 @@ class GeoStudioWindow(QMainWindow):
         item.setPos(x,-y)
         item.setData(2,0.0)  # explicit dragged position is the new anchor
         self.label_positions.setdefault(uid,{})[field] = [round(x,3),round(y,3)]
+        self._commit_label_history()
         saved = self._autosave_work_copy()
         self.update_label_visibility()
         self.status.showMessage(
             f'Przesunięto {field} i zapisano pozycję w stylu GeoStudio.' +
             (f' Kopia: {saved}' if saved else ' Użyj Zapisz jako, aby zachować pozycję.'))
+
+    def _begin_label_history(self, uid, field):
+        """One history entry per drag: opened on press, closed on drop."""
+        self._abort_label_history()
+        self._label_history = self.history.begin(
+            f'Przesunięcie etykiety {field} obiektu {(uid or "")[:8]}',
+            selection_before=[uid] if uid else [])
+        self._label_history.__enter__()
+
+    def _commit_label_history(self):
+        tx, self._label_history = self._label_history, None
+        if tx is not None:
+            tx.__exit__(None, None, None)
+            self._history_changed()
+
+    def _abort_label_history(self):
+        tx, self._label_history = self._label_history, None
+        if tx is not None:
+            tx.__exit__(RuntimeError, RuntimeError('label drag cancelled'), None)
 
     def start_pan(self):
         self.cancel_edit()
@@ -1053,13 +1163,16 @@ class GeoStudioWindow(QMainWindow):
             QMessageBox.warning(self, 'Niepoprawny kod koloru', str(exc))
             return
         modified = []
-        for uid in self.selected_uids:
-            obj = self.doc.by_id.get(uid)
-            if obj and (obj.is_closed or all(
-                len(p) >= 4 and (p[0].x, p[0].y) == (p[-1].x, p[-1].y)
-                for p in obj.display_parts)):
-                self.visual_styles[uid] = {'fill': color, 'opacity': opacity}
-                modified.append(uid)
+        with self.history.begin(f'Wypełnienie {len(self.selected_uids)} obiektów',
+                                selection_before=self.selected_uids):
+            for uid in self.selected_uids:
+                obj = self.doc.by_id.get(uid)
+                if obj and (obj.is_closed or all(
+                    len(p) >= 4 and (p[0].x, p[0].y) == (p[-1].x, p[-1].y)
+                    for p in obj.display_parts)):
+                    self.visual_styles[uid] = {'fill': color, 'opacity': opacity}
+                    modified.append(uid)
+        self._history_changed()
         if not modified:
             QMessageBox.information(self, 'Wypełnienie',
                 'Żaden zaznaczony obiekt nie jest zamkniętym poligonem.')
@@ -1143,7 +1256,11 @@ class GeoStudioWindow(QMainWindow):
         if not ok:return
         try:
             uid=self.selected_uid
-            self.doc.update_field(uid,key,text)
+            with self.history.begin(f'Zmiana {key} obiektu {uid[:8]}',
+                                    selection_before=self.selected_uids) as tx:
+                self.doc.update_field(uid,key,text)
+                tx.set_selection_after([uid])
+            self._history_changed()
             self.rebuild_scene(fit=False, reselect=uid)
             self.status.showMessage('Zmieniono '+key+' w pamięci. Użyj „Zapisz jako”, by utworzyć nowy plik.')
         except Exception as exc:QMessageBox.warning(self,'Nie udało się zmienić atrybutu',str(exc))
@@ -1159,7 +1276,7 @@ class GeoStudioWindow(QMainWindow):
         prompt = (f'Usunąć {count} zaznaczonych obiektów z mapy?\\n'
                   f'Ostatni: {sample.code}, A1={sample.fields.get("A1", "")}, '
                   f'A2={sample.fields.get("A2", "")}.\\n'
-                  'Ta operacja usuwa CAŁE rekordy i nie ma jeszcze Cofnij.\\n'
+                  'Ta operacja usuwa CAŁE rekordy; można ją cofnąć (Ctrl+Z).\\n'
                   'Oryginalny MAP pozostaje nietknięty.')
         answer = QMessageBox.question(self, 'Potwierdź usunięcie', prompt,
                                       QMessageBox.Yes | QMessageBox.No,
@@ -1167,10 +1284,13 @@ class GeoStudioWindow(QMainWindow):
         if answer != QMessageBox.Yes:
             return
         self.cancel_edit()
-        self.doc.delete_objects(selected)
-        for uid in selected:
-            self.visual_styles.pop(uid, None)
-            self.label_positions.pop(uid, None)
+        with self.history.begin(f'Usunięcie {count} obiektów',
+                                selection_before=selected):
+            self.doc.delete_objects(selected)
+            for uid in selected:
+                self.visual_styles.pop(uid, None)
+                self.label_positions.pop(uid, None)
+        self._history_changed()
         self.selected_uids = []
         self.selected_uid = ''
         self._last_pick_pos = None
@@ -1196,16 +1316,27 @@ class GeoStudioWindow(QMainWindow):
             if (self.visual_styles or self.label_positions) and sidecar_path(file).exists():
                 raise FileExistsError('Plik stylów o tej nazwie już istnieje.')
             self.doc.save_as(file)
-            if self.visual_styles or self.label_positions:
-                write_styles(file, self.visual_styles,
-                             label_positions=self.label_positions)
-            QMessageBox.information(self, 'Zapisano eksperymentalną MAP',
-                'Utworzono nowy plik MAP. Osobne wypełnienia (jeśli używane) '
-                'są zapisane w towarzyszącym pliku *.geostudio.json i nie '
-                'są interpretowane przez GEO-MAP. Sprawdź kopię w GEO-MAP. '
-                'Oryginał nie został nadpisany.')
         except Exception as exc:
             QMessageBox.warning(self, 'Zapis przerwany', str(exc))
+            return
+        if self.visual_styles or self.label_positions:
+            try:
+                write_styles(file, self.visual_styles,
+                             label_positions=self.label_positions)
+            except Exception as exc:
+                # The map is on disk, the sidecar is not: not a complete save,
+                # so the save point must not move.
+                QMessageBox.warning(self, 'Zapis częściowy',
+                    'Plik MAP został zapisany, ale stylów GeoStudio nie udało się '
+                    f'zapisać: {exc}\nPunkt zapisu nie został przesunięty.')
+                return
+        self.history.mark_saved()
+        self._update_dirty_title()
+        QMessageBox.information(self, 'Zapisano eksperymentalną MAP',
+            'Utworzono nowy plik MAP. Osobne wypełnienia (jeśli używane) '
+            'są zapisane w towarzyszącym pliku *.geostudio.json i nie '
+            'są interpretowane przez GEO-MAP. Sprawdź kopię w GEO-MAP. '
+            'Oryginał nie został nadpisany.')
 
     def _world_scene_rect(self):
         """Fit real map geometry, never pixel-sized labels or edit markers."""
@@ -1584,7 +1715,9 @@ class GeoStudioWindow(QMainWindow):
         if attrs is None:
             return
         try:
-            uid = self.doc.append_polygon(points, self.polygon_code, fields=attrs)
+            with self.history.begin(f'Nowy poligon {self.polygon_code}'):
+                uid = self.doc.append_polygon(points, self.polygon_code, fields=attrs)
+            self._history_changed()
             self.cancel_edit()
             self.rebuild_scene(fit=False, reselect=uid)
             saved = self._autosave_work_copy()
@@ -1683,7 +1816,10 @@ class GeoStudioWindow(QMainWindow):
         _dist, index, px, py = best
         uid = self.edit_uid
         try:
-            self.doc.insert_polygon_vertex(uid, index, px, py)
+            with self.history.begin('Wstawienie wierzchołka',
+                                    selection_before=[uid]):
+                self.doc.insert_polygon_vertex(uid, index, px, py)
+            self._history_changed()
             self.cancel_edit()
             self.rebuild_scene(fit=False, reselect=uid)
             self.start_vertex_edit()
@@ -1746,7 +1882,10 @@ class GeoStudioWindow(QMainWindow):
         px, py = (snap.x,snap.y) if snap else (x,y)
         try:
             uid = self.edit_uid
-            self.doc.move_polygon_vertex(uid,index,px,py)
+            with self.history.begin('Przesunięcie wierzchołka',
+                                    selection_before=[uid]):
+                self.doc.move_polygon_vertex(uid,index,px,py)
+            self._history_changed()
             # Preserve current scale/position; do not zoom out after every edit.
             self.cancel_edit()
             self.rebuild_scene(fit=False,reselect=uid)
