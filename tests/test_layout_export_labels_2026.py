@@ -94,19 +94,17 @@ def test_modern_compass_resizes_without_background_and_keeps_legend_rows(app, tm
     assert large.boundingRect().height() < 500
 
 
-def test_wms_presets_are_real_services_and_smartsdi_not_network_wms(window, monkeypatch):
+def test_wms_presets_no_longer_include_smartsdi(window):
     dlg = WMSDialog(window)
     try:
         high = "https://mapy.geoportal.gov.pl/wss/service/PZGIK/ORTO/WMS/HighResolution"
         assert dlg.server_selector.findData(high) >= 0
         dlg.server_selector.setCurrentIndex(dlg.server_selector.findData(high))
         assert dlg.address.text() == high
-        dlg.server_selector.setCurrentIndex(dlg.server_selector.findData("smartsdi"))
-        assert not dlg.address.isEnabled()
-        assert not dlg.capabilities_button.isEnabled()
-        monkeypatch.setattr(QMessageBox, "information", staticmethod(lambda *a: None))
-        dlg.fetch_layers()
-        assert dlg.pending is None
+        assert dlg.server_selector.findData("smartsdi") == -1
+        assert not hasattr(dlg, "smartsdi_link")
+        assert all("SmartSDI" not in dlg.server_selector.itemText(index)
+                   for index in range(dlg.server_selector.count()))
     finally:
         dlg.close()
 
