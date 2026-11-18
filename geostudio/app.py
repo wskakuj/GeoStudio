@@ -2583,29 +2583,74 @@ class GeoStudioWindow(QMainWindow):
             self.cancel_edit()
             self.rebuild_scene(fit=False,reselect=self.selected_uid)
 
+    def _refresh_raster_panel(self):
+        if hasattr(self, 'raster_panel'):
+            self.raster_panel.refresh()
+
+    def _save_raster_settings(self):
+        if self.doc and self.doc.filename:
+            return self._raster_overlay.save(self.doc.filename)
+        return None
+
+    def show_raster_panel(self):
+        """Reveal raster management without changing map or editing modes."""
+        self.raster_dock.show()
+        self.layers_dock.show()
+        self.raster_dock.raise_()
+        self._refresh_raster_panel()
+
     def add_raster(self):
-        file,_=QFileDialog.getOpenFileName(self,'Otwórz raster z georeferencją',str(Path.home()),'Obrazy (*.png *.jpg *.jpeg *.tif *.tiff)')
-        if not file:return
-        path=Path(file)
-        pix=QPixmap(file)
-        if pix.isNull():QMessageBox.warning(self,'Raster','Nie udało się odczytać obrazu.');return
-        wf=None
-        for ext in [path.suffix[1:2]+'w',path.suffix[1:2]+path.suffix[-1:]+'w', 'wld', 'tfw', 'jgw', 'pgw']:
-            candidate=path.with_suffix('.'+ext)
-            if candidate.exists():wf=candidate;break
-        if wf is None:
-            QMessageBox.information(self,'Wymagana georeferencja','Raster nie ma pliku world (.tfw/.jgw/.pgw/.wld). Kalibracja ręczna jest na liście następnych etapów.');return
+        """Import an image; use world file or launch interactive GCP calibration."""
+        if not self.doc:
+            QMessageBox.information(self, 'Raster', 'Najpierw otwórz mapę GEO-MAP.')
+            return
+        file, _ = QFileDialog.getOpenFileName(
+            self, 'Dodaj podkład rastrowy',
+            self._recent_folder('last_raster_dir'),
+            'Obrazy (*.png *.jpg *.jpeg *.tif *.tiff *.bmp)')
+        if not file:
+            return
         try:
-            vals=[float(v.strip()) for v in wf.read_text().splitlines()[:6]]
-            if len(vals)!=6:raise ValueError('Plik world powinien zawierać sześć współczynników')
-            a,d,b,e,c,f=vals
-            item=QGraphicsPixmapItem(pix)
-            item.setTransform(QTransform(a,-d,b,-e,c,-f))
-            item.setOpacity(0.62)
-            item.setZValue(-100)
-            self.map_scene.addItem(item)
-            self.status.showMessage(f'Dodano raster: {path.name}. Przejrzystość 62%, podkład pod wektorami.')
-        except Exception as exc:QMessageBox.warning(self,'Błąd georeferencji',str(exc))
+            layer = self._raster_overlay.add(file)
+        except (ValueError, OSError) as exc:
+            QMessageBox.warning(self, 'Nie można dodać rastra', str(exc))
+            return
+        self.settings.setValue('last_raster_dir', str(Path(file).parent))
+        self.show_raster_panel()
+        if layer.calibrated:
+            self._raster_overlay.attach(self.map_scene)
+            try:
+                self._save_raster_settings()
+            except OSError as exc:
+                QMessageBox.warning(self, 'Nie zapisano ustawień podkładu', str(exc))
+            self.status.showMessage(
+                f'Pod mapą: {Path(file).name}. Raster ma georeferencję z pliku world.')
+        else:
+            self.status.showMessage(
+                'Raster nie ma pliku world. Wskaż 3 lub więcej par punktów, aby go skalibrować.')
+            self._open_raster_calibration(layer)
+
+    def calibrate_selected_raster(self):
+        if not self.doc:
+            QMessageBox.information(self, 'Kalibracja', 'Najpierw otwórz mapę.')
+            return
+        layer = self.raster_panel.selected_layer()
+        if layer is None and self._raster_overlay.layers:
+            layer = self._raster_overlay.layers[-1]
+        if layer is None:
+            self.add_raster()
+            return
+        self._open_raster_calibration(layer)
+
+    def _open_raster_calibration(self, layer):
+        if self._raster_calibration_dialog is not None:
+            self._raster_calibration_dialog.close()
+        # This window is intentionally non-modal: the live GEO-MAP canvas
+        # must stay clickable when capturing a corresponding world point.
+        dialog = RasterCalibrationDialog(self, layer)
+        self._raster_calibration_dialog = dialog
+        dialog.show()
+        dialog.raise_()
 
     def export_image(self):
         if not self.doc:return
