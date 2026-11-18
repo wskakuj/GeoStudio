@@ -35,6 +35,21 @@ def validated_styles(styles: dict) -> dict[str, dict]:
     for uid, style in styles.items():
         if not isinstance(uid, str) or not isinstance(style, dict):
             continue
+        if re.fullmatch(r"code:\d{4}", uid):
+            # An opacity override for a whole GEO-MAP code need not change
+            # any original per-object CDF/native fill color. Store it in
+            # the existing sidecar dictionary so Undo/Redo works unchanged.
+            try:
+                opacity = int(style["opacity"])
+                if not 0 <= opacity <= 100:
+                    continue
+                entry = {"opacity": opacity}
+                if "fill" in style:
+                    entry["fill"] = parse_fill_code(str(style["fill"]))[0]
+                cleaned[uid] = entry
+            except (KeyError, ValueError, TypeError):
+                continue
+            continue
         try:
             color, opacity = parse_fill_code(str(style["fill"]), int(style["opacity"]))
             cleaned[uid] = {"fill": color, "opacity": opacity}
