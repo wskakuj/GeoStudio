@@ -1998,6 +1998,7 @@ class GeoStudioWindow(QMainWindow):
             for item in self.view.items(screen_point):
                 uid, field = item.data(0), item.data(1)
                 if (field in {'A1', 'A2'} and uid in self.doc.by_id and
+                        self.doc.by_id[uid].code == '5310' and
                         self.layer_for_uid.get(uid, '') not in self.hidden_layers):
                     self._last_pick_pos = None
                     self._last_pick_candidates = ()
