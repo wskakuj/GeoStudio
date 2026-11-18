@@ -112,6 +112,13 @@ def object_fill_brush(obj: GeoObject, ctx: RenderContext, *, cdf=None) -> QBrush
     if cdf is None:
         cdf = cdf_for_object(ctx.cdf_styles, obj.code,
                              obj.fields.get('A1', ''), obj.fields.get('A2', ''))
+    per_code = ctx.visual_styles.get('code:' + obj.code, {})
+    # A deliberate whole-layer color action must supersede earlier individual
+    # fills. Otherwise the command appears to do nothing for styled parcels.
+    if per_code.get('force_fill') and 'fill' in per_code:
+        color = QColor(per_code['fill'])
+        color.setAlpha(round(per_code.get('opacity', 100) * 255 / 100))
+        return QBrush(color)
     explicit = ctx.visual_styles.get(obj.uid)
     if explicit:
         color = QColor(explicit['fill'])
@@ -194,6 +201,13 @@ def build_scene(scene: QGraphicsScene, doc: GeoMap, ctx: RenderContext) -> Scene
         # Use the CDF border weight when present; protect against
         # excessively wide vendor pen settings.
         pen.setWidthF(min(3.0, max(0.8, cdf.width)) if cdf and cdf.width > 0 else 1.0)
+        code_outline = ctx.visual_styles.get("code:" + obj.code, {})
+        if "stroke" in code_outline:
+            ink = QColor(code_outline["stroke"])
+            if ink.isValid():
+                pen.setColor(ink)
+        if "stroke_width" in code_outline:
+            pen.setWidthF(max(.5, min(12.0, float(code_outline["stroke_width"]))))
         fill_brush = object_fill_brush(obj, ctx, cdf=cdf)
 
         if len(obj.points) == 1:
