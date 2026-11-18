@@ -40,7 +40,7 @@ nie nadpisuje źródłowego `.MAP`.
   dla kodu nadal są obsługiwane.
 - **Graniczniki** przy pierwszym otwarciu MAP są wyłączone; można je
   ponownie zaznaczyć w lewym panelu Warstwy. Nawet przy wyłączonej
-  widoczności jednopunktowe graniczniki pozostają celami przyciągania,
+  widoczności graniczniki pozostają celami przyciągania,
   jeśli przełącznik **Przyciągaj** jest włączony. Zwykłe ukryte warstwy
   nie są przyciągane.
 - Ustawienia widoczności po przełączaniu między otwartymi mapami
