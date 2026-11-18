@@ -40,7 +40,11 @@ def test_both_themes_have_no_unexpanded_tokens():
 def test_new_workspace_has_separate_toolbars_and_visible_mode(window):
     assert isinstance(window.file_toolbar, QToolBar)
     assert window.file_toolbar.objectName() == "GeoStudioFileToolbar"
-    assert window.main_toolbar.objectName() == "GeoStudioToolsToolbar"
+    assert window.main_toolbar.objectName() == "GeoStudioToolPalette"
+    assert window.workspace.map_view is window.view
+    assert window.workspace.tool_rail.isVisible() is False or (
+        window.main_toolbar.orientation() == __import__(
+            "PySide6.QtCore", fromlist=["Qt"]).Qt.Vertical)
     assert window.panel_toolbar.objectName() == "GeoStudioPanelToolbar"
     assert window.mode_badge.text() == "ZAZNACZANIE"
     assert window.tool_actions["select"].isChecked()
