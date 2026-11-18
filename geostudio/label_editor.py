@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QColor
+from PySide6.QtGui import QColor, QFont
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QLabel, QTableWidget, QTableWidgetItem,
     QHeaderView, QFontComboBox, QSpinBox, QDialogButtonBox, QPushButton,
@@ -61,7 +61,7 @@ class AttributeLabelsDialog(QDialog):
             name_item.setFlags(Qt.ItemIsSelectable | Qt.ItemIsEnabled)
             self.table.setItem(row, 1, name_item)
             font = QFontComboBox(self.table)
-            font.setCurrentFont(saved.get("font", "Segoe UI"))
+            font.setCurrentFont(QFont(saved.get("font", "Segoe UI")))
             self.table.setCellWidget(row, 2, font)
             size = QSpinBox(self.table)
             size.setRange(6, 96)
