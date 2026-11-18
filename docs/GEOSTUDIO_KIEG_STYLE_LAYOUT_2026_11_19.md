@@ -5,7 +5,7 @@ Otwórz **Dane → WMS** i wybierz źródło **Działki ewidencyjne + numery (GU
 Kliknij **Pobierz warstwy**, wybierz pozycję **Działki i numery ewidencyjne**
 (kombinacja natywnych warstw `dzialki,numery_dzialek`; dostępna tylko,
 gdy obie są ogłoszone w GetCapabilities) i ustaw **rzeczywisty EPSG** mapy.
-Kliknij **Pokaż WMS pod mapą**. Przybliżaj widok, jeśli numerów jest
+Kliknij **Pokaż wybraną warstwę WMS**. Działki i numery są rysowane\n**nad wypełnieniami poligonów**, natomiast ortofotomapa pozostaje\npod geometrią. Przybliżaj widok, jeśli numerów jest
 niewiele: ich widoczność zależy od skali i powiatowych serwerów źródłowych.
 
 Źródło: Główny Urząd Geodezji i Kartografii, usługa
