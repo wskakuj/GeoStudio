@@ -332,8 +332,11 @@ class GeoStudioWindow(QMainWindow):
         self.selected_uid = ''
         self.layers_dock = QDockWidget('Warstwy GEO-MAP', self)
         self.layers_dock.setObjectName('GeoStudioLayersDock')
+        self.layers_dock.setMinimumWidth(240)
         self.layers_tree = QTreeWidget()
         self.layers_tree.setHeaderLabels(['Warstwa', 'Obiekty'])
+        self.layers_tree.setAlternatingRowColors(True)
+        self.layers_tree.setUniformRowHeights(True)
         self.layers_tree.header().setSectionResizeMode(0, QHeaderView.Stretch)
         self.layers_tree.itemChanged.connect(self.on_layer_toggle)
         self.layers_dock.setWidget(self.layers_tree)
@@ -341,17 +344,30 @@ class GeoStudioWindow(QMainWindow):
 
         self.properties_dock = QDockWidget('Właściwości obiektu', self)
         self.properties_dock.setObjectName('GeoStudioPropertiesDock')
+        self.properties_dock.setMinimumWidth(285)
         prop_root = QWidget(self.properties_dock)
+        prop_root.setObjectName('GeoStudioPropertyPanel')
         prop_layout = QVBoxLayout(prop_root)
+        prop_layout.setContentsMargins(12, 12, 12, 12)
+        prop_layout.setSpacing(10)
         self.props = QTreeWidget()
         self.props.setHeaderLabels(['Pole', 'Wartość'])
+        self.props.setAlternatingRowColors(True)
+        self.props.setRootIsDecorated(False)
         self.props.header().setSectionResizeMode(0, QHeaderView.ResizeToContents)
         self.props.header().setSectionResizeMode(1, QHeaderView.Stretch)
         self.props.itemDoubleClicked.connect(self.edit_property)
         prop_layout.addWidget(self.props, 3)
         self.selected_count_label = QLabel('Brak zaznaczenia')
+        self.selected_count_label.setObjectName('GeoStudioSelectionBadge')
         prop_layout.addWidget(self.selected_count_label)
-        prop_layout.addWidget(QLabel('Wypełnienie poligonów (styl GeoStudio)'))
+        section = QLabel('WYGLĄD POLIGONU')
+        section.setObjectName('GeoStudioSectionHeading')
+        prop_layout.addWidget(section)
+        style_hint = QLabel('Zmiany wyglądu są zapisywane osobno. Oryginalny plik GEO-MAP pozostaje nietknięty.')
+        style_hint.setWordWrap(True)
+        style_hint.setObjectName('GeoStudioPanelHint')
+        prop_layout.addWidget(style_hint)
         form = QFormLayout()
         self.fill_entry = QLineEdit('#7899B5@25')
         self.fill_entry.setToolTip('Kod #RRGGBB@krycie%, np. #D94848@40')
@@ -364,10 +380,13 @@ class GeoStudioWindow(QMainWindow):
         form.addRow('Krycie', self.opacity_spin)
         prop_layout.addLayout(form)
         style_buttons = QHBoxLayout()
-        for title, fn in [('🎨 Paleta', self.choose_fill_color),
-                          ('Kopiuj kod', self.copy_fill_code),
+        for title, fn in [('Kolor…', self.choose_fill_color),
+                          ('Kopiuj', self.copy_fill_code),
                           ('Zastosuj', self.apply_fill_style)]:
             button = QPushButton(title)
+            if title == 'Zastosuj':
+                button.setObjectName('GeoStudioPrimaryButton')
+                button.setToolTip('Zastosuj styl do zaznaczonych poligonów')
             button.clicked.connect(fn)
             style_buttons.addWidget(button)
         prop_layout.addLayout(style_buttons)
@@ -378,6 +397,8 @@ class GeoStudioWindow(QMainWindow):
         self.search_dock.setObjectName('GeoStudioSearchDock')
         search_root = QWidget(self.search_dock)
         search_layout = QVBoxLayout(search_root)
+        search_layout.setContentsMargins(12, 12, 12, 12)
+        search_layout.setSpacing(10)
         search_form = QFormLayout()
         self.search_code = QLineEdit()
         self.search_code.setPlaceholderText('np. 5310 lub 5216')
@@ -390,7 +411,8 @@ class GeoStudioWindow(QMainWindow):
         search_form.addRow('Atrybut', self.search_field)
         search_form.addRow('Wartość =', self.search_value)
         search_layout.addLayout(search_form)
-        find_button = QPushButton('⌕ Znajdź na mapie')
+        find_button = QPushButton('Znajdź na mapie')
+        find_button.setObjectName('GeoStudioPrimaryButton')
         find_button.clicked.connect(self.run_search)
         search_layout.addWidget(find_button)
         self.search_value.returnPressed.connect(self.run_search)
@@ -400,6 +422,7 @@ class GeoStudioWindow(QMainWindow):
         self._search_uids = []
         self.search_results = QTreeWidget()
         self.search_results.setHeaderLabels(['Kod', 'A1', 'A2'])
+        self.search_results.setAlternatingRowColors(True)
         self.search_results.itemClicked.connect(self.select_search_result)
         search_layout.addWidget(self.search_results, 1)
         select_results = QPushButton('Zaznacz wszystkie wyniki')
@@ -412,17 +435,21 @@ class GeoStudioWindow(QMainWindow):
         self.info_dock = self._help_dock()
         self.info_dock.setObjectName('GeoStudioInfoDock')
         self.addDockWidget(Qt.BottomDockWidgetArea, self.info_dock)
+        self.info_dock.hide()  # Save canvas space; help remains one click away.
 
         panels = self.view_menu.addMenu('Panele')
         self.panel_toolbar = QToolBar('Pokaż/ukryj panele', self)
+        self.panel_toolbar.setObjectName('GeoStudioPanelToolbar')
+        self.panel_toolbar.setToolButtonStyle(Qt.ToolButtonTextUnderIcon)
         self.panel_toolbar.setMovable(False)
         self.addToolBar(Qt.RightToolBarArea, self.panel_toolbar)
-        for dock, title in ((self.layers_dock, '▤ Warstwy'),
-                            (self.properties_dock, '▦ Właściwości'),
-                            (self.search_dock, '⌕ Szukaj'),
-                            (self.info_dock, 'ⓘ Pomoc')):
+        for dock, title, glyph in ((self.layers_dock, 'Warstwy', '▤'),
+                                   (self.properties_dock, 'Atrybuty', '▦'),
+                                   (self.search_dock, 'Szukaj', '⌕'),
+                                   (self.info_dock, 'Pomoc', '?')):
             action = dock.toggleViewAction()
             action.setText(title)
+            self._decorate_action(action, glyph, 'Pokaż lub ukryj panel: ' + title)
             panels.addAction(action)
             self.panel_toolbar.addAction(action)
         self.view_menu.addAction(self._action('Przywróć wszystkie panele',
@@ -446,11 +473,12 @@ class GeoStudioWindow(QMainWindow):
 
     def _help_dock(self):
         dock=QDockWidget('Informacja',self)
-        dock.setMaximumHeight(110)
-        label=QLabel('S: zaznacz, H: przesuń; środkowy przycisk przesuwa mapę zawsze. Kolejne kliknięcia przełączają nakładające się obiekty. '
-                     'P: nowy poligon (kliknij pierwszy punkt lub Enter, aby zamknąć). '
-                     'E: przeciągaj wierzchołki albo kliknij krawędź, aby wstawić nowy. Esc: zakończ. '
-                     'Style GEO-MAP nadal są przybliżone.')
+        dock.setMaximumHeight(120)
+        label=QLabel('S — zaznacz  •  H — przesuń  •  P — poligon  •  '
+                     'E — wierzchołki  •  L — etykiety. '
+                     'Ctrl+klik dodaje/usuwa zaznaczenie. Prawy przycisk pokazuje obiekty pod kursorem. '
+                     'Enter kończy poligon; Esc anuluje akcję. '
+                     'Symbolika GEO-MAP nadal jest częściowo przybliżona.')
         label.setWordWrap(True)
         dock.setWidget(label)
         return dock
@@ -816,6 +844,7 @@ class GeoStudioWindow(QMainWindow):
         self.view.label_mode = True
         self.view.setCursor(Qt.CrossCursor)
         self.tool_actions['labels'].setChecked(True)
+        self._set_mode_badge('PRZESUWANIE ETYKIET')
         # Moving descriptions must not mutate GEO-MAP geometry or attributes.
         self.status.showMessage(
             'Tryb L: przeciągnij widoczny napis A1 lub A2. '
@@ -883,6 +912,7 @@ class GeoStudioWindow(QMainWindow):
         self.view.setDragMode(QGraphicsView.NoDrag)
         self.view.setCursor(Qt.OpenHandCursor)
         self.tool_actions['pan'].setChecked(True)
+        self._set_mode_badge('PRZESUWANIE')
         self.status.showMessage('Tryb przesuwania mapy (H). S lub Esc: powrót do zaznaczania.')
 
     def _map_radius(self, pixels: float) -> float:
@@ -1347,6 +1377,10 @@ class GeoStudioWindow(QMainWindow):
 
     def _setup_scale_widget(self):
         """Visible map scale, estimated from Qt's logical screen DPI."""
+        self.mode_badge = QLabel('ZAZNACZANIE')
+        self.mode_badge.setObjectName('GeoStudioModeBadge')
+        self.mode_badge.setToolTip('Aktywny tryb pracy, zmienisz go na górnym pasku')
+        self.status.addPermanentWidget(self.mode_badge)
         self.status.addPermanentWidget(QLabel('Skala widoku:'))
         self.scale_combo = QComboBox(self)
         self.scale_combo.setObjectName('GeoStudioScale')
@@ -1491,6 +1525,7 @@ class GeoStudioWindow(QMainWindow):
         self.view.dragged_vertex = None
         self.view.edit_points = []
         self.view.setDragMode(QGraphicsView.NoDrag)
+        self._set_mode_badge('ZAZNACZANIE')
         self.view._pan_button = None
         self.view._pan_last = None
         if hasattr(self, 'finish_toolbar_action'):
@@ -1529,6 +1564,7 @@ class GeoStudioWindow(QMainWindow):
         self.view.draw_mode = True
         self.view.setCursor(Qt.CrossCursor)
         self.tool_actions['draw'].setChecked(True)
+        self._set_mode_badge('RYSOWANIE POLIGONU')
         self.view.setDragMode(QGraphicsView.NoDrag)
         self._ensure_feedback_items()
         self.finish_toolbar_action.setVisible(True)
@@ -1782,6 +1818,7 @@ class GeoStudioWindow(QMainWindow):
         self.view.edit_mode = True
         self.view.setCursor(Qt.CrossCursor)
         self.tool_actions['edit'].setChecked(True)
+        self._set_mode_badge('EDYCJA WIERZCHOŁKÓW')
         self.view.edit_points = [(p.x,p.y) for p in obj.points[:-1]]
         self.view.setDragMode(QGraphicsView.NoDrag)
         self._ensure_feedback_items()
