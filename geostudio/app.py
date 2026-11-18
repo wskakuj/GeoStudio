@@ -3963,7 +3963,8 @@ class GeoStudioWindow(QMainWindow):
             if image is None:
                 raise ValueError("Mapa jest pusta.")
             report(88, "Zapisywanie pliku " + Path(file).suffix.upper() + "…")
-            if not save_image(image, file):
+            quality = 96 if Path(file).suffix.lower() in {".jpg", ".jpeg"} else None
+            if not save_image(image, file, quality=quality):
                 raise RuntimeError(
                     "Format niedostępny w tej instalacji Qt; wybierz PNG/JPG. "
                     "Eksport TIFF wymaga obsługi TIFF w zainstalowanych pluginach Qt.")
