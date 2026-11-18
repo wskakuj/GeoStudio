@@ -299,10 +299,8 @@ class GeoStudioWindow(QMainWindow):
             (self.multipart_action, 'layers', 'Łączniki obiektów'),
         )
         theme = ribbon.group('Widok', 'Interfejs')
-        theme.menu('Motyw', self.view_menu.actions()[0].menu(), 'more')
-        theme.menu('Panele', self.view_menu.actions()[-2].menu()
-                   if self.view_menu.actions()[-2].menu() else self.workspace_menu,
-                   'properties')
+        theme.menu('Motyw', self.theme_menu, 'more')
+        theme.menu('Panele', self.panels_menu, 'properties')
 
         # Export tab intentionally separates saving native MAP from DXF and images.
         saved = ribbon.group('Eksport', 'Plik GEO-MAP')
@@ -451,6 +449,7 @@ class GeoStudioWindow(QMainWindow):
         vm=self.menuBar().addMenu('&Widok')
         self.view_menu = vm
         themes = vm.addMenu('Motyw interfejsu')
+        self.theme_menu = themes
         self.theme_actions = {}
         theme_group = QActionGroup(self)
         theme_group.setExclusive(True)
@@ -856,6 +855,7 @@ class GeoStudioWindow(QMainWindow):
         self.info_dock.hide()  # Save canvas space; help remains one click away.
 
         panels = self.view_menu.addMenu('Panele')
+        self.panels_menu = panels
         self.panel_toolbar = QToolBar('Pokaż/ukryj panele', self)
         self.panel_toolbar.setObjectName('GeoStudioPanelToolbar')
         self.panel_toolbar.setToolButtonStyle(Qt.ToolButtonIconOnly)
