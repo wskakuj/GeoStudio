@@ -58,3 +58,31 @@ nakładanie na charakterystyczne obiekty, widoczność napisów i działanie
 rysowania nad podkładem. Przełącz WMS, odśwież po zmianie zoomu, sprawdź
 błędy sieci i pomyłkę układu. Otwórz Google Maps w przeglądarce;
 jeśli posiadasz własny klucz Maps Embed API, sprawdź także osadzony podgląd.
+
+
+## Wybór warstwy WMS bez znajomości kodu
+
+W oknie WMS pole **Warstwa WMS** jest teraz wyłącznie listą wyboru.
+Po otwarciu okna ma stan „Kliknij «Pobierz warstwy»” i jest wyłączone.
+Kliknięcie **Pobierz warstwy** wysyła GetCapabilities do wpisanego serwera,
+po czym włącza listę z nazwami dostarczonymi przez usługę (np.
+„Ortofotomapa (ortofoto)”). Nie trzeba wpisywać kodu WMS ręcznie.
+Gdy serwer zwraca błąd OGC lub nie udostępnia warstw, pojawia się komunikat
+z wyjaśnieniem, a przycisk wyświetlenia mapy pozostaje nieaktywny.
+
+## Google Earth bez klucza
+
+Okno **Dane → Mapy online → Google Maps** ma dwa przyciski bez API:
+
+- **Google Maps — przeglądarka (bez API)**: otwiera aktualny obszar mapy
+  w oficjalnej przeglądarkowej usłudze Google Maps.
+- **Google Earth — przeglądarka (bez API)**: otwiera stronę Google Earth Web
+  z wyszukiwaniem współrzędnych bieżącego obszaru po przeliczeniu z
+  potwierdzonego układu EPSG do WGS84. Ten format odnośnika jest
+  pomocniczy i Google może zmienić jego obsługę; w takim wypadku należy
+  otworzyć https://earth.google.com/web/ i wkleić współrzędne w wyszukiwarkę.
+
+**Nie jest to mapa podkładowa w scenie GeoStudio**. Wyświetlanie obrazów
+Google pod poligonami w edytorze przez nieoficjalne kafelki nie jest
+wspierane. Do odrysowywania używaj ortofotomapy WMS Geoportalu lub
+lokalnego rastra z dozwolonym prawem wykorzystania.
