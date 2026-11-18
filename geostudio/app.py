@@ -1860,6 +1860,13 @@ class GeoStudioWindow(QMainWindow):
             return
         self.selected_uids = list(dict.fromkeys(uid for uid in uids if uid in self.doc.by_id))
         self.selected_uid = self.selected_uids[-1] if self.selected_uids else ''
+        for frame in self._selected_label_frames:
+            try:
+                if frame.scene() is self.map_scene:
+                    self.map_scene.removeItem(frame)
+            except RuntimeError:
+                pass
+        self._selected_label_frames = []
         self.props.clear()
         if self.highlight_item is not None:
             self.map_scene.removeItem(self.highlight_item)
@@ -1886,6 +1893,22 @@ class GeoStudioWindow(QMainWindow):
         self.highlight_item.setZValue(1000)
         self.highlight_item.setAcceptedMouseButtons(Qt.NoButton)
         self.map_scene.addItem(self.highlight_item)
+        # The A1 and A2 descriptions belong to the selected GEO-MAP object,
+        # not independent objects. Emphasize both together with its contour.
+        if len(self.selected_uids) == 1:
+            for field in ('A1', 'A2'):
+                label = self.label_items.get((self.selected_uid, field))
+                if label is None:
+                    continue
+                frame = QGraphicsRectItem(
+                    label.boundingRect().adjusted(-3, -2, 3, 2), label)
+                frame.setBrush(QBrush(QColor(255, 190, 25, 72)))
+                border = QPen(QColor(239, 165, 19, 220), 1)
+                border.setCosmetic(True)
+                frame.setPen(border)
+                frame.setZValue(-1)
+                frame.setAcceptedMouseButtons(Qt.NoButton)
+                self._selected_label_frames.append(frame)
         self._show_selection_properties()
         self.update_label_visibility()
 
@@ -1968,12 +1991,32 @@ class GeoStudioWindow(QMainWindow):
             return
         candidates = self._pick_candidates(x, y)
         uids = [obj.uid for obj in candidates]
+        # A click on an A1/A2 text must select its owner directly. This
+        # eliminates repeated cycling through background parcels/land-use.
+        if not additive and not cycle:
+            screen_point = self.view.mapFromScene(QPointF(x, -y))
+            for item in self.view.items(screen_point):
+                uid, field = item.data(0), item.data(1)
+                if (field in {'A1', 'A2'} and uid in self.doc.by_id and
+                        self.layer_for_uid.get(uid, '') not in self.hidden_layers):
+                    self._last_pick_pos = None
+                    self._last_pick_candidates = ()
+                    self._select_uid(uid)
+                    self.status.showMessage(f'Wybrano kod {self.doc.by_id[uid].code} poprzez etykietę {field}.')
+                    return
         if not uids:
             self._last_pick_pos = None
             self._last_pick_candidates = ()
             if not additive:
                 self._set_selected_uids([])
             return
+        # Prefer a small building 5310 over large overlapping land-use and
+        # parcel backgrounds on the first click. Repeated clicks still
+        # cycle the *entire* candidate list, one object per click.
+        if not cycle and not additive and self.selected_uid not in uids:
+            buildings = [uid for uid in uids if self.doc.by_id[uid].code == '5310']
+            if buildings:
+                uids = buildings + [uid for uid in uids if uid not in buildings]
         screen = self.view.mapFromScene(QPointF(x, -y))
         repeat = (self._last_pick_pos is not None and
                   (screen - self._last_pick_pos).manhattanLength() <= 12 and
