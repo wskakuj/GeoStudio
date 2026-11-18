@@ -102,18 +102,27 @@ def highlight_path(doc: GeoMap, uids: list[str], *,
 
 def snap_at(ctx: SelectionContext, x: float, y: float, *,
             exclude_uid: str | None = None,
-            enabled: bool = True) -> SnapResult | None:
-    """Snap to the nearest vertex, otherwise to the nearest edge.
+            enabled: bool = True,
+            include_hidden_markers: bool = False) -> SnapResult | None:
+    """Snap to every nearby vertex or edge, regardless of object code.
 
-    ``radius`` in the context is already map units, so the result respects the
-    current zoom instead of using a fixed distance in metres.
+    Hidden ordinary layers stay excluded. An explicit opt-in lets the map
+    editor also snap to survey monuments in the normally hidden
+    'Graniczniki' layer without making them selectable/rendered.
+    ``radius`` is already in map units, derived from screen pixels.
     """
     if ctx.doc is None or not enabled:
         return None
     radius = ctx.radius
     if radius <= 0:
         return None
-    candidates = [obj for obj in ctx.geometry_index.nearby(x, y, radius)
-                  if ctx.layer_for_uid.get(obj.uid, '') not in ctx.hidden_layers]
+    candidates = []
+    for obj in ctx.geometry_index.nearby(x, y, radius):
+        layer = ctx.layer_for_uid.get(obj.uid, '')
+        hidden = layer in ctx.hidden_layers
+        marker = (include_hidden_markers and
+                  layer.casefold().startswith('granicznik'))
+        if not hidden or marker:
+            candidates.append(obj)
     return find_snap(x, y, candidates, radius, exclude_uid=exclude_uid,
                      hide_connectors=ctx.hide_connectors)
