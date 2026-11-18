@@ -35,11 +35,34 @@ class WMSBounds:
             raise ValueError("Nieprawidłowy obszar mapy dla WMS.")
 
     def getmap_bbox(self, crs: str, version: str = "1.3.0") -> tuple[float, ...]:
-        # Projected coordinates: (easting min, northing min, easting max, northing max).
-        # EPSG:4326 in WMS 1.3.0 has official latitude/longitude axis ordering.
-        if crs.upper() == "EPSG:4326" and version == "1.3.0":
+        """BBOX in the axis order mandated by the requested WMS version.
+
+        GEO-MAP uses X = northing and Y = easting. In WMS 1.1.1 the
+        longitude/easting axis always comes first. WMS 1.3.0 instead
+        uses the authority's CRS axis order: Polish EPSG:2180 and
+        EPSG:2176–2179 are NORTH/EAST, not EAST/NORTH. The old code
+        inverted them and requested a different region of the imagery.
+        """
+        if version == "1.1.1":
+            return self.min_y, self.min_x, self.max_y, self.max_x
+        if version != "1.3.0":
+            raise ValueError("Obsługiwane wersje WMS: 1.3.0 i 1.1.1.")
+        return self._bbox_wms130(crs)
+
+    def _bbox_wms130(self, crs: str) -> tuple[float, ...]:
+        from pyproj import CRS
+        try:
+            axis_info = CRS.from_user_input(crs).axis_info
+        except Exception as exc:
+            raise ValueError("Nie można sprawdzić kolejności osi EPSG.") from exc
+        if len(axis_info) < 2:
+            raise ValueError("Brak definicji osi dla układu WMS.")
+        first, second = axis_info[0].direction.lower(), axis_info[1].direction.lower()
+        if first in {"north", "south"} and second in {"east", "west"}:
             return self.min_x, self.min_y, self.max_x, self.max_y
-        return self.min_y, self.min_x, self.max_y, self.max_x
+        if first in {"east", "west"} and second in {"north", "south"}:
+            return self.min_y, self.min_x, self.max_y, self.max_x
+        raise ValueError("Nierozpoznana kolejność osi w układzie WMS.")
 
 
 def _tag(element) -> str:
