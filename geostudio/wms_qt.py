@@ -17,6 +17,7 @@ from PySide6.QtWidgets import (
 )
 
 from .coordinates import CRS_CHOICES
+from .wms_auto import WMSMapSource
 from .wms_service import (
     WMSBounds, WMSLayerInfo, capabilities_url, getmap_url, parse_capabilities,
 )
@@ -43,6 +44,7 @@ class WMSPreviewOverlay:
         self.visible = True
         self.item: QGraphicsPixmapItem | None = None
         self.title = ""
+        self.source: WMSMapSource | None = None
 
     def clear_items(self):
         self.item = None
@@ -58,6 +60,7 @@ class WMSPreviewOverlay:
         self.image = None
         self.bounds = None
         self.title = ""
+        self.source = None
 
     def set_image(self, data: bytes, bounds: WMSBounds, title: str):
         pixmap = QPixmap()
@@ -302,35 +305,20 @@ class WMSDialog(QDialog):
             QMessageBox.warning(self, "WMS nie obsługuje układu",
                                 f"Warstwa {layer.name} nie deklaruje obsługi {crs}.")
             return
-        scene_rect = self.window.view.mapToScene(
-            self.window.view.viewport().rect()).boundingRect()
-        try:
-            bounds = WMSBounds(
-                scene_rect.left(), -scene_rect.bottom(),
-                scene_rect.right(), -scene_rect.top())
-            east_span = bounds.max_y - bounds.min_y
-            north_span = bounds.max_x - bounds.min_x
-            width = max(256, min(2048, self.window.view.viewport().width()))
-            height = max(128, min(2048, round(width * north_span / east_span)))
-            url = getmap_url(self.address.text(), layer.name, crs, bounds,
-                             width, height)
-        except (ValueError, ZeroDivisionError) as exc:
-            QMessageBox.warning(self, "WMS GetMap", str(exc))
-            return
-
-        def received(payload):
-            overlay = self.window._wms_preview
-            overlay.set_image(payload, bounds, layer.attribution or layer.title)
-            overlay.opacity = self.opacity.value() / 100.
-            overlay.attach(self.window.map_scene)
-            self.window.settings.setValue("wms/last_url", self.address.text())
-            self.window._update_wms_attribution()
-            self.message.setText(
-                f"Nałożono {layer.title}; widok jest aktualny dla obszaru w chwili pobrania. "
-                "Po przesunięciu mapy użyj ponownie «Pokaż WMS pod mapą».")
-        self._request(url, received)
+        self.window.settings.setValue("wms/last_url", self.address.text())
+        self.window._wms_preview.opacity = self.opacity.value() / 100.
+        source = WMSMapSource(
+            self.address.text(), layer.name, crs,
+            layer.attribution or layer.title)
+        # The controller is owned by the main window, not this dialog.
+        # Closing the WMS dialog must NOT stop updates after pan or zoom.
+        self.window._wms_auto.configure(source)
+        self.message.setText(
+            f"WMS: {layer.title}. Podkład odświeża się automatycznie po "
+            "przesunięciu lub zmianie skali. Nie trzeba ponownie klikać.")
 
     def clear_wms(self):
+        self.window._wms_auto.cancel()
         self.window._wms_preview.clear(self.window.map_scene)
         self.window._update_wms_attribution()
         self.message.setText("Usunięto podkład WMS z bieżącego widoku.")

@@ -48,6 +48,7 @@ from .gis_ribbon import GISRibbon
 from .command_palette import CommandPalette
 from .document_sessions import MapSession
 from .wms_qt import WMSPreviewOverlay, WMSDialog
+from .wms_auto import WMSAutoRefresh
 from .google_preview import GoogleMapsPreviewDialog
 from .raster_overlay import RasterOverlayStore
 from .raster_ui import RasterCalibrationDialog, RasterLayerPanel
@@ -161,6 +162,10 @@ class GeoStudioWindow(QMainWindow):
         self.map_scene=QGraphicsScene(self)
         # Custom feature picking handles overlapping objects without Qt selection.
         self.view=MapView(self.map_scene)
+        # Network work belongs to this window, independently from WMS dialog.
+        # The active MapSession stores its own WMS source and imagery.
+        self._wms_auto = WMSAutoRefresh(self)
+        self.view.viewport_changed.connect(self._wms_auto.viewport_changed)
         self.view.setObjectName('GeoStudioCanvas')
         self.view.coordinate.connect(self.on_coordinate)
         self.view.canvas_click.connect(self.select_at)
@@ -1266,6 +1271,7 @@ class GeoStudioWindow(QMainWindow):
 
     def _close_document_dialogs(self):
         """Prevent late network/GCP callbacks from writing into another MAP."""
+        self._wms_auto.cancel()
         self._raster_map_picker = None
         if self._raster_calibration_dialog is not None:
             self._raster_calibration_dialog.close()
@@ -1303,6 +1309,7 @@ class GeoStudioWindow(QMainWindow):
         self._close_document_dialogs()
         self._active_map_tab = index
         self._map_sessions[index].restore(self)
+        self._wms_auto.refresh(force=True)
         self.status.showMessage(
             f'Aktywna mapa: {Path(self.doc.filename).name}. '
             f'{len(self.doc.objects)} obiektów. Historia zmian jest niezależna.')
@@ -1463,6 +1470,7 @@ class GeoStudioWindow(QMainWindow):
         result = build_scene(self.map_scene, self.doc, self._render_context())
         self._raster_overlay.attach(self.map_scene)
         self._wms_preview.attach(self.map_scene)
+        self._wms_auto.viewport_changed()
         self.geometry_index = result.geometry_index
         self.layer_for_uid = result.layer_for_uid
         self.graphics_for_uid = result.graphics_for_uid
@@ -2333,6 +2341,7 @@ class GeoStudioWindow(QMainWindow):
             center = self.view.mapToScene(self.view.viewport().rect().center())
             self.view.scale(factor, factor)
             self.view.centerOn(center)
+            self._wms_auto.viewport_changed()
             self.update_label_visibility()
             self.status.showMessage(
                 f'Ustawiono przybliżoną skalę ekranu 1:{denominator:g}. '
@@ -2359,6 +2368,7 @@ class GeoStudioWindow(QMainWindow):
             return
         self.map_scene.setSceneRect(self._navigation_scene_rect())
         self.view.fitInView(rect, Qt.KeepAspectRatio)
+        self._wms_auto.viewport_changed()
         self.update_label_visibility()
 
     def on_coordinate(self,x,y):

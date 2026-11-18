@@ -14,8 +14,11 @@
 5. Kliknij **Pokaż WMS pod mapą**. GeoStudio wysyła GetMap dla aktualnego
    fragmentu mapy, wyświetla otrzymany obraz **pod poligonami i liniami**,
    pozostawia możliwość zaznaczania i edycji oraz pokazuje atrybucję źródła.
-6. Po przesunięciu lub przybliżeniu widoku kliknij ponownie **Pokaż WMS pod mapą**,
-   aby odświeżyć fragment i rozdzielczość obrazu.
+6. Po przesunięciu mapy, zmianie przybliżenia, rozmiaru okna lub skali
+   **WMS pobiera się automatycznie** po krótkiej przerwie w nawigacji
+   (około 450 ms). Nie trzeba ponownie otwierać okna ani klikać przycisku.
+   Podkład pobiera także obszar nieco większy od bieżącego widoku, aby
+   podczas przesuwania nie pokazywać pustych brzegów.
 7. Krycie zmienisz suwakiem. Przyciskiem **Usuń WMS z widoku** usuniesz podkład.
 
 WMS jest podkładem **tymczasowym**: w tej wersji nie zapisujemy żadnych obrazów
@@ -33,3 +36,19 @@ serwer dla wybranej warstwy.
 ebEngine` zależy od aktualnej
 strony Google, wersji Chromium/WebEngine, obsługi GPU i WebGL.
 
+
+
+### Automatyczne odświeżanie podczas nawigacji
+
+WMS jest aktywny także po zamknięciu dialogu źródła. Nawigacja myszą,
+zmiana skali, dopasowanie mapy i zmiana rozmiaru okna aktualizują zasięg
+WMS po krótkiej przerwie. Nowy GetMap anuluje starsze pobranie, a spóźnione
+odpowiedzi nie mogą nadpisać aktualnego fragmentu ani podkładu innej
+otwartej zakładki MAP. Poprzedni obraz pozostaje widoczny do otrzymania
+nowego; w razie problemu sieciowego zostaje zachowany, a pasek stanu
+informuje o błędzie. Pobieranie kończy się po usunięciu podkładu WMS.
+
+Podgląd zawsze dotyczy aktualnie widocznego obszaru z 15% marginesem
+po każdej stronie i zachowuje proporcje geograficzne WMS. W przypadku
+bardzo dużego ekranu rozdzielczość żądania ograniczona jest do 2048 pikseli
+na bok w celu ochrony pamięci, wydajności i serwera.
