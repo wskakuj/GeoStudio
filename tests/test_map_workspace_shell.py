@@ -27,13 +27,17 @@ def window(app):
     w.close()
 
 
-def test_real_map_view_has_contextual_shell_and_vertical_tool_palette(window):
+def test_real_map_view_has_arcgis_ribbon_and_legacy_actions(window):
     assert isinstance(window.centralWidget(), MapWorkspace)
     assert window.workspace.map_view is window.view
     assert window.main_toolbar.parent() is window.workspace.tool_rail
     assert window.main_toolbar.orientation() == Qt.Vertical
     assert window.selector.parent() is not window.main_toolbar
     assert window.workspace.focus_button.text() == "Skupienie"
+    assert window.workspace.tool_rail.isHidden()
+    assert window.ribbon.tabs.count() == 5
+    assert window.ribbon.tabs.tabText(0) == "Mapa"
+    assert window.ribbon.tabs.tabText(1) == "Edycja"
     assert window.workspace.document_name.text().startswith("Otwórz plik")
     assert set(window.tool_actions) == {"select", "pan", "draw", "edit", "labels"}
 
@@ -56,7 +60,8 @@ def test_map_only_mode_hides_edit_palette_but_not_canvas(window):
     assert window.workspace.map_view is window.view
     assert window.workspace.focus_button.text() == "Powrót do edycji"
     window.set_workspace("edit")
-    assert not window.workspace.tool_rail.isHidden()
+    assert window.workspace.tool_rail.isHidden()  # Editing now lives in the ribbon.
+    assert not window.ribbon_toolbar.isHidden()
     assert window.workspace.focus_button.text() == "Skupienie"
 
 
