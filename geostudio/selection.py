@@ -37,6 +37,7 @@ class SelectionContext:
     code_filter: str | None = None
     hide_connectors: bool = True
     radius: float = 0.0
+    excluded_uids: frozenset[str] = frozenset()
 
 
 def visible_uids(ctx: SelectionContext) -> set[str]:
@@ -44,7 +45,8 @@ def visible_uids(ctx: SelectionContext) -> set[str]:
     if ctx.doc is None:
         return set()
     return {uid for uid, layer in ctx.layer_for_uid.items()
-            if layer not in ctx.hidden_layers and uid in ctx.doc.by_id}
+            if (layer not in ctx.hidden_layers and uid in ctx.doc.by_id
+                and uid not in ctx.excluded_uids)}
 
 
 def pick_candidates(ctx: SelectionContext, x: float, y: float) -> list[GeoObject]:
@@ -118,6 +120,8 @@ def snap_at(ctx: SelectionContext, x: float, y: float, *,
         return None
     candidates = []
     for obj in ctx.geometry_index.nearby(x, y, radius):
+        if obj.uid in ctx.excluded_uids:
+            continue
         layer = ctx.layer_for_uid.get(obj.uid, '')
         hidden = layer in ctx.hidden_layers
         marker = (include_hidden_markers and
