@@ -87,6 +87,8 @@ class GeoStudioWindow(QMainWindow):
         if self.theme_mode not in ('light', 'dark'):
             self.theme_mode = 'light'
         self._ui_icon_actions = []
+        self.workspace_mode = 'edit'
+        self._last_workspace = 'edit'
         self.doc: GeoMap | None=None
         self.current_crs_epsg = None  # Never guess source CRS from raw coordinates.
         self.source_compilation_scale = DEFAULT_SCALE
@@ -157,6 +159,7 @@ class GeoStudioWindow(QMainWindow):
         self.setCentralWidget(self.view)
         self._setup_menu()
         self._setup_docks()
+        self.set_workspace('edit', remember=False)
         # The original docks shrink to unreadable widths on Windows HiDPI.
         # Reserve usable space for layer names and attribute values.
         self.resizeDocks([self.layers_dock, self.properties_dock],
@@ -296,6 +299,25 @@ class GeoStudioWindow(QMainWindow):
             action.triggered.connect(lambda _checked=False, selected=mode: self.set_theme(selected))
             theme_group.addAction(action)
             self.theme_actions[mode] = action
+        workspace_menu = vm.addMenu('Układ stanowiska')
+        self.workspace_menu = workspace_menu
+        self.workspace_actions = {}
+        workspace_group = QActionGroup(self)
+        workspace_group.setExclusive(True)
+        for key, title, shortcut in (
+                ('map', 'Sama mapa', 'Ctrl+1'),
+                ('edit', 'Mapa + edycja', 'Ctrl+2'),
+                ('search', 'Mapa + wyszukiwanie', 'Ctrl+3')):
+            action = self._action(title, lambda _checked=False, mode=key:
+                                  self.set_workspace(mode), shortcut)
+            action.setCheckable(True)
+            workspace_menu.addAction(action)
+            workspace_group.addAction(action)
+            self.workspace_actions[key] = action
+        workspace_menu.addSeparator()
+        workspace_menu.addAction(
+            self._action('Przełącz skupienie na mapie', self.toggle_focus_workspace, 'F11'))
+        self.workspace_actions['edit'].setChecked(True)
         vm.addSeparator()
         vm.addAction(self._action('Dopasuj widok do mapy',self.fit_all,'Ctrl+0'))
         vm.addAction(self._action('Ustaw skalę widoku 1:N…', self.ask_view_scale, 'Ctrl+M'))
@@ -358,6 +380,15 @@ class GeoStudioWindow(QMainWindow):
         file_toolbar.addAction(self._decorate_action(
             self._action('Cała mapa', self.fit_all), 'fit',
             'Dopasuj widok do wszystkich obiektów • Ctrl+0'))
+        workspace_button = QToolButton(self)
+        workspace_button.setText('Układ')
+        workspace_button.setIcon(ui_icon('properties', self.theme_mode))
+        workspace_button.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
+        workspace_button.setPopupMode(QToolButton.InstantPopup)
+        workspace_button.setMenu(self.workspace_menu)
+        workspace_button.setToolTip('Przełącz układ: sama mapa, edycja, wyszukiwanie. F11 — skupienie na mapie.')
+        file_toolbar.addWidget(workspace_button)
+        self.workspace_button = workspace_button
 
         data_menu = QMenu('Dane', self)
         data_menu.addAction(self._action('Wczytaj biblioteki SYM / LAY / CDF…', self.open_catalogs))
@@ -629,6 +660,10 @@ class GeoStudioWindow(QMainWindow):
         search_layout.addWidget(select_results)
         self.search_dock.setWidget(search_root)
         self.addDockWidget(Qt.RightDockWidgetArea, self.search_dock)
+        # One right-side workspace: the search and inspector occupy tabs,
+        # rather than permanently shrinking each other vertically.
+        self.tabifyDockWidget(self.properties_dock, self.search_dock)
+        self.properties_dock.raise_()
         self.search_dock.hide()
 
         self.info_dock = self._help_dock()
@@ -656,19 +691,50 @@ class GeoStudioWindow(QMainWindow):
         self.view_menu.addAction(self._action('Przywróć wszystkie panele',
                                               self.restore_panels))
 
+    def set_workspace(self, mode, *, remember=True):
+        """Change only the workspace chrome, never geometry or current edits."""
+        if mode not in {'map', 'edit', 'search'}:
+            raise ValueError('Unknown GIS workspace')
+        if mode != 'map':
+            self._last_workspace = mode
+        self.workspace_mode = mode
+        if mode == 'map':
+            for dock in (self.layers_dock, self.properties_dock,
+                         self.search_dock, self.info_dock):
+                dock.hide()
+            self.panel_toolbar.hide()
+        else:
+            self.panel_toolbar.show()
+            self.layers_dock.show()
+            self.info_dock.hide()
+            if mode == 'search':
+                if self.search_dock not in self.tabifiedDockWidgets(self.properties_dock):
+                    self.tabifyDockWidget(self.properties_dock, self.search_dock)
+                self.properties_dock.show()
+                self.search_dock.show()
+                self.search_dock.raise_()
+            else:
+                self.search_dock.hide()
+                self.properties_dock.show()
+                self.properties_dock.raise_()
+        for key, action in self.workspace_actions.items():
+            action.setChecked(key == mode)
+        self.workspace_button.setText({
+            'map': 'Sama mapa', 'edit': 'Edycja', 'search': 'Wyszukiwanie'}[mode])
+        if remember:
+            self.settings.setValue('ui/workspace', mode)
+
+    def toggle_focus_workspace(self):
+        if self.workspace_mode == 'map':
+            self.set_workspace(self._last_workspace)
+        else:
+            self.set_workspace('map')
+
     def restore_panels(self):
-        for dock, area in ((self.layers_dock, Qt.LeftDockWidgetArea),
-                           (self.properties_dock, Qt.RightDockWidgetArea),
-                           (self.search_dock, Qt.RightDockWidgetArea),
-                           (self.info_dock, Qt.BottomDockWidgetArea)):
-            self.addDockWidget(area, dock)
-            dock.show()
-            dock.raise_()
-        self.layers_dock.raise_()
+        self.set_workspace('edit')
 
     def show_search(self):
-        self.search_dock.show()
-        self.search_dock.raise_()
+        self.set_workspace('search')
         self.search_code.setFocus()
         self.search_code.selectAll()
 
