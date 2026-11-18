@@ -93,6 +93,10 @@ class DecorationItem(QGraphicsItem):
         self._resizing = False
         self._base_scale = max(0.01, float(scale))
         self._width, self._height = SIZES[data["kind"]]
+        if data["kind"] == "legend":
+            rows = data.get("items")
+            if isinstance(rows, list):
+                self._height = max(self._height, 124 + 24 * min(len(rows), 100))
         self.setData(0, "geostudio-decoration")
         self.setToolTip("Przeciągnij, aby przesunąć • dwuklik, aby edytować • "
                         + KINDS[data["kind"]])
