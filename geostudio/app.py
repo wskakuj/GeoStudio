@@ -490,14 +490,41 @@ class GeoStudioWindow(QMainWindow):
         self.layers_dock.setWidget(layer_root)
         self.addDockWidget(Qt.LeftDockWidgetArea, self.layers_dock)
 
-        self.properties_dock = QDockWidget('Właściwości obiektu', self)
+        self.properties_dock = QDockWidget('Inspektor obiektu', self)
         self.properties_dock.setObjectName('GeoStudioPropertiesDock')
-        self.properties_dock.setMinimumWidth(285)
+        self.properties_dock.setMinimumWidth(325)
         prop_root = QWidget(self.properties_dock)
         prop_root.setObjectName('GeoStudioPropertyPanel')
         prop_layout = QVBoxLayout(prop_root)
-        prop_layout.setContentsMargins(12, 12, 12, 12)
-        prop_layout.setSpacing(10)
+        prop_layout.setContentsMargins(11, 11, 11, 11)
+        prop_layout.setSpacing(11)
+
+        selected_card = QFrame(prop_root)
+        selected_card.setObjectName('GeoStudioSelectionCard')
+        card_layout = QVBoxLayout(selected_card)
+        card_layout.setContentsMargins(13, 12, 13, 12)
+        card_layout.setSpacing(4)
+        self.selected_count_label = QLabel('Brak zaznaczenia')
+        self.selected_count_label.setObjectName('GeoStudioSelectionBadge')
+        card_layout.addWidget(self.selected_count_label)
+        self.object_title = QLabel('Wybierz obiekt na mapie')
+        self.object_title.setObjectName('GeoStudioObjectTitle')
+        self.object_title.setWordWrap(True)
+        card_layout.addWidget(self.object_title)
+        self.object_details = QLabel('Kliknij działkę, budynek lub inny element.')
+        self.object_details.setObjectName('GeoStudioObjectDetails')
+        self.object_details.setWordWrap(True)
+        card_layout.addWidget(self.object_details)
+        prop_layout.addWidget(selected_card)
+
+        # The inspector keeps its existing widget attributes and edit signals,
+        # but separates dense source attributes from occasional styling.
+        self.inspector_tabs = QTabWidget(prop_root)
+        self.inspector_tabs.setObjectName('GeoStudioInspectorTabs')
+        attrs_page = QWidget()
+        attrs_layout = QVBoxLayout(attrs_page)
+        attrs_layout.setContentsMargins(0, 11, 0, 0)
+        attrs_layout.setSpacing(7)
         self.props = QTreeWidget()
         self.props.setHeaderLabels(['Pole', 'Wartość'])
         self.props.setAlternatingRowColors(True)
@@ -505,18 +532,27 @@ class GeoStudioWindow(QMainWindow):
         self.props.header().setSectionResizeMode(0, QHeaderView.ResizeToContents)
         self.props.header().setSectionResizeMode(1, QHeaderView.Stretch)
         self.props.itemDoubleClicked.connect(self.edit_property)
-        prop_layout.addWidget(self.props, 3)
-        self.selected_count_label = QLabel('Brak zaznaczenia')
-        self.selected_count_label.setObjectName('GeoStudioSelectionBadge')
-        prop_layout.addWidget(self.selected_count_label)
-        section = QLabel('WYGLĄD POLIGONU')
-        section.setObjectName('GeoStudioSectionHeading')
-        prop_layout.addWidget(section)
-        style_hint = QLabel('Zmiany wyglądu są zapisywane osobno. Oryginalny plik GEO-MAP pozostaje nietknięty.')
-        style_hint.setWordWrap(True)
-        style_hint.setObjectName('GeoStudioPanelHint')
-        prop_layout.addWidget(style_hint)
+        attrs_layout.addWidget(self.props, 1)
+        edit_hint = QLabel('Dwuklik w pole A1–A6 / TX, aby je edytować. Skrót F2.')
+        edit_hint.setObjectName('GeoStudioInspectorHint')
+        edit_hint.setWordWrap(True)
+        attrs_layout.addWidget(edit_hint)
+        self.inspector_tabs.addTab(attrs_page, 'Atrybuty')
+
+        style_page = QWidget()
+        style_layout = QVBoxLayout(style_page)
+        style_layout.setContentsMargins(5, 16, 5, 8)
+        style_layout.setSpacing(12)
+        style_heading = QLabel('WYPEŁNIENIE POLIGONU')
+        style_heading.setObjectName('GeoStudioSectionHeading')
+        style_layout.addWidget(style_heading)
+        self.fill_preview = QLabel('Podgląd wypełnienia')
+        self.fill_preview.setObjectName('GeoStudioColorPreview')
+        self.fill_preview.setAlignment(Qt.AlignCenter)
+        self.fill_preview.setMinimumHeight(68)
+        style_layout.addWidget(self.fill_preview)
         form = QFormLayout()
+        form.setSpacing(9)
         self.fill_entry = QLineEdit('#7899B5@25')
         self.fill_entry.setToolTip('Kod #RRGGBB@krycie%, np. #D94848@40')
         self.opacity_spin = QSpinBox()
@@ -524,22 +560,33 @@ class GeoStudioWindow(QMainWindow):
         self.opacity_spin.setSuffix(' % krycia')
         self.opacity_spin.setValue(25)
         self.opacity_spin.valueChanged.connect(self._sync_fill_opacity)
-        form.addRow('Kod koloru', self.fill_entry)
+        self.opacity_spin.valueChanged.connect(self._update_fill_preview)
+        self.fill_entry.textChanged.connect(self._update_fill_preview)
+        form.addRow('Kolor', self.fill_entry)
         form.addRow('Krycie', self.opacity_spin)
-        prop_layout.addLayout(form)
+        style_layout.addLayout(form)
         style_buttons = QHBoxLayout()
-        for title, fn in [('Kolor…', self.choose_fill_color),
-                          ('Kopiuj', self.copy_fill_code),
-                          ('Zastosuj', self.apply_fill_style)]:
+        for title, fn in [('Wybierz kolor…', self.choose_fill_color),
+                          ('Kopiuj', self.copy_fill_code)]:
             button = QPushButton(title)
-            if title == 'Zastosuj':
-                button.setObjectName('GeoStudioPrimaryButton')
-                button.setToolTip('Zastosuj styl do zaznaczonych poligonów')
             button.clicked.connect(fn)
             style_buttons.addWidget(button)
-        prop_layout.addLayout(style_buttons)
+        style_layout.addLayout(style_buttons)
+        apply_button = QPushButton('Zastosuj do zaznaczonych poligonów')
+        apply_button.setObjectName('GeoStudioPrimaryButton')
+        apply_button.clicked.connect(self.apply_fill_style)
+        style_layout.addWidget(apply_button)
+        style_hint = QLabel('Zmiany wyglądu są zapisywane w pliku GeoStudio obok kopii. '
+                            'Oryginalny MAP pozostaje nietknięty.')
+        style_hint.setWordWrap(True)
+        style_hint.setObjectName('GeoStudioPanelHint')
+        style_layout.addWidget(style_hint)
+        style_layout.addStretch(1)
+        self.inspector_tabs.addTab(style_page, 'Wygląd')
+        prop_layout.addWidget(self.inspector_tabs, 1)
         self.properties_dock.setWidget(prop_root)
         self.addDockWidget(Qt.RightDockWidgetArea, self.properties_dock)
+        self._update_fill_preview()
 
         self.search_dock = QDockWidget('Wyszukaj obiekty', self)
         self.search_dock.setObjectName('GeoStudioSearchDock')
@@ -1150,6 +1197,8 @@ class GeoStudioWindow(QMainWindow):
             f'Zaznaczono: {len(self.selected_uids)} obiektów' if self.selected_uids
             else 'Brak zaznaczenia')
         if not self.selected_uids:
+            self.object_title.setText('Wybierz obiekt na mapie')
+            self.object_details.setText('Kliknij działkę, budynek lub inny element.')
             self.update_label_visibility()
             return
         combined = highlight_path(self.doc, self.selected_uids,
@@ -1174,6 +1223,16 @@ class GeoStudioWindow(QMainWindow):
         """
         obj = self.doc.by_id[self.selected_uid]
         if len(self.selected_uids) > 1:
+            self.object_title.setText(f'{len(self.selected_uids)} zaznaczonych obiektów')
+            self.object_details.setText('Możesz usunąć grupę lub zmienić jej wypełnienie.')
+        else:
+            title = (obj.fields.get('A2') or obj.fields.get('A1') or
+                     self.symbols.get(obj.code) or f'Obiekt {obj.code}')
+            self.object_title.setText(title)
+            self.object_title.setToolTip(title)
+            self.object_details.setText(
+                f'Kod {obj.code}  ·  {resolve_layer(self.catalog, obj.code)}')
+        if len(self.selected_uids) > 1:
             codes = sorted({self.doc.by_id[uid].code for uid in self.selected_uids})
             entries = [('Zaznaczono', str(len(self.selected_uids))),
                        ('Kody', ', '.join(codes)),
@@ -1192,7 +1251,10 @@ class GeoStudioWindow(QMainWindow):
             entries.extend((k,v) for k,v in obj.fields.items()
                            if k not in {'ID','A1','A2','A3','A4','A5','A6','TX','MP','KR'})
         for key, value in entries:
-            self.props.addTopLevelItem(QTreeWidgetItem([key, str(value)]))
+            row = QTreeWidgetItem([key, str(value)])
+            row.setToolTip(0, str(key))
+            row.setToolTip(1, str(value))
+            self.props.addTopLevelItem(row)
         current = self.visual_styles.get(self.selected_uid)
         if current:
             color_code = fill_code(current['fill'], current['opacity'])
@@ -1279,6 +1341,45 @@ class GeoStudioWindow(QMainWindow):
             node=QTreeWidgetItem([name,str(len(items))]);node.setCheckState(0,Qt.Unchecked if name in self.hidden_layers else Qt.Checked)
             self.layers_tree.addTopLevelItem(node)
         self.layers_tree.blockSignals(False)
+        if hasattr(self, 'layer_filter'):
+            self._filter_layer_rows(self.layer_filter.text())
+
+    def _filter_layer_rows(self, query):
+        """Filter the layer list only; never hide geometry on the map."""
+        needle = query.strip().casefold()
+        matches = 0
+        total = self.layers_tree.topLevelItemCount()
+        for i in range(total):
+            node = self.layers_tree.topLevelItem(i)
+            visible = needle in node.text(0).casefold()
+            node.setHidden(not visible)
+            matches += visible
+        self.layers_summary.setText(
+            f'{matches} z {total} warstw' if needle else f'{total} warstw')
+
+    def _set_all_layers_visible(self, visible):
+        """One bulk visibility change, without repeated signal/scene rebuilds."""
+        tree = self.layers_tree
+        tree.blockSignals(True)
+        try:
+            for i in range(tree.topLevelItemCount()):
+                node = tree.topLevelItem(i)
+                node.setCheckState(0, Qt.Checked if visible else Qt.Unchecked)
+                for graphic in self.items_by_layer.get(node.text(0), []):
+                    graphic.setVisible(visible)
+                if visible:
+                    self.hidden_layers.discard(node.text(0))
+                else:
+                    self.hidden_layers.add(node.text(0))
+        finally:
+            tree.blockSignals(False)
+        if self.doc:
+            selected = [uid for uid in self.selected_uids
+                        if self.layer_for_uid.get(uid) not in self.hidden_layers]
+            if selected != self.selected_uids:
+                self._set_selected_uids(selected)
+            else:
+                self.update_label_visibility()
 
     def on_layer_toggle(self,item,column):
         state=item.checkState(0)==Qt.Checked
@@ -1295,6 +1396,27 @@ class GeoStudioWindow(QMainWindow):
             self._set_selected_uids(selected)
         else:
             self.update_label_visibility()
+
+    def _update_fill_preview(self, *_args):
+        """Show the actual selected fill with the requested opacity."""
+        if not hasattr(self, 'fill_preview'):
+            return
+        try:
+            color, opacity = parse_fill_code(
+                self.fill_entry.text(), self.opacity_spin.value())
+            rgb = QColor(color)
+            preview = rgb if opacity >= 100 else QColor(
+                round(rgb.red() * opacity / 100 + 240 * (100 - opacity) / 100),
+                round(rgb.green() * opacity / 100 + 244 * (100 - opacity) / 100),
+                round(rgb.blue() * opacity / 100 + 248 * (100 - opacity) / 100))
+            ink = '#17273B' if preview.lightness() > 145 else '#FFFFFF'
+            self.fill_preview.setText(f'{color}  ·  krycie {opacity}%')
+            self.fill_preview.setStyleSheet(
+                'background-color: ' + preview.name() + '; color: ' + ink +
+                '; border: 1px solid #8397A9; border-radius: 9px;')
+        except (ValueError, TypeError):
+            self.fill_preview.setText('Wpisz prawidłowy kolor #RRGGBB')
+            self.fill_preview.setStyleSheet('')
 
     def _sync_fill_opacity(self, opacity):
         text = self.fill_entry.text().strip()
