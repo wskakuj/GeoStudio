@@ -2662,6 +2662,12 @@ class GeoStudioWindow(QMainWindow):
         if not self.doc:
             return
         disabled = forest_hidden_classes(self.visual_styles)
+        # Build an O(n) index once. A real forestry MAP may contain tens of
+        # thousands of objects: scanning every label for each polygon was
+        # quadratic and could freeze the application when toggling one class.
+        labels_by_uid = defaultdict(list)
+        for (uid, _field), label in self.label_items.items():
+            labels_by_uid[uid].append(label)
         for obj in self.doc.objects:
             grade = forest_class_value(obj)
             if grade is None:
@@ -2673,9 +2679,8 @@ class GeoStudioWindow(QMainWindow):
                          self.fill_items_for_uid.get(obj.uid)):
                 if part is not None:
                     part.setVisible(shown)
-            for (uid, _field), label in self.label_items.items():
-                if uid == obj.uid:
-                    label.setVisible(shown and self.labels_enabled)
+            for label in labels_by_uid.get(obj.uid, ()):
+                label.setVisible(shown and self.labels_enabled)
         selected = [uid for uid in self.selected_uids
                     if uid not in self._forest_filtered_uids()
                     and self.layer_for_uid.get(uid) not in self.hidden_layers]
