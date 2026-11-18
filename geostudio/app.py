@@ -27,6 +27,7 @@ except ImportError as exc:
 from .geomap import GeoMap, GeoObject, library_layers, library_symbols, library_colors, resolve_layer
 from .interactions import polygon_is_valid, closest_point_on_edge
 from .geometry_index import GeometryIndex
+from .topology_edit import linked_vertex_moves
 from .scene_builder import RenderContext, build_scene, label_anchor, object_path
 from .map_tools import MapView
 from .selection import (SelectionContext, highlight_path, pick_candidates,
@@ -138,6 +139,7 @@ class GeoStudioWindow(QMainWindow):
         self.snap_marker=None
         self.current_snap=None
         self.edit_uid=''
+        self.edit_scope_code = ''
         self.edit_handles=[]
         self.draft_points=[]
         self.layers_tree=None
@@ -161,6 +163,7 @@ class GeoStudioWindow(QMainWindow):
         self.view.canvas_context.connect(self.show_objects_here)
         self.view.polygon_hover.connect(self.preview_polygon)
         self.view.vertex_hover.connect(self.preview_vertex)
+        self.view.vertex_activate.connect(self.activate_vertex_at)
         self.view.vertex_commit.connect(self.commit_vertex)
         self.view.edge_insert.connect(self.insert_vertex_at)
         self.view.cancel_action.connect(self.cancel_edit)
@@ -2262,6 +2265,7 @@ class GeoStudioWindow(QMainWindow):
             self.finish_action.setEnabled(False)
         self.current_polygon = []
         self.edit_uid = ''
+        self.edit_scope_code = ''
         if hasattr(self, 'undo_toolbar_action'):
             self.undo_toolbar_action.setVisible(False)
         if self.draft_item:
@@ -2540,39 +2544,111 @@ class GeoStudioWindow(QMainWindow):
 
     def start_vertex_edit(self):
         if not self.doc or not self.selected_uid:
-            QMessageBox.information(self,'Edycja wierzchołków','Zaznacz najpierw poligon (np. działkę 5216).')
+            QMessageBox.information(
+                self, 'Edycja wierzchołków', 'Zaznacz najpierw poligon.')
             return
         obj = self.doc.by_id[self.selected_uid]
         if not obj.is_closed:
-            QMessageBox.warning(self,'Edycja','Wybrany obiekt nie jest zamkniętym poligonem.')
+            QMessageBox.warning(
+                self, 'Edycja', 'Wybrany obiekt nie jest zamkniętym poligonem.')
             return
-        uid = self.selected_uid
+        uid, code = self.selected_uid, obj.code
         self.cancel_edit()
+        self.edit_scope_code = code
+        self._activate_vertex_object(uid)
+        self.status.showMessage(
+            f'Węzły kodu {code}: przeciągnij dowolny węzeł poligonu o tym kodzie. '
+            'Wspólne węzły sąsiadów zmienią się razem. Esc kończy.')
+
+    def _activate_vertex_object(self, uid):
+        """Switch active vertex handles without leaving the edit tool."""
+        obj = self.doc.by_id.get(uid) if self.doc else None
+        if not obj or not obj.is_closed or obj.code != self.edit_scope_code:
+            return
+        if uid != self.selected_uid:
+            self._set_selected_uids([uid])
         self.edit_uid = uid
         self.view.edit_mode = True
         self.view.setCursor(Qt.CrossCursor)
         self.tool_actions['edit'].setChecked(True)
         self._set_mode_badge('EDYCJA WIERZCHOŁKÓW')
-        self.view.edit_points = [(p.x,p.y) for p in obj.points[:-1]]
+        self.view.edit_points = [(p.x, p.y) for p in obj.points[:-1]]
         self.view.setDragMode(QGraphicsView.NoDrag)
+        for handle in self.edit_handles:
+            if handle.scene() is self.map_scene:
+                self.map_scene.removeItem(handle)
+        self.edit_handles = []
         self._ensure_feedback_items()
         self.draft_item.setPath(self._path_for(obj))
-        for px,py in self.view.edit_points:
-            handle = QGraphicsEllipseItem(-4,-4,8,8)
-            handle.setPos(px,-py)
-            handle.setPen(QPen(QColor('#ffffff'),1))
+        for px, py in self.view.edit_points:
+            handle = QGraphicsEllipseItem(-4, -4, 8, 8)
+            handle.setPos(px, -py)
+            handle.setPen(QPen(QColor('#ffffff'), 1))
             handle.setBrush(QBrush(QColor('#0d9a90')))
-            handle.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIgnoresTransformations,True)
+            handle.setFlag(
+                QGraphicsItem.GraphicsItemFlag.ItemIgnoresTransformations, True)
             handle.setAcceptedMouseButtons(Qt.NoButton)
             handle.setZValue(1200)
             self.map_scene.addItem(handle)
             self.edit_handles.append(handle)
-        self.status.showMessage('Tryb edycji wierzchołków: przeciągnij punkt poligonu. Przyciąganie do innych obiektów. Esc kończy.')
+
+    def activate_vertex_at(self, x, y):
+        """Find the closest editable vertex across ALL visible objects of code."""
+        if not self.doc or not self.view.edit_mode or not self.edit_scope_code:
+            return
+        radius = self._map_radius(20)
+        pos = self.view.mapFromScene(QPointF(x, -y))
+        best = None
+        for obj in self.geometry_index.nearby(x, y, radius):
+            if (obj.code != self.edit_scope_code or not obj.is_closed or
+                    self.layer_for_uid.get(obj.uid, '') in self.hidden_layers):
+                continue
+            for p in obj.points[:-1]:
+                pixel = self.view.mapFromScene(QPointF(p.x, -p.y))
+                distance = (pixel - pos).manhattanLength()
+                if distance <= 18 and (best is None or distance < best[0]):
+                    best = (distance, obj.uid)
+        if best is not None and best[1] != self.edit_uid:
+            self._activate_vertex_object(best[1])
+
+    def _refresh_changed_geometry(self, uids):
+        """Refresh only changed polygon graphics, not thousands of scene items."""
+        for uid in uids:
+            obj = self.doc.by_id.get(uid)
+            if obj is None:
+                continue
+            path = self._path_for(obj)
+            item = self.graphics_for_uid.get(uid)
+            if isinstance(item, QGraphicsPathItem):
+                item.setPath(path)
+            fill = self.fill_items_for_uid.get(uid)
+            if fill is not None:
+                fill.setPath(path)
+            anchor = self._label_anchor(obj)
+            if anchor:
+                for field in ('A1', 'A2', 'A3'):
+                    label = self.label_items.get((uid, field))
+                    if label is not None and not self.label_positions.get(uid, {}).get(field):
+                        label.setPos(anchor[0], -anchor[1])
+        # GeometryIndex stores a spatial hash of bounding boxes; refreshed
+        # coordinate objects require fresh tile occupancy after vertex movement.
+        self.geometry_index = GeometryIndex(
+            self.doc.objects, hide_connectors=self.hide_multipart_connectors)
+        if self.highlight_item is not None:
+            self.highlight_item.setPath(
+                highlight_path(self.doc, self.selected_uids,
+                               hide_connectors=self.hide_multipart_connectors))
+        if self.selected_uid in uids:
+            self._show_selection_properties()
 
     def preview_vertex(self, x, y, index):
         if not self.view.edit_mode or not self.edit_uid:
             return
         snap = self._snap(x, y, exclude_uid=self.edit_uid)
+        # A linked neighbor still contains the old shared vertex while
+        # dragging. Do not snap back onto the very corner being moved.
+        if snap and snap.code == self.edit_scope_code:
+            snap = None
         px, py = (snap.x,snap.y) if snap else (x,y)
         pts = self.view.edit_points[:]
         if not 0 <= index < len(pts):
@@ -2589,19 +2665,25 @@ class GeoStudioWindow(QMainWindow):
         if not self.view.edit_mode or not self.edit_uid:
             return
         snap = self._snap(x, y, exclude_uid=self.edit_uid)
+        if snap and snap.code == self.edit_scope_code:
+            snap = None
         px, py = (snap.x,snap.y) if snap else (x,y)
         try:
             uid = self.edit_uid
-            with self.history.begin('Przesunięcie wierzchołka',
+            changes = linked_vertex_moves(self.doc, uid, index, px, py)
+            with self.history.begin('Przesunięcie wspólnego węzła',
                                     selection_before=[uid]):
-                self.doc.move_polygon_vertex(uid,index,px,py)
+                self.doc.move_polygon_vertices(changes, reparse=False)
             self._history_changed()
-            # Preserve current scale/position; do not zoom out after every edit.
-            self.cancel_edit()
-            self.rebuild_scene(fit=False,reselect=uid)
-            self.start_vertex_edit()
+            # A vertex edit must not call rebuild_scene() for the entire map:
+            # preserve the canvas and update just affected polygons.
+            self._refresh_changed_geometry(changes)
+            self._activate_vertex_object(uid)
             saved = self._autosave_work_copy()
-            self.status.showMessage('Wierzchołek przesunięty.' +
+            count = len(changes) - 1
+            message = (f'Przesunięto węzeł i zsynchronizowano {count} poligonów '
+                       f'tego samego kodu.' if count else 'Przesunięto węzeł.')
+            self.status.showMessage(message +
                                     (f' Kopia: {saved}' if saved else ' Zapisz jako nowy MAP.'))
         except Exception as exc:
             QMessageBox.warning(self,'Nie zmieniono geometrii',str(exc))
