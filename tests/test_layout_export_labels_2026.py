@@ -88,7 +88,10 @@ def test_modern_compass_resizes_without_background_and_keeps_legend_rows(app, tm
     assert saved["scale"] == 2.5
     large = DecorationItem(uid2, saved, 1.0, on_move=lambda *a: None,
                            on_edit=lambda *a: None)
-    assert large.boundingRect().height() > 500
+    # The legend is now displayed in compact columns, not as one
+    # extremely tall box that intercepted clicks on other objects.
+    assert large.boundingRect().width() > 700
+    assert large.boundingRect().height() < 500
 
 
 def test_wms_presets_are_real_services_and_smartsdi_not_network_wms(window, monkeypatch):
