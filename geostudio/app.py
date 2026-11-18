@@ -266,6 +266,7 @@ class GeoStudioWindow(QMainWindow):
             (self.labels_action, 'label', 'Podpisy A1/A2'),
             (self.snap_action, 'snap', 'Przyciąganie'),
         )
+        contents.menu('Oprawa mapy', self.decoration_menu, 'properties')
 
         search = ribbon.group('Mapa', 'Wybieranie')
         search.action(self._action('Znajdź obiekt', self.show_search),
@@ -277,6 +278,7 @@ class GeoStudioWindow(QMainWindow):
         for key, icon, title in (
                 ('select', 'select', 'Zaznacz'),
                 ('draw', 'polygon', 'Poligon'),
+                ('line', 'polygon', 'Linia'),
                 ('edit', 'vertices', 'Wierzchołki'),
                 ('labels', 'label', 'Etykiety')):
             edit.action(self.tool_actions[key], icon, large=True, text=title)
@@ -288,6 +290,7 @@ class GeoStudioWindow(QMainWindow):
              'undo', 'Cofnij punkt'),
             (self._action('Przerwij narzędzie', self.cancel_edit),
              'select', 'Anuluj'),
+            (self.shared_vertex_action, 'vertices', 'Wspólne węzły'),
         )
 
         objects = ribbon.group('Edycja', 'Obiekty')
@@ -2292,6 +2295,8 @@ class GeoStudioWindow(QMainWindow):
 
     def set_shared_vertex_sync(self, enabled):
         self.sync_shared_vertices = bool(enabled)
+        if self.shared_vertex_action.isChecked() != self.sync_shared_vertices:
+            self.shared_vertex_action.setChecked(self.sync_shared_vertices)
         self.status.showMessage(
             'Wspólne węzły: ' +
             ('przesuwaj sąsiadów tego samego kodu.' if enabled else
