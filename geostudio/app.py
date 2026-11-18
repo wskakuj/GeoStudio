@@ -20,7 +20,7 @@ try:
         QGraphicsPathItem, QGraphicsEllipseItem, QGraphicsRectItem, QGraphicsPixmapItem, QGraphicsSimpleTextItem, QGraphicsItem, QDockWidget,
         QTreeWidget, QTreeWidgetItem, QToolBar, QMessageBox, QStatusBar, QInputDialog, QMenu,
         QLabel, QWidget, QVBoxLayout, QHeaderView, QSplitter, QComboBox, QTextEdit,
-        QDialog, QDialogButtonBox, QFormLayout, QLineEdit, QHBoxLayout, QPushButton, QSpinBox, QSlider, QColorDialog, QToolButton, QFrame, QTabWidget)
+        QDialog, QDialogButtonBox, QFormLayout, QLineEdit, QHBoxLayout, QPushButton, QSpinBox, QSlider, QColorDialog, QToolButton, QFrame, QTabWidget, QTableWidget, QTableWidgetItem, QProgressDialog)
 except ImportError as exc:
     raise SystemExit('Zainstaluj GUI: python -m pip install -e .\nBrakuje PySide6') from exc
 
@@ -31,9 +31,10 @@ from .topology_edit import linked_vertex_moves
 from .scene_builder import RenderContext, build_scene, label_anchor, object_path, object_fill_brush
 from .map_tools import MapView
 from .map_decorations import KINDS, DecorationItem, new_decoration
+from .label_editor import ATTRIBUTE_FIELDS, AttributeLabelsDialog
 from .selection import (SelectionContext, highlight_path, pick_candidates,
                         resolve_click, snap_at, toggle_selection, visible_uids)
-from .exporters import render_scene_image, save_image, write_dxf
+from .exporters import render_scene_image, render_print_image, save_image, write_dxf
 from .history import History, HistoryConflict
 from .map_layout import (detect_source_compilation_scale, validated_compilation_scale,
     label_ratio, source_text_height, text_line_offset, DEFAULT_SCALE)
@@ -272,6 +273,8 @@ class GeoStudioWindow(QMainWindow):
         search.action(self._action('Znajdź obiekt', self.show_search),
                       'search', large=True, text='Znajdź')
         search.control(self.selector, minimum_width=178)
+        search.action(self.tool_actions['labels'], 'label',
+                      text='Przesuń etykiety [L]')
 
         # Edit tab. All tools remain backed by their original QActionGroup.
         edit = ribbon.group('Edycja', 'Narzędzia edycji')
@@ -324,12 +327,8 @@ class GeoStudioWindow(QMainWindow):
              'layers', 'Podkłady'),
         )
         online = ribbon.group('Dane', 'Mapy online')
-        online.stack(
-            (self._action('Podgląd WMS…', self.show_wms_dialog),
-             'layers', 'WMS — pod mapą'),
-            (self._action('Google Earth w GeoStudio', self.open_google_maps),
-             'compass', 'Google Earth'),
-        )
+        online.action(self._action('WMS', self.show_wms_dialog),
+                      'layers', large=True, text='WMS')
         coordinates = ribbon.group('Dane', 'Współrzędne')
         coordinates.action(
             self._action('Transformuj układ', self.open_crs_converter),
@@ -557,7 +556,10 @@ class GeoStudioWindow(QMainWindow):
             action.setShortcutContext(Qt.WidgetWithChildrenShortcut)
             self.view.addAction(action)
             em.addAction(action)
-        em.addAction(self._action('Przesuń podpis A1 / A2',self.start_label_edit,'L'))
+        em.addAction(self._action('Przesuń etykiety wszystkich atrybutów',
+                                  self.start_label_edit, 'L'))
+        em.addAction(self._action('Ustaw etykietowanie wybranego kodu…',
+                                  self.open_attribute_label_dialog, 'Ctrl+Alt+L'))
         self.finish_action = self._action('Zakończ i zapisz poligon',self.finish_polygon,'Return')
         em.addAction(self.finish_action)
         self.finish_action.setEnabled(False)
@@ -613,9 +615,7 @@ class GeoStudioWindow(QMainWindow):
         self.view_menu = vm
         map_sources = vm.addMenu('Mapy online')
         map_sources.addAction(
-            self._action('Podgląd warstw WMS…', self.show_wms_dialog))
-        map_sources.addAction(
-            self._action('Google Earth — w oknie programu (bez API)…', self.open_google_maps))
+            self._action('WMS', self.show_wms_dialog))
         self.command_palette_action = self._action(
             'Znajdź polecenie…', self.show_command_palette, 'Ctrl+K')
         vm.addAction(self.command_palette_action)
@@ -848,6 +848,9 @@ class GeoStudioWindow(QMainWindow):
         self.layers_tree.header().setSectionResizeMode(0, QHeaderView.Stretch)
         self.layers_tree.header().setSectionResizeMode(1, QHeaderView.ResizeToContents)
         self.layers_tree.itemChanged.connect(self.on_layer_toggle)
+        self.layers_tree.setContextMenuPolicy(Qt.CustomContextMenu)
+        self.layers_tree.customContextMenuRequested.connect(
+            self.open_layer_context_menu)
         layer_root = QWidget(self.layers_dock)
         layer_layout = QVBoxLayout(layer_root)
         layer_layout.setContentsMargins(10, 12, 10, 10)
@@ -1176,7 +1179,8 @@ class GeoStudioWindow(QMainWindow):
             item = DecorationItem(
                 uid, data, factor,
                 on_move=self.move_map_decoration,
-                on_edit=self.edit_map_decoration)
+                on_edit=self.edit_map_decoration,
+                on_resize=self.resize_map_decoration)
             self.map_scene.addItem(item)
             self.decoration_items[uid] = item
 
@@ -1217,6 +1221,17 @@ class GeoStudioWindow(QMainWindow):
         self._autosave_work_copy()
         self.status.showMessage('Przesunięto element oprawy; Ctrl+Z cofa zmianę.')
 
+    def resize_map_decoration(self, uid, scale):
+        before = self.visual_styles.get(uid)
+        if not before or abs(before.get("scale", 1.0) - scale) < 0.0001:
+            return
+        with self.history.begin("Zmiana rozmiaru oprawy mapy",
+                                selection_before=self.selected_uids):
+            self.visual_styles[uid] = {**before, "scale": scale}
+        self._history_changed()
+        self._autosave_work_copy()
+        self.status.showMessage("Zmieniono rozmiar oprawy; Ctrl+Z cofa zmianę.")
+
     def edit_map_decoration(self, uid):
         """Double-click: edit layout text, or explicitly remove this overlay."""
         data = self.visual_styles.get(uid)
@@ -1224,12 +1239,12 @@ class GeoStudioWindow(QMainWindow):
             return
         dialog = QDialog(self)
         dialog.setWindowTitle('Edytuj: ' + KINDS[data['kind']])
-        dialog.resize(545, 440)
+        dialog.resize(625, 565)
         form = QFormLayout(dialog)
         fields = {}
         for key, label in (
                 ('title', 'Nagłówek / N'), ('subtitle', 'Podtytuł'),
-                ('details', 'Opis / pozycje legendy'), ('area', 'Powierzchnia / stopka')):
+                ('details', 'Opis'), ('area', 'Powierzchnia / stopka')):
             if key == 'details':
                 editor = QTextEdit(dialog)
                 editor.setPlainText(data.get(key, ''))
@@ -1237,7 +1252,70 @@ class GeoStudioWindow(QMainWindow):
             else:
                 editor = QLineEdit(data.get(key, ''), dialog)
             fields[key] = editor
+            if data["kind"] == "legend" and key == "details":
+                editor.hide()  # The palette table below replaces the raw list.
+                continue
             form.addRow(label, editor)
+        legend_table = None
+        if data["kind"] == "legend":
+            legend_table = QTableWidget(dialog)
+            legend_table.setObjectName("GeoStudioLegendTable")
+            legend_table.setColumnCount(2)
+            legend_table.setHorizontalHeaderLabels(["Kolor", "Nazwa / oznaczenie"])
+            legend_table.horizontalHeader().setSectionResizeMode(
+                0, QHeaderView.ResizeToContents)
+            legend_table.horizontalHeader().setSectionResizeMode(
+                1, QHeaderView.Stretch)
+            entries = data.get("items")
+            if not isinstance(entries, list):
+                entries = [{"color": "#91ABA7", "name": entry.strip()}
+                           for entry in data.get("details", "").splitlines() if entry.strip()]
+            for entry in entries:
+                row = legend_table.rowCount()
+                legend_table.insertRow(row)
+                color = QColor(entry.get("color", "#91ABA7"))
+                if not color.isValid():
+                    color = QColor("#91ABA7")
+                color_cell = QTableWidgetItem(color.name().upper())
+                color_cell.setBackground(color)
+                legend_table.setItem(row, 0, color_cell)
+                legend_table.setItem(row, 1, QTableWidgetItem(entry.get("name", "")))
+            form.addRow("Elementy legendy", legend_table)
+            row_controls = QWidget(dialog)
+            row_layout = QHBoxLayout(row_controls)
+            row_layout.setContentsMargins(0, 0, 0, 0)
+            add_row = QPushButton("+ Dodaj", row_controls)
+            remove_row = QPushButton("Usuń pozycję", row_controls)
+            choose_color = QPushButton("Zmień kolor…", row_controls)
+            def add_legend_row():
+                row = legend_table.rowCount()
+                legend_table.insertRow(row)
+                legend_table.setItem(row, 0, QTableWidgetItem("#91ABA7"))
+                legend_table.setItem(row, 1, QTableWidgetItem("Nowa pozycja"))
+                legend_table.setCurrentCell(row, 1)
+                legend_table.editItem(legend_table.item(row, 1))
+            def remove_legend_row():
+                row = legend_table.currentRow()
+                if row >= 0:
+                    legend_table.removeRow(row)
+            def edit_legend_color():
+                row = legend_table.currentRow()
+                if row < 0:
+                    return
+                item = legend_table.item(row, 0)
+                previous = QColor(item.text() if item else "#91ABA7")
+                chosen = QColorDialog.getColor(previous, dialog, "Kolor oznaczenia")
+                if chosen.isValid():
+                    cell = QTableWidgetItem(chosen.name().upper())
+                    cell.setBackground(chosen)
+                    legend_table.setItem(row, 0, cell)
+            add_row.clicked.connect(add_legend_row)
+            remove_row.clicked.connect(remove_legend_row)
+            choose_color.clicked.connect(edit_legend_color)
+            row_layout.addWidget(add_row)
+            row_layout.addWidget(remove_row)
+            row_layout.addWidget(choose_color)
+            form.addRow(row_controls)
         note = QLabel('Oprawa mapy jest zapisywana przez GeoStudio w '
                       'towarzyszącym pliku *.geostudio.json. '
                       'GEO-MAP nie interpretuje tych nakładek.')
@@ -1266,6 +1344,19 @@ class GeoStudioWindow(QMainWindow):
                 for key, editor in fields.items():
                     updated[key] = (editor.toPlainText() if key == 'details'
                                     else editor.text())[:3000]
+                if legend_table is not None:
+                    items = []
+                    for row in range(legend_table.rowCount()):
+                        name_item = legend_table.item(row, 1)
+                        color_item = legend_table.item(row, 0)
+                        name = name_item.text().strip() if name_item else ""
+                        color = QColor(color_item.text() if color_item else "")
+                        if name:
+                            items.append({"name": name[:180],
+                                          "color": color.name().upper()
+                                          if color.isValid() else "#91ABA7"})
+                    updated["items"] = items
+                    updated["details"] = "\n".join(row["name"] for row in items)
                 self.visual_styles[uid] = updated
         self._history_changed()
         self._rebuild_map_decorations_in_place()
@@ -1986,6 +2077,39 @@ class GeoStudioWindow(QMainWindow):
                 not self.visual_styles.get('legacy-hidden:' + str(uid), {}).get('hidden')))
         self.update_view_scale_indicator()
 
+    def open_attribute_label_dialog(self, code=None):
+        if not self.doc:
+            return
+        if not isinstance(code, str) or len(code) != 4:
+            code = (self.doc.by_id[self.selected_uid].code
+                    if self.selected_uid else None)
+        if code is None:
+            codes = sorted({obj.code for obj in self.doc.objects})
+            if not codes:
+                return
+            code, ok = QInputDialog.getItem(
+                self, "Etykietowanie", "Kod obiektów", codes, 0, False)
+            if not ok:
+                return
+        key = "labels:code:" + code
+        dialog = AttributeLabelsDialog(
+            code, self.visual_styles.get(key), self)
+        if dialog.exec() != QDialog.Accepted:
+            return
+        specification = dialog.specification()
+        if self.visual_styles.get(key) == specification:
+            return
+        with self.history.begin("Etykiety atrybutów kodu " + code,
+                                selection_before=self.selected_uids):
+            self.visual_styles[key] = specification
+        self._history_changed()
+        current = self.selected_uid
+        self.rebuild_scene(fit=False, reselect=current)
+        self._autosave_work_copy()
+        self.status.showMessage(
+            f"Etykiety kodu {code} zapisane. Każdą widoczną etykietę "
+            "można przesuwać narzędziem L obok zaznaczania S.")
+
     def start_label_edit(self):
         if not self.doc:
             return
@@ -1994,10 +2118,10 @@ class GeoStudioWindow(QMainWindow):
         self.view.setCursor(Qt.CrossCursor)
         self.tool_actions['labels'].setChecked(True)
         self._set_mode_badge('PRZESUWANIE ETYKIET')
-        # Moving descriptions must not mutate GEO-MAP geometry or attributes.
         self.status.showMessage(
-            'Tryb L: przeciągnij widoczny napis A1 lub A2. '
-            'Pozycje zapisywane są w pliku GeoStudio obok kopii MAP.')
+            'Tryb L: przeciągnij dowolną widoczną etykietę atrybutu. '
+            'Ctrl+Alt+L otwiera ustawienia etykietowania kodu. '
+            'Pozycje zapisują się w pliku GeoStudio.')
 
     def begin_label_drag(self, x, y):
         self._active_label = None
@@ -2009,7 +2133,9 @@ class GeoStudioWindow(QMainWindow):
             if not item.isVisible():
                 continue
             uid, field = item.data(0), item.data(1)
-            if field not in {'A1','A2'}:
+            if field not in ATTRIBUTE_FIELDS and not (
+                    isinstance(field, str) and field.startswith("TX")
+                    and field[2:].isdigit()):
                 continue
             if self.layer_for_uid.get(uid,'') in self.hidden_layers:
                 continue
@@ -2045,7 +2171,9 @@ class GeoStudioWindow(QMainWindow):
         if item is None:
             return
         uid, field = item.data(0), item.data(1)
-        if not uid or field not in {'A1','A2'}:
+        if not uid or not (field in ATTRIBUTE_FIELDS or (
+                isinstance(field, str) and field.startswith("TX")
+                and field[2:].isdigit())):
             return
         item.setPos(x,-y)
         item.setData(2,0.0)  # explicit dragged position is the new anchor
@@ -2409,6 +2537,113 @@ class GeoStudioWindow(QMainWindow):
             self.snap_marker.setAcceptedMouseButtons(Qt.NoButton)
             self.map_scene.addItem(self.snap_marker)
             self.snap_marker.setVisible(False)
+
+    def _objects_in_layer(self, layer):
+        if not self.doc:
+            return []
+        return [obj for obj in self.doc.objects
+                if resolve_layer(self.catalog, obj.code) == layer and obj.uid]
+
+    def open_layer_context_menu(self, pos):
+        """Right-click a layer: operate on every member, with one Undo."""
+        item = self.layers_tree.itemAt(pos)
+        if item is None or not self.doc:
+            return
+        layer = item.text(0)
+        objs = self._objects_in_layer(layer)
+        menu = QMenu(self)
+        select_action = menu.addAction(f"Zaznacz wszystkie ({len(objs)} obiektów)")
+        attributes_action = menu.addAction("Zmień atrybut wszystkich obiektów…")
+        color_action = menu.addAction("Ustaw kolor poligonów całej warstwy…")
+        menu.addSeparator()
+        labels_action = menu.addAction("Ustaw etykiety atrybutów kodu…")
+        chosen = menu.exec(self.layers_tree.viewport().mapToGlobal(pos))
+        if chosen == select_action:
+            if len(objs) > 1000 and QMessageBox.question(
+                self, "Duża warstwa",
+                f"Zaznaczyć {len(objs)} obiektów?",
+                QMessageBox.Yes | QMessageBox.No, QMessageBox.No) != QMessageBox.Yes:
+                return
+            self._set_selected_uids([obj.uid for obj in objs])
+        elif chosen == attributes_action:
+            self.bulk_edit_layer_field(layer, objs)
+        elif chosen == color_action:
+            self.bulk_color_layer(layer, objs)
+        elif chosen == labels_action:
+            codes = sorted({obj.code for obj in objs})
+            if not codes:
+                return
+            code, accepted = QInputDialog.getItem(
+                self, "Etykiety warstwy", "Wybierz kod obiektów",
+                codes, 0, False)
+            if accepted:
+                self.open_attribute_label_dialog(code)
+
+    def bulk_edit_layer_field(self, layer, objects):
+        if not objects:
+            return
+        allowed = ("A1", "A2", "A3", "A4", "A5", "A6", "TX", "MP", "KR")
+        field, ok = QInputDialog.getItem(
+            self, "Atrybut całej warstwy", "Pole atrybutu", list(allowed), 1, False)
+        if not ok:
+            return
+        subset = [obj for obj in objects if field in obj.fields]
+        if not subset:
+            QMessageBox.information(
+                self, "Brak pola", "Żaden obiekt tej warstwy nie ma pola " + field +
+                ". Aby nie dopisywać niezamierzonych rekordów, operacja przerwana.")
+            return
+        value, ok = QInputDialog.getText(
+            self, "Atrybut całej warstwy",
+            f"Wpisz wspólną wartość {field} dla {len(subset)} obiektów "
+            "(zmieni istniejące pola; pozostałe pomija).")
+        if not ok:
+            return
+        if QMessageBox.question(
+            self, "Potwierdź zmianę zbiorczą",
+            f"Zmienić {field} w {len(subset)} obiektach warstwy «{layer}»? "
+            "Zmianę można cofnąć jednym Ctrl+Z.",
+            QMessageBox.Yes | QMessageBox.No, QMessageBox.No) != QMessageBox.Yes:
+            return
+        updates = {(obj.uid, field): value for obj in subset
+                   if obj.fields.get(field) != value}
+        if not updates:
+            return
+        try:
+            with self.history.begin(f"Zmiana {field} warstwy {layer}",
+                                    selection_before=self.selected_uids):
+                self.doc.bulk_update_fields(updates)
+            self._history_changed()
+            self.rebuild_scene(fit=False)
+            self._autosave_work_copy()
+            self.status.showMessage(f"Zmieniono {field} w {len(updates)} obiektach.")
+        except Exception as exc:
+            QMessageBox.warning(self, "Nie udało się zmienić warstwy", str(exc))
+
+    def bulk_color_layer(self, layer, objects):
+        codes = sorted({obj.code for obj in objects if obj.is_closed})
+        if not codes:
+            QMessageBox.information(self, "Kolor warstwy", "Brak poligonów do wypełnienia.")
+            return
+        chosen = QColorDialog.getColor(QColor("#98C6B7"), self, "Kolor całej warstwy")
+        if not chosen.isValid():
+            return
+        opacity, accepted = QInputDialog.getInt(
+            self, "Krycie warstwy", "Krycie [%]", 60, 0, 100)
+        if not accepted:
+            return
+        with self.history.begin(f"Kolor warstwy {layer}",
+                                selection_before=self.selected_uids):
+            for code in codes:
+                key = "code:" + code
+                self.visual_styles[key] = {
+                    **self.visual_styles.get(key, {}),
+                    "fill": chosen.name().upper(), "opacity": opacity}
+        self._history_changed()
+        self._refresh_fill_brushes(force=True)
+        self._autosave_work_copy()
+        self.status.showMessage(
+            f"Nowy kolor warstwy «{layer}» dla {len(codes)} kodów.")
 
     def _populate_layers(self):
         self.layers_tree.blockSignals(True)
@@ -3681,18 +3916,76 @@ class GeoStudioWindow(QMainWindow):
         dialog.raise_()
 
     def export_image(self):
-        if not self.doc:return
-        file,_=QFileDialog.getSaveFileName(self,'Eksport widoku mapy',str(Path.home()/'mapa.png'),
-            'PNG (*.png);;JPEG (*.jpg);;TIFF (*.tif)')
-        if not file:return
+        """High-quality export of the full map with screen-matching orientation."""
+        if not self.doc:
+            return
+        file, _ = QFileDialog.getSaveFileName(
+            self, "Eksport mapy do wydruku", str(Path.home() / "mapa.png"),
+            "PNG (*.png);;JPEG (*.jpg *.jpeg);;TIFF (*.tif *.tiff)")
+        if not file:
+            return
+        width, ok = QInputDialog.getInt(
+            self, "Rozdzielczość eksportu",
+            "Szerokość gotowego obrazu [px]\n"
+            "2600 — ekran; 6000 — wysoka; 10000 — druk; 14000 — wielki format.\n"
+            "Dla bardzo dużych map limit pamięci może wymagać zmniejszenia wartości.",
+            10000, 1000, 20000, 500)
+        if not ok:
+            return
+        progress = QProgressDialog(
+            "Przygotowywanie eksportu…", "", 0, 100, self)
+        progress.setWindowTitle("Eksport mapy — PNG/JPG/TIFF")
+        progress.setCancelButton(None)
+        progress.setMinimumDuration(0)
+        progress.setWindowModality(Qt.WindowModal)
+        progress.setValue(0)
+        progress.show()
+        def report(percentage, message):
+            progress.setLabelText(message)
+            progress.setValue(percentage)
+            QApplication.processEvents()
+        # Selection edges, edit handles and floating guides are UI aids,
+        # not print content. Restore their original visibility afterwards.
+        print_hidden = []
+        for item in ([self.highlight_item, self.snap_marker, self.draft_item] +
+                     list(self.edit_handles) + list(self._selected_label_frames)):
+            if item is not None and item.isVisible():
+                print_hidden.append(item)
+                item.setVisible(False)
+        selected_decorations = [
+            item for item in self.decoration_items.values() if item.isSelected()]
+        for item in selected_decorations:
+            item.setSelected(False)
         try:
-            img=render_scene_image(self.map_scene)
-            if img is None:return
-            if not save_image(img,file):
-                # TIFF writer availability is platform-dependent.
-                raise RuntimeError('Format niedostępny w tej instalacji Qt; wybierz PNG/JPG.')
-            self.status.showMessage('Zapisano obraz: '+file)
-        except Exception as exc:QMessageBox.warning(self,'Błąd eksportu',str(exc))
+            report(5, "Analiza rozmiaru i orientacji mapy…")
+            image = render_print_image(
+                self.map_scene, self.view.transform(), width=width, progress=report)
+            if image is None:
+                raise ValueError("Mapa jest pusta.")
+            report(88, "Zapisywanie pliku " + Path(file).suffix.upper() + "…")
+            quality = 96 if Path(file).suffix.lower() in {".jpg", ".jpeg"} else None
+            if not save_image(image, file, quality=quality):
+                raise RuntimeError(
+                    "Format niedostępny w tej instalacji Qt; wybierz PNG/JPG. "
+                    "Eksport TIFF wymaga obsługi TIFF w zainstalowanych pluginach Qt.")
+            size = f"{image.width()} × {image.height()} px"
+            report(100, "Eksport zakończony.")
+            self.status.showMessage("Eksport zakończony: " + size + " — " + file)
+            QMessageBox.information(
+                self, "Mapa wyeksportowana",
+                f"Zapisano: {Path(file).name}\nRozdzielczość: {size}\n"
+                "Orientacja zgodna z aktualnym widokiem mapy. "
+                "Metadane drukarskie: 300 DPI.")
+        except Exception as exc:
+            QMessageBox.warning(self, "Błąd eksportu", str(exc))
+        finally:
+            for item in print_hidden:
+                if item.scene() is self.map_scene:
+                    item.setVisible(True)
+            for item in selected_decorations:
+                if item.scene() is self.map_scene:
+                    item.setSelected(True)
+            progress.close()
 
     def export_dxf(self):
         if not self.doc:return

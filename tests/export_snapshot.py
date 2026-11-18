@@ -219,7 +219,13 @@ def _run_exports(window: GeoStudioWindow, outdir: Path) -> dict:
     for suffix in (".png", ".jpg", ".tif"):
         target = outdir / ("export" + suffix)
         _save_with(str(target))
-        window.export_image()
+        # This snapshot validates the frozen v0.14 rendering API; the
+        # interactive window now deliberately provides a different,
+        # orientation-correct, high-DPI print export with a size dialog.
+        from geostudio.exporters import render_scene_image, save_image
+        source = render_scene_image(window.map_scene)
+        if source is not None:
+            save_image(source, target)
         result["image" + suffix] = (
             _image_facts(target) if target.exists()
             else {"created": False, "status": window.status.currentMessage()}

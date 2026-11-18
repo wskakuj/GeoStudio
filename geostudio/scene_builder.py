@@ -289,6 +289,15 @@ def build_scene(scene: QGraphicsScene, doc: GeoMap, ctx: RenderContext) -> Scene
             labels = [(f'TX{index}',line) for index,line in enumerate(texts)]
         elif obj.code.startswith('7') and obj.fields.get('TX'):
             labels = [('TX',obj.fields['TX'].replace('||',' '))]
+        custom_config = ctx.visual_styles.get("labels:code:" + obj.code)
+        if isinstance(custom_config, dict) and isinstance(
+                custom_config.get("fields"), dict):
+            custom_fields = custom_config["fields"]
+            labels = [
+                (field, obj.fields[field].replace("||", "\n"))
+                for field, opts in custom_fields.items()
+                if opts.get("visible") and obj.fields.get(field)
+            ]
         if not labels:
             continue
         anchor = label_anchor(obj)
@@ -347,6 +356,15 @@ def build_scene(scene: QGraphicsScene, doc: GeoMap, ctx: RenderContext) -> Scene
                 font.setPixelSize(11)
                 color=QColor('#58686F')
                 color.setAlpha(180)
+            if custom_config:
+                specific = custom_config.get("fields", {}).get(field, {})
+                if specific:
+                    font.setFamily(specific.get("font", "Segoe UI"))
+                    font.setPixelSize(max(6, min(96, int(specific.get("size", 16)))))
+                    font.setBold(bool(specific.get("bold", False)))
+                    color = QColor(specific.get("color", "#243A45"))
+                    if not color.isValid():
+                        color = QColor("#243A45")
             label.setFont(font)
             if multiline_a2:
                 label.setDefaultTextColor(color)
@@ -357,6 +375,10 @@ def build_scene(scene: QGraphicsScene, doc: GeoMap, ctx: RenderContext) -> Scene
             ratio=label_ratio(obj.code,obj.fields,bounds.height(),
                               ctx.compilation_scale,
                               ctx.source_compilation_scale)
+            if custom_config and custom_config.get("fields", {}).get(field):
+                # Use a fixed map ratio so custom font pixel sizes remain
+                # visible even on 6000/7900 texts where native A1 size is fixed.
+                ratio = .55 * ctx.compilation_scale / ctx.source_compilation_scale
             custom=ctx.label_positions.get(obj.uid,{}).get(field)
             x,y = custom if custom else anchor
             label.setPos(x,-y)

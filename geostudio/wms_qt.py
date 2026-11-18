@@ -9,7 +9,7 @@ from __future__ import annotations
 import math
 
 from PySide6.QtCore import Qt, QUrl
-from PySide6.QtGui import QColor, QPixmap, QTransform
+from PySide6.QtGui import QColor, QPixmap, QTransform, QDesktopServices
 from PySide6.QtNetwork import QNetworkAccessManager, QNetworkReply, QNetworkRequest
 from PySide6.QtWidgets import (
     QComboBox, QDialog, QFormLayout, QHBoxLayout, QLabel, QLineEdit,
@@ -122,9 +122,25 @@ class WMSDialog(QDialog):
         # Official GUGiK orthoimagery WMS is a practical starting point in PL.
         default_wms = ("https://mapy.geoportal.gov.pl/wss/service/"
                        "PZGIK/ORTO/WMS/StandardResolution")
+        self.server_selector = QComboBox(self)
+        self.server_selector.setObjectName("GeoStudioWMSServerPresets")
+        self.server_selector.addItem(
+            "Geoportal — ortofotomapa standardowa", default_wms)
+        self.server_selector.addItem(
+            "Geoportal — ortofotomapa wysokiej rozdzielczości",
+            "https://mapy.geoportal.gov.pl/wss/service/PZGIK/ORTO/WMS/HighResolution")
+        self.server_selector.addItem("Własny adres serwera WMS…", "custom")
+        self.server_selector.addItem(
+            "SmartSDI — dane EGiB/PRG (wtyczka QGIS, nie WMS)", "smartsdi")
+        self.server_selector.currentIndexChanged.connect(self._server_changed)
+        form.addRow("Źródło danych", self.server_selector)
         self.address = QLineEdit(str(window.settings.value("wms/last_url", default_wms)))
+        self.address.setObjectName("GeoStudioWMSAddress")
         self.address.setPlaceholderText("https://.../wms")
-        form.addRow("Serwer WMS", self.address)
+        self.address.textEdited.connect(self._custom_address_entered)
+        form.addRow("Adres WMS", self.address)
+        preset = self.server_selector.findData(self.address.text())
+        self.server_selector.setCurrentIndex(preset if preset >= 0 else 2)
         # Ordinary users should select one of the actual server-advertised
         # layers, not guess an internal identifier in an editable text field.
         self.layer_selector = QComboBox()
@@ -148,6 +164,10 @@ class WMSDialog(QDialog):
                 self.crs_selector.setCurrentIndex(idx)
         form.addRow("Układ MAP", self.crs_selector)
         root.addLayout(form)
+        self.smartsdi_link = QPushButton("SmartSDI — informacje o wtyczce QGIS", self)
+        self.smartsdi_link.clicked.connect(lambda: QDesktopServices.openUrl(
+            QUrl("https://github.com/geo-system/qgis-smartsdi")))
+        root.addWidget(self.smartsdi_link)
 
         controls = QHBoxLayout()
         self.capabilities_button = QPushButton("Pobierz warstwy")
@@ -180,6 +200,33 @@ class WMSDialog(QDialog):
         close.clicked.connect(self.close)
         actions.addWidget(close)
         root.addLayout(actions)
+
+    def _server_changed(self, _index):
+        selected = self.server_selector.currentData()
+        if selected == "smartsdi":
+            self.address.setEnabled(False)
+            self.capabilities_button.setEnabled(False) if hasattr(self, "capabilities_button") else None
+            if hasattr(self, "message"):
+                self.message.setText(
+                    "SmartSDI jest wtyczką QGIS do pobierania danych EGiB i PRG, "
+                    "nie udostępnia własnego adresu WMS. "
+                    "Przycisk poniżej otwiera stronę projektu.")
+            return
+        self.address.setEnabled(True)
+        if hasattr(self, "capabilities_button"):
+            self.capabilities_button.setEnabled(True)
+        if selected not in ("custom", None):
+            self.address.setText(selected)
+        if hasattr(self, "layer_selector"):
+            self._show_layers_failure()
+
+    def _custom_address_entered(self, _value):
+        self.server_selector.blockSignals(True)
+        self.server_selector.setCurrentIndex(
+            self.server_selector.findData("custom"))
+        self.server_selector.blockSignals(False)
+        if hasattr(self, "layer_selector"):
+            self._show_layers_failure()
 
     def _opacity_changed(self, value):
         self.window._wms_preview.opacity = value / 100.
@@ -232,6 +279,12 @@ class WMSDialog(QDialog):
         self.map_button.setEnabled(False)
 
     def fetch_layers(self):
+        if self.server_selector.currentData() == "smartsdi":
+            QMessageBox.information(
+                self, "SmartSDI",
+                "SmartSDI to wtyczka QGIS, a nie adres WMS. "
+                "Otwórz projekt SmartSDI lub wybierz serwer Geoportalu.")
+            return
         try:
             url = capabilities_url(self.address.text())
         except ValueError as exc:
