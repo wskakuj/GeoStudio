@@ -45,6 +45,8 @@ from .ui_theme import theme_stylesheet, ui_icon
 from .workspace_shell import MapWorkspace
 from .gis_ribbon import GISRibbon
 from .command_palette import CommandPalette
+from .raster_overlay import RasterOverlayStore
+from .raster_ui import RasterCalibrationDialog, RasterLayerPanel
 from .library_render import (parse_cdf, parse_sym_primitives, cdf_for_object,
     native_fill_color, simple_point_segments, simple_point_circles,
     parse_lay_pen_styles, lay_for_code,
@@ -140,6 +142,10 @@ class GeoStudioWindow(QMainWindow):
         self.current_polygon:list[tuple[float,float]]=[]
         self.polygon_code='5216'
         self.history = History(_MapHistoryTarget(self))
+        self._raster_overlay = RasterOverlayStore()
+        self._raster_map_picker = None
+        self._raster_calibration_dialog = None
+        self._raster_opacity_pending = False
         self._label_history = None
         self.map_scene=QGraphicsScene(self)
         # Custom feature picking handles overlapping objects without Qt selection.
@@ -276,6 +282,12 @@ class GeoStudioWindow(QMainWindow):
         rasters = ribbon.group('Dane', 'Rastry')
         rasters.action(self._action('Dodaj raster', self.add_raster),
                        'image', large=True, text='Dodaj raster')
+        rasters.stack(
+            (self._action('Kalibruj raster…', self.calibrate_selected_raster),
+             'snap', 'Kalibracja GCP'),
+            (self._action('Panel podkładów', self.show_raster_panel),
+             'layers', 'Podkłady'),
+        )
         coordinates = ribbon.group('Dane', 'Współrzędne')
         coordinates.action(
             self._action('Transformuj układ', self.open_crs_converter),
@@ -476,7 +488,10 @@ class GeoStudioWindow(QMainWindow):
     def _setup_menu(self):
         fm=self.menuBar().addMenu('&Plik')
         actions=[('Otwórz MAP…',self.open_map,'Ctrl+O'),('Wczytaj biblioteki SYM/LAY/CDF…',self.open_catalogs,None),
-                 ('Zapisz jako MAP…',self.save_map,'Ctrl+Shift+S'),('Dodaj raster z plikiem world…',self.add_raster,None),
+                 ('Zapisz jako MAP…',self.save_map,'Ctrl+Shift+S'),
+                 ('Dodaj raster / skan…',self.add_raster,None),
+                 ('Kalibruj raster (GCP)…',self.calibrate_selected_raster,None),
+                 ('Panel podkładów rastrowych',self.show_raster_panel,None),
                  ('Eksportuj obraz JPG/PNG/TIFF…',self.export_image,None),('Eksportuj DXF (uproszczony)…',self.export_dxf,None)]
         for label,fn,keys in actions: fm.addAction(self._action(label,fn,keys))
         fm.addSeparator();fm.addAction(self._action('Zakończ',self.close,'Ctrl+Q'))
@@ -743,7 +758,14 @@ class GeoStudioWindow(QMainWindow):
         self.layers_summary = QLabel('Wczytaj mapę, aby zobaczyć warstwy')
         self.layers_summary.setObjectName('GeoStudioLayerSummary')
         layer_layout.addWidget(self.layers_summary)
-        self.layers_dock.setWidget(layer_root)
+        # One left dock, two real content tabs. A second QDockWidget would
+        # unexpectedly rearrange the unrelated right-side inspector tabs in Qt.
+        self.raster_tabs = QTabWidget(self.layers_dock)
+        self.raster_tabs.setObjectName('GeoStudioContentsTabs')
+        self.raster_tabs.addTab(layer_root, 'Warstwy')
+        self.raster_panel = RasterLayerPanel(self)
+        self.raster_tabs.addTab(self.raster_panel, 'Rastry')
+        self.layers_dock.setWidget(self.raster_tabs)
         self.addDockWidget(Qt.LeftDockWidgetArea, self.layers_dock)
 
         self.properties_dock = QDockWidget('Inspektor obiektu', self)
@@ -944,8 +966,8 @@ class GeoStudioWindow(QMainWindow):
         if hasattr(self, 'ribbon_toolbar'):
             self.ribbon_toolbar.setVisible(mode != 'map')
         if mode == 'map':
-            for dock in (self.layers_dock, self.properties_dock,
-                         self.search_dock, self.info_dock):
+            for dock in (self.layers_dock,
+                         self.properties_dock, self.search_dock, self.info_dock):
                 dock.hide()
             self.panel_toolbar.hide()
         else:
@@ -1164,6 +1186,15 @@ class GeoStudioWindow(QMainWindow):
             self.settings.setValue('last_map_dir', str(Path(file).parent))
             self.visual_styles = load_styles(file)
             self.label_positions = load_label_positions(file)
+            try:
+                self._raster_overlay.load(file)
+            except (OSError, ValueError, TypeError, KeyError) as raster_error:
+                self._raster_overlay.clear()
+                QMessageBox.warning(
+                    self, 'Podkłady rastrowe',
+                    'Mapa została otwarta, ale ustawienia podkładów są '
+                    f'nieprawidłowe: {raster_error}')
+            self._refresh_raster_panel()
             self.source_compilation_scale = detect_source_compilation_scale(doc.objects)
             saved = self.settings.value(self._compilation_scale_key(file), None)
             self.compilation_scale = validated_compilation_scale(
@@ -1278,7 +1309,11 @@ class GeoStudioWindow(QMainWindow):
     def rebuild_scene(self, *, fit=True, reselect=''):
         if not self.doc:
             return
+        # The renderer clears QGraphicsScene: recreate each background
+        # pixmap after every geometry / label rebuild, never above vectors.
+        self._raster_overlay.clear_items()
         result = build_scene(self.map_scene, self.doc, self._render_context())
+        self._raster_overlay.attach(self.map_scene)
         self.geometry_index = result.geometry_index
         self.layer_for_uid = result.layer_for_uid
         self.graphics_for_uid = result.graphics_for_uid
@@ -1602,6 +1637,11 @@ class GeoStudioWindow(QMainWindow):
 
     def select_at(self, x, y, cycle=False, additive=False):
         if not self.doc:
+            return
+        if self._raster_map_picker is not None:
+            callback = self._raster_map_picker
+            self._raster_map_picker = None
+            callback(x, y)
             return
         candidates = self._pick_candidates(x, y)
         uids = [obj.uid for obj in candidates]
@@ -2543,29 +2583,73 @@ class GeoStudioWindow(QMainWindow):
             self.cancel_edit()
             self.rebuild_scene(fit=False,reselect=self.selected_uid)
 
+    def _refresh_raster_panel(self):
+        if hasattr(self, 'raster_panel'):
+            self.raster_panel.refresh()
+
+    def _save_raster_settings(self):
+        if self.doc and self.doc.filename:
+            return self._raster_overlay.save(self.doc.filename)
+        return None
+
+    def show_raster_panel(self):
+        """Select raster tab inside the existing left contents dock."""
+        self.layers_dock.show()
+        self.raster_tabs.setCurrentWidget(self.raster_panel)
+        self._refresh_raster_panel()
+
     def add_raster(self):
-        file,_=QFileDialog.getOpenFileName(self,'Otwórz raster z georeferencją',str(Path.home()),'Obrazy (*.png *.jpg *.jpeg *.tif *.tiff)')
-        if not file:return
-        path=Path(file)
-        pix=QPixmap(file)
-        if pix.isNull():QMessageBox.warning(self,'Raster','Nie udało się odczytać obrazu.');return
-        wf=None
-        for ext in [path.suffix[1:2]+'w',path.suffix[1:2]+path.suffix[-1:]+'w', 'wld', 'tfw', 'jgw', 'pgw']:
-            candidate=path.with_suffix('.'+ext)
-            if candidate.exists():wf=candidate;break
-        if wf is None:
-            QMessageBox.information(self,'Wymagana georeferencja','Raster nie ma pliku world (.tfw/.jgw/.pgw/.wld). Kalibracja ręczna jest na liście następnych etapów.');return
+        """Import an image; use world file or launch interactive GCP calibration."""
+        if not self.doc:
+            QMessageBox.information(self, 'Raster', 'Najpierw otwórz mapę GEO-MAP.')
+            return
+        file, _ = QFileDialog.getOpenFileName(
+            self, 'Dodaj podkład rastrowy',
+            self._recent_folder('last_raster_dir'),
+            'Obrazy (*.png *.jpg *.jpeg *.tif *.tiff *.bmp)')
+        if not file:
+            return
         try:
-            vals=[float(v.strip()) for v in wf.read_text().splitlines()[:6]]
-            if len(vals)!=6:raise ValueError('Plik world powinien zawierać sześć współczynników')
-            a,d,b,e,c,f=vals
-            item=QGraphicsPixmapItem(pix)
-            item.setTransform(QTransform(a,-d,b,-e,c,-f))
-            item.setOpacity(0.62)
-            item.setZValue(-100)
-            self.map_scene.addItem(item)
-            self.status.showMessage(f'Dodano raster: {path.name}. Przejrzystość 62%, podkład pod wektorami.')
-        except Exception as exc:QMessageBox.warning(self,'Błąd georeferencji',str(exc))
+            layer = self._raster_overlay.add(file)
+        except (ValueError, OSError) as exc:
+            QMessageBox.warning(self, 'Nie można dodać rastra', str(exc))
+            return
+        self.settings.setValue('last_raster_dir', str(Path(file).parent))
+        self.show_raster_panel()
+        if layer.calibrated:
+            self._raster_overlay.attach(self.map_scene)
+            try:
+                self._save_raster_settings()
+            except OSError as exc:
+                QMessageBox.warning(self, 'Nie zapisano ustawień podkładu', str(exc))
+            self.status.showMessage(
+                f'Pod mapą: {Path(file).name}. Raster ma georeferencję z pliku world.')
+        else:
+            self.status.showMessage(
+                'Raster nie ma pliku world. Wskaż 3 lub więcej par punktów, aby go skalibrować.')
+            self._open_raster_calibration(layer)
+
+    def calibrate_selected_raster(self):
+        if not self.doc:
+            QMessageBox.information(self, 'Kalibracja', 'Najpierw otwórz mapę.')
+            return
+        layer = self.raster_panel.selected_layer()
+        if layer is None and self._raster_overlay.layers:
+            layer = self._raster_overlay.layers[-1]
+        if layer is None:
+            self.add_raster()
+            return
+        self._open_raster_calibration(layer)
+
+    def _open_raster_calibration(self, layer):
+        if self._raster_calibration_dialog is not None:
+            self._raster_calibration_dialog.close()
+        # This window is intentionally non-modal: the live GEO-MAP canvas
+        # must stay clickable when capturing a corresponding world point.
+        dialog = RasterCalibrationDialog(self, layer)
+        self._raster_calibration_dialog = dialog
+        dialog.show()
+        dialog.raise_()
 
     def export_image(self):
         if not self.doc:return
