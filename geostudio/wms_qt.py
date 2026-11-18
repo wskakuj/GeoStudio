@@ -8,8 +8,8 @@ from __future__ import annotations
 
 import math
 
-from PySide6.QtCore import Qt, QUrl
-from PySide6.QtGui import QColor, QPixmap, QTransform, QDesktopServices
+from PySide6.QtCore import Qt
+from PySide6.QtGui import QColor, QPixmap, QTransform
 from PySide6.QtNetwork import QNetworkAccessManager, QNetworkReply, QNetworkRequest
 from PySide6.QtWidgets import (
     QComboBox, QDialog, QFormLayout, QHBoxLayout, QLabel, QLineEdit,
@@ -137,8 +137,6 @@ class WMSDialog(QDialog):
             "Działki ewidencyjne + numery (GUGiK KIEG)",
             "https://integracja.gugik.gov.pl/cgi-bin/KrajowaIntegracjaEwidencjiGruntow")
         self.server_selector.addItem("Własny adres serwera WMS…", "custom")
-        self.server_selector.addItem(
-            "SmartSDI — dane EGiB/PRG (wtyczka QGIS, nie WMS)", "smartsdi")
         self.server_selector.currentIndexChanged.connect(self._server_changed)
         form.addRow("Źródło danych", self.server_selector)
         self.address = QLineEdit(str(window.settings.value("wms/last_url", default_wms)))
@@ -172,10 +170,6 @@ class WMSDialog(QDialog):
                 self.crs_selector.setCurrentIndex(idx)
         form.addRow("Układ MAP", self.crs_selector)
         root.addLayout(form)
-        self.smartsdi_link = QPushButton("SmartSDI — informacje o wtyczce QGIS", self)
-        self.smartsdi_link.clicked.connect(lambda: QDesktopServices.openUrl(
-            QUrl("https://github.com/geo-system/qgis-smartsdi")))
-        root.addWidget(self.smartsdi_link)
 
         controls = QHBoxLayout()
         self.capabilities_button = QPushButton("Pobierz warstwy")
@@ -211,15 +205,6 @@ class WMSDialog(QDialog):
 
     def _server_changed(self, _index):
         selected = self.server_selector.currentData()
-        if selected == "smartsdi":
-            self.address.setEnabled(False)
-            self.capabilities_button.setEnabled(False) if hasattr(self, "capabilities_button") else None
-            if hasattr(self, "message"):
-                self.message.setText(
-                    "SmartSDI jest wtyczką QGIS do pobierania danych EGiB i PRG, "
-                    "nie udostępnia własnego adresu WMS. "
-                    "Przycisk poniżej otwiera stronę projektu.")
-            return
         self.address.setEnabled(True)
         if hasattr(self, "capabilities_button"):
             self.capabilities_button.setEnabled(True)
@@ -289,12 +274,6 @@ class WMSDialog(QDialog):
         self.map_button.setEnabled(False)
 
     def fetch_layers(self):
-        if self.server_selector.currentData() == "smartsdi":
-            QMessageBox.information(
-                self, "SmartSDI",
-                "SmartSDI to wtyczka QGIS, a nie adres WMS. "
-                "Otwórz projekt SmartSDI lub wybierz serwer Geoportalu.")
-            return
         try:
             url = capabilities_url(self.address.text())
         except ValueError as exc:
