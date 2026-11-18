@@ -168,7 +168,7 @@ class GeoMap:
         self.lines.insert(insertion,replacement)
         self._parse()
 
-    def move_polygon_vertices(self, changes: dict[str, dict[int, tuple[float, float]]]):
+    def move_polygon_vertices(self, changes: dict[str, dict[int, tuple[float, float]]], *, reparse: bool = True):
         """Move one or more polygon vertices atomically with only ONE parse.
 
         Validate every resulting ring before touching raw MAP lines. Unrelated
@@ -213,7 +213,20 @@ class GeoMap:
         for line_no, replacement in pending.items():
             self.lines[line_no] = replacement
         if pending:
-            self._parse()
+            if reparse:
+                self._parse()
+            else:
+                # Fast UI path: these edits change only existing P coordinates,
+                # so keep all original GeoObject instances and update the
+                # affected points in place. Undo/redo may still reparse fully.
+                for uid, replacements in changes.items():
+                    obj = self.by_id[uid]
+                    for index, (x, y) in replacements.items():
+                        obj.points[index].x = round(x, 3)
+                        obj.points[index].y = round(y, 3)
+                        if index == 0:
+                            obj.points[-1].x = round(x, 3)
+                            obj.points[-1].y = round(y, 3)
 
     def move_polygon_vertex(self, uid: str, vertex_index: int, x: float, y: float):
         """Move one polygon vertex, preserving the original P record format."""
