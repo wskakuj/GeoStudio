@@ -21,7 +21,8 @@ def test_5310_pipe_separates_stacked_a2_lines_without_editing_map_bytes(qt_app):
     uid = doc.append_polygon([(4, 4), (8, 4), (8, 8)],
                              '5310', fields={'A1': 'y', 'A2': 'Ol75|II-0.5'})
     before = doc.to_bytes()
-    result = build_scene(QGraphicsScene(), doc, RenderContext())
+    scene = QGraphicsScene()  # Keep Qt owner alive while inspecting labels.
+    result = build_scene(scene, doc, RenderContext())
     label = result.label_items[(uid, 'A2')]
     assert isinstance(label, QGraphicsTextItem)
     assert label.toPlainText() == 'Ol75\nII-0.5'
@@ -37,6 +38,7 @@ def test_non_multiline_building_a2_remains_legacy_simple_text(qt_app):
     doc = GeoMap(fixture_map())
     uid = doc.append_polygon([(4, 4), (8, 4), (8, 8)],
                              '5310', fields={'A2': 'II-0.5'})
-    result = build_scene(QGraphicsScene(), doc, RenderContext())
+    scene = QGraphicsScene()  # Keep Qt owner alive while inspecting labels.
+    result = build_scene(scene, doc, RenderContext())
     assert not isinstance(result.label_items[(uid, 'A2')], QGraphicsTextItem)
     assert result.label_items[(uid, 'A2')].text() == 'II-0.5'
