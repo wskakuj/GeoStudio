@@ -42,6 +42,7 @@ from .object_search import search_objects
 from .visual_styles import (parse_fill_code, fill_code, load_styles,
     load_label_positions, write_styles, sidecar_path)
 from .ui_theme import theme_stylesheet, ui_icon
+from .workspace_shell import MapWorkspace
 from .library_render import (parse_cdf, parse_sym_primitives, cdf_for_object,
     native_fill_color, simple_point_segments, simple_point_circles,
     parse_lay_pen_styles, lay_for_code,
@@ -87,6 +88,8 @@ class GeoStudioWindow(QMainWindow):
         if self.theme_mode not in ('light', 'dark'):
             self.theme_mode = 'light'
         self._ui_icon_actions = []
+        self.workspace_mode = 'edit'
+        self._last_workspace = 'edit'
         self.doc: GeoMap | None=None
         self.current_crs_epsg = None  # Never guess source CRS from raw coordinates.
         self.source_compilation_scale = DEFAULT_SCALE
@@ -154,9 +157,10 @@ class GeoStudioWindow(QMainWindow):
         self.view.label_press.connect(self.begin_label_drag)
         self.view.label_move.connect(self.move_label)
         self.view.label_drop.connect(self.end_label_drag)
-        self.setCentralWidget(self.view)
         self._setup_menu()
+        self._install_workspace_shell()
         self._setup_docks()
+        self.set_workspace('edit', remember=False)
         # The original docks shrink to unreadable widths on Windows HiDPI.
         # Reserve usable space for layer names and attribute values.
         self.resizeDocks([self.layers_dock, self.properties_dock],
@@ -168,10 +172,28 @@ class GeoStudioWindow(QMainWindow):
         self.setStyleSheet(theme_stylesheet(self.theme_mode))
         self._refresh_toolbar_icons()
 
+    def _install_workspace_shell(self):
+        """Move map tools into a dedicated rail instead of a second ribbon."""
+        self.removeToolBarBreak(self.main_toolbar)
+        self.removeToolBar(self.main_toolbar)
+        self.main_toolbar.setOrientation(Qt.Vertical)
+        self.main_toolbar.setToolButtonStyle(Qt.ToolButtonTextUnderIcon)
+        self.main_toolbar.setIconSize(QSize(25, 25))
+        self.main_toolbar.setObjectName('GeoStudioToolPalette')
+        self.main_toolbar.setFixedWidth(94)
+        self.workspace = MapWorkspace(
+            self.view, self.main_toolbar, self.selector,
+            on_fit=self.fit_all, on_focus=self.toggle_focus_workspace)
+        self.setCentralWidget(self.workspace)
+        self.workspace.set_document(None)
+
     def _update_dirty_title(self):
         mark = ' *' if self.history.is_dirty else ''
         self.setWindowTitle(getattr(self, '_base_title',
                                     'GeoStudio v0.14') + mark)
+        if hasattr(self, 'workspace'):
+            self.workspace.set_document(
+                self.doc.filename if self.doc else None, dirty=self.history.is_dirty)
 
     def _history_changed(self):
         self._update_dirty_title()
@@ -256,6 +278,8 @@ class GeoStudioWindow(QMainWindow):
     def _set_mode_badge(self, text):
         if hasattr(self, 'mode_badge'):
             self.mode_badge.setText(text)
+        if hasattr(self, 'workspace'):
+            self.workspace.set_tool(text)
 
     def _setup_menu(self):
         fm=self.menuBar().addMenu('&Plik')
@@ -296,6 +320,25 @@ class GeoStudioWindow(QMainWindow):
             action.triggered.connect(lambda _checked=False, selected=mode: self.set_theme(selected))
             theme_group.addAction(action)
             self.theme_actions[mode] = action
+        workspace_menu = vm.addMenu('Układ stanowiska')
+        self.workspace_menu = workspace_menu
+        self.workspace_actions = {}
+        workspace_group = QActionGroup(self)
+        workspace_group.setExclusive(True)
+        for key, title, shortcut in (
+                ('map', 'Sama mapa', 'Ctrl+1'),
+                ('edit', 'Mapa + edycja', 'Ctrl+2'),
+                ('search', 'Mapa + wyszukiwanie', 'Ctrl+3')):
+            action = self._action(title, lambda _checked=False, mode=key:
+                                  self.set_workspace(mode), shortcut)
+            action.setCheckable(True)
+            workspace_menu.addAction(action)
+            workspace_group.addAction(action)
+            self.workspace_actions[key] = action
+        workspace_menu.addSeparator()
+        workspace_menu.addAction(
+            self._action('Przełącz skupienie na mapie', self.toggle_focus_workspace, 'F11'))
+        self.workspace_actions['edit'].setChecked(True)
         vm.addSeparator()
         vm.addAction(self._action('Dopasuj widok do mapy',self.fit_all,'Ctrl+0'))
         vm.addAction(self._action('Ustaw skalę widoku 1:N…', self.ask_view_scale, 'Ctrl+M'))
@@ -358,6 +401,15 @@ class GeoStudioWindow(QMainWindow):
         file_toolbar.addAction(self._decorate_action(
             self._action('Cała mapa', self.fit_all), 'fit',
             'Dopasuj widok do wszystkich obiektów • Ctrl+0'))
+        workspace_button = QToolButton(self)
+        workspace_button.setText('Układ')
+        workspace_button.setIcon(ui_icon('properties', self.theme_mode))
+        workspace_button.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
+        workspace_button.setPopupMode(QToolButton.InstantPopup)
+        workspace_button.setMenu(self.workspace_menu)
+        workspace_button.setToolTip('Przełącz układ: sama mapa, edycja, wyszukiwanie. F11 — skupienie na mapie.')
+        file_toolbar.addWidget(workspace_button)
+        self.workspace_button = workspace_button
 
         data_menu = QMenu('Dane', self)
         data_menu.addAction(self._action('Wczytaj biblioteki SYM / LAY / CDF…', self.open_catalogs))
@@ -401,7 +453,9 @@ class GeoStudioWindow(QMainWindow):
         self.addToolBar(Qt.TopToolBarArea, toolbar)
         caption = QLabel('NARZĘDZIA')
         caption.setObjectName('GeoStudioToolbarCaption')
-        toolbar.addWidget(caption)
+        # The tool category is already presented by the new side rail.
+        # Keep this label for compatibility, but do not spend map space on it.
+        caption.hide()
         self.tool_actions = {}
         group = QActionGroup(self)
         group.setExclusive(True)
@@ -409,7 +463,7 @@ class GeoStudioWindow(QMainWindow):
             ('select', 'Zaznacz', 'select', self.cancel_edit, 'Zaznacz obiekt (S); Ctrl+klik dodaje/usuwa'),
             ('pan', 'Przesuń', 'hand', self.start_pan, 'Przesuwaj mapę (H)'),
             ('draw', 'Poligon', 'polygon', self.start_polygon, 'Narysuj poligon (P)'),
-            ('edit', 'Wierzchołki', 'vertices', self.start_vertex_edit, 'Edytuj wierzchołki (E)'),
+            ('edit', 'Węzły', 'vertices', self.start_vertex_edit, 'Edytuj wierzchołki (E)'),
             ('labels', 'Etykiety', 'label', self.start_label_edit, 'Przesuwaj napisy A1/A2 (L)'),
         ]:
             action = self._decorate_action(self._action(title, fn), glyph, hint)
@@ -452,7 +506,8 @@ class GeoStudioWindow(QMainWindow):
         self.selector.addItem('Działki 5216', '5216')
         self.selector.addItem('Użytki 5230', '5230')
         self.selector.currentIndexChanged.connect(self.change_select_filter)
-        toolbar.addWidget(self.selector)
+        # The selection filter lives in the contextual map header,
+        # so the vertical tool rail remains narrow and legible.
 
     def _setup_docks(self):
         self.selected_uid = ''
@@ -519,6 +574,25 @@ class GeoStudioWindow(QMainWindow):
         self.object_details.setObjectName('GeoStudioObjectDetails')
         self.object_details.setWordWrap(True)
         card_layout.addWidget(self.object_details)
+        self.object_metrics = QLabel('Wybierz obiekt, aby zobaczyć jego parametry')
+        self.object_metrics.setObjectName('GeoStudioObjectMetrics')
+        self.object_metrics.setWordWrap(True)
+        card_layout.addWidget(self.object_metrics)
+        quick_actions = QHBoxLayout()
+        quick_actions.setSpacing(8)
+        self.edit_object_button = QPushButton('Edytuj atrybut')
+        self.edit_object_button.setObjectName('GeoStudioQuickEdit')
+        self.edit_object_button.setToolTip('Edytuj atrybut wybranego obiektu (F2)')
+        self.edit_object_button.clicked.connect(self.edit_selected)
+        self.edit_object_button.setEnabled(False)
+        quick_actions.addWidget(self.edit_object_button, 1)
+        self.copy_object_button = QPushButton('Kopiuj ID')
+        self.copy_object_button.setObjectName('GeoStudioQuickCopy')
+        self.copy_object_button.setToolTip('Skopiuj identyfikator zaznaczonego obiektu')
+        self.copy_object_button.clicked.connect(self.copy_selected_uid)
+        self.copy_object_button.setEnabled(False)
+        quick_actions.addWidget(self.copy_object_button)
+        card_layout.addLayout(quick_actions)
         prop_layout.addWidget(selected_card)
 
         # The inspector keeps its existing widget attributes and edit signals,
@@ -629,6 +703,10 @@ class GeoStudioWindow(QMainWindow):
         search_layout.addWidget(select_results)
         self.search_dock.setWidget(search_root)
         self.addDockWidget(Qt.RightDockWidgetArea, self.search_dock)
+        # One right-side workspace: the search and inspector occupy tabs,
+        # rather than permanently shrinking each other vertically.
+        self.tabifyDockWidget(self.properties_dock, self.search_dock)
+        self.properties_dock.raise_()
         self.search_dock.hide()
 
         self.info_dock = self._help_dock()
@@ -656,19 +734,52 @@ class GeoStudioWindow(QMainWindow):
         self.view_menu.addAction(self._action('Przywróć wszystkie panele',
                                               self.restore_panels))
 
+    def set_workspace(self, mode, *, remember=True):
+        """Change only the workspace chrome, never geometry or current edits."""
+        if mode not in {'map', 'edit', 'search'}:
+            raise ValueError('Unknown GIS workspace')
+        if mode != 'map':
+            self._last_workspace = mode
+        self.workspace_mode = mode
+        if hasattr(self, 'workspace'):
+            self.workspace.set_focus_mode(mode == 'map')
+        if mode == 'map':
+            for dock in (self.layers_dock, self.properties_dock,
+                         self.search_dock, self.info_dock):
+                dock.hide()
+            self.panel_toolbar.hide()
+        else:
+            self.panel_toolbar.show()
+            self.layers_dock.show()
+            self.info_dock.hide()
+            if mode == 'search':
+                if self.search_dock not in self.tabifiedDockWidgets(self.properties_dock):
+                    self.tabifyDockWidget(self.properties_dock, self.search_dock)
+                self.properties_dock.show()
+                self.search_dock.show()
+                self.search_dock.raise_()
+            else:
+                self.search_dock.hide()
+                self.properties_dock.show()
+                self.properties_dock.raise_()
+        for key, action in self.workspace_actions.items():
+            action.setChecked(key == mode)
+        self.workspace_button.setText({
+            'map': 'Sama mapa', 'edit': 'Edycja', 'search': 'Wyszukiwanie'}[mode])
+        if remember:
+            self.settings.setValue('ui/workspace', mode)
+
+    def toggle_focus_workspace(self):
+        if self.workspace_mode == 'map':
+            self.set_workspace(self._last_workspace)
+        else:
+            self.set_workspace('map')
+
     def restore_panels(self):
-        for dock, area in ((self.layers_dock, Qt.LeftDockWidgetArea),
-                           (self.properties_dock, Qt.RightDockWidgetArea),
-                           (self.search_dock, Qt.RightDockWidgetArea),
-                           (self.info_dock, Qt.BottomDockWidgetArea)):
-            self.addDockWidget(area, dock)
-            dock.show()
-            dock.raise_()
-        self.layers_dock.raise_()
+        self.set_workspace('edit')
 
     def show_search(self):
-        self.search_dock.show()
-        self.search_dock.raise_()
+        self.set_workspace('search')
         self.search_code.setFocus()
         self.search_code.selectAll()
 
@@ -1187,6 +1298,11 @@ class GeoStudioWindow(QMainWindow):
         pos = self.view.mapFromScene(QPointF(x,-y))
         menu.exec(self.view.viewport().mapToGlobal(pos))
 
+    def copy_selected_uid(self):
+        if self.selected_uid:
+            QApplication.clipboard().setText(self.selected_uid)
+            self.status.showMessage('Skopiowano identyfikator obiektu.')
+
     def _set_selected_uids(self, uids):
         """One highlight path can outline thousands of selected objects efficiently."""
         if not self.doc:
@@ -1200,9 +1316,13 @@ class GeoStudioWindow(QMainWindow):
         self.selected_count_label.setText(
             f'Zaznaczono: {len(self.selected_uids)} obiektów' if self.selected_uids
             else 'Brak zaznaczenia')
+        if hasattr(self, 'edit_object_button'):
+            self.edit_object_button.setEnabled(bool(self.selected_uids))
+            self.copy_object_button.setEnabled(bool(self.selected_uid))
         if not self.selected_uids:
             self.object_title.setText('Wybierz obiekt na mapie')
             self.object_details.setText('Kliknij działkę, budynek lub inny element.')
+            self.object_metrics.setText('Wybierz obiekt, aby zobaczyć jego parametry')
             self.update_label_visibility()
             return
         combined = highlight_path(self.doc, self.selected_uids,
@@ -1229,6 +1349,9 @@ class GeoStudioWindow(QMainWindow):
         if len(self.selected_uids) > 1:
             self.object_title.setText(f'{len(self.selected_uids)} zaznaczonych obiektów')
             self.object_details.setText('Możesz usunąć grupę lub zmienić jej wypełnienie.')
+            self.object_metrics.setText(
+                f'{len(self.selected_uids)} obiektów  •  '
+                f'{sum(len(self.doc.by_id[uid].points) for uid in self.selected_uids):,} wierzchołków')
         else:
             title = (obj.fields.get('A2') or obj.fields.get('A1') or
                      self.symbols.get(obj.code) or f'Obiekt {obj.code}')
@@ -1236,6 +1359,10 @@ class GeoStudioWindow(QMainWindow):
             self.object_title.setToolTip(title)
             self.object_details.setText(
                 f'Kod {obj.code}  ·  {resolve_layer(self.catalog, obj.code)}')
+            area = (f'  •  {obj.area_m2 / 10000:,.4f} ha'
+                    if obj.area_m2 is not None else '')
+            self.object_metrics.setText(
+                f'{len(obj.points)} wierzchołków' + area)
         if len(self.selected_uids) > 1:
             codes = sorted({self.doc.by_id[uid].code for uid in self.selected_uids})
             entries = [('Zaznaczono', str(len(self.selected_uids))),
