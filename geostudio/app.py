@@ -157,6 +157,10 @@ class GeoStudioWindow(QMainWindow):
         self.setCentralWidget(self.view)
         self._setup_menu()
         self._setup_docks()
+        # The original docks shrink to unreadable widths on Windows HiDPI.
+        # Reserve usable space for layer names and attribute values.
+        self.resizeDocks([self.layers_dock, self.properties_dock],
+                         [275, 355], Qt.Horizontal)
         self._load_saved_libraries()
         self.status=QStatusBar();self.setStatusBar(self.status)
         self._setup_scale_widget()
@@ -454,7 +458,7 @@ class GeoStudioWindow(QMainWindow):
         self.selected_uid = ''
         self.layers_dock = QDockWidget('Warstwy GEO-MAP', self)
         self.layers_dock.setObjectName('GeoStudioLayersDock')
-        self.layers_dock.setMinimumWidth(255)
+        self.layers_dock.setMinimumWidth(265)
         self.layers_tree = QTreeWidget()
         self.layers_tree.setHeaderLabels(['Warstwa', 'Obiekty'])
         self.layers_tree.setAlternatingRowColors(True)
@@ -492,7 +496,7 @@ class GeoStudioWindow(QMainWindow):
 
         self.properties_dock = QDockWidget('Inspektor obiektu', self)
         self.properties_dock.setObjectName('GeoStudioPropertiesDock')
-        self.properties_dock.setMinimumWidth(325)
+        self.properties_dock.setMinimumWidth(335)
         prop_root = QWidget(self.properties_dock)
         prop_root.setObjectName('GeoStudioPropertyPanel')
         prop_layout = QVBoxLayout(prop_root)
@@ -1701,6 +1705,10 @@ class GeoStudioWindow(QMainWindow):
 
     def _setup_scale_widget(self):
         """Visible map scale, estimated from Qt's logical screen DPI."""
+        self.coordinate_readout = QLabel('X —   Y —')
+        self.coordinate_readout.setObjectName('GeoStudioCoordinateReadout')
+        self.coordinate_readout.setToolTip('Pozycja kursora w źródłowym układzie współrzędnych GEO-MAP')
+        self.status.addPermanentWidget(self.coordinate_readout)
         self.mode_badge = QLabel('ZAZNACZANIE')
         self.mode_badge.setObjectName('GeoStudioModeBadge')
         self.mode_badge.setToolTip('Aktywny tryb pracy, zmienisz go na górnym pasku')
@@ -1834,7 +1842,12 @@ class GeoStudioWindow(QMainWindow):
         self.update_label_visibility()
 
     def on_coordinate(self,x,y):
-        self.status.showMessage(f'Współrzędne źródłowe: X={x:.3f} | Y={y:.3f} | {"tryb rysowania" if self.view.draw_mode else "tryb zaznaczania"}')
+        # Persistent readout: moving the cursor should not erase status tips,
+        # undo feedback or save warnings from the message area.
+        if hasattr(self, 'coordinate_readout'):
+            self.coordinate_readout.setText(f'X {x:.3f}    Y {y:.3f}')
+        else:
+            self.status.showMessage(f'Współrzędne: X={x:.3f} | Y={y:.3f}')
 
     def cancel_edit(self):
         self.view.draw_mode = False
