@@ -83,3 +83,12 @@ def test_inspector_quick_actions_have_correct_enabled_state(window):
     assert QApplication.clipboard().text() == "DEMO-01"
     window._select_uid(None)
     assert not window.edit_object_button.isEnabled()
+
+
+def test_layers_inspector_and_search_share_a_single_sidebar(window):
+    assert window.dockWidgetArea(window.layers_dock) == Qt.LeftDockWidgetArea
+    assert window.dockWidgetArea(window.properties_dock) == Qt.LeftDockWidgetArea
+    assert window.dockWidgetArea(window.search_dock) == Qt.LeftDockWidgetArea
+    assert window.properties_dock in window.tabifiedDockWidgets(window.layers_dock)
+    assert window.search_dock in window.tabifiedDockWidgets(window.layers_dock)
+    assert window.panel_toolbar.isHidden()
