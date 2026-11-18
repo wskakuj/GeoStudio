@@ -181,7 +181,7 @@ class WMSDialog(QDialog):
         self.capabilities_button = QPushButton("Pobierz warstwy")
         self.capabilities_button.clicked.connect(self.fetch_layers)
         controls.addWidget(self.capabilities_button)
-        self.map_button = QPushButton("Pokaż WMS pod mapą")
+        self.map_button = QPushButton("Pokaż wybraną warstwę WMS")
         self.map_button.setObjectName("GeoStudioPrimaryButton")
         self.map_button.clicked.connect(self.fetch_map)
         self.map_button.setEnabled(False)
