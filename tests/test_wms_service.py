@@ -87,3 +87,21 @@ def test_google_reference_uses_official_maps_and_verified_epsg():
     assert ",21.011" in url
     with pytest.raises(ValueError):
         google_maps_reference_url(north, east, 12345)
+
+
+def test_google_maps_embed_url_uses_official_provider_and_never_guesses_crs():
+    from pyproj import Transformer
+    from geostudio.wms_service import google_maps_embed_url
+    east, north = Transformer.from_crs(
+        "EPSG:4326", "EPSG:2180", always_xy=True).transform(21.011, 52.229)
+    url = google_maps_embed_url(north, east, 2180, "test-key", 16, "satellite")
+    assert url.startswith("https://www.google.com/maps/embed/v1/view?")
+    query = parse_qs(urlparse(url).query)
+    assert query["key"] == ["test-key"]
+    assert query["maptype"] == ["satellite"]
+    assert query["zoom"] == ["16"]
+    assert query["center"][0].startswith("52.229")
+    with pytest.raises(ValueError):
+        google_maps_embed_url(north, east, 2180, "")
+    with pytest.raises(ValueError):
+        google_maps_embed_url(north, east, 2180, "x", map_type="hacked")
