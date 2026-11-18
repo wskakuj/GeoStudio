@@ -351,6 +351,57 @@ QTreeWidget#GeoStudioLayerTree {
     border: none; border-radius: 0;
 }
 """
+    css += """
+/* Quick Access commands, search, and ribbon collapse -- compact GIS header. */
+QToolButton#GeoStudioQuickAccessButton {
+    background: transparent; border: 1px solid transparent;
+    border-radius: 5px; padding: 4px;
+    min-width: 24px; min-height: 24px;
+}
+QToolButton#GeoStudioQuickAccessButton:hover {
+    background: @hover@; border-color: @border@;
+}
+QToolButton#GeoStudioQuickAccessButton:disabled { color: @disabled@; }
+QToolButton#GeoStudioCommandSearch {
+    background: @input@; color: @muted@; border: 1px solid @border@;
+    border-radius: 7px; text-align: left;
+    padding: 7px 12px; font-size: 9pt;
+    min-width: 180px;
+}
+QToolButton#GeoStudioCommandSearch:hover {
+    border-color: @accent@; background: @hover@; color: @text@;
+}
+QToolButton#GeoStudioRibbonCollapse {
+    background: transparent; border-radius: 5px; padding: 5px 6px;
+    color: @muted@; font-size: 9pt;
+}
+QToolButton#GeoStudioRibbonCollapse:hover {
+    color: @text@; background: @hover@;
+}
+QDialog#GeoStudioCommandPalette {
+    background: @surface@; border: 1px solid @border@;
+}
+QLabel#GeoStudioPaletteHeading {
+    font-size: 14pt; font-weight: 750; color: @text@;
+}
+QLineEdit#GeoStudioPaletteQuery {
+    min-height: 38px; padding: 7px 12px; font-size: 11pt;
+    border: 1px solid @accent@; background: @input@;
+}
+QListWidget#GeoStudioPaletteResults {
+    background: @surface@; border: 1px solid @border@;
+    border-radius: 8px; padding: 4px;
+}
+QListWidget#GeoStudioPaletteResults::item {
+    min-height: 30px; padding: 6px 9px; border-radius: 5px;
+}
+QListWidget#GeoStudioPaletteResults::item:selected {
+    background: @selection@; color: @selection_text@;
+}
+QFrame#GeoStudioPaletteFooter {
+    border-top: 1px solid @border@; color: @muted@;
+}
+"""
     for key, value in c.items():
         css = css.replace(f"@{key}@", value)
     return css
