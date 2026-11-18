@@ -141,7 +141,9 @@ def test_shortcuts_match_requested_mapping_and_preserve_crs(qt_app):
                    window.findChildren(__import__("PySide6.QtGui", fromlist=["QAction"]).QAction)}
         assert any(v == "T" for v in actions.values())
         assert any(v == "F" for v in actions.values())
-        assert any(v == "Ctrl+H" for v in actions.values())
+        assert not any(v == "Ctrl+H" for v in actions.values())
+        assert any(v == "Ctrl+L" for v in actions.values())
+        assert any(v == "B" for v in actions.values())
         assert any(v == "Ctrl+F" for v in actions.values())
         assert any(v == "Ctrl+T" for v in actions.values())
     finally:

@@ -50,6 +50,7 @@ class MapView(QGraphicsView):
         self.dragged_vertex = None
         self._pan_button = None
         self._pan_last = None
+        self._drag_decoration = False
         self.setRenderHint(QPainter.Antialiasing)
         self.setDragMode(QGraphicsView.NoDrag)
         self.setViewportUpdateMode(QGraphicsView.BoundingRectViewportUpdate)
@@ -110,6 +111,11 @@ class MapView(QGraphicsView):
         self.viewport_changed.emit()
 
     def mouseMoveEvent(self, event):
+        if self._drag_decoration:
+            # Qt's scene drag machinery moves the vector layout item.
+            super().mouseMoveEvent(event)
+            event.accept()
+            return
         if self._pan_button is not None:
             # Middle-button drag is temporary pan in SELECT/DRAW/EDIT/PAN.
             pos = event.position().toPoint()
@@ -131,6 +137,13 @@ class MapView(QGraphicsView):
 
     def mousePressEvent(self, event):
         self.setFocus()
+        if event.button() == Qt.LeftButton:
+            item = self.itemAt(event.position().toPoint())
+            if item is not None and item.data(0) == "geostudio-decoration":
+                self._drag_decoration = True
+                super().mousePressEvent(event)
+                event.accept()
+                return
         # Consistent explicit mouse handling avoids QGraphicsView.ScrollHandDrag
         # swallowing selection clicks and unexpectedly altering wheel anchors.
         if event.button() == Qt.MiddleButton or (self.pan_mode and event.button() == Qt.LeftButton):
@@ -181,6 +194,11 @@ class MapView(QGraphicsView):
         event.accept()
 
     def mouseReleaseEvent(self, event):
+        if self._drag_decoration and event.button() == Qt.LeftButton:
+            super().mouseReleaseEvent(event)
+            self._drag_decoration = False
+            event.accept()
+            return
         if self._pan_button is not None and event.button() == self._pan_button:
             self._pan_button = None
             self._pan_last = None
@@ -202,6 +220,11 @@ class MapView(QGraphicsView):
         event.accept()
 
     def mouseDoubleClickEvent(self, event):
+        item = self.itemAt(event.position().toPoint())
+        if item is not None and item.data(0) == "geostudio-decoration":
+            super().mouseDoubleClickEvent(event)
+            event.accept()
+            return
         if self.draw_mode:
             self.finish_polygon.emit()
         elif self.pan_mode:

@@ -381,6 +381,48 @@ class GeoMap:
         self._parse()
         return uid
 
+    def append_polyline(self, points: list[tuple[float, float]], code='6900',
+                        label='', fields: dict[str, str] | None = None) -> str:
+        """Create a real open GEO-MAP line (no automatic polygon closure).
+
+        Attribute and P-record preservation follows append_polygon, but a
+        polyline needs only two distinct positions and may be collinear.
+        """
+        from math import isfinite
+        if len(points) < 2 or len(set(points)) < 2:
+            raise ValueError('Linia wymaga co najmniej dwóch różnych punktów.')
+        if not re.fullmatch(r'\d{4}', code):
+            raise ValueError('Code must have exactly four digits')
+        if any(not (isfinite(x) and isfinite(y) and -1e9 < x < 1e9 and
+                    -1e9 < y < 1e9) for x, y in points):
+            raise ValueError('Invalid coordinates')
+        if any(a == b for a, b in zip(points, points[1:])):
+            raise ValueError('Linia nie może mieć kolejnych identycznych punktów.')
+        attrs = dict(fields or {})
+        if label and 'A2' not in attrs:
+            attrs['A2'] = label
+        allowed = {'A1', 'A2', 'A3', 'A4', 'A5', 'A6', 'TX', 'MP', 'DT', 'KR'}
+        if any(key not in allowed for key in attrs):
+            raise ValueError('Unsupported new-object attribute')
+        if any(any(char in value for char in '\r\n]') for value in attrs.values()):
+            raise ValueError('Attributes cannot include a newline or ]')
+        uid = str(uuid.uuid4()).upper()
+        records = [f'*{code} 8553090  15          0', f':ID[{uid}]']
+        for key in ('A1', 'A2', 'A3', 'A4', 'A5', 'A6', 'TX', 'MP', 'DT', 'KR'):
+            if key in attrs:
+                records.append(f':{key}[{attrs[key]}]')
+        if 'MP' not in attrs:
+            records.append(':MP[0]')
+        records.append(':FA[-1]')
+        records.extend(f'P 1   {x:.3f}   {y:.3f}' for x, y in points)
+        encoded = [(line + '\r\n').encode('cp1250', errors='strict')
+                   for line in records]
+        if self.lines and not self.lines[-1].endswith((b'\r', b'\n')):
+            self.lines[-1] += b'\r\n'
+        self.lines.extend(encoded)
+        self._parse()
+        return uid
+
     def to_bytes(self) -> bytes:
         if not self.lines: raise ValueError('Empty map')
         # N is number of physical lines. CHK is MD5 of all bytes after first line.

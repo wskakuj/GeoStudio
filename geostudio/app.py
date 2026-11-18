@@ -19,7 +19,7 @@ try:
     from PySide6.QtWidgets import (QApplication, QMainWindow, QFileDialog, QGraphicsView, QGraphicsScene,
         QGraphicsPathItem, QGraphicsEllipseItem, QGraphicsRectItem, QGraphicsPixmapItem, QGraphicsSimpleTextItem, QGraphicsItem, QDockWidget,
         QTreeWidget, QTreeWidgetItem, QToolBar, QMessageBox, QStatusBar, QInputDialog, QMenu,
-        QLabel, QWidget, QVBoxLayout, QHeaderView, QSplitter, QComboBox,
+        QLabel, QWidget, QVBoxLayout, QHeaderView, QSplitter, QComboBox, QTextEdit,
         QDialog, QDialogButtonBox, QFormLayout, QLineEdit, QHBoxLayout, QPushButton, QSpinBox, QSlider, QColorDialog, QToolButton, QFrame, QTabWidget)
 except ImportError as exc:
     raise SystemExit('Zainstaluj GUI: python -m pip install -e .\nBrakuje PySide6') from exc
@@ -30,6 +30,7 @@ from .geometry_index import GeometryIndex, point_in_ring
 from .topology_edit import linked_vertex_moves
 from .scene_builder import RenderContext, build_scene, label_anchor, object_path, object_fill_brush
 from .map_tools import MapView
+from .map_decorations import KINDS, DecorationItem, new_decoration
 from .selection import (SelectionContext, highlight_path, pick_candidates,
                         resolve_click, snap_at, toggle_selection, visible_uids)
 from .exporters import render_scene_image, save_image, write_dxf
@@ -145,6 +146,11 @@ class GeoStudioWindow(QMainWindow):
         self._auto_copy_path = None
         self._auto_copy_digest = None
         self._auto_style_digest = None
+        self._auto_copy_blocked = False
+        self.pinned_uids = []
+        self.sync_shared_vertices = True
+        self.draw_geometry_kind = "polygon"
+        self.decoration_items = {}
         self.highlight_item=None
         self.draft_item=None
         self.snap_marker=None
@@ -260,6 +266,7 @@ class GeoStudioWindow(QMainWindow):
             (self.labels_action, 'label', 'Podpisy A1/A2'),
             (self.snap_action, 'snap', 'Przyciąganie'),
         )
+        contents.menu('Oprawa mapy', self.decoration_menu, 'properties')
 
         search = ribbon.group('Mapa', 'Wybieranie')
         search.action(self._action('Znajdź obiekt', self.show_search),
@@ -271,6 +278,7 @@ class GeoStudioWindow(QMainWindow):
         for key, icon, title in (
                 ('select', 'select', 'Zaznacz'),
                 ('draw', 'polygon', 'Poligon'),
+                ('line', 'polygon', 'Linia'),
                 ('edit', 'vertices', 'Wierzchołki'),
                 ('labels', 'label', 'Etykiety')):
             edit.action(self.tool_actions[key], icon, large=True, text=title)
@@ -282,6 +290,7 @@ class GeoStudioWindow(QMainWindow):
              'undo', 'Cofnij punkt'),
             (self._action('Przerwij narzędzie', self.cancel_edit),
              'select', 'Anuluj'),
+            (self.shared_vertex_action, 'vertices', 'Wspólne węzły'),
         )
 
         objects = ribbon.group('Edycja', 'Obiekty')
@@ -457,7 +466,8 @@ class GeoStudioWindow(QMainWindow):
             self.ribbon.refresh_icons(self.theme_mode)
         for attr, icon_name in (
                 ('orientation_button', 'compass'), ('data_button', 'layers'),
-                ('export_button', 'export'), ('map_settings_button', 'more')):
+                ('export_button', 'export'), ('map_settings_button', 'more'),
+                ('furniture_button', 'properties')):
             button = getattr(self, attr, None)
             if button is not None:
                 button.setIcon(ui_icon(icon_name, self.theme_mode))
@@ -540,6 +550,7 @@ class GeoStudioWindow(QMainWindow):
         # the inspector or a search field must not switch map tools.
         for title, callback, shortcut in (
                 ('Rysuj poligon', self.start_polygon, 'N'),
+                ('Rysuj linię', self.start_polyline, 'I'),
                 ('Edytuj węzły / wierzchołki', self.start_vertex_edit, 'P'),
                 ('Parametry aktywnego obiektu…', self.show_active_object_parameters, 'E')):
             action = self._action(title, callback, shortcut)
@@ -554,8 +565,23 @@ class GeoStudioWindow(QMainWindow):
         em.addAction(self._action('Edytuj pojedynczy atrybut…',self.edit_selected,'F2'))
         self.delete_action = self._action('Usuń zaznaczony obiekt', self.delete_selected, 'Delete')
         em.addAction(self.delete_action)
-        em.addAction(self._action('Zaawansowane zaznaczanie (kod, A1, A2)…',
-                                  self.open_selection_query, 'Ctrl+H'))
+        # F remains the only code/attribute search dialog shortcut.
+        # Ctrl+L selects everything of the currently active code.
+        em.addAction(self._action('Zaznacz wszystkie obiekty aktywnego kodu',
+                                  self.select_all_same_code, 'Ctrl+L'))
+        pin = self._action('Utrwal / odłącz aktywny obiekt [B]',
+                           self.toggle_pin_active, 'B')
+        pin.setShortcutContext(Qt.WidgetWithChildrenShortcut)
+        self.view.addAction(pin)
+        em.addAction(pin)
+        em.addAction(self._action('Wyczyść utrwalone zaznaczenie',
+                                  self.clear_pinned_selection, 'Ctrl+Shift+B'))
+        self.shared_vertex_action = self._action(
+            'Przesuwaj wspólne węzły poligonów tego samego kodu',
+            self.set_shared_vertex_sync)
+        self.shared_vertex_action.setCheckable(True)
+        self.shared_vertex_action.setChecked(True)
+        em.addAction(self.shared_vertex_action)
         em.addAction(self._action('Zamiana frazy w atrybutach…',
                                   self.open_phrase_replacement, 'Ctrl+F'))
         for label, callback, shortcut in (
@@ -566,6 +592,19 @@ class GeoStudioWindow(QMainWindow):
             action.setShortcutContext(Qt.WidgetWithChildrenShortcut)
             self.view.addAction(action)
             em.addAction(action)
+        self.decoration_menu = self.menuBar().addMenu('&Oprawa mapy')
+        for kind, description in KINDS.items():
+            self.decoration_menu.addAction(
+                self._action('Wstaw: ' + description,
+                             lambda _checked=False, choice=kind:
+                             self.insert_map_decoration(choice)))
+        self.decoration_menu.addSeparator()
+        self.decoration_menu.addAction(
+            self._action('Ukryj zaznaczony dawny element (5200/6000/7900)',
+                         self.hide_selected_legacy_decoration))
+        self.decoration_menu.addAction(
+            self._action('Przywróć ukryte elementy dawnej oprawy',
+                         self.restore_legacy_decorations))
         trans_menu = self.menuBar().addMenu('&Trans')
         trans_menu.addAction(self._action(
             'Przelicz współrzędne / eksportuj kopię MAP…',
@@ -707,6 +746,17 @@ class GeoStudioWindow(QMainWindow):
         self.export_button.setMenu(export_menu)
         file_toolbar.addWidget(self.export_button)
 
+        self.furniture_button = QToolButton(self)
+        self.furniture_button.setText('Oprawa mapy')
+        self.furniture_button.setIcon(ui_icon('properties', self.theme_mode))
+        self.furniture_button.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
+        self.furniture_button.setPopupMode(QToolButton.InstantPopup)
+        self.furniture_button.setMenu(self.decoration_menu)
+        self.furniture_button.setToolTip(
+            'Dodaj i edytuj ramkę, kompas, metrykę lub legendę. '
+            'Przeciągnij, aby przesunąć, dwuklik do edycji.')
+        file_toolbar.addWidget(self.furniture_button)
+
         self.orientation_button = QToolButton(self)
         self.orientation_button.setText('Orientacja')
         self.orientation_button.setIcon(ui_icon('compass', self.theme_mode))
@@ -736,6 +786,7 @@ class GeoStudioWindow(QMainWindow):
             ('select', 'Zaznacz', 'select', self.cancel_edit, 'Zaznacz obiekt (S); Ctrl+klik dodaje/usuwa'),
             ('pan', 'Przesuń', 'hand', self.start_pan, 'Przesuwaj mapę (H)'),
             ('draw', 'Poligon', 'polygon', self.start_polygon, 'Narysuj poligon (N)'),
+            ('line', 'Linia', 'polygon', self.start_polyline, 'Narysuj linię od dwóch punktów (I)'),
             ('edit', 'Węzły', 'vertices', self.start_vertex_edit, 'Edytuj wierzchołki (P)'),
             ('labels', 'Etykiety', 'label', self.start_label_edit, 'Przesuwaj napisy A1/A2 (L)'),
         ]:
@@ -758,6 +809,9 @@ class GeoStudioWindow(QMainWindow):
         self.snap_action.setText('Przyciągaj')
         toolbar.addAction(self._decorate_action(
             self.snap_action, 'snap', 'Przyciąganie do węzłów, linii i graniczników, także przy ukrytej warstwie Graniczniki'))
+        toolbar.addAction(self._decorate_action(
+            self.shared_vertex_action, 'vertices',
+            'Włącz: przesuwaj także wspólne węzły obiektów tego samego kodu; wyłącz: tylko aktywny poligon'))
 
         map_settings_menu = QMenu('Opcje mapy', self)
         map_settings_menu.addAction(self.labels_action)
@@ -1110,6 +1164,150 @@ class GeoStudioWindow(QMainWindow):
         if dialog.exec() == QDialog.Accepted:
             self._start_polygon_with_code(dialog.code.text())
 
+    def _rebuild_map_decorations(self):
+        """Draw editable layout elements without altering any MAP records."""
+        self.decoration_items = {}
+        bounds = self._world_scene_rect()
+        dimension = max(bounds.width(), bounds.height(), 100.0)
+        factor = max(0.04, min(6.0, dimension / 2500))
+        for uid, data in self.visual_styles.items():
+            if not uid.startswith('layout:') or data.get('kind') not in KINDS:
+                continue
+            item = DecorationItem(
+                uid, data, factor,
+                on_move=self.move_map_decoration,
+                on_edit=self.edit_map_decoration)
+            self.map_scene.addItem(item)
+            self.decoration_items[uid] = item
+
+    def insert_map_decoration(self, kind, *, x=None, y=None):
+        """Insert a map-anchored vector template at the cursor or view centre."""
+        if not self.doc:
+            QMessageBox.information(self, 'Oprawa mapy', 'Najpierw otwórz mapę.')
+            return
+        if x is None or y is None:
+            centre = self.view.mapToScene(self.view.viewport().rect().center())
+            x, y = centre.x(), -centre.y()
+        uid, data = new_decoration(kind, x, y)
+        with self.history.begin('Wstawiono: ' + KINDS[kind],
+                                selection_before=self.selected_uids):
+            self.visual_styles[uid] = data
+        self._history_changed()
+        self._rebuild_map_decorations_in_place()
+        self._autosave_work_copy()
+        self.status.showMessage(
+            f'Wstawiono: {KINDS[kind]}. Przeciągnij element w wybrane miejsce; '
+            'dwuklik otwiera edycję. Ctrl+Z cofa dodanie.')
+
+    def _rebuild_map_decorations_in_place(self):
+        for item in self.decoration_items.values():
+            if item.scene() is self.map_scene:
+                self.map_scene.removeItem(item)
+        self._rebuild_map_decorations()
+
+    def move_map_decoration(self, uid, x, y):
+        """Commit a completed canvas drag as one Undo-able sidecar change."""
+        before = self.visual_styles.get(uid)
+        if before is None or (before['x'] == x and before['y'] == y):
+            return
+        with self.history.begin('Przesunięcie oprawy mapy',
+                                selection_before=self.selected_uids):
+            self.visual_styles[uid] = {**before, 'x': x, 'y': y}
+        self._history_changed()
+        self._autosave_work_copy()
+        self.status.showMessage('Przesunięto element oprawy; Ctrl+Z cofa zmianę.')
+
+    def edit_map_decoration(self, uid):
+        """Double-click: edit layout text, or explicitly remove this overlay."""
+        data = self.visual_styles.get(uid)
+        if not data or data.get('kind') not in KINDS:
+            return
+        dialog = QDialog(self)
+        dialog.setWindowTitle('Edytuj: ' + KINDS[data['kind']])
+        dialog.resize(545, 440)
+        form = QFormLayout(dialog)
+        fields = {}
+        for key, label in (
+                ('title', 'Nagłówek / N'), ('subtitle', 'Podtytuł'),
+                ('details', 'Opis / pozycje legendy'), ('area', 'Powierzchnia / stopka')):
+            if key == 'details':
+                editor = QTextEdit(dialog)
+                editor.setPlainText(data.get(key, ''))
+                editor.setMinimumHeight(140)
+            else:
+                editor = QLineEdit(data.get(key, ''), dialog)
+            fields[key] = editor
+            form.addRow(label, editor)
+        note = QLabel('Oprawa mapy jest zapisywana przez GeoStudio w '
+                      'towarzyszącym pliku *.geostudio.json. '
+                      'GEO-MAP nie interpretuje tych nakładek.')
+        note.setWordWrap(True)
+        form.addRow(note)
+        buttons = QDialogButtonBox(QDialogButtonBox.Save |
+                                   QDialogButtonBox.Cancel, dialog)
+        buttons.button(QDialogButtonBox.Save).setText('Zapisz')
+        delete = buttons.addButton('Usuń element', QDialogButtonBox.DestructiveRole)
+        dialog._delete_requested = False
+        def remove():
+            dialog._delete_requested = True
+            dialog.accept()
+        delete.clicked.connect(remove)
+        buttons.accepted.connect(dialog.accept)
+        buttons.rejected.connect(dialog.reject)
+        form.addRow(buttons)
+        if dialog.exec() != QDialog.Accepted:
+            return
+        with self.history.begin('Edycja oprawy mapy',
+                                selection_before=self.selected_uids):
+            if dialog._delete_requested:
+                self.visual_styles.pop(uid, None)
+            else:
+                updated = dict(data)
+                for key, editor in fields.items():
+                    updated[key] = (editor.toPlainText() if key == 'details'
+                                    else editor.text())[:3000]
+                self.visual_styles[uid] = updated
+        self._history_changed()
+        self._rebuild_map_decorations_in_place()
+        self._autosave_work_copy()
+
+    def hide_selected_legacy_decoration(self):
+        if not self.doc or not self.selected_uid:
+            QMessageBox.information(self, 'Stara oprawa', 'Zaznacz element na mapie.')
+            return
+        obj = self.doc.by_id[self.selected_uid]
+        if obj.code not in {'5200', '6000', '7900'}:
+            QMessageBox.information(
+                self, 'Stara oprawa',
+                'Ukrywanie dostępne wyłącznie dla wskazanego elementu '
+                'kodów 5200, 6000 lub 7900.')
+            return
+        uid = self.selected_uid
+        with self.history.begin('Ukrycie starego elementu oprawy',
+                                selection_before=self.selected_uids):
+            self.visual_styles['legacy-hidden:' + uid] = {'hidden': True}
+        self._history_changed()
+        self.pinned_uids = [item for item in self.pinned_uids if item != uid]
+        self.rebuild_scene(fit=False)
+        self._set_selected_uids([])
+        self._autosave_work_copy()
+        self.status.showMessage(
+            'Ukryto element tylko w GeoStudio. Oryginalny rekord MAP zachowano.')
+
+    def restore_legacy_decorations(self):
+        keys = [key for key in self.visual_styles
+                if key.startswith('legacy-hidden:')]
+        if not keys:
+            return
+        with self.history.begin('Przywrócenie starej oprawy',
+                                selection_before=self.selected_uids):
+            for key in keys:
+                self.visual_styles.pop(key, None)
+        self._history_changed()
+        self.rebuild_scene(fit=False)
+        self._autosave_work_copy()
+        self.status.showMessage('Przywrócono wszystkie oryginalne elementy oprawy.')
+
     def open_search_query(self):
         """F: find first matching code/attribute or select all results."""
         self._run_attribute_dialog(select_all=False)
@@ -1357,6 +1555,23 @@ class GeoStudioWindow(QMainWindow):
         saved = Path(str(self.settings.value(key, str(Path.home()))))
         return str(saved if saved.is_dir() else Path.home())
 
+    @staticmethod
+    def _work_copy_location(source):
+        """One deterministic autosave slot in the app data folder.
+
+        The filename is keyed by the full source path *and source bytes*, so
+        revisions of the original never overwrite a different working map.
+        No more _robocza_2, _robocza_3, ... next to the user's originals.
+        """
+        source = Path(source).resolve()
+        initial = source.read_bytes() if source.is_file() else b""
+        key = hashlib.sha256(
+            os.fsencode(str(source)) + b"\\0" + hashlib.sha256(initial).digest()
+        ).hexdigest()[:32]
+        base = Path(os.environ.get("LOCALAPPDATA") or (
+            Path.home() / ".local" / "share")) / "GeoStudio" / "autosave"
+        return base / (key + ".MAP")
+
     def open_map(self):
         file,_=QFileDialog.getOpenFileName(
             self, 'Otwórz mapę GEO-MAP',
@@ -1373,6 +1588,34 @@ class GeoStudioWindow(QMainWindow):
             if not doc.checksum_valid:
                 answer=QMessageBox.warning(self,'Suma kontrolna','Suma MD5 pliku nie zgadza się z nagłówkiem. Otworzyć tylko do podglądu?',QMessageBox.Yes|QMessageBox.No)
                 if answer!=QMessageBox.Yes:return
+            # An existing autosave is a recoverable session, not an excuse
+            # to create another _robocza_N.MAP beside the original.
+            recovery = self._work_copy_location(file)
+            recovered = False
+            blocked = False
+            if recovery.is_file():
+                reply = QMessageBox.question(
+                    self, 'Istnieje wcześniejsza sesja robocza',
+                    'GeoStudio znalazło wcześniejszy automatyczny zapis dla '
+                    'tej mapy.\n\nTak — przywróć sesję roboczą i kontynuuj '
+                    'zapis do jej jednego pliku.\nNie — otwórz oryginał bez '
+                    'automatycznego nadpisywania wcześniejszej sesji. '
+                    'Zmiany możesz zapisać przez Zapisz jako.',
+                    QMessageBox.Yes | QMessageBox.No, QMessageBox.Yes)
+                if reply == QMessageBox.Yes:
+                    recovered_doc = GeoMap.open(recovery)
+                    if not recovered_doc.checksum_valid:
+                        QMessageBox.warning(
+                            self, 'Uszkodzona kopia',
+                            'Autokopia nie przeszła kontroli CHK; otwieram '
+                            'oryginał bez automatycznego nadpisywania kopii.')
+                        blocked = True
+                    else:
+                        doc = recovered_doc
+                        doc.filename = str(file)
+                        recovered = True
+                else:
+                    blocked = True
             self._capture_active_map_tab()
             if self.doc is not None:
                 self.cancel_edit()
@@ -1387,8 +1630,9 @@ class GeoStudioWindow(QMainWindow):
             self.current_crs_epsg = detected_crs_from_prj(file)
             self.selected_uid = ''
             self.settings.setValue('last_map_dir', str(Path(file).parent))
-            self.visual_styles = load_styles(file)
-            self.label_positions = load_label_positions(file)
+            sidecar_source = recovery if recovered and sidecar_path(recovery).is_file() else file
+            self.visual_styles = load_styles(sidecar_source)
+            self.label_positions = load_label_positions(sidecar_source)
             try:
                 self._raster_overlay.load(file)
             except (OSError, ValueError, TypeError, KeyError) as raster_error:
@@ -1403,9 +1647,16 @@ class GeoStudioWindow(QMainWindow):
             self.compilation_scale = validated_compilation_scale(
                 saved, default=self.source_compilation_scale)
             self.selected_uids = []
-            self._auto_copy_path = None
-            self._auto_copy_digest = None
-            self._auto_style_digest = None
+            self._auto_copy_path = recovery if recovered else None
+            self._auto_copy_digest = (hashlib.sha256(recovery.read_bytes()).digest()
+                                      if recovered else None)
+            existing_styles = sidecar_path(recovery) if recovered else None
+            self._auto_style_digest = (
+                hashlib.sha256(existing_styles.read_bytes()).digest()
+                if existing_styles is not None and existing_styles.is_file()
+                else None)
+            self._auto_copy_blocked = blocked
+            self.pinned_uids = []
             self._last_pick_pos = None
             self._last_pick_candidates = ()
             self._look_for_libraries(Path(file).parent)
@@ -1417,8 +1668,10 @@ class GeoStudioWindow(QMainWindow):
             self._base_title = 'GeoStudio v0.14 — '+Path(file).name
             self._append_current_map_tab()
             self.status.showMessage(
-                f'Otwarto nową zakładkę: {Path(file).name} — '
-                f'{len(doc.objects)} obiektów, {len(doc.lines)} wierszy.')
+                ('Przywrócono jedną sesję roboczą. ' if recovered else
+                 'Otworzono oryginał bez autozapisu — Zapisz jako. ' if blocked
+                 else 'Otworzono mapę. ') +
+                f'{Path(file).name} — {len(doc.objects)} obiektów.')
         except Exception as exc: QMessageBox.critical(self,'Błąd odczytu mapy',str(exc))
 
     def _capture_active_map_tab(self):
@@ -1631,6 +1884,7 @@ class GeoStudioWindow(QMainWindow):
         result = build_scene(self.map_scene, self.doc, self._render_context())
         self._raster_overlay.attach(self.map_scene)
         self._wms_preview.attach(self.map_scene)
+        self._rebuild_map_decorations()
         self._wms_auto.viewport_changed()
         self.geometry_index = result.geometry_index
         self.layer_for_uid = result.layer_for_uid
@@ -1648,6 +1902,18 @@ class GeoStudioWindow(QMainWindow):
         self.edit_handles = []
         self.draft_points = []
         self.current_snap = None
+        # Hide only explicitly chosen old 5200/6000/7900 fragments.
+        # The original MAP records remain byte-identical and can be restored.
+        for key, style in self.visual_styles.items():
+            if key.startswith('legacy-hidden:') and style.get('hidden'):
+                uid = key[len('legacy-hidden:'):]
+                for item in (self.graphics_for_uid.get(uid),
+                             self.fill_items_for_uid.get(uid)):
+                    if item is not None:
+                        item.setVisible(False)
+                for label_key, label in self.label_items.items():
+                    if label_key[0] == uid:
+                        label.setVisible(False)
         # Checkbox state and rendered visibility must always agree,
         # including on the initial open (Graniczniki are off by default).
         for name in self.hidden_layers:
@@ -1716,7 +1982,8 @@ class GeoStudioWindow(QMainWindow):
                 transform,item.boundingRect(),ratio,offset))
             uid=item.data(0)
             item.setVisible(bool(self.labels_enabled and
-                self.layer_for_uid.get(uid,'') not in self.hidden_layers))
+                self.layer_for_uid.get(uid,'') not in self.hidden_layers and
+                not self.visual_styles.get('legacy-hidden:' + str(uid), {}).get('hidden')))
         self.update_view_scale_indicator()
 
     def start_label_edit(self):
@@ -1837,7 +2104,10 @@ class GeoStudioWindow(QMainWindow):
             hidden_layers=frozenset(self.hidden_layers),
             code_filter=self.select_code_filter,
             hide_connectors=self.hide_multipart_connectors,
-            radius=radius)
+            radius=radius,
+            excluded_uids=frozenset(key[len('legacy-hidden:'):]
+                for key, style in self.visual_styles.items()
+                if key.startswith('legacy-hidden:') and style.get('hidden')))
 
     def _visible_uids(self):
         return visible_uids(self._selection_context(0.0))
@@ -1848,13 +2118,19 @@ class GeoStudioWindow(QMainWindow):
     def show_objects_here(self, x, y):
         """Explicit chooser for all overlapping objects: right-click canvas."""
         candidates = self._pick_candidates(x, y)
-        if not candidates:
-            return
         menu = QMenu(self)
         for obj in candidates[:30]:
             title = f'{obj.code} — {obj.fields.get("A2") or obj.fields.get("A1") or obj.uid[:8]}'
             action = menu.addAction(title)
             action.triggered.connect(lambda checked=False, uid=obj.uid: self._select_uid(uid))
+        if candidates:
+            menu.addSeparator()
+        furniture = menu.addMenu('Wstaw element oprawy w tym miejscu')
+        for kind, description in KINDS.items():
+            action = furniture.addAction(description)
+            action.triggered.connect(
+                lambda _checked=False, choice=kind, px=x, py=y:
+                self.insert_map_decoration(choice, x=px, y=py))
         pos = self.view.mapFromScene(QPointF(x,-y))
         menu.exec(self.view.viewport().mapToGlobal(pos))
 
@@ -1988,7 +2264,43 @@ class GeoStudioWindow(QMainWindow):
         self.opacity_spin.setValue(opacity)
 
     def _select_uid(self, uid):
-        self._set_selected_uids([uid] if uid else [])
+        pinned = [value for value in self.pinned_uids
+                  if self.doc and value in self.doc.by_id and value != uid]
+        self._set_selected_uids(pinned + ([uid] if uid else []))
+
+    def toggle_pin_active(self):
+        """B: keep the current highlighted polygon when choosing the next one."""
+        if not self.doc or not self.selected_uid:
+            self.status.showMessage('Najpierw wskaż poligon, potem naciśnij B.')
+            return
+        uid = self.selected_uid
+        if uid in self.pinned_uids:
+            self.pinned_uids.remove(uid)
+            state = 'Odłączono'
+        else:
+            self.pinned_uids.append(uid)
+            state = 'Utrwalono'
+        self._set_selected_uids(
+            self.pinned_uids + ([uid] if uid not in self.pinned_uids else []))
+        self.status.showMessage(
+            f'{state} obiekt {self.doc.by_id[uid].code}. '
+            f'Utrwalone: {len(self.pinned_uids)}. '
+            'Kliknij następny poligon i naciśnij B. Ctrl+Shift+B czyści blokadę.')
+
+    def clear_pinned_selection(self):
+        self.pinned_uids = []
+        if self.doc:
+            self._set_selected_uids([])
+        self.status.showMessage('Wyczyszczono utrwalone zaznaczenie.')
+
+    def set_shared_vertex_sync(self, enabled):
+        self.sync_shared_vertices = bool(enabled)
+        if self.shared_vertex_action.isChecked() != self.sync_shared_vertices:
+            self.shared_vertex_action.setChecked(self.sync_shared_vertices)
+        self.status.showMessage(
+            'Wspólne węzły: ' +
+            ('przesuwaj sąsiadów tego samego kodu.' if enabled else
+             'przesuwaj wyłącznie aktywny poligon.'))
 
     def select_at(self, x, y, cycle=False, additive=False):
         if not self.doc:
@@ -2026,7 +2338,7 @@ class GeoStudioWindow(QMainWindow):
             self._last_pick_pos = None
             self._last_pick_candidates = ()
             if not additive:
-                self._set_selected_uids([])
+                self._set_selected_uids(self.pinned_uids)
             return
         # Prefer a small building 5310 over large overlapping land-use and
         # parcel backgrounds on the first click. Repeated clicks still
@@ -2056,16 +2368,17 @@ class GeoStudioWindow(QMainWindow):
         self.status.showMessage(
             f'Wybrano kod {self.doc.by_id[uid].code}. '
             f'Łącznie zaznaczono: {len(self.selected_uids)}. '
-            'Ctrl+klik dodaje/usuwa, Ctrl+H otwiera wybór po kodzie i atrybutach.')
+            'B utrwala obiekt, Ctrl+L zaznacza cały aktywny kod; F wyszukuje.')
 
     def select_all_same_code(self):
         if not self.doc or not self.selected_uid:
-            self.status.showMessage('Zaznacz najpierw jeden obiekt, następnie naciśnij Ctrl+H.')
+            self.status.showMessage('Wskaż obiekt i użyj Ctrl+L, aby zaznaczyć cały jego kod.')
             return
         code = self.doc.by_id[self.selected_uid].code
         uids = [obj.uid for obj in self.doc.objects
                 if obj.uid and obj.code == code
                 and self.layer_for_uid.get(obj.uid, '') not in self.hidden_layers]
+        self.pinned_uids = []
         self._set_selected_uids(uids)
         self.status.showMessage(
             f'Zaznaczono {len(uids)} obiektów kodu {code}. '
@@ -2800,15 +3113,24 @@ class GeoStudioWindow(QMainWindow):
         self.status.showMessage('Zaznaczanie [S]. Prawy przycisk pokazuje listę obiektów w miejscu kliknięcia.')
 
     def start_polygon(self):
-        """N shortcut / ribbon entry for creating a new polygon."""
+        """N shortcut / ribbon entry, auto-detecting line code 6900."""
         if not self.doc:
             return
         code, ok = QInputDialog.getText(
-            self, 'Nowy poligon', 'Kod GEO-MAP:', text=self.polygon_code)
+            self, 'Nowy obiekt', 'Kod GEO-MAP:', text=self.polygon_code)
         if ok:
             self._start_polygon_with_code(code)
 
-    def _start_polygon_with_code(self, code):
+    def start_polyline(self):
+        """I: draw an open line of any selected code with two or more points."""
+        if not self.doc:
+            return
+        code, ok = QInputDialog.getText(
+            self, 'Nowa linia', 'Kod GEO-MAP:', text='6900')
+        if ok:
+            self._start_polygon_with_code(code, geometry_kind='line')
+
+    def _start_polygon_with_code(self, code, *, geometry_kind=None):
         if not self.doc:
             return
         code = str(code).strip()
@@ -2817,19 +3139,25 @@ class GeoStudioWindow(QMainWindow):
             return
         self.cancel_edit()
         self.polygon_code = code
+        self.draw_geometry_kind = (geometry_kind or
+                                   ('line' if code == '6900' else 'polygon'))
         self.current_polygon = []
         self.view.draw_mode = True
         self.view.setCursor(Qt.CrossCursor)
-        self.tool_actions['draw'].setChecked(True)
-        self._set_mode_badge('RYSOWANIE POLIGONU')
+        self.tool_actions['line' if self.draw_geometry_kind == 'line' else 'draw'].setChecked(True)
+        self._set_mode_badge('RYSOWANIE LINII' if self.draw_geometry_kind == 'line'
+                             else 'RYSOWANIE POLIGONU')
         self.view.setDragMode(QGraphicsView.NoDrag)
         self._ensure_feedback_items()
         self.finish_toolbar_action.setVisible(True)
+        self.finish_toolbar_action.setText(
+            'Zakończ linię' if self.draw_geometry_kind == 'line' else 'Zakończ poligon')
         self.undo_toolbar_action.setVisible(True)
         self.finish_action.setEnabled(True)
         self.status.showMessage(
-            f'Rysowanie kodu {code}: klikaj wierzchołki. Enter lub PPM kończy '
-            'poligon; Esc cofa ostatni punkt.')
+            f'Rysowanie {("linii" if self.draw_geometry_kind == "line" else "poligonu")} '
+            f'kodu {code}: klikaj punkty. Enter lub PPM kończy; '
+            'Esc cofa ostatni punkt.')
 
     def preview_polygon(self, x, y):
         if not self.view.draw_mode:
@@ -2838,7 +3166,7 @@ class GeoStudioWindow(QMainWindow):
         snap = self._snap(x, y)
         self.current_snap = snap
         px, py = (snap.x, snap.y) if snap else (x, y)
-        if len(self.current_polygon) >= 3:
+        if self.draw_geometry_kind != 'line' and len(self.current_polygon) >= 3:
             start = self.current_polygon[0]
             cursor = self.view.mapFromScene(QPointF(x, -y))
             anchor = self.view.mapFromScene(QPointF(start[0], -start[1]))
@@ -2858,7 +3186,7 @@ class GeoStudioWindow(QMainWindow):
         # Close on a click within a 14-pixel radius of the FIRST point.
         # Screen coordinates are essential: one fixed map-unit tolerance
         # would behave unpredictably when the user zooms.
-        if len(self.current_polygon) >= 3:
+        if self.draw_geometry_kind != 'line' and len(self.current_polygon) >= 3:
             initial = self.current_polygon[0]
             cursor = self.view.mapFromScene(QPointF(x, -y))
             anchor = self.view.mapFromScene(QPointF(initial[0], -initial[1]))
@@ -2867,7 +3195,8 @@ class GeoStudioWindow(QMainWindow):
                 return
         snap = self._snap(x, y)
         px, py = (snap.x, snap.y) if snap else (x, y)
-        if len(self.current_polygon) >= 3 and (px, py) == self.current_polygon[0]:
+        if (self.draw_geometry_kind != 'line' and len(self.current_polygon) >= 3
+                and (px, py) == self.current_polygon[0]):
             self.finish_polygon()
             return
         if self.current_polygon and self.current_polygon[-1] == (px,py):
@@ -2911,7 +3240,9 @@ class GeoStudioWindow(QMainWindow):
     def _ask_polygon_attributes(self):
         """Full form for new-object attributes; blanks are stored as editable empty fields."""
         dialog = QDialog(self)
-        dialog.setWindowTitle(f'Nowy poligon {self.polygon_code} — atrybuty')
+        dialog.setWindowTitle(
+            f'Nowa {"linia" if self.draw_geometry_kind == "line" else "powierzchnia"} '
+            f'{self.polygon_code} — atrybuty')
         dialog.resize(560, 480)
         layout = QFormLayout(dialog)
         entries = {}
@@ -2946,21 +3277,35 @@ class GeoStudioWindow(QMainWindow):
         points = self.current_polygon[:]
         if len(points) > 1 and points[0] == points[-1]:
             points.pop()
-        if not polygon_is_valid(points):
-            QMessageBox.warning(self, 'Poligon',
+        line = self.draw_geometry_kind == 'line'
+        if line:
+            valid = (len(points) >= 2 and len(set(points)) >= 2
+                     and all(a != b for a, b in zip(points, points[1:])))
+        else:
+            valid = polygon_is_valid(points)
+        if not valid:
+            QMessageBox.warning(
+                self, 'Linia' if line else 'Poligon',
+                'Wymagane co najmniej 2 różne punkty linii.' if line else
                 'Wymagane co najmniej 3 różne, niewspółliniowe punkty.')
             return
         attrs = self._ask_polygon_attributes()
         if attrs is None:
             return
         try:
-            with self.history.begin(f'Nowy poligon {self.polygon_code}'):
-                uid = self.doc.append_polygon(points, self.polygon_code, fields=attrs)
+            with self.history.begin(
+                    f'Nowa linia {self.polygon_code}' if line else
+                    f'Nowy poligon {self.polygon_code}'):
+                uid = (self.doc.append_polyline(points, self.polygon_code, fields=attrs)
+                       if line else self.doc.append_polygon(
+                           points, self.polygon_code, fields=attrs))
             self._history_changed()
             self.cancel_edit()
             self.rebuild_scene(fit=False, reselect=uid)
             saved = self._autosave_work_copy()
-            self.status.showMessage('Zamknięto poligon i zapisano pola A1–A6, TX i metadane.' +
+            self.status.showMessage(
+                ('Zapisano linię otwartą.' if line else 'Zamknięto poligon.') +
+                ' Zapisano atrybuty A1–A6 i metadane.' +
                 (f' Kopia robocza: {saved}' if saved else ' Użyj Zapisz jako, by zapisać kopię mapy.'))
         except Exception as exc:
             QMessageBox.warning(self, 'Błąd rysowania', str(exc))
@@ -2985,31 +3330,32 @@ class GeoStudioWindow(QMainWindow):
         self._auto_style_digest = hashlib.sha256(target.read_bytes()).digest()
 
     def _autosave_work_copy(self):
-        """Automatically persist edits to a NEW work-copy, never the source file.
+        """Autosave into one app-data slot, never the original map folder.
 
-        Rewrites ONLY a copy generated by this application instance; atomic
-        replace protects against interruption. User-supplied .MAP is untouched.
+        The slot is either exclusively created by this instance or recovered
+        after a deliberate user confirmation. Every rewrite is atomic and
+        guarded against external edits by a checksum.
         """
-        if not self.doc or not self.doc.filename:
+        if not self.doc or not self.doc.filename or self._auto_copy_blocked:
             return None
         source = Path(self.doc.filename).resolve()
         encoded = self.doc.to_bytes()
         try:
             if self._auto_copy_path is None:
-                # Exclusive creation avoids overwriting any existing user file.
-                for number in range(1, 1000):
-                    suffix = '' if number == 1 else f'_{number}'
-                    candidate = source.with_name(source.stem + '_GeoStudio_robocza' + suffix + source.suffix)
-                    try:
-                        with candidate.open('xb') as output:
-                            output.write(encoded)
-                        self._auto_copy_path = candidate
-                        self._auto_copy_digest = hashlib.sha256(encoded).digest()
-                        break
-                    except FileExistsError:
-                        continue
-                else:
-                    raise FileExistsError('Brak wolnej nazwy kopii roboczej')
+                candidate = self._work_copy_location(source)
+                candidate.parent.mkdir(parents=True, exist_ok=True)
+                try:
+                    with candidate.open('xb') as output:
+                        output.write(encoded)
+                except FileExistsError:
+                    # Another session already owns the one autosave slot.
+                    # Never overwrite it, and never create a numbered copy.
+                    self._auto_copy_blocked = True
+                    raise FileExistsError(
+                        'Istnieje już kopia robocza. Otwórz mapę ponownie '
+                        'i przywróć sesję albo użyj Zapisz jako.')
+                self._auto_copy_path = candidate
+                self._auto_copy_digest = hashlib.sha256(encoded).digest()
             else:
                 target = self._auto_copy_path
                 if not target.is_file() or target.resolve() == source:
@@ -3207,8 +3553,12 @@ class GeoStudioWindow(QMainWindow):
         px, py = (snap.x,snap.y) if snap else (x,y)
         try:
             uid = self.edit_uid
-            changes = linked_vertex_moves(self.doc, uid, index, px, py)
-            with self.history.begin('Przesunięcie wspólnego węzła',
+            changes = (linked_vertex_moves(self.doc, uid, index, px, py)
+                       if self.sync_shared_vertices
+                       else {uid: {index: (px, py)}})
+            with self.history.begin(
+                    'Przesunięcie wspólnego węzła' if self.sync_shared_vertices
+                    else 'Przesunięcie pojedynczego węzła',
                                     selection_before=[uid]):
                 self.doc.move_polygon_vertices(changes, reparse=False)
             self._history_changed()

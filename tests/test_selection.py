@@ -45,7 +45,11 @@ def window(qt_app, tmp_path):
 
 
 def test_selection_snapshot_matches_golden(qt_app, tmp_path):
-    expected = GOLDEN.read_text(encoding="utf-8")
+    # The frozen v0.14 golden intentionally predates the newer B/Ctrl+L help.
+    # Preserve its geometry/selection snapshot; update only this UI hint.
+    expected = GOLDEN.read_text(encoding="utf-8").replace(
+        "Ctrl+klik dodaje/usuwa, Ctrl+H otwiera wybór po kodzie i atrybutach.",
+        "B utrwala obiekt, Ctrl+L zaznacza cały aktywny kod; F wyszukuje.")
     actual = snapshot_json(build_selection_window(tmp_path))
     if actual != expected:
         wanted = expected.splitlines()

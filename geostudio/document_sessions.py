@@ -14,9 +14,11 @@ from PySide6.QtGui import QTransform
 DOCUMENT_FIELDS = (
     "doc", "history", "current_crs_epsg", "source_compilation_scale",
     "compilation_scale", "visual_styles", "label_positions",
+    "pinned_uids", "sync_shared_vertices", "draw_geometry_kind",
     "_raster_overlay", "_wms_preview", "selected_uids", "selected_uid",
     "hidden_layers", "select_code_filter", "_base_title",
     "_auto_copy_path", "_auto_copy_digest", "_auto_style_digest",
+    "_auto_copy_blocked",
     "_last_pick_pos", "_last_pick_candidates", "_search_uids",
     "catalog", "symbols", "palette", "cdf_styles", "sym_primitives",
     "lay_pen_styles", "sym_line_patterns", "library_paths",
@@ -52,7 +54,8 @@ class MapSession:
 
     def capture(self, window):
         for field in DOCUMENT_FIELDS:
-            self.values[field] = getattr(window, field)
+            value = getattr(window, field)
+            self.values[field] = list(value) if field == "pinned_uids" else value
         self.view_transform = QTransform(window.view.transform())
         self.scroll_x = window.view.horizontalScrollBar().value()
         self.scroll_y = window.view.verticalScrollBar().value()
@@ -70,6 +73,7 @@ class MapSession:
         window.view.horizontalScrollBar().setValue(self.scroll_x)
         window.view.verticalScrollBar().setValue(self.scroll_y)
         window._set_selected_uids(selection)
+        window.shared_vertex_action.setChecked(window.sync_shared_vertices)
         window._refresh_raster_panel()
         window._update_wms_attribution()
         window._update_compilation_scale_indicator()

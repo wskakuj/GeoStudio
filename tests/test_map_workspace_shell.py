@@ -39,7 +39,7 @@ def test_real_map_view_has_arcgis_ribbon_and_legacy_actions(window):
     assert window.ribbon.tabs.tabText(0) == "Mapa"
     assert window.ribbon.tabs.tabText(1) == "Edycja"
     assert window.workspace.document_name.text().startswith("Otwórz plik")
-    assert set(window.tool_actions) == {"select", "pan", "draw", "edit", "labels"}
+    assert set(window.tool_actions) == {"select", "pan", "draw", "line", "edit", "labels"}
 
 
 def test_map_shell_updates_document_and_dirty_status(window):
