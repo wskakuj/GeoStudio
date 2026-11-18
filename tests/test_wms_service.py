@@ -30,12 +30,12 @@ def test_parse_capabilities_layers_and_inherited_crs():
     assert layers[1].crs == ("EPSG:2180", "EPSG:3857")
 
 
-def test_wms_projected_bbox_flips_geomap_north_east_order():
+def test_wms_projected_bbox_obeys_epsg2180_north_east_axis_order():
     bounds = WMSBounds(5_151_000, 667_000, 5_152_000, 668_000)
     url = getmap_url("https://maps.example/wms?SERVICE=WMS&token=x",
                      "orto", "EPSG:2180", bounds, 1000, 1000)
     query = parse_qs(urlparse(url).query)
-    assert query["BBOX"] == ["667000,5151000,668000,5152000"]
+    assert query["BBOX"] == ["5151000,667000,5152000,668000"]
     assert query["CRS"] == ["EPSG:2180"]
     assert query["TRANSPARENT"] == ["TRUE"]
     assert query["FORMAT"] == ["image/png"]
@@ -105,3 +105,30 @@ def test_google_maps_embed_url_uses_official_provider_and_never_guesses_crs():
         google_maps_embed_url(north, east, 2180, "")
     with pytest.raises(ValueError):
         google_maps_embed_url(north, east, 2180, "x", map_type="hacked")
+
+
+@pytest.mark.parametrize("epsg", [2180, 2176, 2177, 2178, 2179])
+def test_polish_epsg_wms_130_north_east_axis_order(epsg):
+    bounds = WMSBounds(513_000, 666_000, 514_000, 668_000)
+    result = parse_qs(urlparse(getmap_url(
+        "https://maps.example/wms", "ortho", f"EPSG:{epsg}",
+        bounds, 1000, 500)).query)
+    assert result["BBOX"] == ["513000,666000,514000,668000"]
+    assert result["CRS"] == [f"EPSG:{epsg}"]
+
+
+def test_wms_111_always_easting_northing_for_projected_crs():
+    bounds = WMSBounds(513_000, 666_000, 514_000, 668_000)
+    result = parse_qs(urlparse(getmap_url(
+        "https://maps.example/wms", "ortho", "EPSG:2180",
+        bounds, 1000, 500, version="1.1.1")).query)
+    assert result["BBOX"] == ["666000,513000,668000,514000"]
+    assert "SRS" in result and "CRS" not in result
+
+
+def test_epsg3857_still_easting_northing_in_wms130():
+    box = WMSBounds(1_000_000, 2_000_000, 1_100_000, 2_100_000)
+    result = parse_qs(urlparse(getmap_url(
+        "https://maps.example/wms", "ortho", "EPSG:3857",
+        box, 1000, 1000)).query)
+    assert result["BBOX"] == ["2000000,1000000,2100000,1100000"]
