@@ -1224,14 +1224,19 @@ class GeoStudioWindow(QMainWindow):
         for obj in self.doc.objects:
             if not obj.points or obj.code in {"5200", "6000", "6301", "7900"}:
                 continue
-            # Land-use subdivisions have meaningful A1 values.
-            subtype = obj.fields.get("A1", "").strip() if obj.code == "5230" else ""
+            # Forest-class subtypes are part of the same Użytki Leśne
+            # layer but remain independently described in the legend.
+            subtype = (forest_class_value(obj) or
+                       obj.fields.get("A1", "").strip()) if obj.code == "5230" else ""
+            if subtype in forest_hidden_classes(self.visual_styles):
+                continue
             key = (obj.code, subtype.casefold())
             if key in found:
                 continue
-            name = (self.symbols.get(obj.code)
-                    or resolve_layer(self.catalog, obj.code)
-                    or "Obiekt")
+            name = (FOREST_LAYER if forest_class_value(obj) is not None else
+                    (self.symbols.get(obj.code)
+                     or resolve_layer(self.catalog, obj.code)
+                     or "Obiekt"))
             label = f"{obj.code}  {name}"
             if subtype:
                 label += f"  ·  {subtype}"
