@@ -353,6 +353,7 @@ class RasterLayerPanel(QWidget):
         layer = self.window._raster_overlay.by_id(item.data(Qt.ItemDataRole.UserRole))
         layer.visible = item.checkState() == Qt.CheckState.Checked
         self.window._raster_overlay.update_layer(layer)
+        self.window._refresh_fill_brushes()
         self.window._save_raster_settings()
 
     def change_opacity(self, value):
@@ -377,4 +378,5 @@ class RasterLayerPanel(QWidget):
             return
         self.window._raster_overlay.remove(layer.uid, self.window.map_scene)
         self.refresh()
+        self.window._refresh_fill_brushes()
         self.window._save_raster_settings()
