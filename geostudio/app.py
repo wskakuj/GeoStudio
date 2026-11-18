@@ -145,6 +145,10 @@ class GeoStudioWindow(QMainWindow):
         self._auto_copy_path = None
         self._auto_copy_digest = None
         self._auto_style_digest = None
+        self._auto_copy_blocked = False
+        self.pinned_uids = []
+        self.sync_shared_vertices = True
+        self.draw_geometry_kind = "polygon"
         self.highlight_item=None
         self.draft_item=None
         self.snap_marker=None
@@ -1357,6 +1361,23 @@ class GeoStudioWindow(QMainWindow):
         saved = Path(str(self.settings.value(key, str(Path.home()))))
         return str(saved if saved.is_dir() else Path.home())
 
+    @staticmethod
+    def _work_copy_location(source):
+        """One deterministic autosave slot in the app data folder.
+
+        The filename is keyed by the full source path *and source bytes*, so
+        revisions of the original never overwrite a different working map.
+        No more _robocza_2, _robocza_3, ... next to the user's originals.
+        """
+        source = Path(source).resolve()
+        initial = source.read_bytes() if source.is_file() else b""
+        key = hashlib.sha256(
+            os.fsencode(str(source)) + b"\\0" + hashlib.sha256(initial).digest()
+        ).hexdigest()[:32]
+        base = Path(os.environ.get("LOCALAPPDATA") or (
+            Path.home() / ".local" / "share")) / "GeoStudio" / "autosave"
+        return base / (key + ".MAP")
+
     def open_map(self):
         file,_=QFileDialog.getOpenFileName(
             self, 'Otwórz mapę GEO-MAP',
@@ -1373,6 +1394,34 @@ class GeoStudioWindow(QMainWindow):
             if not doc.checksum_valid:
                 answer=QMessageBox.warning(self,'Suma kontrolna','Suma MD5 pliku nie zgadza się z nagłówkiem. Otworzyć tylko do podglądu?',QMessageBox.Yes|QMessageBox.No)
                 if answer!=QMessageBox.Yes:return
+            # An existing autosave is a recoverable session, not an excuse
+            # to create another _robocza_N.MAP beside the original.
+            recovery = self._work_copy_location(file)
+            recovered = False
+            blocked = False
+            if recovery.is_file():
+                reply = QMessageBox.question(
+                    self, 'Istnieje wcześniejsza sesja robocza',
+                    'GeoStudio znalazło wcześniejszy automatyczny zapis dla '
+                    'tej mapy.\n\nTak — przywróć sesję roboczą i kontynuuj '
+                    'zapis do jej jednego pliku.\nNie — otwórz oryginał bez '
+                    'automatycznego nadpisywania wcześniejszej sesji. '
+                    'Zmiany możesz zapisać przez Zapisz jako.',
+                    QMessageBox.Yes | QMessageBox.No, QMessageBox.Yes)
+                if reply == QMessageBox.Yes:
+                    recovered_doc = GeoMap.open(recovery)
+                    if not recovered_doc.checksum_valid:
+                        QMessageBox.warning(
+                            self, 'Uszkodzona kopia',
+                            'Autokopia nie przeszła kontroli CHK; otwieram '
+                            'oryginał bez automatycznego nadpisywania kopii.')
+                        blocked = True
+                    else:
+                        doc = recovered_doc
+                        doc.filename = str(file)
+                        recovered = True
+                else:
+                    blocked = True
             self._capture_active_map_tab()
             if self.doc is not None:
                 self.cancel_edit()
@@ -1387,8 +1436,9 @@ class GeoStudioWindow(QMainWindow):
             self.current_crs_epsg = detected_crs_from_prj(file)
             self.selected_uid = ''
             self.settings.setValue('last_map_dir', str(Path(file).parent))
-            self.visual_styles = load_styles(file)
-            self.label_positions = load_label_positions(file)
+            sidecar_source = recovery if recovered and sidecar_path(recovery).is_file() else file
+            self.visual_styles = load_styles(sidecar_source)
+            self.label_positions = load_label_positions(sidecar_source)
             try:
                 self._raster_overlay.load(file)
             except (OSError, ValueError, TypeError, KeyError) as raster_error:
@@ -1403,9 +1453,16 @@ class GeoStudioWindow(QMainWindow):
             self.compilation_scale = validated_compilation_scale(
                 saved, default=self.source_compilation_scale)
             self.selected_uids = []
-            self._auto_copy_path = None
-            self._auto_copy_digest = None
-            self._auto_style_digest = None
+            self._auto_copy_path = recovery if recovered else None
+            self._auto_copy_digest = (hashlib.sha256(recovery.read_bytes()).digest()
+                                      if recovered else None)
+            existing_styles = sidecar_path(recovery) if recovered else None
+            self._auto_style_digest = (
+                hashlib.sha256(existing_styles.read_bytes()).digest()
+                if existing_styles is not None and existing_styles.is_file()
+                else None)
+            self._auto_copy_blocked = blocked
+            self.pinned_uids = []
             self._last_pick_pos = None
             self._last_pick_candidates = ()
             self._look_for_libraries(Path(file).parent)
@@ -1417,8 +1474,10 @@ class GeoStudioWindow(QMainWindow):
             self._base_title = 'GeoStudio v0.14 — '+Path(file).name
             self._append_current_map_tab()
             self.status.showMessage(
-                f'Otwarto nową zakładkę: {Path(file).name} — '
-                f'{len(doc.objects)} obiektów, {len(doc.lines)} wierszy.')
+                ('Przywrócono jedną sesję roboczą. ' if recovered else
+                 'Otworzono oryginał bez autozapisu — Zapisz jako. ' if blocked
+                 else 'Otworzono mapę. ') +
+                f'{Path(file).name} — {len(doc.objects)} obiektów.')
         except Exception as exc: QMessageBox.critical(self,'Błąd odczytu mapy',str(exc))
 
     def _capture_active_map_tab(self):
@@ -2985,31 +3044,32 @@ class GeoStudioWindow(QMainWindow):
         self._auto_style_digest = hashlib.sha256(target.read_bytes()).digest()
 
     def _autosave_work_copy(self):
-        """Automatically persist edits to a NEW work-copy, never the source file.
+        """Autosave into one app-data slot, never the original map folder.
 
-        Rewrites ONLY a copy generated by this application instance; atomic
-        replace protects against interruption. User-supplied .MAP is untouched.
+        The slot is either exclusively created by this instance or recovered
+        after a deliberate user confirmation. Every rewrite is atomic and
+        guarded against external edits by a checksum.
         """
-        if not self.doc or not self.doc.filename:
+        if not self.doc or not self.doc.filename or self._auto_copy_blocked:
             return None
         source = Path(self.doc.filename).resolve()
         encoded = self.doc.to_bytes()
         try:
             if self._auto_copy_path is None:
-                # Exclusive creation avoids overwriting any existing user file.
-                for number in range(1, 1000):
-                    suffix = '' if number == 1 else f'_{number}'
-                    candidate = source.with_name(source.stem + '_GeoStudio_robocza' + suffix + source.suffix)
-                    try:
-                        with candidate.open('xb') as output:
-                            output.write(encoded)
-                        self._auto_copy_path = candidate
-                        self._auto_copy_digest = hashlib.sha256(encoded).digest()
-                        break
-                    except FileExistsError:
-                        continue
-                else:
-                    raise FileExistsError('Brak wolnej nazwy kopii roboczej')
+                candidate = self._work_copy_location(source)
+                candidate.parent.mkdir(parents=True, exist_ok=True)
+                try:
+                    with candidate.open('xb') as output:
+                        output.write(encoded)
+                except FileExistsError:
+                    # Another session already owns the one autosave slot.
+                    # Never overwrite it, and never create a numbered copy.
+                    self._auto_copy_blocked = True
+                    raise FileExistsError(
+                        'Istnieje już kopia robocza. Otwórz mapę ponownie '
+                        'i przywróć sesję albo użyj Zapisz jako.')
+                self._auto_copy_path = candidate
+                self._auto_copy_digest = hashlib.sha256(encoded).digest()
             else:
                 target = self._auto_copy_path
                 if not target.is_file() or target.resolve() == source:
