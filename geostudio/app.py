@@ -45,6 +45,8 @@ from .ui_theme import theme_stylesheet, ui_icon
 from .workspace_shell import MapWorkspace
 from .gis_ribbon import GISRibbon
 from .command_palette import CommandPalette
+from .wms_qt import WMSPreviewOverlay, WMSDialog
+from .google_preview import GoogleMapsPreviewDialog
 from .raster_overlay import RasterOverlayStore
 from .raster_ui import RasterCalibrationDialog, RasterLayerPanel
 from .library_render import (parse_cdf, parse_sym_primitives, cdf_for_object,
@@ -143,6 +145,9 @@ class GeoStudioWindow(QMainWindow):
         self.polygon_code='5216'
         self.history = History(_MapHistoryTarget(self))
         self._raster_overlay = RasterOverlayStore()
+        self._wms_preview = WMSPreviewOverlay()
+        self._wms_dialog = None
+        self._google_dialog = None
         self._raster_map_picker = None
         self._raster_calibration_dialog = None
         self._raster_opacity_pending = False
@@ -287,6 +292,13 @@ class GeoStudioWindow(QMainWindow):
              'snap', 'Kalibracja GCP'),
             (self._action('Panel podkładów', self.show_raster_panel),
              'layers', 'Podkłady'),
+        )
+        online = ribbon.group('Dane', 'Mapy online')
+        online.stack(
+            (self._action('Podgląd WMS…', self.show_wms_dialog),
+             'layers', 'WMS — pod mapą'),
+            (self._action('Google Maps', self.open_google_maps),
+             'compass', 'Google Maps ↗'),
         )
         coordinates = ribbon.group('Dane', 'Współrzędne')
         coordinates.action(
@@ -516,6 +528,11 @@ class GeoStudioWindow(QMainWindow):
             self.open_crs_converter, 'Ctrl+T'))
         vm=self.menuBar().addMenu('&Widok')
         self.view_menu = vm
+        map_sources = vm.addMenu('Mapy online')
+        map_sources.addAction(
+            self._action('Podgląd warstw WMS…', self.show_wms_dialog))
+        map_sources.addAction(
+            self._action('Google Maps — referencyjny podgląd…', self.open_google_maps))
         self.command_palette_action = self._action(
             'Znajdź polecenie…', self.show_command_palette, 'Ctrl+K')
         vm.addAction(self.command_palette_action)
@@ -1181,6 +1198,8 @@ class GeoStudioWindow(QMainWindow):
                 answer=QMessageBox.warning(self,'Suma kontrolna','Suma MD5 pliku nie zgadza się z nagłówkiem. Otworzyć tylko do podglądu?',QMessageBox.Yes|QMessageBox.No)
                 if answer!=QMessageBox.Yes:return
             self.doc=doc
+            self._wms_preview.clear(self.map_scene)
+            self._update_wms_attribution()
             self.current_crs_epsg = detected_crs_from_prj(file)
             self.selected_uid = ''
             self.settings.setValue('last_map_dir', str(Path(file).parent))
@@ -1312,8 +1331,10 @@ class GeoStudioWindow(QMainWindow):
         # The renderer clears QGraphicsScene: recreate each background
         # pixmap after every geometry / label rebuild, never above vectors.
         self._raster_overlay.clear_items()
+        self._wms_preview.clear_items()
         result = build_scene(self.map_scene, self.doc, self._render_context())
         self._raster_overlay.attach(self.map_scene)
+        self._wms_preview.attach(self.map_scene)
         self.geometry_index = result.geometry_index
         self.layer_for_uid = result.layer_for_uid
         self.graphics_for_uid = result.graphics_for_uid
@@ -2094,6 +2115,10 @@ class GeoStudioWindow(QMainWindow):
         self.compilation_label=QLabel(self)
         self.compilation_label.setObjectName('GeoStudioCompilationScale')
         self.status.addPermanentWidget(self.compilation_label)
+        self.wms_source_label = QLabel(self)
+        self.wms_source_label.setObjectName('GeoStudioWMSSource')
+        self.wms_source_label.setVisible(False)
+        self.status.addPermanentWidget(self.wms_source_label)
         self._update_compilation_scale_indicator()
 
     @staticmethod
@@ -2597,6 +2622,38 @@ class GeoStudioWindow(QMainWindow):
         self.layers_dock.show()
         self.raster_tabs.setCurrentWidget(self.raster_panel)
         self._refresh_raster_panel()
+
+    def _update_wms_attribution(self):
+        label = getattr(self, 'wms_source_label', None)
+        if label is None:
+            return
+        overlay = self._wms_preview
+        if overlay.image is None:
+            label.hide()
+            return
+        name = overlay.title or 'usługa WMS'
+        label.setText('WMS: ' + name[:36] + ('…' if len(name) > 36 else ''))
+        label.setToolTip('Źródło WMS: ' + name)
+        label.show()
+
+    def show_wms_dialog(self):
+        if not self.doc:
+            QMessageBox.information(self, 'WMS', 'Najpierw otwórz mapę GEO-MAP.')
+            return
+        if self._wms_dialog is None:
+            self._wms_dialog = WMSDialog(self)
+        self._wms_dialog.show()
+        self._wms_dialog.raise_()
+
+    def open_google_maps(self):
+        """Open sanctioned Maps Embed API preview, with external fallback."""
+        if not self.doc:
+            QMessageBox.information(self, 'Google Maps', 'Najpierw otwórz mapę.')
+            return
+        if self._google_dialog is None:
+            self._google_dialog = GoogleMapsPreviewDialog(self)
+        self._google_dialog.show()
+        self._google_dialog.raise_()
 
     def add_raster(self):
         """Import an image; use world file or launch interactive GCP calibration."""
