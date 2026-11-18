@@ -2734,6 +2734,28 @@ class GeoStudioWindow(QMainWindow):
         self.update_label_visibility()
         self._autosave_work_copy()
 
+    def _add_forest_class_menu(self, menu):
+        """Construct checkable filter actions without opening a modal popup."""
+        grades = self._forest_class_counts()
+        hidden = forest_hidden_classes(self.visual_styles)
+        class_menu = menu.addMenu("Klasoużytki — widoczność")
+        all_on = class_menu.addAction("Pokaż wszystkie klasoużytki")
+        all_on.triggered.connect(
+            lambda: self.set_all_forest_classes_visible(True))
+        all_off = class_menu.addAction("Ukryj wszystkie klasoużytki")
+        all_off.triggered.connect(
+            lambda: self.set_all_forest_classes_visible(False))
+        class_menu.addSeparator()
+        for grade, count in sorted(grades.items()):
+            action = class_menu.addAction(f"{grade} ({count})")
+            action.setCheckable(True)
+            action.setChecked(grade not in hidden)
+            action.setToolTip("Pokaż lub ukryj wyłącznie obiekty " + grade)
+            action.triggered.connect(
+                lambda checked, name=grade:
+                self.set_forest_class_visible(name, checked))
+        return class_menu
+
     def open_layer_context_menu(self, pos):
         """Right-click a layer: operate on every member, with one Undo."""
         item = self.layers_tree.itemAt(pos)
@@ -2743,24 +2765,7 @@ class GeoStudioWindow(QMainWindow):
         objs = self._objects_in_layer(layer)
         menu = QMenu(self)
         if layer == FOREST_LAYER:
-            grades = self._forest_class_counts()
-            hidden = forest_hidden_classes(self.visual_styles)
-            class_menu = menu.addMenu("Klasoużytki — widoczność")
-            all_on = class_menu.addAction("Pokaż wszystkie klasoużytki")
-            all_on.triggered.connect(
-                lambda: self.set_all_forest_classes_visible(True))
-            all_off = class_menu.addAction("Ukryj wszystkie klasoużytki")
-            all_off.triggered.connect(
-                lambda: self.set_all_forest_classes_visible(False))
-            class_menu.addSeparator()
-            for grade, count in sorted(grades.items()):
-                action = class_menu.addAction(f"{grade} ({count})")
-                action.setCheckable(True)
-                action.setChecked(grade not in hidden)
-                action.setToolTip("Pokaż lub ukryj wyłącznie obiekty " + grade)
-                action.triggered.connect(
-                    lambda checked, name=grade:
-                    self.set_forest_class_visible(name, checked))
+            self._add_forest_class_menu(menu)
             menu.addSeparator()
         select_action = menu.addAction(f"Zaznacz wszystkie ({len(objs)} obiektów)")
         attributes_action = menu.addAction("Zmień atrybut wszystkich obiektów…")
