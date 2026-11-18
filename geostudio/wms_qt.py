@@ -122,9 +122,18 @@ class WMSDialog(QDialog):
         self.address = QLineEdit(str(window.settings.value("wms/last_url", default_wms)))
         self.address.setPlaceholderText("https://.../wms")
         form.addRow("Serwer WMS", self.address)
+        # Ordinary users should select one of the actual server-advertised
+        # layers, not guess an internal identifier in an editable text field.
         self.layer_selector = QComboBox()
-        self.layer_selector.setEditable(True)
-        self.layer_selector.setPlaceholderText("Najpierw pobierz GetCapabilities")
+        self.layer_selector.setObjectName("GeoStudioWMSLayerPicker")
+        self.layer_selector.setEditable(False)
+        self.layer_selector.setMinimumContentsLength(24)
+        self.layer_selector.setSizeAdjustPolicy(
+            QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
+        self.layer_selector.addItem("Kliknij «Pobierz warstwy»", None)
+        self.layer_selector.setEnabled(False)
+        self.layer_selector.setToolTip(
+            "Lista dostępnych warstw pochodzi z serwera WMS (GetCapabilities).")
         form.addRow("Warstwa WMS", self.layer_selector)
         self.crs_selector = QComboBox()
         self.crs_selector.addItem("Wybierz układ współrzędnych MAP", None)
@@ -144,6 +153,7 @@ class WMSDialog(QDialog):
         self.map_button = QPushButton("Pokaż WMS pod mapą")
         self.map_button.setObjectName("GeoStudioPrimaryButton")
         self.map_button.clicked.connect(self.fetch_map)
+        self.map_button.setEnabled(False)
         controls.addWidget(self.map_button)
         root.addLayout(controls)
         opacity_row = QHBoxLayout()
@@ -188,7 +198,8 @@ class WMSDialog(QDialog):
         def finished():
             self.pending = None
             self.capabilities_button.setEnabled(True)
-            self.map_button.setEnabled(True)
+            self.map_button.setEnabled(
+                self.layer_selector.isEnabled() and self.layer_selector.currentData() is not None)
             if reply.error() != QNetworkReply.NetworkError.NoError:
                 self.message.setText("Błąd połączenia WMS: " + reply.errorString())
             else:
@@ -211,23 +222,45 @@ class WMSDialog(QDialog):
             QMessageBox.warning(self, "Adres WMS", str(exc))
             return
 
+        self._layers = []
+        self.layer_selector.clear()
+        self.layer_selector.addItem("Trwa pobieranie listy warstw…", None)
+        self.layer_selector.setEnabled(False)
+        self.map_button.setEnabled(False)
+
         def received(xml):
             self._layers = list(parse_capabilities(xml))
             self.layer_selector.clear()
+            if not self._layers:
+                self.layer_selector.addItem("Serwer nie udostępnia warstw", None)
+                self.layer_selector.setEnabled(False)
+                self.map_button.setEnabled(False)
+                self.message.setText(
+                    "Serwer odpowiedział, ale nie udostępnił żadnej warstwy WMS. "
+                    "Sprawdź adres usługi GetCapabilities.")
+                return
             for info in self._layers:
-                self.layer_selector.addItem(
-                    info.title + "  (" + info.name + ")", info.name)
+                label = info.title if info.title == info.name else f"{info.title}  ({info.name})"
+                self.layer_selector.addItem(label, info.name)
+                self.layer_selector.setItemData(
+                    self.layer_selector.count() - 1,
+                    f"Identyfikator: {info.name}\nCRS: {', '.join(info.crs) or 'brak danych'}",
+                    Qt.ItemDataRole.ToolTipRole)
+            self.layer_selector.setEnabled(True)
+            self.layer_selector.setCurrentIndex(0)
+            self.map_button.setEnabled(True)
             self.message.setText(
-                f"Pobrano {len(self._layers)} warstw. Wybierz warstwę i zgodny EPSG.")
+                f"Pobrano {len(self._layers)} warstw. Rozwiń listę «Warstwa WMS» "
+                "i wybierz pozycję, następnie wskaż zgodny EPSG.")
+
         self._request(url, received)
 
     def _selected_layer(self):
         stored = self.layer_selector.currentData()
-        name = stored or self.layer_selector.currentText().strip()
         for info in self._layers:
-            if info.name == name:
+            if info.name == stored:
                 return info
-        return WMSLayerInfo(name, name, ())
+        return None
 
     def fetch_map(self):
         if not self.window.doc:
@@ -245,6 +278,12 @@ class WMSDialog(QDialog):
                 f"MAP ma EPSG:{self.window.current_crs_epsg}, wybrano EPSG:{epsg}.")
             return
         layer = self._selected_layer()
+        if layer is None:
+            QMessageBox.warning(
+                self, "Wybierz warstwę WMS",
+                "Najpierw kliknij «Pobierz warstwy», a następnie wybierz "
+                "warstwę z rozwijanej listy. Nie trzeba wpisywać jej ręcznie.")
+            return
         crs = f"EPSG:{epsg}"
         if layer.crs and crs not in layer.crs:
             QMessageBox.warning(self, "WMS nie obsługuje układu",
