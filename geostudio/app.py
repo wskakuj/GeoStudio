@@ -1184,6 +1184,39 @@ class GeoStudioWindow(QMainWindow):
             self.map_scene.addItem(item)
             self.decoration_items[uid] = item
 
+    def _map_legend_entries(self):
+        """Build the legend from codes actually present in this MAP.
+
+        Previously every map got the same seven unrelated sample species.
+        Keep editable, GEO-MAP-independent entries for all real layer codes.
+        """
+        if not self.doc:
+            return []
+        found = {}
+        for obj in self.doc.objects:
+            if not obj.points or obj.code in {"5200", "6000", "6301", "7900"}:
+                continue
+            # Land-use subdivisions have meaningful A1 values.
+            subtype = obj.fields.get("A1", "").strip() if obj.code == "5230" else ""
+            key = (obj.code, subtype.casefold())
+            if key in found:
+                continue
+            name = (self.symbols.get(obj.code)
+                    or resolve_layer(self.catalog, obj.code)
+                    or "Obiekt")
+            label = f"{obj.code}  {name}"
+            if subtype:
+                label += f"  ·  {subtype}"
+            style = self.visual_styles.get("code:" + obj.code, {})
+            native = native_fill_color(obj.style)
+            base = (style.get("fill") or
+                    (QColor(*native).name().upper() if native else
+                     QColor(*obj.colorref).name().upper()))
+            found[key] = {"name": label[:180], "color": base}
+            if len(found) >= 100:
+                break
+        return [found[key] for key in sorted(found)]
+
     def insert_map_decoration(self, kind, *, x=None, y=None):
         """Insert a map-anchored vector template at the cursor or view centre."""
         if not self.doc:
@@ -1193,6 +1226,11 @@ class GeoStudioWindow(QMainWindow):
             centre = self.view.mapToScene(self.view.viewport().rect().center())
             x, y = centre.x(), -centre.y()
         uid, data = new_decoration(kind, x, y)
+        if kind == "legend":
+            entries = self._map_legend_entries()
+            if entries:
+                data["items"] = entries
+                data["details"] = "\n".join(item["name"] for item in entries)
         with self.history.begin('Wstawiono: ' + KINDS[kind],
                                 selection_before=self.selected_uids):
             self.visual_styles[uid] = data
