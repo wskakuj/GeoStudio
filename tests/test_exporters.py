@@ -251,6 +251,9 @@ def test_unsupported_image_format_reports_the_old_message(window, tmp_path, monk
     warnings = []
     monkeypatch.setattr(QMessageBox, "warning",
                         staticmethod(lambda *a, **k: warnings.append(a)))
+    from PySide6.QtWidgets import QInputDialog
+    monkeypatch.setattr(QInputDialog, "getInt",
+                        staticmethod(lambda *a, **k: (2600, True)))
     window.export_image()
     assert not target.exists()
     assert warnings and warnings[0][1] == "Błąd eksportu"
