@@ -17,7 +17,7 @@ try:
     from PySide6.QtCore import Qt, QPoint, QPointF, QRectF, QSize, QSettings, Signal, QTimer
     from PySide6.QtGui import QAction, QBrush, QColor, QFont, QPainterPath, QPen, QPixmap, QTransform, QActionGroup
     from PySide6.QtWidgets import (QApplication, QMainWindow, QFileDialog, QGraphicsView, QGraphicsScene,
-        QGraphicsPathItem, QGraphicsEllipseItem, QGraphicsPixmapItem, QGraphicsSimpleTextItem, QGraphicsItem, QDockWidget,
+        QGraphicsPathItem, QGraphicsEllipseItem, QGraphicsRectItem, QGraphicsPixmapItem, QGraphicsSimpleTextItem, QGraphicsItem, QDockWidget,
         QTreeWidget, QTreeWidgetItem, QToolBar, QMessageBox, QStatusBar, QInputDialog, QMenu,
         QLabel, QWidget, QVBoxLayout, QHeaderView, QSplitter, QComboBox,
         QDialog, QDialogButtonBox, QFormLayout, QLineEdit, QHBoxLayout, QPushButton, QSpinBox, QSlider, QColorDialog, QToolButton, QFrame, QTabWidget)
@@ -40,6 +40,9 @@ from .coordinates import (CRS_CHOICES, MODERN_EPSG, transform_xy,
     transform_map_copy, output_prj_text, transform_label_positions,
     detected_crs_from_prj)
 from .object_search import search_objects
+from .feature_dialogs import (
+    CodePickerDialog, AttributeQueryDialog, ReplaceTextDialog, replacement_plan,
+)
 from .visual_styles import (parse_fill_code, fill_code, load_styles,
     load_label_positions, write_styles, sidecar_path)
 from .ui_theme import theme_stylesheet, ui_icon
@@ -125,6 +128,7 @@ class GeoStudioWindow(QMainWindow):
         self._last_fill_opacity = None
         self.selected_uids = []
         self.highlight_items = []
+        self._selected_label_frames = []
         self.labels=[]
         self.label_world_span = {}
         self.labels_enabled = True
@@ -541,8 +545,18 @@ class GeoStudioWindow(QMainWindow):
         em.addAction(self._action('Edytuj atrybut zaznaczonego obiektu…',self.edit_selected,'F2'))
         self.delete_action = self._action('Usuń zaznaczony obiekt', self.delete_selected, 'Delete')
         em.addAction(self.delete_action)
-        em.addAction(self._action('Zaznacz wszystkie obiekty tego kodu', self.select_all_same_code, 'Ctrl+H'))
-        em.addAction(self._action('Szukaj obiektu', self.show_search, 'Ctrl+F'))
+        em.addAction(self._action('Zaawansowane zaznaczanie (kod, A1, A2)…',
+                                  self.open_selection_query, 'Ctrl+H'))
+        em.addAction(self._action('Zamiana frazy w atrybutach…',
+                                  self.open_phrase_replacement, 'Ctrl+F'))
+        for label, callback, shortcut in (
+            ('Utwórz obiekt według kodu…', self.start_code_creation, 'T'),
+            ('Wyszukaj obiekty…', self.open_search_query, 'F'),
+        ):
+            action = self._action(label, callback, shortcut)
+            action.setShortcutContext(Qt.WidgetWithChildrenShortcut)
+            self.view.addAction(action)
+            em.addAction(action)
         trans_menu = self.menuBar().addMenu('&Trans')
         trans_menu.addAction(self._action(
             'Przelicz współrzędne / eksportuj kopię MAP…',
@@ -1265,7 +1279,7 @@ class GeoStudioWindow(QMainWindow):
             self.history = History(_MapHistoryTarget(self))
             self._raster_overlay = RasterOverlayStore()
             self._wms_preview = WMSPreviewOverlay()
-            self.hidden_layers = set()
+            self.hidden_layers = {'Graniczniki'}
             self.select_code_filter = None
             self._update_wms_attribution()
             self.current_crs_epsg = detected_crs_from_prj(file)
@@ -1526,11 +1540,17 @@ class GeoStudioWindow(QMainWindow):
         self.label_items = result.label_items
         self.label_world_span = result.label_world_span
         self.highlight_item = None
+        self._selected_label_frames = []
         self.draft_item = None
         self.snap_marker = None
         self.edit_handles = []
         self.draft_points = []
         self.current_snap = None
+        # Checkbox state and rendered visibility must always agree,
+        # including on the initial open (Graniczniki are off by default).
+        for name in self.hidden_layers:
+            for item in self.items_by_layer.get(name, ()):
+                item.setVisible(False)
         self._populate_layers()
         if fit:
             self.fit_all()
