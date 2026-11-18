@@ -25,6 +25,10 @@ from geostudio.geomap import GeoMap
 
 GRID = 16
 BACKGROUND = "#ffffff"
+# A pixel counts as ink only if it differs from the paper by more than this
+# (sum over RGB, 0..765). JPEG noise moves nearly every pixel by one or two
+# steps; real drawing is far above the threshold.
+INK_THRESHOLD = 30
 
 # Layer names that exercise the DXF sanitiser: forbidden characters, an
 # over-long name and an unmapped code ("Inne / kod 5200").
@@ -68,7 +72,20 @@ def export_map_bytes() -> bytes:
 def build_export_window(tmp_path: Path) -> GeoStudioWindow:
     window = GeoStudioWindow()
     window.doc = GeoMap(export_map_bytes(), filename="EXPORT.MAP")
+    # GeoStudioWindow restores the libraries the user used last time from
+    # QSettings. That makes rendering depend on whatever ran before, on this
+    # machine and in this session, so the export fixture clears every style
+    # container before rendering. Without this the reference image changes
+    # whenever another test (or another developer) has libraries loaded.
     window.catalog = dict(CATALOG)
+    window.symbols = {}
+    window.cdf_styles = {}
+    window.sym_primitives = {}
+    window.sym_line_patterns = {}
+    window.lay_pen_styles = {}
+    window.visual_styles = {}
+    window.label_positions = {}
+    window.hidden_layers = set()
     window.rebuild_scene(fit=False)
     return window
 
@@ -96,25 +113,44 @@ def _rgb_array(image: QImage):
 
 
 def _png_signature(image: QImage) -> dict:
-    """Coarse, platform-tolerant description of a rendered image."""
+    """Coarse, platform-tolerant description of a rendered image.
+
+    Thin cartographic lines barely move a cell's mean colour, so the content is
+    described by how much ink each cell holds instead: that reacts strongly to
+    geometry moving and hardly at all to antialiasing differences between Qt
+    builds.
+    """
     import numpy as np
 
-    grid_source = _rgb_array(image.scaled(GRID, GRID))
-    cells = grid_source.reshape(GRID * GRID, 3).astype(int).tolist()
-
-    background = image.pixelColor(0, 0).name()
+    reference = np.array(image.pixelColor(0, 0).getRgb()[:3], dtype=int)
     probe = image.scaled(min(image.width(), 512), min(image.height(), 512))
     pixels = _rgb_array(probe).astype(int)
-    reference = np.array(image.pixelColor(0, 0).getRgb()[:3], dtype=int)
-    mask = np.abs(pixels - reference).sum(axis=2) > 0
+    mask = np.abs(pixels - reference).sum(axis=2) > INK_THRESHOLD
+
+    rows, columns = np.nonzero(mask)
     bbox = None
-    if mask.any():
-        rows, columns = np.nonzero(mask)
+    if rows.size:
         scale_x = image.width() / probe.width()
         scale_y = image.height() / probe.height()
         bbox = [int(round(columns.min() * scale_x)), int(round(rows.min() * scale_y)),
                 int(round(columns.max() * scale_x)), int(round(rows.max() * scale_y))]
-    return {"grid": cells, "background": background, "contentBox": bbox}
+
+    ink_grid = []
+    step_y = probe.height() / GRID
+    step_x = probe.width() / GRID
+    for cell_y in range(GRID):
+        for cell_x in range(GRID):
+            y0, y1 = int(cell_y * step_y), max(int((cell_y + 1) * step_y), int(cell_y * step_y) + 1)
+            x0, x1 = int(cell_x * step_x), max(int((cell_x + 1) * step_x), int(cell_x * step_x) + 1)
+            block = mask[y0:y1, x0:x1]
+            ink_grid.append(round(float(block.mean()) if block.size else 0.0, 6))
+
+    return {
+        "background": image.pixelColor(0, 0).name(),
+        "contentBox": bbox,
+        "inkFraction": round(float(mask.mean()) if mask.size else 0.0, 6),
+        "inkGrid": ink_grid,
+    }
 
 
 def _image_facts(path: Path) -> dict:
