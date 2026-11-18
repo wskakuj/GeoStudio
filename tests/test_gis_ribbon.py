@@ -69,6 +69,7 @@ def test_edits_switch_to_edit_tab_and_keep_map_contents(window):
     win = window
     win.doc = GeoMap(fixture_map())
     win.rebuild_scene(fit=False)
+    win._select_uid('DEMO-01')  # Vertex tool needs a selected polygon, not a modal warning.
     original = win.doc.to_bytes()
     count = len(win.map_scene.items())
     win.ribbon.select_tab("Mapa")
@@ -86,7 +87,7 @@ def test_focus_hides_ribbon_but_restores_it_and_panel_visibility(window):
     assert window.workspace.tool_rail.isHidden()
     window.set_workspace("edit")
     assert not window.ribbon_toolbar.isHidden()
-    assert not window.workspace.tool_rail.isHidden() is False
+    assert window.workspace.tool_rail.isHidden()
 
 
 def test_ribbon_theme_switch_and_document_context(window):
