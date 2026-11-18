@@ -1162,7 +1162,7 @@ class GeoStudioWindow(QMainWindow):
         answer = QMessageBox.question(
             self, 'Potwierdź zamianę frazy',
             f'Zamienić „{spec.needle}” na „{spec.replacement}” '
-            f'w polu {spec.field} dla {len(updates)} obiektów?\\n'
+            f'w polu {spec.field} dla {len(updates)} obiektów?\n'
             'Wszystkie zmiany będzie można cofnąć jednym Ctrl+Z. '
             'Oryginalny plik MAP nie zostanie nadpisany.',
             QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
