@@ -181,7 +181,7 @@ class GeoMap:
         for (uid, field), value in values.items():
             if field not in allowed or not isinstance(value, str):
                 raise ValueError('Unsupported replacement field')
-            if any(c in value for c in '\\r\\n]'):
+            if any(c in value for c in '\r\n]'):
                 raise ValueError('Replacement may not contain newlines or closing brackets')
             obj = self.by_id[uid]
             prefix = f':{field}['.encode('ascii')
@@ -190,8 +190,8 @@ class GeoMap:
                 original = self.lines[line_no]
                 if not original.startswith(prefix):
                     continue
-                eol = (b'\\r\\n' if original.endswith(b'\\r\\n') else
-                       b'\\n' if original.endswith(b'\\n') else b'')
+                eol = (b'\r\n' if original.endswith(b'\r\n') else
+                       b'\n' if original.endswith(b'\n') else b'')
                 pending[line_no] = prefix + value.encode('cp1250', errors='strict') + b']' + eol
                 found = True
                 break
