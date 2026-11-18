@@ -139,3 +139,26 @@ def getmap_url(base_url: str, layer: str, crs: str, bounds: WMSBounds,
         ("CRS" if version == "1.3.0" else "SRS"): crs.upper(),
     }
     return _merge(base_url, params)
+
+
+def google_maps_reference_url(map_x: float, map_y: float, source_epsg: int,
+                              zoom: int = 17) -> str:
+    """Official browser Google Maps reference near a GEO-MAP map coordinate.
+
+    Google imagery must not be scraped or republished as custom tiles.
+    map_x is northing and map_y easting, unlike pyproj's (east,north).
+    """
+    from .coordinates import KNOWN_EPSG
+    if source_epsg not in KNOWN_EPSG:
+        raise ValueError("Wybierz obsługiwany i zweryfikowany układ mapy.")
+    if not all(isfinite(v) for v in (map_x, map_y)):
+        raise ValueError("Nieprawidłowe współrzędne.")
+    if not 1 <= zoom <= 21:
+        raise ValueError("Nieprawidłowy zoom Google Maps.")
+    from pyproj import Transformer
+    transform = Transformer.from_crs(
+        f"EPSG:{source_epsg}", "EPSG:4326", always_xy=True)
+    longitude, latitude = transform.transform(map_y, map_x, errcheck=True)
+    if not (-90 <= latitude <= 90 and -180 <= longitude <= 180):
+        raise ValueError("Punkt znajduje się poza zakresem współrzędnych geograficznych.")
+    return f"https://www.google.com/maps/@{latitude:.7f},{longitude:.7f},{zoom}z"
