@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import unicodedata
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QEvent, Qt
 from PySide6.QtWidgets import (
     QDialog, QFrame, QHBoxLayout, QLabel, QLineEdit, QListWidget,
     QListWidgetItem, QVBoxLayout,
@@ -44,6 +44,7 @@ class CommandPalette(QDialog):
         self.query.setPlaceholderText("Np. skala, poligon, DXF, warstwy…")
         self.query.setClearButtonEnabled(True)
         self.query.textChanged.connect(self._refresh)
+        self.query.installEventFilter(self)
         self.query.returnPressed.connect(self.activate_current)
         root.addWidget(self.query)
 
@@ -59,6 +60,21 @@ class CommandPalette(QDialog):
         footer_row.setContentsMargins(4, 4, 4, 4)
         footer_row.addWidget(QLabel("↑ ↓  Wybierz     Enter  Uruchom     Esc  Zamknij"))
         root.addWidget(footer)
+
+    def eventFilter(self, watched, event):
+        if watched is self.query and event.type() == QEvent.Type.KeyPress:
+            key = event.key()
+            if key in (Qt.Key.Key_Down, Qt.Key.Key_Up):
+                direction = 1 if key == Qt.Key.Key_Down else -1
+                current = self.results.currentRow()
+                for offset in range(1, self.results.count() + 1):
+                    candidate = (current + direction * offset) % self.results.count()
+                    item = self.results.item(candidate)
+                    if item.flags() & Qt.ItemFlag.ItemIsEnabled:
+                        self.results.setCurrentRow(candidate)
+                        break
+                return True
+        return super().eventFilter(watched, event)
 
     def set_commands(self, commands):
         """Load (label, QAction) pairs, retaining exact original action objects."""
