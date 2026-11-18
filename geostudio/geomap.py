@@ -193,6 +193,12 @@ class GeoMap:
                 coords[index] = (x, y)
             if not polygon_is_valid(coords):
                 raise ValueError('Polygon must have three distinct non-collinear vertices')
+            # In topology mode collapsing an existing distinct corner onto
+            # another vertex would create a zero-length edge. Even though the
+            # signed area might stay nonzero, do not silently corrupt a ring.
+            before = [(p.x, p.y) for p in obj.points[:-1]]
+            if len(set(before)) == len(before) and len(set(coords)) < len(coords):
+                raise ValueError('The edit would collapse two distinct polygon vertices')
             records = [(i, POINT_RE.match(raw.rstrip(b'\r\n')))
                        for i, raw in enumerate(self.lines[obj.start+1:obj.end], obj.start+1)]
             records = [(i, match) for i, match in records if match]
