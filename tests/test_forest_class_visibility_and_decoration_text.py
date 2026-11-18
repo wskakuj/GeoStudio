@@ -92,23 +92,18 @@ def test_forest_class_filter_is_per_grade_and_hides_geometries_labels_picks_snap
     assert window.graphics_for_uid["GRADE5"].isVisible()
 
 
-def test_forest_context_menu_contains_checkable_grades(window, monkeypatch):
-    row = next(i for i in range(window.layers_tree.topLevelItemCount())
-               if window.layers_tree.topLevelItem(i).text(0) == FOREST_LAYER)
-    window.layers_tree.setCurrentItem(window.layers_tree.topLevelItem(row))
-    rect = window.layers_tree.visualItemRect(window.layers_tree.topLevelItem(row))
-    captured = []
-    def intercept(menu, *_args):
-        captured.extend(menu.actions())
-        return None
-    monkeypatch.setattr(QMenu, "exec", intercept)
-    window.open_layer_context_menu(rect.center())
-    submenus = [action.menu() for action in captured if action.menu()]
-    class_menu = next(m for m in submenus if "Klasoużytki" in m.title())
+def test_forest_context_menu_contains_checkable_grades(window):
+    menu = QMenu()
+    class_menu = window._add_forest_class_menu(menu)
     actions = [item for item in class_menu.actions() if item.isCheckable()]
     assert len(actions) == 3
     assert all(action.isChecked() for action in actions)
     assert any(action.text().startswith("LsVI") for action in actions)
+    # Qt QAction emits the desired bool; this is the real menu callback.
+    grade_v = next(action for action in actions if action.text().startswith("LsV ("))
+    grade_v.trigger()
+    assert forest_hidden_classes(window.visual_styles) == {"LsV"}
+    assert not window.graphics_for_uid["GRADE5"].isVisible()
 
 
 def _render_decoration(kind, *, details=None, items=None):
