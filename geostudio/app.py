@@ -544,6 +544,7 @@ class GeoStudioWindow(QMainWindow):
         # the inspector or a search field must not switch map tools.
         for title, callback, shortcut in (
                 ('Rysuj poligon', self.start_polygon, 'N'),
+                ('Rysuj linię', self.start_polyline, 'I'),
                 ('Edytuj węzły / wierzchołki', self.start_vertex_edit, 'P'),
                 ('Parametry aktywnego obiektu…', self.show_active_object_parameters, 'E')):
             action = self._action(title, callback, shortcut)
@@ -755,6 +756,7 @@ class GeoStudioWindow(QMainWindow):
             ('select', 'Zaznacz', 'select', self.cancel_edit, 'Zaznacz obiekt (S); Ctrl+klik dodaje/usuwa'),
             ('pan', 'Przesuń', 'hand', self.start_pan, 'Przesuwaj mapę (H)'),
             ('draw', 'Poligon', 'polygon', self.start_polygon, 'Narysuj poligon (N)'),
+            ('line', 'Linia', 'polygon', self.start_polyline, 'Narysuj linię od dwóch punktów (I)'),
             ('edit', 'Węzły', 'vertices', self.start_vertex_edit, 'Edytuj wierzchołki (P)'),
             ('labels', 'Etykiety', 'label', self.start_label_edit, 'Przesuwaj napisy A1/A2 (L)'),
         ]:
@@ -2913,15 +2915,24 @@ class GeoStudioWindow(QMainWindow):
         self.status.showMessage('Zaznaczanie [S]. Prawy przycisk pokazuje listę obiektów w miejscu kliknięcia.')
 
     def start_polygon(self):
-        """N shortcut / ribbon entry for creating a new polygon."""
+        """N shortcut / ribbon entry, auto-detecting line code 6900."""
         if not self.doc:
             return
         code, ok = QInputDialog.getText(
-            self, 'Nowy poligon', 'Kod GEO-MAP:', text=self.polygon_code)
+            self, 'Nowy obiekt', 'Kod GEO-MAP:', text=self.polygon_code)
         if ok:
             self._start_polygon_with_code(code)
 
-    def _start_polygon_with_code(self, code):
+    def start_polyline(self):
+        """I: draw an open line of any selected code with two or more points."""
+        if not self.doc:
+            return
+        code, ok = QInputDialog.getText(
+            self, 'Nowa linia', 'Kod GEO-MAP:', text='6900')
+        if ok:
+            self._start_polygon_with_code(code, geometry_kind='line')
+
+    def _start_polygon_with_code(self, code, *, geometry_kind=None):
         if not self.doc:
             return
         code = str(code).strip()
@@ -2930,19 +2941,25 @@ class GeoStudioWindow(QMainWindow):
             return
         self.cancel_edit()
         self.polygon_code = code
+        self.draw_geometry_kind = (geometry_kind or
+                                   ('line' if code == '6900' else 'polygon'))
         self.current_polygon = []
         self.view.draw_mode = True
         self.view.setCursor(Qt.CrossCursor)
-        self.tool_actions['draw'].setChecked(True)
-        self._set_mode_badge('RYSOWANIE POLIGONU')
+        self.tool_actions['line' if self.draw_geometry_kind == 'line' else 'draw'].setChecked(True)
+        self._set_mode_badge('RYSOWANIE LINII' if self.draw_geometry_kind == 'line'
+                             else 'RYSOWANIE POLIGONU')
         self.view.setDragMode(QGraphicsView.NoDrag)
         self._ensure_feedback_items()
         self.finish_toolbar_action.setVisible(True)
+        self.finish_toolbar_action.setText(
+            'Zakończ linię' if self.draw_geometry_kind == 'line' else 'Zakończ poligon')
         self.undo_toolbar_action.setVisible(True)
         self.finish_action.setEnabled(True)
         self.status.showMessage(
-            f'Rysowanie kodu {code}: klikaj wierzchołki. Enter lub PPM kończy '
-            'poligon; Esc cofa ostatni punkt.')
+            f'Rysowanie {("linii" if self.draw_geometry_kind == "line" else "poligonu")} '
+            f'kodu {code}: klikaj punkty. Enter lub PPM kończy; '
+            'Esc cofa ostatni punkt.')
 
     def preview_polygon(self, x, y):
         if not self.view.draw_mode:
@@ -2951,7 +2968,7 @@ class GeoStudioWindow(QMainWindow):
         snap = self._snap(x, y)
         self.current_snap = snap
         px, py = (snap.x, snap.y) if snap else (x, y)
-        if len(self.current_polygon) >= 3:
+        if self.draw_geometry_kind != 'line' and len(self.current_polygon) >= 3:
             start = self.current_polygon[0]
             cursor = self.view.mapFromScene(QPointF(x, -y))
             anchor = self.view.mapFromScene(QPointF(start[0], -start[1]))
@@ -2971,7 +2988,7 @@ class GeoStudioWindow(QMainWindow):
         # Close on a click within a 14-pixel radius of the FIRST point.
         # Screen coordinates are essential: one fixed map-unit tolerance
         # would behave unpredictably when the user zooms.
-        if len(self.current_polygon) >= 3:
+        if self.draw_geometry_kind != 'line' and len(self.current_polygon) >= 3:
             initial = self.current_polygon[0]
             cursor = self.view.mapFromScene(QPointF(x, -y))
             anchor = self.view.mapFromScene(QPointF(initial[0], -initial[1]))
@@ -2980,7 +2997,8 @@ class GeoStudioWindow(QMainWindow):
                 return
         snap = self._snap(x, y)
         px, py = (snap.x, snap.y) if snap else (x, y)
-        if len(self.current_polygon) >= 3 and (px, py) == self.current_polygon[0]:
+        if (self.draw_geometry_kind != 'line' and len(self.current_polygon) >= 3
+                and (px, py) == self.current_polygon[0]):
             self.finish_polygon()
             return
         if self.current_polygon and self.current_polygon[-1] == (px,py):
@@ -3024,7 +3042,9 @@ class GeoStudioWindow(QMainWindow):
     def _ask_polygon_attributes(self):
         """Full form for new-object attributes; blanks are stored as editable empty fields."""
         dialog = QDialog(self)
-        dialog.setWindowTitle(f'Nowy poligon {self.polygon_code} — atrybuty')
+        dialog.setWindowTitle(
+            f'Nowa {"linia" if self.draw_geometry_kind == "line" else "powierzchnia"} '
+            f'{self.polygon_code} — atrybuty')
         dialog.resize(560, 480)
         layout = QFormLayout(dialog)
         entries = {}
@@ -3059,21 +3079,35 @@ class GeoStudioWindow(QMainWindow):
         points = self.current_polygon[:]
         if len(points) > 1 and points[0] == points[-1]:
             points.pop()
-        if not polygon_is_valid(points):
-            QMessageBox.warning(self, 'Poligon',
+        line = self.draw_geometry_kind == 'line'
+        if line:
+            valid = (len(points) >= 2 and len(set(points)) >= 2
+                     and all(a != b for a, b in zip(points, points[1:])))
+        else:
+            valid = polygon_is_valid(points)
+        if not valid:
+            QMessageBox.warning(
+                self, 'Linia' if line else 'Poligon',
+                'Wymagane co najmniej 2 różne punkty linii.' if line else
                 'Wymagane co najmniej 3 różne, niewspółliniowe punkty.')
             return
         attrs = self._ask_polygon_attributes()
         if attrs is None:
             return
         try:
-            with self.history.begin(f'Nowy poligon {self.polygon_code}'):
-                uid = self.doc.append_polygon(points, self.polygon_code, fields=attrs)
+            with self.history.begin(
+                    f'Nowa linia {self.polygon_code}' if line else
+                    f'Nowy poligon {self.polygon_code}'):
+                uid = (self.doc.append_polyline(points, self.polygon_code, fields=attrs)
+                       if line else self.doc.append_polygon(
+                           points, self.polygon_code, fields=attrs))
             self._history_changed()
             self.cancel_edit()
             self.rebuild_scene(fit=False, reselect=uid)
             saved = self._autosave_work_copy()
-            self.status.showMessage('Zamknięto poligon i zapisano pola A1–A6, TX i metadane.' +
+            self.status.showMessage(
+                ('Zapisano linię otwartą.' if line else 'Zamknięto poligon.') +
+                ' Zapisano atrybuty A1–A6 i metadane.' +
                 (f' Kopia robocza: {saved}' if saved else ' Użyj Zapisz jako, by zapisać kopię mapy.'))
         except Exception as exc:
             QMessageBox.warning(self, 'Błąd rysowania', str(exc))
