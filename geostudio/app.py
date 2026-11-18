@@ -324,12 +324,8 @@ class GeoStudioWindow(QMainWindow):
              'layers', 'Podkłady'),
         )
         online = ribbon.group('Dane', 'Mapy online')
-        online.stack(
-            (self._action('Podgląd WMS…', self.show_wms_dialog),
-             'layers', 'WMS — pod mapą'),
-            (self._action('Google Earth w GeoStudio', self.open_google_maps),
-             'compass', 'Google Earth'),
-        )
+        online.action(self._action('WMS', self.show_wms_dialog),
+                      'layers', large=True, text='WMS')
         coordinates = ribbon.group('Dane', 'Współrzędne')
         coordinates.action(
             self._action('Transformuj układ', self.open_crs_converter),
@@ -613,9 +609,7 @@ class GeoStudioWindow(QMainWindow):
         self.view_menu = vm
         map_sources = vm.addMenu('Mapy online')
         map_sources.addAction(
-            self._action('Podgląd warstw WMS…', self.show_wms_dialog))
-        map_sources.addAction(
-            self._action('Google Earth — w oknie programu (bez API)…', self.open_google_maps))
+            self._action('WMS', self.show_wms_dialog))
         self.command_palette_action = self._action(
             'Znajdź polecenie…', self.show_command_palette, 'Ctrl+K')
         vm.addAction(self.command_palette_action)
