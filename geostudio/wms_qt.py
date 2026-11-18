@@ -129,6 +129,9 @@ class WMSDialog(QDialog):
         self.server_selector.addItem(
             "Geoportal — ortofotomapa wysokiej rozdzielczości",
             "https://mapy.geoportal.gov.pl/wss/service/PZGIK/ORTO/WMS/HighResolution")
+        self.server_selector.addItem(
+            "Działki ewidencyjne + numery (GUGiK KIEG)",
+            "https://integracja.gugik.gov.pl/cgi-bin/KrajowaIntegracjaEwidencjiGruntow")
         self.server_selector.addItem("Własny adres serwera WMS…", "custom")
         self.server_selector.addItem(
             "SmartSDI — dane EGiB/PRG (wtyczka QGIS, nie WMS)", "smartsdi")
@@ -140,7 +143,8 @@ class WMSDialog(QDialog):
         self.address.textEdited.connect(self._custom_address_entered)
         form.addRow("Adres WMS", self.address)
         preset = self.server_selector.findData(self.address.text())
-        self.server_selector.setCurrentIndex(preset if preset >= 0 else 2)
+        self.server_selector.setCurrentIndex(
+            preset if preset >= 0 else self.server_selector.findData("custom"))
         # Ordinary users should select one of the actual server-advertised
         # layers, not guess an internal identifier in an editable text field.
         self.layer_selector = QComboBox()
@@ -217,6 +221,8 @@ class WMSDialog(QDialog):
             self.capabilities_button.setEnabled(True)
         if selected not in ("custom", None):
             self.address.setText(selected)
+        if selected and "KrajowaIntegracjaEwidencjiGruntow" in selected:
+            self.opacity.setValue(100) if hasattr(self, "opacity") else None
         if hasattr(self, "layer_selector"):
             self._show_layers_failure()
 
@@ -308,6 +314,26 @@ class WMSDialog(QDialog):
                     "Serwer odpowiedział, ale nie udostępnił żadnej warstwy WMS. "
                     "Sprawdź adres usługi GetCapabilities.")
                 return
+            # The official GUGiK KIEG publishes the parcel boundaries and
+            # number text as separate WMS layers. A synthetic selection joins
+            # both into ONE GetMap using the standard comma-separated LAYERS.
+            # Only offer the preset when both are advertised by the service.
+            if "KrajowaIntegracjaEwidencjiGruntow" in self.address.text():
+                by_name = {item.name.casefold(): item for item in self._layers}
+                parcels = by_name.get("dzialki")
+                numbers = by_name.get("numery_dzialek")
+                if parcels and numbers:
+                    # Use only CRS codes supported by *both* layers.
+                    common = tuple(sorted(set(parcels.crs) & set(numbers.crs)))
+                    if not parcels.crs or not numbers.crs:
+                        common = parcels.crs or numbers.crs
+                    combo = WMSLayerInfo(
+                        "dzialki,numery_dzialek", "Działki i numery ewidencyjne",
+                        common, "Źródło: GUGiK, KIEG WMS")
+                    self._layers.insert(0, combo)
+                    self.message.setText(
+                        "Działki i numery są warstwą przeglądową WMS, a nie "
+                        "geometrią do edycji. Wybierz zgodny układ MAP i kliknij Pokaż WMS.")
             for info in self._layers:
                 label = info.title if info.title == info.name else f"{info.title}  ({info.name})"
                 self.layer_selector.addItem(label, info.name)
