@@ -12,18 +12,21 @@ A1/A2; nie są to dodatkowe osobne obiekty w pliku MAP.
 Węzły: jednoczesne przesunięcie współdzielonego narożnika dotyczy
 wyłącznie poligonów **tego samego kodu**. Nie włączono modyfikacji innych
 typów obiektów ani automatycznego wycinania nakładających się powierzchni.
-W trybie węzłów można przyciągać edytowany punkt do wierzchołków i krawędzi **dowolnego kodu**, w tym do graniczników. Samo przyciągnięcie nie modyfikuje obiektu docelowego; przy zatwierdzeniu przesunięcia synchronizują się tylko węzły poligonów **tego samego kodu** co edytowany.
+W trybie węzłów można przyciągać edytowany punkt do wierzchołków i krawędzi **dowolnego kodu**, w tym do graniczników. Samo przyciągnięcie nie modyfikuje obiektu docelowego. Przycisk **Wspólne węzły** decyduje, czy przesuwają się też węzły poligonów **tego samego kodu** co edytowany; po wyłączeniu porusza się wyłącznie bieżący obiekt.
 
 ## Nowe skróty klawiszowe
 | Skrót | Akcja |
 | --- | --- |
 | **T** | Okno „Podaj kod tworzonego obiektu”: kod 4-cyfrowy, nazwa, lista symboli GEO-MAP |
-| **F** | Okno wyszukiwania: kod, A1/A2 i opcjonalny drugi warunek |
-| **Ctrl+H** | Szczegółowe zaznaczanie grupy: sam kod albo kod wraz z A1/A2; dokładne dopasowanie lub „zawiera” |
+| **F** | Okno wyszukiwania i zaznaczania grupy: kod, A1/A2, warunek dokładny lub „zawiera” |
+| **Ctrl+L** | Zaznacz wszystkie widoczne obiekty aktualnie aktywnego kodu |
+| **B** | Utrwal zaznaczenie podświetlonego obiektu, aby kolejne kliknięcia go nie usuwały |
+| **Ctrl+Shift+B** | Wyczyść utrwalone zaznaczenie |
 | **Ctrl+F** | Zamiana frazy w wybranym polu A1–A6 lub TX, w zaznaczonych obiektach albo całej mapie |
 | **E** | Okno „Parametry aktywnego obiektu”: atrybuty A1–A6, TX, MP, KR oraz zakładka współrzędnych punktów |
 | **P** | Edycja węzłów zaznaczonego poligonu |
-| **N** | Nowy poligon — dotychczasowe proste rysowanie z pytaniem o kod |
+| **N** | Nowy poligon — kod 6900 automatycznie jest linią od 2 punktów |
+| **I** | Otwarta linia dowolnego kodu od 2 punktów |
 | **S/H/L** | Zaznaczanie / przesuwanie mapy / przesuwanie etykiet |
 | **Ctrl+T** | Istniejące przeliczanie współrzędnych — bez zmian |
 
