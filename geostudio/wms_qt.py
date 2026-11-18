@@ -183,7 +183,7 @@ class WMSDialog(QDialog):
         if self.window._wms_preview.item is not None:
             self.window._wms_preview.item.setOpacity(value / 100.)
 
-    def _request(self, url: str, callback):
+    def _request(self, url: str, callback, *, fetching_layers=False):
         if self.pending is not None:
             return
         req = QNetworkRequest(QUrl(url))
@@ -201,19 +201,32 @@ class WMSDialog(QDialog):
             self.map_button.setEnabled(
                 self.layer_selector.isEnabled() and self.layer_selector.currentData() is not None)
             if reply.error() != QNetworkReply.NetworkError.NoError:
+                if fetching_layers:
+                    self._show_layers_failure()
                 self.message.setText("Błąd połączenia WMS: " + reply.errorString())
             else:
                 payload = bytes(reply.readAll())
                 if len(payload) > 15_000_000:
+                    if fetching_layers:
+                        self._show_layers_failure()
                     self.message.setText("WMS zwrócił zbyt duży plik.")
                 else:
                     try:
                         callback(payload)
                     except (ValueError, TypeError) as exc:
+                        if fetching_layers:
+                            self._show_layers_failure()
                         self.message.setText("Błąd odpowiedzi WMS: " + str(exc))
             reply.deleteLater()
 
         reply.finished.connect(finished)
+
+    def _show_layers_failure(self):
+        self._layers = []
+        self.layer_selector.clear()
+        self.layer_selector.addItem("Nie pobrano warstw — spróbuj ponownie", None)
+        self.layer_selector.setEnabled(False)
+        self.map_button.setEnabled(False)
 
     def fetch_layers(self):
         try:
@@ -253,7 +266,7 @@ class WMSDialog(QDialog):
                 f"Pobrano {len(self._layers)} warstw. Rozwiń listę «Warstwa WMS» "
                 "i wybierz pozycję, następnie wskaż zgodny EPSG.")
 
-        self._request(url, received)
+        self._request(url, received, fetching_layers=True)
 
     def _selected_layer(self):
         stored = self.layer_selector.currentData()
