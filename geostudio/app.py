@@ -46,6 +46,7 @@ from .ui_theme import theme_stylesheet, ui_icon
 from .workspace_shell import MapWorkspace
 from .gis_ribbon import GISRibbon
 from .command_palette import CommandPalette
+from .document_sessions import MapSession
 from .wms_qt import WMSPreviewOverlay, WMSDialog
 from .google_preview import GoogleMapsPreviewDialog
 from .raster_overlay import RasterOverlayStore
@@ -96,6 +97,9 @@ class GeoStudioWindow(QMainWindow):
             self.theme_mode = 'light'
         self._ui_icon_actions = []
         self._command_palette = None
+        self._map_sessions = []
+        self._active_map_tab = -1
+        self._tab_change_guard = False
         self.workspace_mode = 'edit'
         self._last_workspace = 'edit'
         self.doc: GeoMap | None=None
@@ -204,6 +208,9 @@ class GeoStudioWindow(QMainWindow):
             on_fit=self.fit_all, on_focus=self.toggle_focus_workspace)
         self.setCentralWidget(self.workspace)
         self.workspace.set_document(None)
+        self.workspace.document_tabs.currentChanged.connect(self._activate_map_tab)
+        self.workspace.document_tabs.tabCloseRequested.connect(self.close_map_tab)
+        self.workspace.new_map_button.clicked.connect(self.open_map)
 
 
     def _install_arcgis_ribbon(self):
@@ -367,6 +374,11 @@ class GeoStudioWindow(QMainWindow):
         if hasattr(self, 'ribbon'):
             self.ribbon.set_document(
                 self.doc.filename if self.doc else None, dirty=self.history.is_dirty)
+        if (0 <= self._active_map_tab < len(self._map_sessions) and
+                hasattr(self, 'workspace')):
+            self.workspace.document_tabs.setTabText(
+                self._active_map_tab,
+                Path(self.doc.filename).name + (' *' if self.history.is_dirty else ''))
 
     def _history_changed(self):
         self._update_dirty_title()
@@ -1189,19 +1201,27 @@ class GeoStudioWindow(QMainWindow):
             self, 'Otwórz mapę GEO-MAP',
             self._recent_folder('last_map_dir'), 'GEO-MAP (*.MAP *.map)')
         if not file:return
-        if self.doc is not None and self.history.is_dirty:
-            answer=QMessageBox.warning(self,'Niezapisane zmiany',
-                'Bieżąca mapa ma zmiany, które nie zostały zapisane. '
-                'Otwarcie innej mapy odrzuci je i wyczyści historię. Kontynuować?',
-                QMessageBox.Yes|QMessageBox.No, QMessageBox.No)
-            if answer!=QMessageBox.Yes:return
+        # A new map opens a NEW document tab. The previously active map,
+        # including its dirty history, remains available and editable.
+        for idx, session in enumerate(self._map_sessions):
+            if Path(session.filename).resolve() == Path(file).resolve():
+                self.workspace.document_tabs.setCurrentIndex(idx)
+                return
         try:
             doc=GeoMap.open(file)
             if not doc.checksum_valid:
                 answer=QMessageBox.warning(self,'Suma kontrolna','Suma MD5 pliku nie zgadza się z nagłówkiem. Otworzyć tylko do podglądu?',QMessageBox.Yes|QMessageBox.No)
                 if answer!=QMessageBox.Yes:return
+            self._capture_active_map_tab()
+            if self.doc is not None:
+                self.cancel_edit()
+                self._close_document_dialogs()
             self.doc=doc
-            self._wms_preview.clear(self.map_scene)
+            self.history = History(_MapHistoryTarget(self))
+            self._raster_overlay = RasterOverlayStore()
+            self._wms_preview = WMSPreviewOverlay()
+            self.hidden_layers = set()
+            self.select_code_filter = None
             self._update_wms_attribution()
             self.current_crs_epsg = detected_crs_from_prj(file)
             self.selected_uid = ''
@@ -1234,9 +1254,114 @@ class GeoStudioWindow(QMainWindow):
             self._label_history = None
             self.history.clear()
             self._base_title = 'GeoStudio v0.14 — '+Path(file).name
-            self._update_dirty_title()
-            self.status.showMessage(f'{len(doc.objects)} obiektów, {len(doc.lines)} wierszy | {file}')
+            self._append_current_map_tab()
+            self.status.showMessage(
+                f'Otwarto nową zakładkę: {Path(file).name} — '
+                f'{len(doc.objects)} obiektów, {len(doc.lines)} wierszy.')
         except Exception as exc: QMessageBox.critical(self,'Błąd odczytu mapy',str(exc))
+
+    def _capture_active_map_tab(self):
+        if 0 <= self._active_map_tab < len(self._map_sessions) and self.doc:
+            self._map_sessions[self._active_map_tab].capture(self)
+
+    def _close_document_dialogs(self):
+        """Prevent late network/GCP callbacks from writing into another MAP."""
+        self._raster_map_picker = None
+        if self._raster_calibration_dialog is not None:
+            self._raster_calibration_dialog.close()
+            self._raster_calibration_dialog = None
+        if self._wms_dialog is not None:
+            if self._wms_dialog.pending is not None:
+                self._wms_dialog.pending.abort()
+            self._wms_dialog.close()
+            self._wms_dialog = None
+        if self._google_dialog is not None:
+            self._google_dialog.close()
+            self._google_dialog = None
+
+    def _append_current_map_tab(self):
+        session = MapSession(self)
+        self._map_sessions.append(session)
+        self._tab_change_guard = True
+        try:
+            idx = self.workspace.document_tabs.addTab(Path(self.doc.filename).name)
+            self.workspace.document_tabs.setTabToolTip(idx, str(self.doc.filename))
+            self.workspace.document_tabs.setCurrentIndex(idx)
+            self._active_map_tab = idx
+            self.workspace.map_tabs_frame.show()
+        finally:
+            self._tab_change_guard = False
+        self._update_dirty_title()
+
+    def _activate_map_tab(self, index):
+        if self._tab_change_guard or index < 0 or index == self._active_map_tab:
+            return
+        if index >= len(self._map_sessions):
+            return
+        self._capture_active_map_tab()
+        self.cancel_edit()
+        self._close_document_dialogs()
+        self._active_map_tab = index
+        self._map_sessions[index].restore(self)
+        self.status.showMessage(
+            f'Aktywna mapa: {Path(self.doc.filename).name}. '
+            f'{len(self.doc.objects)} obiektów. Historia zmian jest niezależna.')
+
+    def close_map_tab(self, index):
+        if not 0 <= index < len(self._map_sessions):
+            return
+        session = self._map_sessions[index]
+        if index == self._active_map_tab:
+            self._capture_active_map_tab()
+        if session.dirty:
+            answer = QMessageBox.question(
+                self, 'Zamknąć mapę z niezapisanymi zmianami?',
+                f'{Path(session.filename).name} zawiera niezapisane zmiany. '
+                'Zamknięcie jej zakładki odrzuci edycję w pamięci. '
+                'Kopia robocza, jeśli istnieje, pozostanie na dysku. '
+                'Zamknąć bez zapisywania jako nowy MAP?',
+                QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
+            if answer != QMessageBox.Yes:
+                return
+
+        closing_active = index == self._active_map_tab
+        self._tab_change_guard = True
+        try:
+            self._map_sessions.pop(index)
+            self.workspace.document_tabs.removeTab(index)
+        finally:
+            self._tab_change_guard = False
+        if not closing_active:
+            if index < self._active_map_tab:
+                self._active_map_tab -= 1
+            return
+
+        self.cancel_edit()
+        self._close_document_dialogs()
+        self._active_map_tab = -1
+        if self._map_sessions:
+            replacement = min(index, len(self._map_sessions) - 1)
+            self._tab_change_guard = True
+            try:
+                self.workspace.document_tabs.setCurrentIndex(replacement)
+            finally:
+                self._tab_change_guard = False
+            self._activate_map_tab(replacement)
+        else:
+            self.doc = None
+            self.history = History(_MapHistoryTarget(self))
+            self._raster_overlay = RasterOverlayStore()
+            self._wms_preview = WMSPreviewOverlay()
+            self.map_scene.clear()
+            self.selected_uids = []
+            self.selected_uid = ''
+            self.layers_tree.clear()
+            self.props.clear()
+            self.workspace.map_tabs_frame.hide()
+            self._base_title = 'GeoStudio v0.14 — eksperymentalny edytor GEO-MAP'
+            self._update_dirty_title()
+            self._update_wms_attribution()
+            self.status.showMessage('Wszystkie mapy zamknięte. Otwórz plik MAP (Ctrl+O).')
 
     def _load_saved_libraries(self):
         """Remember stable library locations across sessions, never bundle vendor files."""

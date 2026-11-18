@@ -402,6 +402,41 @@ QFrame#GeoStudioPaletteFooter {
     border-top: 1px solid @border@; color: @muted@;
 }
 """
+    css += """
+/* Workspace document tabs: ArcGIS-like, compact and high-contrast. */
+QFrame#GeoStudioMapTabsFrame {
+    background: @toolbar@; border: none;
+    border-bottom: 1px solid @border@;
+}
+QTabBar#GeoStudioMapDocumentTabs {
+    background: transparent;
+}
+QTabBar#GeoStudioMapDocumentTabs::tab {
+    background: @toolbar@; border: 1px solid @border@;
+    border-bottom: 2px solid transparent; color: @muted@;
+    border-top-left-radius: 7px; border-top-right-radius: 7px;
+    padding: 8px 20px 8px 13px; margin-right: 3px;
+    min-width: 105px; max-width: 245px;
+    font-weight: 550; font-size: 9.5pt;
+}
+QTabBar#GeoStudioMapDocumentTabs::tab:selected {
+    background: @surface@; color: @text@;
+    border-bottom: 2px solid @accent@; font-weight: 700;
+}
+QTabBar#GeoStudioMapDocumentTabs::tab:hover:!selected {
+    background: @hover@; color: @text@;
+}
+QToolButton#GeoStudioNewMapTabButton {
+    background: transparent; color: @text@;
+    font-size: 16pt; font-weight: 650;
+    min-width: 32px; min-height: 28px;
+    padding: 0px; border: 1px solid transparent;
+    border-radius: 6px;
+}
+QToolButton#GeoStudioNewMapTabButton:hover {
+    background: @hover@; border-color: @border@;
+}
+"""
     for key, value in c.items():
         css = css.replace(f"@{key}@", value)
     return css
