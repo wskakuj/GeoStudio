@@ -14,8 +14,8 @@ from pathlib import Path
 from collections import defaultdict
 
 try:
-    from PySide6.QtCore import Qt, QPoint, QPointF, QRectF, QSize, QSettings, Signal
-    from PySide6.QtGui import QAction, QBrush, QColor, QFont, QPainterPath, QPen, QPixmap, QTransform, QActionGroup
+    from PySide6.QtCore import Qt, QPoint, QPointF, QRectF, QSize, QSettings, Signal, QUrl
+    from PySide6.QtGui import QAction, QBrush, QColor, QFont, QPainterPath, QPen, QPixmap, QTransform, QActionGroup, QDesktopServices
     from PySide6.QtWidgets import (QApplication, QMainWindow, QFileDialog, QGraphicsView, QGraphicsScene,
         QGraphicsPathItem, QGraphicsEllipseItem, QGraphicsPixmapItem, QGraphicsSimpleTextItem, QGraphicsItem, QDockWidget,
         QTreeWidget, QTreeWidgetItem, QToolBar, QMessageBox, QStatusBar, QInputDialog, QMenu,
@@ -45,6 +45,8 @@ from .ui_theme import theme_stylesheet, ui_icon
 from .workspace_shell import MapWorkspace
 from .gis_ribbon import GISRibbon
 from .command_palette import CommandPalette
+from .wms_qt import WMSPreviewOverlay, WMSDialog
+from .wms_service import google_maps_reference_url
 from .library_render import (parse_cdf, parse_sym_primitives, cdf_for_object,
     native_fill_color, simple_point_segments, simple_point_circles,
     parse_lay_pen_styles, lay_for_code,
@@ -140,6 +142,8 @@ class GeoStudioWindow(QMainWindow):
         self.current_polygon:list[tuple[float,float]]=[]
         self.polygon_code='5216'
         self.history = History(_MapHistoryTarget(self))
+        self._wms_preview = WMSPreviewOverlay()
+        self._wms_dialog = None
         self._label_history = None
         self.map_scene=QGraphicsScene(self)
         # Custom feature picking handles overlapping objects without Qt selection.
@@ -276,6 +280,13 @@ class GeoStudioWindow(QMainWindow):
         rasters = ribbon.group('Dane', 'Rastry')
         rasters.action(self._action('Dodaj raster', self.add_raster),
                        'image', large=True, text='Dodaj raster')
+        online = ribbon.group('Dane', 'Mapy online')
+        online.stack(
+            (self._action('Podgląd WMS…', self.show_wms_dialog),
+             'layers', 'WMS — pod mapą'),
+            (self._action('Google Maps (przeglądarka)', self.open_google_maps),
+             'compass', 'Google Maps ↗'),
+        )
         coordinates = ribbon.group('Dane', 'Współrzędne')
         coordinates.action(
             self._action('Transformuj układ', self.open_crs_converter),
@@ -501,6 +512,10 @@ class GeoStudioWindow(QMainWindow):
             self.open_crs_converter, 'Ctrl+T'))
         vm=self.menuBar().addMenu('&Widok')
         self.view_menu = vm
+        sources = vm.addMenu('Mapy online')
+        sources.addAction(self._action('Podgląd warstw WMS…', self.show_wms_dialog))
+        sources.addAction(self._action('Google Maps — otwórz punkt w przeglądarce…',
+                                        self.open_google_maps))
         self.command_palette_action = self._action(
             'Znajdź polecenie…', self.show_command_palette, 'Ctrl+K')
         vm.addAction(self.command_palette_action)
@@ -1159,6 +1174,8 @@ class GeoStudioWindow(QMainWindow):
                 answer=QMessageBox.warning(self,'Suma kontrolna','Suma MD5 pliku nie zgadza się z nagłówkiem. Otworzyć tylko do podglądu?',QMessageBox.Yes|QMessageBox.No)
                 if answer!=QMessageBox.Yes:return
             self.doc=doc
+            self._wms_preview.clear(self.map_scene)
+            self._update_wms_attribution()
             self.current_crs_epsg = detected_crs_from_prj(file)
             self.selected_uid = ''
             self.settings.setValue('last_map_dir', str(Path(file).parent))
@@ -1278,7 +1295,9 @@ class GeoStudioWindow(QMainWindow):
     def rebuild_scene(self, *, fit=True, reselect=''):
         if not self.doc:
             return
+        self._wms_preview.clear_items()
         result = build_scene(self.map_scene, self.doc, self._render_context())
+        self._wms_preview.attach(self.map_scene)
         self.geometry_index = result.geometry_index
         self.layer_for_uid = result.layer_for_uid
         self.graphics_for_uid = result.graphics_for_uid
@@ -2054,6 +2073,10 @@ class GeoStudioWindow(QMainWindow):
         self.compilation_label=QLabel(self)
         self.compilation_label.setObjectName('GeoStudioCompilationScale')
         self.status.addPermanentWidget(self.compilation_label)
+        self.wms_source_label = QLabel(self)
+        self.wms_source_label.setObjectName('GeoStudioWMSSource')
+        self.wms_source_label.setVisible(False)
+        self.status.addPermanentWidget(self.wms_source_label)
         self._update_compilation_scale_indicator()
 
     @staticmethod
@@ -2542,6 +2565,51 @@ class GeoStudioWindow(QMainWindow):
             QMessageBox.warning(self,'Nie zmieniono geometrii',str(exc))
             self.cancel_edit()
             self.rebuild_scene(fit=False,reselect=self.selected_uid)
+
+    def _update_wms_attribution(self):
+        label = getattr(self, 'wms_source_label', None)
+        if label is None:
+            return
+        overlay = self._wms_preview
+        if overlay.image is None:
+            label.hide()
+            return
+        name = overlay.title or 'usługa WMS'
+        label.setText('WMS: ' + name[:36] + ('…' if len(name) > 36 else ''))
+        label.setToolTip('Źródło WMS: ' + name)
+        label.show()
+
+    def show_wms_dialog(self):
+        if not self.doc:
+            QMessageBox.information(self, 'WMS', 'Najpierw otwórz mapę GEO-MAP.')
+            return
+        if self._wms_dialog is None:
+            self._wms_dialog = WMSDialog(self)
+        self._wms_dialog.show()
+        self._wms_dialog.raise_()
+
+    def open_google_maps(self):
+        """Official Google Maps browser reference; no third-party tile scraping."""
+        if not self.doc:
+            QMessageBox.information(self, 'Google Maps', 'Najpierw otwórz mapę.')
+            return
+        epsg = self.current_crs_epsg
+        if epsg is None:
+            options = [text for text, _ in CRS_CHOICES]
+            selected, accepted = QInputDialog.getItem(
+                self, 'Układ źródłowy GEO-MAP',
+                'Wybierz poprawny układ bieżącego MAP:', options, 0, False)
+            if not accepted:
+                return
+            epsg = dict(CRS_CHOICES)[selected]
+        rect = self.view.mapToScene(self.view.viewport().rect()).boundingRect()
+        x, y = rect.center().x(), -rect.center().y()
+        try:
+            url = google_maps_reference_url(x, y, epsg)
+            if not QDesktopServices.openUrl(QUrl(url)):
+                raise ValueError('System nie otworzył przeglądarki.')
+        except Exception as exc:
+            QMessageBox.warning(self, 'Google Maps', str(exc))
 
     def add_raster(self):
         file,_=QFileDialog.getOpenFileName(self,'Otwórz raster z georeferencją',str(Path.home()),'Obrazy (*.png *.jpg *.jpeg *.tif *.tiff)')
