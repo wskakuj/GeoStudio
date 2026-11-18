@@ -1161,6 +1161,150 @@ class GeoStudioWindow(QMainWindow):
         if dialog.exec() == QDialog.Accepted:
             self._start_polygon_with_code(dialog.code.text())
 
+    def _rebuild_map_decorations(self):
+        """Draw editable layout elements without altering any MAP records."""
+        self.decoration_items = {}
+        bounds = self._world_scene_rect()
+        dimension = max(bounds.width(), bounds.height(), 100.0)
+        factor = max(0.04, min(6.0, dimension / 2500))
+        for uid, data in self.visual_styles.items():
+            if not uid.startswith('layout:') or data.get('kind') not in KINDS:
+                continue
+            item = DecorationItem(
+                uid, data, factor,
+                on_move=self.move_map_decoration,
+                on_edit=self.edit_map_decoration)
+            self.map_scene.addItem(item)
+            self.decoration_items[uid] = item
+
+    def insert_map_decoration(self, kind, *, x=None, y=None):
+        """Insert a map-anchored vector template at the cursor or view centre."""
+        if not self.doc:
+            QMessageBox.information(self, 'Oprawa mapy', 'Najpierw otwórz mapę.')
+            return
+        if x is None or y is None:
+            centre = self.view.mapToScene(self.view.viewport().rect().center())
+            x, y = centre.x(), -centre.y()
+        uid, data = new_decoration(kind, x, y)
+        with self.history.begin('Wstawiono: ' + KINDS[kind],
+                                selection_before=self.selected_uids):
+            self.visual_styles[uid] = data
+        self._history_changed()
+        self._rebuild_map_decorations_in_place()
+        self._autosave_work_copy()
+        self.status.showMessage(
+            f'Wstawiono: {KINDS[kind]}. Przeciągnij element w wybrane miejsce; '
+            'dwuklik otwiera edycję. Ctrl+Z cofa dodanie.')
+
+    def _rebuild_map_decorations_in_place(self):
+        for item in self.decoration_items.values():
+            if item.scene() is self.map_scene:
+                self.map_scene.removeItem(item)
+        self._rebuild_map_decorations()
+
+    def move_map_decoration(self, uid, x, y):
+        """Commit a completed canvas drag as one Undo-able sidecar change."""
+        before = self.visual_styles.get(uid)
+        if before is None or (before['x'] == x and before['y'] == y):
+            return
+        with self.history.begin('Przesunięcie oprawy mapy',
+                                selection_before=self.selected_uids):
+            self.visual_styles[uid] = {**before, 'x': x, 'y': y}
+        self._history_changed()
+        self._autosave_work_copy()
+        self.status.showMessage('Przesunięto element oprawy; Ctrl+Z cofa zmianę.')
+
+    def edit_map_decoration(self, uid):
+        """Double-click: edit layout text, or explicitly remove this overlay."""
+        data = self.visual_styles.get(uid)
+        if not data or data.get('kind') not in KINDS:
+            return
+        dialog = QDialog(self)
+        dialog.setWindowTitle('Edytuj: ' + KINDS[data['kind']])
+        dialog.resize(545, 440)
+        form = QFormLayout(dialog)
+        fields = {}
+        for key, label in (
+                ('title', 'Nagłówek / N'), ('subtitle', 'Podtytuł'),
+                ('details', 'Opis / pozycje legendy'), ('area', 'Powierzchnia / stopka')):
+            if key == 'details':
+                editor = QTextEdit(dialog)
+                editor.setPlainText(data.get(key, ''))
+                editor.setMinimumHeight(140)
+            else:
+                editor = QLineEdit(data.get(key, ''), dialog)
+            fields[key] = editor
+            form.addRow(label, editor)
+        note = QLabel('Oprawa mapy jest zapisywana przez GeoStudio w '
+                      'towarzyszącym pliku *.geostudio.json. '
+                      'GEO-MAP nie interpretuje tych nakładek.')
+        note.setWordWrap(True)
+        form.addRow(note)
+        buttons = QDialogButtonBox(QDialogButtonBox.Save |
+                                   QDialogButtonBox.Cancel, dialog)
+        buttons.button(QDialogButtonBox.Save).setText('Zapisz')
+        delete = buttons.addButton('Usuń element', QDialogButtonBox.DestructiveRole)
+        dialog._delete_requested = False
+        def remove():
+            dialog._delete_requested = True
+            dialog.accept()
+        delete.clicked.connect(remove)
+        buttons.accepted.connect(dialog.accept)
+        buttons.rejected.connect(dialog.reject)
+        form.addRow(buttons)
+        if dialog.exec() != QDialog.Accepted:
+            return
+        with self.history.begin('Edycja oprawy mapy',
+                                selection_before=self.selected_uids):
+            if dialog._delete_requested:
+                self.visual_styles.pop(uid, None)
+            else:
+                updated = dict(data)
+                for key, editor in fields.items():
+                    updated[key] = (editor.toPlainText() if key == 'details'
+                                    else editor.text())[:3000]
+                self.visual_styles[uid] = updated
+        self._history_changed()
+        self._rebuild_map_decorations_in_place()
+        self._autosave_work_copy()
+
+    def hide_selected_legacy_decoration(self):
+        if not self.doc or not self.selected_uid:
+            QMessageBox.information(self, 'Stara oprawa', 'Zaznacz element na mapie.')
+            return
+        obj = self.doc.by_id[self.selected_uid]
+        if obj.code not in {'5200', '6000', '7900'}:
+            QMessageBox.information(
+                self, 'Stara oprawa',
+                'Ukrywanie dostępne wyłącznie dla wskazanego elementu '
+                'kodów 5200, 6000 lub 7900.')
+            return
+        uid = self.selected_uid
+        with self.history.begin('Ukrycie starego elementu oprawy',
+                                selection_before=self.selected_uids):
+            self.visual_styles['legacy-hidden:' + uid] = {'hidden': True}
+        self._history_changed()
+        self.pinned_uids = [item for item in self.pinned_uids if item != uid]
+        self.rebuild_scene(fit=False)
+        self._set_selected_uids([])
+        self._autosave_work_copy()
+        self.status.showMessage(
+            'Ukryto element tylko w GeoStudio. Oryginalny rekord MAP zachowano.')
+
+    def restore_legacy_decorations(self):
+        keys = [key for key in self.visual_styles
+                if key.startswith('legacy-hidden:')]
+        if not keys:
+            return
+        with self.history.begin('Przywrócenie starej oprawy',
+                                selection_before=self.selected_uids):
+            for key in keys:
+                self.visual_styles.pop(key, None)
+        self._history_changed()
+        self.rebuild_scene(fit=False)
+        self._autosave_work_copy()
+        self.status.showMessage('Przywrócono wszystkie oryginalne elementy oprawy.')
+
     def open_search_query(self):
         """F: find first matching code/attribute or select all results."""
         self._run_attribute_dialog(select_all=False)
@@ -1835,7 +1979,8 @@ class GeoStudioWindow(QMainWindow):
                 transform,item.boundingRect(),ratio,offset))
             uid=item.data(0)
             item.setVisible(bool(self.labels_enabled and
-                self.layer_for_uid.get(uid,'') not in self.hidden_layers))
+                self.layer_for_uid.get(uid,'') not in self.hidden_layers and
+                not self.visual_styles.get('legacy-hidden:' + str(uid), {}).get('hidden')))
         self.update_view_scale_indicator()
 
     def start_label_edit(self):
