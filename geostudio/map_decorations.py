@@ -7,10 +7,10 @@ primitives. Their information and positions are saved in the existing
 from __future__ import annotations
 
 from uuid import uuid4
-from math import hypot
+from math import hypot, ceil
 
 from PySide6.QtCore import QPointF, QRectF, Qt
-from PySide6.QtGui import QColor, QFont, QPainter, QPainterPath, QPen, QBrush, QTransform
+from PySide6.QtGui import QColor, QFont, QFontMetricsF, QPainter, QPainterPath, QPen, QBrush, QTransform
 from PySide6.QtWidgets import QGraphicsItem
 
 
@@ -96,7 +96,9 @@ class DecorationItem(QGraphicsItem):
         if data["kind"] == "legend":
             rows = data.get("items")
             if isinstance(rows, list):
-                self._height = max(self._height, 124 + 24 * min(len(rows), 100))
+                columns = max(1, ceil(len(rows) / 15))
+                self._width = max(self._width, 365 * columns + 25)
+                self._height = max(150, 115 + 24 * min(len(rows), 15))
         self.setData(0, "geostudio-decoration")
         self.setToolTip("Przeciągnij, aby przesunąć • dwuklik, aby edytować • "
                         + KINDS[data["kind"]])
@@ -113,6 +115,56 @@ class DecorationItem(QGraphicsItem):
 
     def boundingRect(self):
         return QRectF(-3, -3, self._width + 6, self._height + 6)
+
+    def shape(self):
+        """Hit-test only painted content + resizing handle, never empty layout.
+
+        The old giant boundingRect() caused neighbouring transparent objects
+        to intercept each other's clicks. It must remain large for painting,
+        but the Qt mouse-pick shape must stay tight to actual content.
+        """
+        hit = QPainterPath()
+        kind = self.layout_data["kind"]
+        if kind == "north":
+            hit.addEllipse(QRectF(28, 28, 128, 128))
+            for r in (QRectF(73, 0, 38, 29), QRectF(154, 73, 30, 37),
+                      QRectF(74, 154, 36, 30), QRectF(0, 73, 32, 37)):
+                hit.addRect(r)
+        else:
+            def add_text(text, x, y, font_size, *, limit=None):
+                if not str(text).strip():
+                    return
+                metric = QFontMetricsF(self._font(font_size, bold=True))
+                lines = str(text).splitlines()
+                for idx, line in enumerate(lines):
+                    if not line.strip():
+                        continue
+                    w = min(metric.horizontalAdvance(line) + 14,
+                            limit or self._width - x - 12)
+                    h = metric.height() + 5
+                    hit.addRect(QRectF(x, y + idx * h, w, h))
+            add_text(self.layout_data.get("title", ""), 13, 0, 21)
+            add_text(self.layout_data.get("subtitle", ""), 14, 45, 17)
+            if kind == "legend":
+                rows = self.layout_data.get("items", [])
+                if not isinstance(rows, list):
+                    rows = [{"name": x} for x in str(
+                        self.layout_data.get("details", "")).splitlines()]
+                for idx, entry in enumerate(rows[:100]):
+                    col, row = divmod(idx, 15)
+                    x = 15 + col * 365
+                    y = 95 + row * 24
+                    hit.addRect(QRectF(x, y + 2, 36, 18))
+                    add_text(entry.get("name", ""), x + 50, y, 13,
+                             limit=286)
+            else:
+                add_text(self.layout_data.get("details", ""), 14, 93, 14)
+            if self.layout_data.get("area"):
+                add_text(self.layout_data["area"], 14, self._height - 35, 13)
+        # The selection/resize handle must be accessible only when selected.
+        if self.isSelected():
+            hit.addRect(QRectF(self._width - 18, self._height - 18, 21, 21))
+        return hit
 
     @staticmethod
     def _font(size: int, *, bold=False):
@@ -203,20 +255,25 @@ class DecorationItem(QGraphicsItem):
                        "#BA7A75", "#6B8B9E", "#D1BA56")
             entries = [{"name": name.strip(), "color": palette[i % len(palette)]}
                        for i, name in enumerate(str(details).splitlines()) if name.strip()]
-        available = max(0, int((self._height - 124) / 24))
-        for idx, entry in enumerate(entries[:available]):
+        for idx, entry in enumerate(entries[:100]):
+            column, row = divmod(idx, 15)
+            left = 15 + column * 365
+            y = 95 + row * 24
             name = str(entry.get("name", ""))[:150]
             color = QColor(str(entry.get("color", "#91ABA7")))
             if not color.isValid():
                 color = ACCENT
-            y = 95 + 24 * idx
             painter.setPen(QPen(color.darker(115), 1))
             painter.setBrush(QBrush(color))
-            painter.drawRoundedRect(QRectF(15, y + 4, 34, 14), 2, 2)
-            self._text(painter, name, 63, y, self._width - 76, 22,
+            painter.drawRoundedRect(QRectF(left, y + 4, 34, 14), 2, 2)
+            self._text(painter, name, left + 50, y, 290, 22,
                        size=13, color=INK)
 
     def mousePressEvent(self, event):
+        # Qt moves all selected movable items as a group. The user expects
+        # each nearby annotation to move independently, never as a group.
+        if self.scene() is not None:
+            self.scene().clearSelection()
         self.setSelected(True)
         self._drag_origin = QPointF(self.pos())
         corner = QRectF(self._width - 19, self._height - 19, 25, 25)
