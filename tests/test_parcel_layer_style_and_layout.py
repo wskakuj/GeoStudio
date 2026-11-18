@@ -16,7 +16,8 @@ from geostudio.label_editor import AttributeLabelsDialog
 from geostudio.map_decorations import DecorationItem, new_decoration
 from geostudio.visual_styles import load_styles, write_styles
 from geostudio.wms_qt import WMSDialog
-from geostudio.wms_service import WMSLayerInfo
+from geostudio.wms_service import WMSLayerInfo, WMSBounds, getmap_url
+from urllib.parse import parse_qs, urlsplit
 
 
 @pytest.fixture(scope="module")
@@ -136,6 +137,11 @@ def test_kieg_wms_combines_parcel_boundaries_and_numbers(window, monkeypatch):
         monkeypatch.setattr(window._wms_auto, "configure", sources.append)
         dlg.fetch_map()
         assert sources and sources[-1].layer == "dzialki,numery_dzialek"
+        url = getmap_url(kieg, sources[-1].layer, "EPSG:2180",
+                         WMSBounds(100, 200, 150, 260), 512, 512)
+        query = parse_qs(urlsplit(url).query, keep_blank_values=True)
+        assert query["LAYERS"] == ["dzialki,numery_dzialek"]
+        assert query["STYLES"] == [","]
     finally:
         dlg.close()
 
