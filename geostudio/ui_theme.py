@@ -249,6 +249,159 @@ QStatusBar {
     border-top: 1px solid @border@; min-height: 32px;
 }
 """
+    css += """
+/* ArcGIS-inspired command ribbon: task tabs above grouped tools. */
+QToolBar#GeoStudioRibbonToolbar {
+    background: @surface@; border: 0; padding: 0; margin: 0; spacing: 0;
+}
+QWidget#GeoStudioGISRibbon {
+    background: @surface@; border: 0;
+}
+QFrame#GeoStudioRibbonHeader {
+    background: @toolbar@; border-bottom: 1px solid @border@;
+}
+QLabel#GeoStudioRibbonBrand {
+    color: @text@; font-size: 15pt; font-weight: 800;
+    letter-spacing: -0.3px;
+}
+QLabel#GeoStudioRibbonSubtitle {
+    color: @muted@; font-size: 8.5pt; font-weight: 700;
+    padding-left: 12px; border-left: 1px solid @border@;
+}
+QLabel#GeoStudioRibbonDocument {
+    color: @muted@; font-size: 9pt; padding: 2px 4px;
+}
+QTabWidget#GeoStudioRibbonTabs::pane {
+    background: @surface@; border: 0; border-bottom: 1px solid @border@;
+}
+QTabWidget#GeoStudioRibbonTabs QTabBar {
+    background: @toolbar@;
+}
+QTabWidget#GeoStudioRibbonTabs QTabBar::tab {
+    background: @toolbar@; color: @muted@; border: 0;
+    border-bottom: 3px solid transparent;
+    padding: 9px 19px; margin: 0 2px;
+    font-size: 10pt; font-weight: 650;
+}
+QTabWidget#GeoStudioRibbonTabs QTabBar::tab:selected {
+    background: @surface@; color: @accent@;
+    border-bottom: 3px solid @accent@;
+}
+QTabWidget#GeoStudioRibbonTabs QTabBar::tab:hover:!selected {
+    background: @hover@; color: @text@;
+}
+QScrollArea#GeoStudioRibbonScroller,
+QWidget#GeoStudioRibbonSurface {
+    background: @surface@; border: none;
+}
+QFrame#GeoStudioRibbonGroup {
+    border: 0; border-right: 1px solid @border@; background: transparent;
+    margin-right: 2px;
+}
+QLabel#GeoStudioRibbonGroupCaption {
+    font-size: 8pt; color: @muted@; font-weight: 600;
+    padding: 2px 3px 0 3px;
+}
+QToolButton#GeoStudioRibbonLarge, QToolButton#GeoStudioRibbonSmall {
+    background: transparent; border: 1px solid transparent; border-radius: 6px;
+    color: @text@; font-weight: 550;
+}
+QToolButton#GeoStudioRibbonLarge {
+    padding: 5px 6px; font-size: 9pt;
+}
+QToolButton#GeoStudioRibbonSmall {
+    padding: 4px 7px; font-size: 9pt; text-align: left;
+}
+QToolButton#GeoStudioRibbonLarge:hover, QToolButton#GeoStudioRibbonSmall:hover {
+    background: @hover@; border-color: @border@;
+}
+QToolButton#GeoStudioRibbonLarge:checked, QToolButton#GeoStudioRibbonSmall:checked,
+QToolButton#GeoStudioRibbonLarge:pressed, QToolButton#GeoStudioRibbonSmall:pressed {
+    background: @accent_soft@; border-color: @accent@; color: @accent@;
+}
+QToolButton#GeoStudioRibbonLarge:disabled, QToolButton#GeoStudioRibbonSmall:disabled {
+    color: @disabled@;
+}
+QWidget#GeoStudioWorkspace { background: @surface@; }
+QFrame#GeoStudioDocumentHeader {
+    background: @surface@; border: none; border-bottom: 1px solid @border@;
+    border-radius: 0;
+}
+QLabel#GeoStudioDocumentEyebrow {
+    color: @accent@; font-size: 8pt; letter-spacing: 0.6px; font-weight: 700;
+}
+QLabel#GeoStudioDocumentName {
+    color: @text@; font-size: 10.5pt; font-weight: 650; padding: 0;
+}
+QFrame#GeoStudioMapSurface {
+    background: #FFFFFF; border: 0; border-radius: 0;
+}
+QGraphicsView#GeoStudioCanvas {
+    background: #FFFFFF; border: none; border-radius: 0;
+}
+QDockWidget {
+    border: none; background: @surface@;
+}
+QDockWidget::title {
+    background: @toolbar@; color: @text@; font-size: 10pt;
+    font-weight: 700; border-bottom: 1px solid @border@;
+    padding: 12px 14px;
+}
+QTreeWidget#GeoStudioLayerTree {
+    border: none; border-radius: 0;
+}
+"""
+    css += """
+/* Quick Access commands, search, and ribbon collapse -- compact GIS header. */
+QToolButton#GeoStudioQuickAccessButton {
+    background: transparent; border: 1px solid transparent;
+    border-radius: 5px; padding: 4px;
+    min-width: 24px; min-height: 24px;
+}
+QToolButton#GeoStudioQuickAccessButton:hover {
+    background: @hover@; border-color: @border@;
+}
+QToolButton#GeoStudioQuickAccessButton:disabled { color: @disabled@; }
+QToolButton#GeoStudioCommandSearch {
+    background: @input@; color: @muted@; border: 1px solid @border@;
+    border-radius: 7px; text-align: left;
+    padding: 7px 12px; font-size: 9pt;
+    min-width: 180px;
+}
+QToolButton#GeoStudioCommandSearch:hover {
+    border-color: @accent@; background: @hover@; color: @text@;
+}
+QToolButton#GeoStudioRibbonCollapse {
+    background: transparent; border-radius: 5px; padding: 5px 6px;
+    color: @muted@; font-size: 9pt;
+}
+QToolButton#GeoStudioRibbonCollapse:hover {
+    color: @text@; background: @hover@;
+}
+QDialog#GeoStudioCommandPalette {
+    background: @surface@; border: 1px solid @border@;
+}
+QLabel#GeoStudioPaletteHeading {
+    font-size: 14pt; font-weight: 750; color: @text@;
+}
+QLineEdit#GeoStudioPaletteQuery {
+    min-height: 38px; padding: 7px 12px; font-size: 11pt;
+    border: 1px solid @accent@; background: @input@;
+}
+QListWidget#GeoStudioPaletteResults {
+    background: @surface@; border: 1px solid @border@;
+    border-radius: 8px; padding: 4px;
+}
+QListWidget#GeoStudioPaletteResults::item {
+    min-height: 30px; padding: 6px 9px; border-radius: 5px;
+}
+QListWidget#GeoStudioPaletteResults::item:selected {
+    background: @selection@; color: @selection_text@;
+}
+QFrame#GeoStudioPaletteFooter {
+    border-top: 1px solid @border@; color: @muted@;
+}
+"""
     for key, value in c.items():
         css = css.replace(f"@{key}@", value)
     return css

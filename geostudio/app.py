@@ -43,6 +43,8 @@ from .visual_styles import (parse_fill_code, fill_code, load_styles,
     load_label_positions, write_styles, sidecar_path)
 from .ui_theme import theme_stylesheet, ui_icon
 from .workspace_shell import MapWorkspace
+from .gis_ribbon import GISRibbon
+from .command_palette import CommandPalette
 from .library_render import (parse_cdf, parse_sym_primitives, cdf_for_object,
     native_fill_color, simple_point_segments, simple_point_circles,
     parse_lay_pen_styles, lay_for_code,
@@ -88,6 +90,7 @@ class GeoStudioWindow(QMainWindow):
         if self.theme_mode not in ('light', 'dark'):
             self.theme_mode = 'light'
         self._ui_icon_actions = []
+        self._command_palette = None
         self.workspace_mode = 'edit'
         self._last_workspace = 'edit'
         self.doc: GeoMap | None=None
@@ -160,6 +163,7 @@ class GeoStudioWindow(QMainWindow):
         self._setup_menu()
         self._install_workspace_shell()
         self._setup_docks()
+        self._install_arcgis_ribbon()
         self.set_workspace('edit', remember=False)
         # The original docks shrink to unreadable widths on Windows HiDPI.
         # Reserve usable space for layer names and attribute values.
@@ -187,12 +191,154 @@ class GeoStudioWindow(QMainWindow):
         self.setCentralWidget(self.workspace)
         self.workspace.set_document(None)
 
+
+    def _install_arcgis_ribbon(self):
+        """Replace two desktop toolbars with a task-based GIS ribbon.
+
+        Every button delegates to the existing QAction or method. The map
+        model, data format, selection and scene rendering do not change.
+        """
+        ribbon = GISRibbon(self.theme_mode, self)
+        self.ribbon = ribbon
+        ribbon.set_command_search(self.show_command_palette)
+        self.ribbon_toolbar = QToolBar('Wstążka GIS', self)
+        self.ribbon_toolbar.setObjectName('GeoStudioRibbonToolbar')
+        self.ribbon_toolbar.setMovable(False)
+        self.ribbon_toolbar.setFloatable(False)
+        self.ribbon_toolbar.setAllowedAreas(Qt.TopToolBarArea)
+        self.ribbon_toolbar.addWidget(ribbon)
+        self.removeToolBar(self.file_toolbar)
+        self.file_toolbar.hide()
+        self.addToolBar(Qt.TopToolBarArea, self.ribbon_toolbar)
+
+        # Map tab: the most frequent cartographic operations.
+        project = ribbon.group('Mapa', 'Projekt')
+        project.action(self.open_toolbar_action, 'folder', large=True, text='Otwórz MAP')
+        project.action(self.save_toolbar_action, 'save', large=True, text='Zapisz kopię')
+
+        navigation = ribbon.group('Mapa', 'Nawigacja')
+        navigation.action(self.tool_actions['select'], 'select', large=True, text='Zaznacz')
+        navigation.action(self.tool_actions['pan'], 'hand', large=True, text='Przesuń')
+        navigation.action(self._action('Cała mapa', self.fit_all), 'fit', large=True)
+        navigation.menu('Orientacja', self.orientation_button.menu(), 'compass')
+
+        contents = ribbon.group('Mapa', 'Zawartość mapy')
+        contents.stack(
+            (self.layers_dock.toggleViewAction(), 'layers', 'Warstwy'),
+            (self.labels_action, 'label', 'Podpisy A1/A2'),
+            (self.snap_action, 'snap', 'Przyciąganie'),
+        )
+
+        search = ribbon.group('Mapa', 'Wybieranie')
+        search.action(self._action('Znajdź obiekt', self.show_search),
+                      'search', large=True, text='Znajdź')
+        search.control(self.selector, minimum_width=178)
+
+        # Edit tab. All tools remain backed by their original QActionGroup.
+        edit = ribbon.group('Edycja', 'Narzędzia edycji')
+        for key, icon, title in (
+                ('select', 'select', 'Zaznacz'),
+                ('draw', 'polygon', 'Poligon'),
+                ('edit', 'vertices', 'Wierzchołki'),
+                ('labels', 'label', 'Etykiety')):
+            edit.action(self.tool_actions[key], icon, large=True, text=title)
+
+        sketch = ribbon.group('Edycja', 'Szkic')
+        sketch.stack(
+            (self.finish_action, 'check', 'Zakończ poligon'),
+            (self._action('Cofnij punkt szkicu', self.undo_last_polygon_point),
+             'undo', 'Cofnij punkt'),
+            (self._action('Przerwij narzędzie', self.cancel_edit),
+             'select', 'Anuluj'),
+        )
+
+        objects = ribbon.group('Edycja', 'Obiekty')
+        objects.stack(
+            (self._action('Edytuj atrybut', self.edit_selected),
+             'properties', 'Edytuj atrybut'),
+            (self._action('Wybierz ten kod', self.select_all_same_code),
+             'filter', 'Wybierz ten kod'),
+            (self.delete_action, 'more', 'Usuń zaznaczone'),
+        )
+        history = ribbon.group('Edycja', 'Historia')
+        self.ribbon_undo_action = self._action('Cofnij zmianę', self.undo_last_edit)
+        self.ribbon_redo_action = self._action('Ponów zmianę', self.redo_last_edit)
+        history.stack(
+            (self.ribbon_undo_action, 'undo', 'Cofnij zmianę'),
+            (self.ribbon_redo_action, 'redo', 'Ponów zmianę'),
+        )
+
+        # Data tab keeps import / coordinate tools discoverable.
+        libraries = ribbon.group('Dane', 'Biblioteki GEO-MAP')
+        libraries.action(
+            self._action('Wczytaj SYM / LAY / CDF', self.open_catalogs),
+            'layers', large=True, text='SYM / LAY / CDF')
+        rasters = ribbon.group('Dane', 'Rastry')
+        rasters.action(self._action('Dodaj raster', self.add_raster),
+                       'image', large=True, text='Dodaj raster')
+        coordinates = ribbon.group('Dane', 'Współrzędne')
+        coordinates.action(
+            self._action('Transformuj układ', self.open_crs_converter),
+            'snap', large=True, text='Transformuj')
+
+        # View tab: scale, pane arrangement and display controls.
+        workspace = ribbon.group('Widok', 'Układ stanowiska')
+        workspace.stack(
+            (self.workspace_actions['edit'], 'properties', 'Edycja'),
+            (self.workspace_actions['search'], 'search', 'Wyszukiwanie'),
+            (self.workspace_actions['map'], 'fit', 'Sama mapa'),
+        )
+        scales = ribbon.group('Widok', 'Skala i obrót')
+        scales.stack(
+            (self._action('Skala widoku', self.ask_view_scale),
+             'fit', 'Skala widoku 1:N'),
+            (self._action('Skala opracowania', self.ask_compilation_scale),
+             'properties', 'Skala opracowania'),
+        )
+        scales.menu('Obróć mapę', self.orientation_button.menu(), 'compass')
+        display = ribbon.group('Widok', 'Wyświetlanie')
+        display.stack(
+            (self.all_labels_action, 'label', 'Wszystkie podpisy'),
+            (self.multipart_action, 'layers', 'Łączniki obiektów'),
+        )
+        theme = ribbon.group('Widok', 'Interfejs')
+        theme.menu('Motyw', self.theme_menu, 'more')
+        theme.menu('Panele', self.panels_menu, 'properties')
+
+        # Export tab intentionally separates saving native MAP from DXF and images.
+        saved = ribbon.group('Eksport', 'Plik GEO-MAP')
+        saved.action(self.save_toolbar_action, 'save', large=True, text='Zapisz MAP')
+        output = ribbon.group('Eksport', 'Udostępnianie')
+        output.action(self._action('Eksportuj obraz', self.export_image),
+                      'image', large=True, text='PNG / JPG / TIFF')
+        output.action(self._action('Eksportuj DXF', self.export_dxf),
+                      'export', large=True, text='DXF')
+
+        # Compact Quick Access actions are available on every ribbon page.
+        for action, icon in (
+                (self.open_toolbar_action, 'folder'),
+                (self.save_toolbar_action, 'save'),
+                (self.ribbon_undo_action, 'undo'),
+                (self.ribbon_redo_action, 'redo')):
+            ribbon.add_quick_action(action, icon)
+        ribbon.set_document(self.doc.filename if self.doc else None)
+        self.ribbon_toggle_action = self._action(
+            'Zwiń / rozwiń wstążkę', ribbon.toggle_collapsed, 'Ctrl+F1')
+        self.addAction(self.ribbon_toggle_action)
+
+        # ArcGIS Pro puts editing commands in the ribbon, not a vertical rail.
+        self.workspace.tool_rail.hide()
+        self.panel_toolbar.hide()
+
     def _update_dirty_title(self):
         mark = ' *' if self.history.is_dirty else ''
         self.setWindowTitle(getattr(self, '_base_title',
                                     'GeoStudio v0.14') + mark)
         if hasattr(self, 'workspace'):
             self.workspace.set_document(
+                self.doc.filename if self.doc else None, dirty=self.history.is_dirty)
+        if hasattr(self, 'ribbon'):
+            self.ribbon.set_document(
                 self.doc.filename if self.doc else None, dirty=self.history.is_dirty)
 
     def _history_changed(self):
@@ -257,6 +403,8 @@ class GeoStudioWindow(QMainWindow):
     def _refresh_toolbar_icons(self):
         for action, glyph in self._ui_icon_actions:
             action.setIcon(ui_icon(glyph, self.theme_mode))
+        if hasattr(self, 'ribbon'):
+            self.ribbon.refresh_icons(self.theme_mode)
         for attr, icon_name in (
                 ('orientation_button', 'compass'), ('data_button', 'layers'),
                 ('export_button', 'export'), ('map_settings_button', 'more')):
@@ -280,6 +428,50 @@ class GeoStudioWindow(QMainWindow):
             self.mode_badge.setText(text)
         if hasattr(self, 'workspace'):
             self.workspace.set_tool(text)
+        if hasattr(self, 'ribbon') and text in (
+                'RYSOWANIE POLIGONU', 'RYSOWANIE LINII',
+                'EDYCJA WIERZCHOŁKÓW', 'PRZESUWANIE ETYKIET'):
+            self.ribbon.select_tab('Edycja')
+
+    def _searchable_actions(self):
+        """Collect existing QAction instances, including nested menus and ribbon."""
+        result = []
+        seen = set()
+
+        def add(action):
+            if action is None:
+                return
+            menu = action.menu()
+            if menu is not None:
+                for child in menu.actions():
+                    add(child)
+                return
+            if action.isSeparator() or not action.text().strip():
+                return
+            if id(action) in seen:
+                return
+            seen.add(id(action))
+            result.append((action.text().replace('&', ''), action))
+
+        for top in self.menuBar().actions():
+            add(top)
+        for action in (self.open_toolbar_action, self.save_toolbar_action,
+                       self.snap_action, self.labels_action, self.delete_action,
+                       getattr(self, 'ribbon_undo_action', None),
+                       getattr(self, 'ribbon_redo_action', None)):
+            add(action)
+        for action in self.tool_actions.values():
+            add(action)
+        if hasattr(self, 'ribbon'):
+            for button in self.ribbon.findChildren(QToolButton):
+                add(button.defaultAction())
+        return result
+
+    def show_command_palette(self):
+        if self._command_palette is None:
+            self._command_palette = CommandPalette(self)
+        self._command_palette.set_commands(self._searchable_actions())
+        self._command_palette.open_palette()
 
     def _setup_menu(self):
         fm=self.menuBar().addMenu('&Plik')
@@ -309,7 +501,12 @@ class GeoStudioWindow(QMainWindow):
             self.open_crs_converter, 'Ctrl+T'))
         vm=self.menuBar().addMenu('&Widok')
         self.view_menu = vm
+        self.command_palette_action = self._action(
+            'Znajdź polecenie…', self.show_command_palette, 'Ctrl+K')
+        vm.addAction(self.command_palette_action)
+        vm.addSeparator()
         themes = vm.addMenu('Motyw interfejsu')
+        self.theme_menu = themes
         self.theme_actions = {}
         theme_group = QActionGroup(self)
         theme_group.setExclusive(True)
@@ -715,6 +912,7 @@ class GeoStudioWindow(QMainWindow):
         self.info_dock.hide()  # Save canvas space; help remains one click away.
 
         panels = self.view_menu.addMenu('Panele')
+        self.panels_menu = panels
         self.panel_toolbar = QToolBar('Pokaż/ukryj panele', self)
         self.panel_toolbar.setObjectName('GeoStudioPanelToolbar')
         self.panel_toolbar.setToolButtonStyle(Qt.ToolButtonIconOnly)
@@ -743,13 +941,15 @@ class GeoStudioWindow(QMainWindow):
         self.workspace_mode = mode
         if hasattr(self, 'workspace'):
             self.workspace.set_focus_mode(mode == 'map')
+        if hasattr(self, 'ribbon_toolbar'):
+            self.ribbon_toolbar.setVisible(mode != 'map')
         if mode == 'map':
             for dock in (self.layers_dock, self.properties_dock,
                          self.search_dock, self.info_dock):
                 dock.hide()
             self.panel_toolbar.hide()
         else:
-            self.panel_toolbar.show()
+            self.panel_toolbar.hide()  # Pane commands live on the View ribbon.
             self.layers_dock.show()
             self.info_dock.hide()
             if mode == 'search':
