@@ -168,45 +168,56 @@ class GeoMap:
         self.lines.insert(insertion,replacement)
         self._parse()
 
-    def move_polygon_vertex(self, uid: str, vertex_index: int, x: float, y: float):
-        """Edit one vertex in-place, preserving the original P record's suffix.
+    def move_polygon_vertices(self, changes: dict[str, dict[int, tuple[float, float]]]):
+        """Move one or more polygon vertices atomically with only ONE parse.
 
-        For closed rings the duplicated first/last vertex is updated together.
-        Non-geometry records, point labels and line endings remain untouched.
+        Validate every resulting ring before touching raw MAP lines. Unrelated
+        source bytes, native per-vertex flags and line endings remain unchanged.
+        A closed ring's last duplicate is moved with its first vertex.
         """
         from math import isfinite
-        if uid not in self.by_id:
-            raise KeyError(uid)
-        obj = self.by_id[uid]
-        if not obj.is_closed:
-            raise ValueError('Only closed polygons can be edited')
-        if not (isfinite(x) and isfinite(y) and -1e9 < x < 1e9 and -1e9 < y < 1e9):
-            raise ValueError('Invalid coordinates')
-        distinct_count = len(obj.points) - 1
-        if not 0 <= vertex_index < distinct_count:
-            raise IndexError('Vertex outside polygon')
         from .interactions import polygon_is_valid
-        coords = [(p.x, p.y) for p in obj.points[:-1]]
-        coords[vertex_index] = (x, y)
-        if not polygon_is_valid(coords):
-            raise ValueError('Polygon must have at least three distinct non-collinear vertices')
-        records = [(i, POINT_RE.match(raw.rstrip(b'\r\n')))
-                   for i, raw in enumerate(self.lines[obj.start+1:obj.end], obj.start+1)]
-        records = [(i, m) for i, m in records if m]
-        if len(records) != len(obj.points):
-            raise ValueError('Unexpected P record count; refusing to edit')
-        indices = [vertex_index]
-        if vertex_index == 0:
-            indices.append(distinct_count)
-        for pos in indices:
-            line_no, match = records[pos]
-            original = self.lines[line_no]
-            eol = b'\r\n' if original.endswith(b'\r\n') else b'\n' if original.endswith(b'\n') else b''
-            # Keep P type, optional comma labels, flags, and line ending intact.
-            prefix = original[:match.start(2)]
-            suffix = match.group(4)
-            self.lines[line_no] = prefix + f'{x:.3f}'.encode() + b'   ' + f'{y:.3f}'.encode() + suffix + eol
-        self._parse()
+        pending: dict[int, bytes] = {}
+        for uid, replacements in changes.items():
+            obj = self.by_id[uid]
+            if not obj.is_closed:
+                raise ValueError('Only closed polygons can be edited')
+            size = len(obj.points) - 1
+            coords = [(p.x, p.y) for p in obj.points[:-1]]
+            for index, value in replacements.items():
+                if not 0 <= index < size:
+                    raise IndexError('Vertex outside polygon')
+                x, y = value
+                if not (isfinite(x) and isfinite(y) and -1e9 < x < 1e9 and -1e9 < y < 1e9):
+                    raise ValueError('Invalid coordinates')
+                coords[index] = (x, y)
+            if not polygon_is_valid(coords):
+                raise ValueError('Polygon must have three distinct non-collinear vertices')
+            records = [(i, POINT_RE.match(raw.rstrip(b'\r\n')))
+                       for i, raw in enumerate(self.lines[obj.start+1:obj.end], obj.start+1)]
+            records = [(i, match) for i, match in records if match]
+            if len(records) != len(obj.points):
+                raise ValueError('Unexpected P record count; refusing to edit')
+            expanded = dict(replacements)
+            if 0 in replacements:
+                expanded[size] = replacements[0]
+            for index, (x, y) in expanded.items():
+                line_no, match = records[index]
+                original = self.lines[line_no]
+                eol = b'\r\n' if original.endswith(b'\r\n') else (
+                    b'\n' if original.endswith(b'\n') else b'')
+                prefix = original[:match.start(2)]
+                suffix = match.group(4)
+                pending[line_no] = (prefix + f'{x:.3f}'.encode() + b'   ' +
+                                    f'{y:.3f}'.encode() + suffix + eol)
+        for line_no, replacement in pending.items():
+            self.lines[line_no] = replacement
+        if pending:
+            self._parse()
+
+    def move_polygon_vertex(self, uid: str, vertex_index: int, x: float, y: float):
+        """Move one polygon vertex, preserving the original P record format."""
+        self.move_polygon_vertices({uid: {vertex_index: (x, y)}})
 
     def insert_polygon_vertex(self, uid: str, segment_index: int, x: float, y: float):
         """Split a polygon edge by inserting one GEO-MAP P record.
