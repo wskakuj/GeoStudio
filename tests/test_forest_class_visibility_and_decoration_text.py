@@ -165,7 +165,7 @@ def test_decoration_details_survive_scene_transform_and_render(qt):
         qp.end()
     # Transform item-local detail bounds into the rendered image coordinates;
     # no reliance on the scene's swapped Y/X geodetic orientation.
-    bounds = item.mapRectToScene(QRectF(14, 95, 420, 70)).boundingRect()
+    bounds = item.mapRectToScene(QRectF(14, 95, 420, 70))
     px = max(0, round((bounds.left() - source.left()) /
                       source.width() * image.width()))
     py = max(0, round((bounds.top() - source.top()) /
