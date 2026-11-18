@@ -258,6 +258,9 @@ class DecorationItem(QGraphicsItem):
 
     def _paint_content(self, painter):
         self._panel(painter)
+        # Without this local the painter raised NameError after the subtitle,
+        # leaving the title/credits body and EVERY legend row invisible.
+        kind = self.layout_data["kind"]
         title = self.layout_data.get("title", "")
         subtitle = self.layout_data.get("subtitle", "")
         details = self.layout_data.get("details", "")
