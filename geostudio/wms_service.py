@@ -162,7 +162,7 @@ def getmap_url(base_url: str, layer: str, crs: str, bounds: WMSBounds,
     bbox_str = ",".join(f"{value:.10f}".rstrip("0").rstrip(".") for value in bbox)
     params = {
         "SERVICE": "WMS", "REQUEST": "GetMap", "VERSION": version,
-        "LAYERS": layer, "STYLES": "", "FORMAT": "image/png",
+        "LAYERS": layer, "STYLES": "," * layer.count(","), "FORMAT": "image/png",
         "TRANSPARENT": "TRUE",
         "WIDTH": str(width), "HEIGHT": str(height),
         "BBOX": bbox_str,
