@@ -12,7 +12,7 @@ A1/A2; nie są to dodatkowe osobne obiekty w pliku MAP.
 Węzły: jednoczesne przesunięcie współdzielonego narożnika dotyczy
 wyłącznie poligonów **tego samego kodu**. Nie włączono modyfikacji innych
 typów obiektów ani automatycznego wycinania nakładających się powierzchni.
-W trybie węzłów przyciąganie do innego kodu jest wyłączone.
+W trybie węzłów można przyciągać edytowany punkt do wierzchołków i krawędzi **dowolnego kodu**, w tym do graniczników. Samo przyciągnięcie nie modyfikuje obiektu docelowego; przy zatwierdzeniu przesunięcia synchronizują się tylko węzły poligonów **tego samego kodu** co edytowany.
 
 ## Nowe skróty klawiszowe
 | Skrót | Akcja |
@@ -21,8 +21,10 @@ W trybie węzłów przyciąganie do innego kodu jest wyłączone.
 | **F** | Okno wyszukiwania: kod, A1/A2 i opcjonalny drugi warunek |
 | **Ctrl+H** | Szczegółowe zaznaczanie grupy: sam kod albo kod wraz z A1/A2; dokładne dopasowanie lub „zawiera” |
 | **Ctrl+F** | Zamiana frazy w wybranym polu A1–A6 lub TX, w zaznaczonych obiektach albo całej mapie |
-| **P** | Dotychczasowe proste rysowanie z pytaniem o kod |
-| **S/H/E/L** | Istniejące narzędzia: zaznaczanie / przesuwanie / węzły / etykiety |
+| **E** | Okno „Parametry aktywnego obiektu”: atrybuty A1–A6, TX, MP, KR oraz zakładka współrzędnych punktów |
+| **P** | Edycja węzłów zaznaczonego poligonu |
+| **N** | Nowy poligon — dotychczasowe proste rysowanie z pytaniem o kod |
+| **S/H/L** | Zaznaczanie / przesuwanie mapy / przesuwanie etykiet |
 | **Ctrl+T** | Istniejące przeliczanie współrzędnych — bez zmian |
 
 Przed zamianą frazy GeoStudio pokazuje liczbę obiektów i prosi o
@@ -37,7 +39,10 @@ nie nadpisuje źródłowego `.MAP`.
   z kryciem 40%. Ręczny styl konkretnego obiektu lub krycie ustawione
   dla kodu nadal są obsługiwane.
 - **Graniczniki** przy pierwszym otwarciu MAP są wyłączone; można je
-  ponownie zaznaczyć w lewym panelu Warstwy.
+  ponownie zaznaczyć w lewym panelu Warstwy. Nawet przy wyłączonej
+  widoczności jednopunktowe graniczniki pozostają celami przyciągania,
+  jeśli przełącznik **Przyciągaj** jest włączony. Zwykłe ukryte warstwy
+  nie są przyciągane.
 - Ustawienia widoczności po przełączaniu między otwartymi mapami
   są niezależne, tak jak historia edycji.
 
