@@ -317,6 +317,56 @@ class GeoMap:
         self._parse()
         return uid
 
+    def append_geometry(self, points: list[tuple[float, float]], code: str,
+                        *, kind: str = 'line',
+                        fields: dict[str, str] | None = None) -> str:
+        """Append an experimental open line or a point, preserving source records.
+
+        GEO-MAP uses P 0 at the end of an open component. For line/text codes,
+        reuse a style header from an existing object of the *same code* when
+        available; unknown codes fall back to the existing generic header.
+        Original source records are never rewritten.
+        """
+        if kind == 'polygon':
+            return self.append_polygon(points, code, fields=fields)
+        if kind not in {'line', 'point'}:
+            raise ValueError('Geometry must be point, line or polygon')
+        if not re.fullmatch(r'\d{4}', code):
+            raise ValueError('Code must have exactly four digits')
+        from math import isfinite
+        if len(points) < (2 if kind == 'line' else 1):
+            raise ValueError('An open line requires two vertices; a point requires one')
+        if kind == 'point' and len(points) != 1:
+            raise ValueError('A point must have exactly one vertex')
+        if len(set(points)) < (2 if kind == 'line' else 1):
+            raise ValueError('Geometry must contain distinct vertices')
+        if any(not (isfinite(x) and isfinite(y) and -1e9 < x < 1e9 and -1e9 < y < 1e9)
+               for x, y in points):
+            raise ValueError('Invalid coordinates')
+        attrs = dict(fields or {})
+        allowed = {'A1', 'A2', 'A3', 'A4', 'A5', 'A6', 'TX', 'MP', 'DT', 'KR'}
+        if any(key not in allowed for key in attrs):
+            raise ValueError('Unsupported new-object attribute')
+        for value in attrs.values():
+            if not isinstance(value, str) or any(ch in value for ch in '\r\n]'):
+                raise ValueError('Invalid attribute; use one line without ]')
+        uid = str(uuid.uuid4()).upper()
+        template = next((obj.style for obj in self.objects if obj.code == code), None)
+        style = template if template is not None else '8553090  15          0'
+        records = [f'*{code} {style}', f':ID[{uid}]']
+        for key in ('A1', 'A2', 'A3', 'A4', 'A5', 'A6', 'TX', 'MP', 'DT', 'KR'):
+            if key in attrs:
+                records.append(f':{key}[{attrs[key]}]')
+        for i, (x, y) in enumerate(points):
+            point_type = 0 if kind == 'line' and i == len(points) - 1 else 1
+            records.append(f'P {point_type}   {x:.3f}   {y:.3f}')
+        encoded = [(line + '\r\n').encode('cp1250', errors='strict') for line in records]
+        if self.lines and not self.lines[-1].endswith((b'\r', b'\n')):
+            self.lines[-1] += b'\r\n'
+        self.lines.extend(encoded)
+        self._parse()
+        return uid
+
     def to_bytes(self) -> bytes:
         if not self.lines: raise ValueError('Empty map')
         # N is number of physical lines. CHK is MD5 of all bytes after first line.
