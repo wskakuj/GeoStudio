@@ -29,7 +29,7 @@
    "PARCEL",
    "LANDUSE"
   ],
-  "status": "Wybrano kod 5230. Łącznie zaznaczono: 2. Ctrl+klik dodaje/usuwa, Ctrl+H zaznacza cały kod."
+  "status": "Wybrano kod 5230. Łącznie zaznaczono: 2. Ctrl+klik dodaje/usuwa, Ctrl+H otwiera wybór po kodzie i atrybutach."
  },
  "additive_two_objects": {
   "countLabel": "Zaznaczono: 2 obiektów",
@@ -61,7 +61,7 @@
    "PARCEL",
    "NEIGHBOUR"
   ],
-  "status": "Wybrano kod 5216. Łącznie zaznaczono: 2. Ctrl+klik dodaje/usuwa, Ctrl+H zaznacza cały kod."
+  "status": "Wybrano kod 5216. Łącznie zaznaczono: 2. Ctrl+klik dodaje/usuwa, Ctrl+H otwiera wybór po kodzie i atrybutach."
  },
  "click_empty_space": {
   "countLabel": "Brak zaznaczenia",
@@ -71,7 +71,7 @@
   },
   "properties": [],
   "selected": [],
-  "status": "Wybrano kod 5216. Łącznie zaznaczono: 2. Ctrl+klik dodaje/usuwa, Ctrl+H zaznacza cały kod."
+  "status": "Wybrano kod 5216. Łącznie zaznaczono: 2. Ctrl+klik dodaje/usuwa, Ctrl+H otwiera wybór po kodzie i atrybutach."
  },
  "click_parcel_under_landuse": {
   "countLabel": "Zaznaczono: 1 obiektów",
@@ -150,7 +150,7 @@
   "selected": [
    "PARCEL"
   ],
-  "status": "Wybrano kod 5216. Łącznie zaznaczono: 1. Ctrl+klik dodaje/usuwa, Ctrl+H zaznacza cały kod."
+  "status": "Wybrano kod 5216. Łącznie zaznaczono: 1. Ctrl+klik dodaje/usuwa, Ctrl+H otwiera wybór po kodzie i atrybutach."
  },
  "code_filter": {
   "countLabel": "Zaznaczono: 1 obiektów",
@@ -229,7 +229,7 @@
   "selected": [
    "LANDUSE"
   ],
-  "status": "Wybrano kod 5230. Łącznie zaznaczono: 1. Ctrl+klik dodaje/usuwa, Ctrl+H zaznacza cały kod."
+  "status": "Wybrano kod 5230. Łącznie zaznaczono: 1. Ctrl+klik dodaje/usuwa, Ctrl+H otwiera wybór po kodzie i atrybutach."
  },
  "cycle_flag": {
   "countLabel": "Zaznaczono: 1 obiektów",
@@ -308,7 +308,7 @@
   "selected": [
    "PARCEL"
   ],
-  "status": "Wybrano kod 5216. Łącznie zaznaczono: 1. Ctrl+klik dodaje/usuwa, Ctrl+H zaznacza cały kod."
+  "status": "Wybrano kod 5216. Łącznie zaznaczono: 1. Ctrl+klik dodaje/usuwa, Ctrl+H otwiera wybór po kodzie i atrybutach."
  },
  "hidden_layer_skipped": {
   "countLabel": "Zaznaczono: 1 obiektów",
@@ -387,7 +387,7 @@
   "selected": [
    "LANDUSE"
   ],
-  "status": "Wybrano kod 5230. Łącznie zaznaczono: 1. Ctrl+klik dodaje/usuwa, Ctrl+H zaznacza cały kod."
+  "status": "Wybrano kod 5230. Łącznie zaznaczono: 1. Ctrl+klik dodaje/usuwa, Ctrl+H otwiera wybór po kodzie i atrybutach."
  },
  "multi_selection_outline": {
   "countLabel": "Zaznaczono: 3 obiektów",
@@ -511,7 +511,7 @@
   "selected": [
    "LANDUSE"
   ],
-  "status": "Wybrano kod 5230. Łącznie zaznaczono: 1. Ctrl+klik dodaje/usuwa, Ctrl+H zaznacza cały kod."
+  "status": "Wybrano kod 5230. Łącznie zaznaczono: 1. Ctrl+klik dodaje/usuwa, Ctrl+H otwiera wybór po kodzie i atrybutach."
  },
  "select_all_same_code": {
   "countLabel": "Zaznaczono: 4 obiektów",
