@@ -112,3 +112,17 @@ def test_existing_canvas_is_not_rebuilt_when_theme_switches(window):
         assert before == after
     finally:
         window.set_theme(old)
+
+
+def test_coordinate_readout_is_always_visible_without_overwriting_messages(window):
+    window.status.showMessage("Zapisano kopię roboczą")
+    window.on_coordinate(515432.98765, 668123.45678)
+    assert "515432.988" in window.coordinate_readout.text()
+    assert "668123.457" in window.coordinate_readout.text()
+    assert window.status.currentMessage() == "Zapisano kopię roboczą"
+
+
+def test_docks_have_room_for_attribute_values(window):
+    assert window.layers_dock.minimumWidth() >= 260
+    assert window.properties_dock.minimumWidth() >= 330
+    assert window.panel_toolbar.width() <= 50
