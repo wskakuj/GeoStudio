@@ -20,15 +20,15 @@ from geostudio.selection import SelectionContext, snap_at
 
 
 def sample_doc():
-    data = (MapBuilder(ext=(1000, -5, -5, 55, 30))
+    data = (MapBuilder(ext=(1000, -5, -5, 55, 70))
             .object("5310", "BUILD", {"A1": "b", "A2": "test"},
                     [(0, 0), (10, 0), (10, 10), (0, 10)])
             .object("5310", "SAME", {"A1": "c"},
                     [(10, 0), (15, 0), (15, 10), (10, 10)])
             .object("5216", "OTHER", {"A2": "parcel"},
                     [(20, 0), (30, 0), (30, 10), (20, 10)])
-            .object("1246", "MARK", points=[(20, 5)], closed=False)
-            .object("6000", "LINE", points=[(40, 0), (40, 20)],
+            .object("1246", "MARK", points=[(18, 5)], closed=False)
+            .object("6000", "LINE", points=[(40, 0), (40, 60)],
                     closed=False)
             .build())
     return GeoMap(data)
@@ -111,13 +111,13 @@ def test_hidden_granicznik_is_a_snap_target_but_not_selectable(window):
         layer_for_uid=window.layer_for_uid,
         hidden_layers=frozenset(window.hidden_layers),
         radius=1.5)
-    assert snap_at(ctx, 20.2, 5.3) is None
+    assert snap_at(ctx, 18.2, 5.3) is None
     snap = snap_at(ctx, 20.2, 5.3, include_hidden_markers=True)
     assert snap is not None
     assert snap.uid == "MARK"
     assert snap.kind == "vertex"
     window.snap_action.setChecked(False)
-    assert window._snap(20.2, 5.3) is None
+    assert window._snap(18.2, 5.3) is None
 
 
 def test_cross_code_vertex_snap_does_not_move_foreign_geometry(window, monkeypatch):
@@ -128,9 +128,9 @@ def test_cross_code_vertex_snap_does_not_move_foreign_geometry(window, monkeypat
     monkeypatch.setattr(window, "_autosave_work_copy", lambda: None)
     before_other = [(p.x, p.y) for p in window.doc.by_id["OTHER"].points]
     before_marker = [(p.x, p.y) for p in window.doc.by_id["MARK"].points]
-    window.commit_vertex(20.2, 5.3, 1)
+    window.commit_vertex(18.2, 5.3, 1)
     assert (window.doc.by_id["BUILD"].points[1].x,
-            window.doc.by_id["BUILD"].points[1].y) == (20.0, 5.0)
+            window.doc.by_id["BUILD"].points[1].y) == (18.0, 5.0)
     assert (window.doc.by_id["SAME"].points[0].x,
             window.doc.by_id["SAME"].points[0].y) == (20.0, 5.0)
     assert [(p.x, p.y) for p in window.doc.by_id["OTHER"].points] == before_other
