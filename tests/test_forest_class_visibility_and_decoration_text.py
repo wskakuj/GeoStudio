@@ -148,6 +148,36 @@ def test_map_title_and_credits_have_real_body_not_only_headers(qt):
             assert _ink_count(image, 12, 195, 460, 50) > 20
 
 
+def test_decoration_details_survive_scene_transform_and_render(qt):
+    """Regression for screenshots where only the headings were visible."""
+    scene = QGraphicsScene()
+    uid, info = new_decoration("title", 50, 50)
+    info["details"] = "Gmina: Tłuszcz\\nPowiat: wołomiński\\nStan na: 2026"
+    item = DecorationItem(uid, info, 1, on_move=lambda *args: None,
+                          on_edit=lambda *args: None)
+    scene.addItem(item)
+    source = item.sceneBoundingRect()
+    image = QImage(max(1, int(source.width() * 2)),
+                   max(1, int(source.height() * 2)), QImage.Format_RGB32)
+    image.fill(Qt.white)
+    qp = QPainter(image)
+    scene.render(qp, QRectF(0, 0, image.width(), image.height()),
+                 source, Qt.IgnoreAspectRatio)
+    qp.end()
+    # Transform item-local detail bounds into the rendered image coordinates;
+    # no reliance on the scene's swapped Y/X geodetic orientation.
+    bounds = item.mapRectToScene(QRectF(14, 95, 420, 70)).boundingRect()
+    px = max(0, round((bounds.left() - source.left()) /
+                      source.width() * image.width()))
+    py = max(0, round((bounds.top() - source.top()) /
+                      source.height() * image.height()))
+    right = min(image.width(), round((bounds.right() - source.left()) /
+                                    source.width() * image.width()))
+    bottom = min(image.height(), round((bounds.bottom() - source.top()) /
+                                      source.height() * image.height()))
+    assert _ink_count(image, px, py, right-px, bottom-py) > 75
+
+
 def test_legend_draws_multiple_actual_coloured_rows(qt):
     items = [{"name": "Ls " + str(i), "color": "#BF5511"}
              for i in range(28)]
