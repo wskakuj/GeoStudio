@@ -25,7 +25,9 @@ def draw_icon(name: str, color: str) -> QIcon:
     pixmap.setDevicePixelRatio(2.0)
     painter = QPainter(pixmap)
     painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
-    painter.scale(2.0, 2.0)
+    # QPainter already honours QPixmap.devicePixelRatio() on HiDPI targets.
+    # Scaling again clipped half of each icon (the short broken strokes
+    # visible on Windows). Draw the 24×24 design in logical coordinates.
 
     pen = QPen(QColor(color))
     pen.setWidthF(1.8)
