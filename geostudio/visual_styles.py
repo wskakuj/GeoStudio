@@ -35,6 +35,18 @@ def validated_styles(styles: dict) -> dict[str, dict]:
     for uid, style in styles.items():
         if not isinstance(uid, str) or not isinstance(style, dict):
             continue
+        if uid == "forest-class-visibility":
+            from .forest_classes import FILTER_KEY
+            from re import fullmatch
+            raw = style.get("hidden")
+            if isinstance(raw, list):
+                values = sorted({
+                    str(value) for value in raw
+                    if isinstance(value, str) and
+                    fullmatch(r"Ls(?:[IVX]+[a-d]?)?", value, re.IGNORECASE)
+                })
+                cleaned[FILTER_KEY] = {"hidden": values}
+            continue
         if re.fullmatch(r"labels:code:\d{4}", uid):
             from .label_editor import ATTRIBUTE_FIELDS
             fields = style.get("fields", {})

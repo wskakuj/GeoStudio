@@ -98,7 +98,19 @@ class DecorationItem(QGraphicsItem):
             if isinstance(rows, list):
                 columns = max(1, ceil(len(rows) / 15))
                 self._width = max(self._width, 365 * columns + 25)
-                self._height = max(150, 115 + 24 * min(len(rows), 15))
+                bottom = 115 + 24 * min(len(rows), 15)
+                if str(data.get("area", "")).strip():
+                    bottom += 40  # Never place the footer over the last symbol.
+                self._height = max(150, bottom)
+        elif data["kind"] in {"title", "credits"}:
+            # Height must include ALL of the long editable description,
+            # even after the user enters several lines and zooms the page.
+            detail_lines = self._wrapped_details(str(data.get("details", "")),
+                                                 self._width - 30)
+            self._height = max(
+                self._height,
+                103 + 23 * len(detail_lines) +
+                (44 if str(data.get("area", "")).strip() else 15))
         self.setData(0, "geostudio-decoration")
         self.setToolTip("Przeciągnij, aby przesunąć • dwuklik, aby edytować • "
                         + KINDS[data["kind"]])
@@ -158,7 +170,9 @@ class DecorationItem(QGraphicsItem):
                     add_text(entry.get("name", ""), x + 50, y, 13,
                              limit=286)
             else:
-                add_text(self.layout_data.get("details", ""), 14, 93, 14)
+                wrapped = self._wrapped_details(
+                    str(self.layout_data.get("details", "")), self._width - 30)
+                add_text("\n".join(wrapped), 14, 98, 14)
             if self.layout_data.get("area"):
                 add_text(self.layout_data["area"], 14, self._height - 35, 13)
         # The selection/resize handle must be accessible only when selected.
@@ -181,6 +195,53 @@ class DecorationItem(QGraphicsItem):
                          (Qt.AlignLeft | Qt.AlignVCenter | Qt.TextWordWrap)
                          if align is None else align, str(text))
 
+    @staticmethod
+    def _wrapped_details(details: str, width: float) -> list[str]:
+        """Wrap editable description text to a real font-measured width.
+
+        The original QRectF + word-wrap call silently omitted body text in
+        some Qt/Windows paint configurations. Lines are now explicitly laid
+        out and drawn by baseline, including hard line breaks and long names.
+        """
+        font = DecorationItem._font(14)
+        metrics = QFontMetricsF(font)
+        usable_width = max(45.0, float(width))
+        result = []
+        for original in details.splitlines():
+            if not original.strip():
+                result.append("")
+                continue
+            line = ""
+            for word in original.split():
+                proposed = word if not line else line + " " + word
+                if line and metrics.horizontalAdvance(proposed) > usable_width:
+                    result.append(line)
+                    line = word
+                else:
+                    line = proposed
+                # Also handle extremely long unbroken words/cadastral IDs.
+                while line and metrics.horizontalAdvance(line) > usable_width:
+                    end = len(line) - 1
+                    while end > 1 and metrics.horizontalAdvance(line[:end]) > usable_width:
+                        end -= 1
+                    result.append(line[:max(1, end)])
+                    line = line[max(1, end):]
+            if line:
+                result.append(line)
+        return result
+
+    def _paint_details(self, painter, details):
+        """Draw each requested line, rather than relying on a clipped block."""
+        lines = self._wrapped_details(details, self._width - 30)
+        painter.setFont(self._font(14))
+        painter.setPen(MUTED)
+        metrics = QFontMetricsF(painter.font())
+        y = 98.0 + metrics.ascent()
+        for line in lines:
+            if line:
+                painter.drawText(QPointF(14.0, y), line)
+            y += 23.0
+
     def _panel(self, painter):
         painter.setPen(QPen(ACCENT, 2))
         painter.drawLine(12, 31, self._width - 12, 31)
@@ -202,6 +263,9 @@ class DecorationItem(QGraphicsItem):
 
     def _paint_content(self, painter):
         self._panel(painter)
+        # Without this local the painter raised NameError after the subtitle,
+        # leaving the title/credits body and EVERY legend row invisible.
+        kind = self.layout_data["kind"]
         title = self.layout_data.get("title", "")
         subtitle = self.layout_data.get("subtitle", "")
         details = self.layout_data.get("details", "")
@@ -213,11 +277,7 @@ class DecorationItem(QGraphicsItem):
         if kind == "legend":
             self._paint_legend_rows(painter, details)
         else:
-            self._text(painter, details, 14, 93,
-                       self._width - 28,
-                       (96 if kind == "title" else 153),
-                       size=14, color=MUTED,
-                       align=Qt.AlignLeft | Qt.AlignTop | Qt.TextWordWrap)
+            self._paint_details(painter, details)
         if area:
             self._text(painter, area, 14, self._height - 35,
                        self._width - 30, 27,

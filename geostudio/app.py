@@ -31,6 +31,10 @@ from .topology_edit import linked_vertex_moves
 from .scene_builder import RenderContext, build_scene, label_anchor, object_path, object_fill_brush
 from .map_tools import MapView
 from .map_decorations import KINDS, DecorationItem, new_decoration
+from .forest_classes import (
+    FOREST_LAYER, FILTER_KEY, forest_class_value,
+    forest_layer_for_object, forest_hidden_classes,
+)
 from .label_editor import ATTRIBUTE_FIELDS, AttributeLabelsDialog
 from .selection import (SelectionContext, highlight_path, pick_candidates,
                         resolve_click, snap_at, toggle_selection, visible_uids)
@@ -1220,14 +1224,19 @@ class GeoStudioWindow(QMainWindow):
         for obj in self.doc.objects:
             if not obj.points or obj.code in {"5200", "6000", "6301", "7900"}:
                 continue
-            # Land-use subdivisions have meaningful A1 values.
-            subtype = obj.fields.get("A1", "").strip() if obj.code == "5230" else ""
+            # Forest-class subtypes are part of the same Użytki Leśne
+            # layer but remain independently described in the legend.
+            subtype = (forest_class_value(obj) or
+                       obj.fields.get("A1", "").strip()) if obj.code == "5230" else ""
+            if subtype in forest_hidden_classes(self.visual_styles):
+                continue
             key = (obj.code, subtype.casefold())
             if key in found:
                 continue
-            name = (self.symbols.get(obj.code)
-                    or resolve_layer(self.catalog, obj.code)
-                    or "Obiekt")
+            name = (FOREST_LAYER if forest_class_value(obj) is not None else
+                    (self.symbols.get(obj.code)
+                     or resolve_layer(self.catalog, obj.code)
+                     or "Obiekt"))
             label = f"{obj.code}  {name}"
             if subtype:
                 label += f"  ·  {subtype}"
@@ -2072,6 +2081,7 @@ class GeoStudioWindow(QMainWindow):
         for name in self.hidden_layers:
             for item in self.items_by_layer.get(name, ()):
                 item.setVisible(False)
+        self._apply_forest_class_visibility()
         self._populate_layers()
         if fit:
             self.fit_all()
@@ -2136,7 +2146,8 @@ class GeoStudioWindow(QMainWindow):
             uid=item.data(0)
             item.setVisible(bool(self.labels_enabled and
                 self.layer_for_uid.get(uid,'') not in self.hidden_layers and
-                not self.visual_styles.get('legacy-hidden:' + str(uid), {}).get('hidden')))
+                not self.visual_styles.get('legacy-hidden:' + str(uid), {}).get('hidden') and
+                not self._is_filtered_forest_uid(uid)))
         self.update_view_scale_indicator()
 
     def open_attribute_label_dialog(self, code=None):
@@ -2295,9 +2306,11 @@ class GeoStudioWindow(QMainWindow):
             code_filter=self.select_code_filter,
             hide_connectors=self.hide_multipart_connectors,
             radius=radius,
-            excluded_uids=frozenset(key[len('legacy-hidden:'):]
-                for key, style in self.visual_styles.items()
-                if key.startswith('legacy-hidden:') and style.get('hidden')))
+            excluded_uids=frozenset(
+                {key[len('legacy-hidden:'):]
+                 for key, style in self.visual_styles.items()
+                 if key.startswith('legacy-hidden:') and style.get('hidden')}
+                | self._forest_filtered_uids()))
 
     def _visible_uids(self):
         return visible_uids(self._selection_context(0.0))
@@ -2411,7 +2424,7 @@ class GeoStudioWindow(QMainWindow):
             self.object_title.setText(title)
             self.object_title.setToolTip(title)
             self.object_details.setText(
-                f'Kod {obj.code}  ·  {resolve_layer(self.catalog, obj.code)}')
+                f'Kod {obj.code}  ·  {self.layer_for_uid.get(obj.uid) or resolve_layer(self.catalog, obj.code)}')
             area = (f'  •  {obj.area_m2 / 10000:,.4f} ha'
                     if obj.area_m2 is not None else '')
             self.object_metrics.setText(
@@ -2424,7 +2437,8 @@ class GeoStudioWindow(QMainWindow):
         else:
             entries = [('Kod', obj.code),
                        ('Nazwa symbolu', self.symbols.get(obj.code, '—')),
-                       ('Warstwa', resolve_layer(self.catalog, obj.code)),
+                       ('Warstwa', self.layer_for_uid.get(obj.uid) or
+                        resolve_layer(self.catalog, obj.code)),
                        ('ID', obj.uid), ('Wierzchołki', str(len(obj.points)))]
             if obj.area_m2 is not None:
                 entries.append(('Pole geometryczne',
@@ -2581,9 +2595,9 @@ class GeoStudioWindow(QMainWindow):
             self.status.showMessage('Wskaż obiekt i użyj Ctrl+L, aby zaznaczyć cały jego kod.')
             return
         code = self.doc.by_id[self.selected_uid].code
+        visible = self._visible_uids()
         uids = [obj.uid for obj in self.doc.objects
-                if obj.uid and obj.code == code
-                and self.layer_for_uid.get(obj.uid, '') not in self.hidden_layers]
+                if obj.uid and obj.code == code and obj.uid in visible]
         self.pinned_uids = []
         self._set_selected_uids(uids)
         self.status.showMessage(
@@ -2620,7 +2634,128 @@ class GeoStudioWindow(QMainWindow):
         if not self.doc:
             return []
         return [obj for obj in self.doc.objects
-                if resolve_layer(self.catalog, obj.code) == layer and obj.uid]
+                if obj.uid and self.layer_for_uid.get(obj.uid) == layer]
+
+    def _forest_class_counts(self):
+        counts = defaultdict(int)
+        if self.doc:
+            for obj in self.doc.objects:
+                grade = forest_class_value(obj)
+                if grade is not None:
+                    counts[grade] += 1
+        return dict(counts)
+
+    def _forest_filtered_uids(self):
+        if not self.doc:
+            return set()
+        disabled = forest_hidden_classes(self.visual_styles)
+        if not disabled:
+            return set()
+        return {obj.uid for obj in self.doc.objects
+                if obj.uid and forest_class_value(obj) in disabled}
+
+    def _is_filtered_forest_uid(self, uid):
+        if not self.doc or uid not in self.doc.by_id:
+            return False
+        grade = forest_class_value(self.doc.by_id[uid])
+        return grade is not None and grade in forest_hidden_classes(self.visual_styles)
+
+    def _apply_forest_class_visibility(self):
+        """Apply class filters to strokes, polygon fills, and every label.
+
+        Do not change source GEO-MAP geometry or the whole layer switch.
+        """
+        if not self.doc:
+            return
+        disabled = forest_hidden_classes(self.visual_styles)
+        # Build an O(n) index once. A real forestry MAP may contain tens of
+        # thousands of objects: scanning every label for each polygon was
+        # quadratic and could freeze the application when toggling one class.
+        labels_by_uid = defaultdict(list)
+        for (uid, _field), label in self.label_items.items():
+            labels_by_uid[uid].append(label)
+        for obj in self.doc.objects:
+            grade = forest_class_value(obj)
+            if grade is None:
+                continue
+            shown = (grade not in disabled and
+                     FOREST_LAYER not in self.hidden_layers and
+                     not self.visual_styles.get('legacy-hidden:' + obj.uid, {}).get('hidden'))
+            for part in (self.graphics_for_uid.get(obj.uid),
+                         self.fill_items_for_uid.get(obj.uid)):
+                if part is not None:
+                    part.setVisible(shown)
+            for label in labels_by_uid.get(obj.uid, ()):
+                label.setVisible(shown and self.labels_enabled)
+        selected = [uid for uid in self.selected_uids
+                    if uid not in self._forest_filtered_uids()
+                    and self.layer_for_uid.get(uid) not in self.hidden_layers]
+        if selected != self.selected_uids:
+            self.pinned_uids = [uid for uid in self.pinned_uids if uid in selected]
+            self._set_selected_uids(selected)
+
+    def set_forest_class_visible(self, grade, visible):
+        """Update a class visibility in the sidecar with a single undo step."""
+        known = self._forest_class_counts()
+        if grade not in known:
+            return
+        hidden = forest_hidden_classes(self.visual_styles)
+        if visible:
+            hidden.discard(grade)
+        else:
+            hidden.add(grade)
+        if hidden == forest_hidden_classes(self.visual_styles):
+            return
+        with self.history.begin(
+                f'Klasoużytki: {"pokaż" if visible else "ukryj"} {grade}',
+                selection_before=self.selected_uids):
+            self.visual_styles[FILTER_KEY] = {"hidden": sorted(hidden)}
+        self._history_changed()
+        self._apply_forest_class_visibility()
+        self.update_label_visibility()
+        self._autosave_work_copy()
+        self.status.showMessage(
+            f'Klasoużytek {grade}: {"widoczny" if visible else "ukryty"}. '
+            'Ctrl+Z cofa zmianę.')
+
+    def set_all_forest_classes_visible(self, visible):
+        known = self._forest_class_counts()
+        if not known:
+            return
+        before = forest_hidden_classes(self.visual_styles)
+        hidden = set() if visible else set(known)
+        if before == hidden:
+            return
+        with self.history.begin(
+                "Pokaż klasoużytki leśne" if visible else "Ukryj klasoużytki leśne",
+                selection_before=self.selected_uids):
+            self.visual_styles[FILTER_KEY] = {"hidden": sorted(hidden)}
+        self._history_changed()
+        self._apply_forest_class_visibility()
+        self.update_label_visibility()
+        self._autosave_work_copy()
+
+    def _add_forest_class_menu(self, menu):
+        """Construct checkable filter actions without opening a modal popup."""
+        grades = self._forest_class_counts()
+        hidden = forest_hidden_classes(self.visual_styles)
+        class_menu = menu.addMenu("Klasoużytki — widoczność")
+        all_on = class_menu.addAction("Pokaż wszystkie klasoużytki")
+        all_on.triggered.connect(
+            lambda: self.set_all_forest_classes_visible(True))
+        all_off = class_menu.addAction("Ukryj wszystkie klasoużytki")
+        all_off.triggered.connect(
+            lambda: self.set_all_forest_classes_visible(False))
+        class_menu.addSeparator()
+        for grade, count in sorted(grades.items()):
+            action = class_menu.addAction(f"{grade} ({count})")
+            action.setCheckable(True)
+            action.setChecked(grade not in hidden)
+            action.setToolTip("Pokaż lub ukryj wyłącznie obiekty " + grade)
+            action.triggered.connect(
+                lambda checked, name=grade:
+                self.set_forest_class_visible(name, checked))
+        return class_menu
 
     def open_layer_context_menu(self, pos):
         """Right-click a layer: operate on every member, with one Undo."""
@@ -2630,6 +2765,9 @@ class GeoStudioWindow(QMainWindow):
         layer = item.text(0)
         objs = self._objects_in_layer(layer)
         menu = QMenu(self)
+        if layer == FOREST_LAYER:
+            self._add_forest_class_menu(menu)
+            menu.addSeparator()
         select_action = menu.addAction(f"Zaznacz wszystkie ({len(objs)} obiektów)")
         attributes_action = menu.addAction("Zmień atrybut wszystkich obiektów…")
         color_action = menu.addAction("Ustaw kolor poligonów całej warstwy…")
@@ -2882,8 +3020,10 @@ class GeoStudioWindow(QMainWindow):
         finally:
             tree.blockSignals(False)
         if self.doc:
+            self._apply_forest_class_visibility()
             selected = [uid for uid in self.selected_uids
-                        if self.layer_for_uid.get(uid) not in self.hidden_layers]
+                        if self.layer_for_uid.get(uid) not in self.hidden_layers
+                        and uid not in self._forest_filtered_uids()]
             if selected != self.selected_uids:
                 self._set_selected_uids(selected)
             else:
@@ -2896,10 +3036,12 @@ class GeoStudioWindow(QMainWindow):
             self.hidden_layers.discard(item.text(0))
         else:
             self.hidden_layers.add(item.text(0))
+        self._apply_forest_class_visibility()
         # A hidden layer must not keep a ghost selection overlay; labels
         # belonging to other visible layers retain their previous positions.
         selected = [uid for uid in self.selected_uids
-                    if self.layer_for_uid.get(uid) not in self.hidden_layers]
+                    if self.layer_for_uid.get(uid) not in self.hidden_layers
+                    and uid not in self._forest_filtered_uids()]
         if selected != self.selected_uids:
             self._set_selected_uids(selected)
         else:
@@ -3117,7 +3259,8 @@ class GeoStudioWindow(QMainWindow):
         obj = self.doc.by_id[uid]
         dialog = ObjectParametersDialog(
             obj, symbols=self.symbols,
-            layer_name=resolve_layer(self.catalog, obj.code), parent=self)
+            layer_name=self.layer_for_uid.get(uid) or
+                       resolve_layer(self.catalog, obj.code), parent=self)
         if dialog.exec() != QDialog.Accepted:
             return
         changes = dialog.changed_fields()

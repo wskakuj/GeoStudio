@@ -34,16 +34,14 @@ Obsługa zapisu TIFF zależy od instalacji kodeków Qt.
 Menu **Dane → WMS** zawiera:
 - Geoportal / ortofotomapa standardowa,
 - Geoportal / ortofotomapa wysokiej rozdzielczości,
-- własny adres serwera WMS,
-- informacyjną pozycję SmartSDI (nie jest serwerem WMS).
+- granice i numery działek ewidencyjnych GUGiK KIEG,
+- własny adres serwera WMS.
 
 Adres HighResolution jest oficjalnym punktem serwisu Geoportalu:
 https://mapy.geoportal.gov.pl/wss/service/PZGIK/ORTO/WMS/HighResolution
 
-**SmartSDI** to [wtyczka QGIS](https://github.com/geo-system/qgis-smartsdi)
-do pobierania wektorowych danych EGiB/PRG; nie jest usługą WMS i nie
-obsługuje GetCapabilities. Dostępny jest link do projektu w oknie GeoStudio.
-Samo dodanie linku nie implementuje pobierania ani importu jego danych.
+Podkład KIEG jest wyłącznie rastrowym podglądem granic i numerów działek.
+Nie zapisuje edytowalnych działek do pliku MAP.
 
 ## Warstwy
 W zakładce Warstwy kliknij **PPM na nazwie warstwy**, żeby zaznaczyć
