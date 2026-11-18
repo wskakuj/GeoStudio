@@ -1198,19 +1198,27 @@ class GeoStudioWindow(QMainWindow):
             self, 'Otwórz mapę GEO-MAP',
             self._recent_folder('last_map_dir'), 'GEO-MAP (*.MAP *.map)')
         if not file:return
-        if self.doc is not None and self.history.is_dirty:
-            answer=QMessageBox.warning(self,'Niezapisane zmiany',
-                'Bieżąca mapa ma zmiany, które nie zostały zapisane. '
-                'Otwarcie innej mapy odrzuci je i wyczyści historię. Kontynuować?',
-                QMessageBox.Yes|QMessageBox.No, QMessageBox.No)
-            if answer!=QMessageBox.Yes:return
+        # A new map opens a NEW document tab. The previously active map,
+        # including its dirty history, remains available and editable.
+        for idx, session in enumerate(self._map_sessions):
+            if Path(session.filename).resolve() == Path(file).resolve():
+                self.workspace.document_tabs.setCurrentIndex(idx)
+                return
         try:
             doc=GeoMap.open(file)
             if not doc.checksum_valid:
                 answer=QMessageBox.warning(self,'Suma kontrolna','Suma MD5 pliku nie zgadza się z nagłówkiem. Otworzyć tylko do podglądu?',QMessageBox.Yes|QMessageBox.No)
                 if answer!=QMessageBox.Yes:return
+            self._capture_active_map_tab()
+            if self.doc is not None:
+                self.cancel_edit()
+                self._close_document_dialogs()
             self.doc=doc
-            self._wms_preview.clear(self.map_scene)
+            self.history = History(_MapHistoryTarget(self))
+            self._raster_overlay = RasterOverlayStore()
+            self._wms_preview = WMSPreviewOverlay()
+            self.hidden_layers = set()
+            self.select_code_filter = None
             self._update_wms_attribution()
             self.current_crs_epsg = detected_crs_from_prj(file)
             self.selected_uid = ''
@@ -1243,8 +1251,10 @@ class GeoStudioWindow(QMainWindow):
             self._label_history = None
             self.history.clear()
             self._base_title = 'GeoStudio v0.14 — '+Path(file).name
-            self._update_dirty_title()
-            self.status.showMessage(f'{len(doc.objects)} obiektów, {len(doc.lines)} wierszy | {file}')
+            self._append_current_map_tab()
+            self.status.showMessage(
+                f'Otwarto nową zakładkę: {Path(file).name} — '
+                f'{len(doc.objects)} obiektów, {len(doc.lines)} wierszy.')
         except Exception as exc: QMessageBox.critical(self,'Błąd odczytu mapy',str(exc))
 
     def _capture_active_map_tab(self):
