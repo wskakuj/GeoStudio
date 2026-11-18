@@ -147,8 +147,9 @@ def test_old_response_is_cancelled_and_cannot_replace_new_view(window):
     controller.configure(_source())
     old = stub.replies[0]
 
-    # Simulate scrolling/zoom by changing the extent seen by the controller.
-    window.view.centerOn(600, -700)
+    # The offscreen fixture has no meaningful scroll range, so zoom the
+    # transform directly to guarantee a different GetMap extent.
+    window.view.scale(1.7, 1.7)
     controller.refresh(force=True)
     assert old.aborted
     assert len(stub.requests) == 2
