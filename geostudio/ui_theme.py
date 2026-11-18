@@ -122,6 +122,14 @@ QTabBar::tab:selected { color: @accent@; border-bottom: 2px solid @accent@; }
 QTabBar::tab:hover:!selected { background: @hover@; color: @text@; }
 QFrame#GeoStudioSelectionCard { background: @alt@; border: 1px solid @border@; border-radius: 9px; }
 QLabel#GeoStudioObjectTitle { color: @text@; font-size: 13pt; font-weight: 750; padding: 1px 2px; }
+QLabel#GeoStudioObjectMetrics { color: @accent@; font-size: 10pt; font-weight: 700; padding: 9px 1px 5px 1px; }
+QPushButton#GeoStudioQuickEdit, QPushButton#GeoStudioQuickCopy {
+    border: 1px solid @border@; border-radius: 8px; background: @surface@;
+    padding: 9px 11px; font-size: 9pt; font-weight: 700;
+}
+QPushButton#GeoStudioQuickEdit:hover, QPushButton#GeoStudioQuickCopy:hover {
+    background: @hover@; border-color: @accent@; color: @accent@;
+}
 QLabel#GeoStudioObjectDetails { color: @muted@; font-size: 9.5pt; padding: 1px 2px; }
 QLabel#GeoStudioLayerSummary { color: @muted@; font-size: 9pt; }
 QLabel#GeoStudioEmptyHint { color: @muted@; font-size: 10pt; padding: 5px; }
