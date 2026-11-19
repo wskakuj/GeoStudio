@@ -24,7 +24,7 @@ from geostudio.geometry_index import GeometryIndex
 from geostudio.history import History
 from geostudio.topology_edit import linked_vertex_plan
 from geostudio.web_app.topology_safety import rings_overlap, rings_contact, ring_of, nearest_boundary_snap
-from geostudio.interactions import find_snap, closest_point_on_edge
+from geostudio.interactions import find_snap, closest_point_on_edge, polygon_is_valid
 from geostudio.library_render import native_fill_color
 
 MAX_MAP_BYTES = 80 * 1024 * 1024
@@ -114,6 +114,7 @@ class PreviewWorkspace:
         self._document_token = ""
         self._bulk_preview_key = ""
         self._move_preview_key = ""
+        self._objects_preview_key = ""
 
     def load_map(self, content: bytes, filename: str) -> dict:
         if not content or len(content) > MAX_MAP_BYTES:
@@ -132,6 +133,7 @@ class PreviewWorkspace:
             self._document_token = token_hex(16)
             self._bulk_preview_key = ""
             self._move_preview_key = ""
+            self._objects_preview_key = ""
             self._reindex(doc, name)
             self._styles = {}
             self._label_positions = {}
@@ -663,6 +665,172 @@ class PreviewWorkspace:
                     "delta": report["delta"],
                     "snapApplied": report["snapApplied"],
                     "topologyDetached": bool(report["topologyConflicts"])}
+
+    def _object_operation_plan(self, payload: dict, *, document_token: str,
+                               revision: int) -> dict:
+        """Preflight copy/delete/create against the exact current MAP revision."""
+        if self._doc is None or self._history is None:
+            raise ValueError("Najpierw otwórz mapę.")
+        if (document_token != self._document_token or
+                type(revision) is not int or revision != self._revision):
+            raise RuntimeError("Mapa zmieniła się. Otwórz podgląd ponownie.")
+        if not isinstance(payload, dict):
+            raise ValueError("Nieprawidłowe dane operacji.")
+        action=payload.get("action")
+        if action not in {"copy","delete","create"}:
+            raise ValueError("Nieznany rodzaj operacji na poligonach.")
+        allowed_keys={
+            "copy":{"action","ids","dx","dy"},
+            "delete":{"action","ids"},
+            "create":{"action","code","points","fields"},
+        }[action]
+        if set(payload)-allowed_keys:
+            raise ValueError("Nieznane pola polecenia.")
+        selected=[]
+        code_counts=Counter()
+        coordinates=[]
+        if action in {"copy","delete"}:
+            ids=payload.get("ids")
+            if (not isinstance(ids,list) or not ids or
+                    len(ids)>(500 if action=="copy" else MAX_BULK_EDIT_OBJECTS) or
+                    len(set(str(i) for i in ids))!=len(ids)):
+                raise ValueError("Nieprawidłowe lub zbyt duże zaznaczenie.")
+            for fid in ids:
+                if not isinstance(fid,str):
+                    raise ValueError("ID musi być tekstem.")
+                entry=self._lookup.get(fid)
+                if entry is None:
+                    raise LookupError("Zaznaczenie zawiera nieistniejący obiekt.")
+                obj=entry.obj
+                if (not obj.uid or self._uid_counts.get(obj.uid)!=1 or
+                        self._doc.by_id.get(obj.uid) is not obj):
+                    raise ValueError("Brak unikatowego identyfikatora :ID.")
+                if action=="copy" and (not obj.is_closed or len(obj.points)<4):
+                    raise ValueError("Kopiowanie dotyczy tylko poligonów.")
+                selected.append(obj)
+                code_counts[obj.code]+=1
+        if action=="copy":
+            dx,dy=payload.get("dx"),payload.get("dy")
+            if (type(dx) not in (int,float) or type(dy) not in (int,float) or
+                    not isfinite(dx) or not isfinite(dy) or
+                    abs(dx)>100000 or abs(dy)>100000):
+                raise ValueError("Nieprawidłowe przesunięcie kopii.")
+            dx,dy=round(dx,3),round(dy,3)
+            if dx==0 and dy==0:
+                raise ValueError("Kopia musi mieć inne położenie niż oryginał.")
+            if sum(len(obj.points) for obj in selected)>50000:
+                raise ValueError("Zbyt dużo węzłów do skopiowania.")
+            # Unlike MOVE, the original polygon remains. Every new polygon
+            # must not overlap ANY existing polygon with the same code.
+            for obj in selected:
+                candidate=ring_of(obj,dx,dy)
+                for other in self._doc.objects:
+                    if not other.is_closed or other.code!=obj.code:
+                        continue
+                    if rings_overlap(candidate,ring_of(other)):
+                        raise ValueError("Kopia nakłada się na poligon kodu "+
+                                         obj.code+". Zmień przesunięcie.")
+            coordinates=[{"uid":obj.uid,"code":obj.code} for obj in selected[:10]]
+        elif action=="create":
+            code=payload.get("code")
+            if code not in {"5216","5220","5230","5310"}:
+                raise ValueError("Wybierz kod poligonu: 5216, 5220, 5230 lub 5310.")
+            coords=payload.get("points")
+            if not isinstance(coords,list) or not 3<=len(coords)<=500:
+                raise ValueError("Poligon wymaga 3–500 punktów.")
+            for point in coords:
+                if (not isinstance(point,list) or len(point)!=2 or
+                        any(type(v) not in (int,float) or
+                            not isfinite(v) or abs(v)>=1e9 for v in point)):
+                    raise ValueError("Nieprawidłowe współrzędne poligonu.")
+                coordinates.append((round(point[0],3),round(point[1],3)))
+            if coordinates[0]==coordinates[-1]:
+                coordinates.pop()
+            if len(coordinates)<3 or not polygon_is_valid(coordinates):
+                raise ValueError("Poligon ma niepoprawny obrys lub za małe pole.")
+            fields=payload.get("fields")
+            if not isinstance(fields,dict) or set(fields)-{"A1","A2"}:
+                raise ValueError("Atrybuty nowego poligonu mogą zawierać A1/A2.")
+            for value in fields.values():
+                if not isinstance(value,str) or any(c in value for c in "\r\n]"):
+                    raise ValueError("Nieprawidłowa wartość A1 lub A2.")
+                try:
+                    if len(value.encode("cp1250"))>512:
+                        raise ValueError("Atrybut przekracza 512 bajtów.")
+                except UnicodeEncodeError as exc:
+                    raise ValueError("Atrybut musi mieć kodowanie CP1250.") from exc
+            for other in self._doc.objects:
+                if other.is_closed and other.code==code and rings_overlap(
+                        coordinates,ring_of(other)):
+                    raise ValueError(
+                        "Nowy poligon nakłada się na istniejący poligon tego samego kodu.")
+            code_counts[code]=1
+        canonical={"action":action,"payload":payload,
+                   "documentToken":document_token,"revision":revision}
+        preview_key=sha256(json.dumps(
+            canonical,sort_keys=True,ensure_ascii=False,
+            separators=(",",":")).encode("utf-8")).hexdigest()
+        return {"action":action,"selected":selected,"coords":coordinates,
+                "report":{"action":action,"selected":len(selected),
+                          "codes":dict(sorted(code_counts.items())),
+                          "vertexCount":(len(coordinates) if action=="create"
+                            else sum(len(o.points) for o in selected)),
+                          "previewKey":preview_key,"canApply":True,
+                          **self._editing_status()}}
+
+    def preview_object_operation(self, payload: dict, *,
+                                 document_token: str, revision: int) -> dict:
+        with self._lock:
+            plan=self._object_operation_plan(payload,
+                document_token=document_token,revision=revision)
+            self._objects_preview_key=plan["report"]["previewKey"]
+            return plan["report"]
+
+    def apply_object_operation(self, payload: dict, *, preview_key: str,
+                               document_token: str, revision: int) -> dict:
+        with self._lock:
+            plan=self._object_operation_plan(payload,
+                document_token=document_token,revision=revision)
+            report=plan["report"]
+            if (not isinstance(preview_key,str) or
+                    preview_key!=report["previewKey"] or
+                    preview_key!=self._objects_preview_key):
+                raise RuntimeError("Przed zatwierdzeniem wykonaj świeży podgląd.")
+            action=plan["action"]
+            selected=plan["selected"]
+            before=self._doc.to_bytes()
+            created=[]
+            with self._history.begin(
+                {"copy":"Kopiuj poligony","delete":"Usuń poligony",
+                 "create":"Nowy poligon"}[action],
+                selection_before=tuple(o.uid for o in selected),
+            ):
+                if action=="delete":
+                    self._doc.delete_objects([o.uid for o in selected])
+                elif action=="copy":
+                    created=self._doc.duplicate_polygons(
+                        [o.uid for o in selected],
+                        round(payload["dx"],3),round(payload["dy"],3))
+                else:
+                    created=[self._doc.append_polygon(
+                        plan["coords"],code=payload["code"],
+                        fields=payload["fields"])]
+                # For append/copy, all original MAP records must survive.
+                if action!="delete":
+                    if not b"".join(self._doc.lines).startswith(
+                            b"".join(GeoMap(before).lines)):
+                        raise ValueError(
+                            "Wykryto zmianę oryginalnego rekordu. Cofnięto operację.")
+            self._reindex(self._doc,self._doc.filename)
+            self._revision+=1
+            self._objects_preview_key=""
+            self._move_preview_key=""
+            self._bulk_preview_key=""
+            return {**self._editing_status(),"changed":True,"action":action,
+                    "affected":payload.get("ids",[]),
+                    "createdUids":created,
+                    "createdIds":[self._object_id[id(self._doc.by_id[uid])]
+                                  for uid in created]}
 
     @staticmethod
     def _foreign_code_digest(doc: GeoMap, edited_code: str) -> bytes:
