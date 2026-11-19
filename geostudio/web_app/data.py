@@ -1394,18 +1394,50 @@ class PreviewWorkspace:
             })
         return result
 
-    def _feature(self, entry: _Entry) -> dict:
-        obj = entry.obj
-        parts = [
-            [[p.y, -p.x] for p in segment] for segment in obj.display_parts
-            if segment
-        ]
-        return {
-            "id": entry.fid, "code": obj.code, "layer": entry.layer,
-            "grade": entry.grade, "bbox": entry.bbox, "closed": obj.is_closed,
-            "geometry": parts, "style": self._style(entry),
-            "labels": self._labels(entry),
-        }
+    def _feature(self, entry: _Entry, overlay_objects=()) -> dict:
+        obj=entry.obj
+        parts=[[[p.y,-p.x] for p in segment]
+               for segment in obj.display_parts if segment]
+        visible_area=obj.area_m2
+        mask_count=0
+        if obj.is_closed and overlay_objects:
+            order=self._overlay_uids()
+            at=order.index(obj.uid) if obj.uid in order else -1
+            upper_ids=set(order[at+1:])
+            # Same code only. Preserve unrelated codes even when geometries
+            # intersect; overlays never modify the actual MAP records.
+            upper=[other for other in overlay_objects
+                   if other.uid in upper_ids and other.uid!=obj.uid
+                   and other.code==obj.code]
+            if upper:
+                ax0=min(p.x for p in obj.points)
+                ay0=min(p.y for p in obj.points)
+                ax1=max(p.x for p in obj.points)
+                ay1=max(p.y for p in obj.points)
+                upper=[other for other in upper
+                       if min(p.x for p in other.points)<ax1
+                       and max(p.x for p in other.points)>ax0
+                       and min(p.y for p in other.points)<ay1
+                       and max(p.y for p in other.points)>ay0]
+                if upper:
+                    try:
+                        base=polygon_of(obj)
+                        shapes=[polygon_of(other) for other in upper]
+                        result=visible_difference(base,shapes)
+                        parts=shape_parts(result)
+                        visible_area=round(result.area,3)
+                        mask_count=len(shapes)
+                    except ValueError:
+                        # Multi-contour GEO-MAP geometry needs a native parser.
+                        # Preserve the original rather than risk data loss.
+                        pass
+        return {"id":entry.fid,"code":obj.code,"layer":entry.layer,
+                "grade":entry.grade,"bbox":entry.bbox,"closed":obj.is_closed,
+                "geometry":parts,"style":self._style(entry),
+                "labels":self._labels(entry) if parts else [],
+                "baseAreaM2":obj.area_m2,
+                "visibleAreaM2":visible_area,
+                "reversibleCutout":mask_count>0}
 
     def viewport(self, bounds: tuple[float, float, float, float],
                  limit: int = MAX_RENDER_FEATURES) -> dict:
@@ -1432,9 +1464,14 @@ class PreviewWorkspace:
             visible = [entry for entry in self._entries
                        if id(entry.obj) in ids and _intersects(entry.bbox, clipped)]
             total = len(visible)
+            stack=self._overlay_uids()
+            overlay=[self._doc.by_id[uid] for uid in stack
+                     if uid in self._doc.by_id
+                     and self._uid_counts.get(uid)==1
+                     and self._doc.by_id[uid].is_closed]
             return {
-                "features": [self._feature(entry) for entry in visible[:limit]],
-                "limited": total > limit, "total": total,
+                "features":[self._feature(entry,overlay) for entry in visible[:limit]],
+                "limited":total>limit,"total":total,
             }
 
     def details(self, fid: str) -> dict:
