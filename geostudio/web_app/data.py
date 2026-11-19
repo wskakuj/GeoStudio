@@ -112,6 +112,7 @@ class PreviewWorkspace:
         self._revision = 0
         self._document_token = ""
         self._bulk_preview_key = ""
+        self._move_preview_key = ""
 
     def load_map(self, content: bytes, filename: str) -> dict:
         if not content or len(content) > MAX_MAP_BYTES:
@@ -129,6 +130,7 @@ class PreviewWorkspace:
             self._revision = 0
             self._document_token = token_hex(16)
             self._bulk_preview_key = ""
+            self._move_preview_key = ""
             self._reindex(doc, name)
             self._styles = {}
             self._label_positions = {}
@@ -443,6 +445,204 @@ class PreviewWorkspace:
                 "missingFields": report["missingFields"],
                 "affected": plan["selectedIds"],
             }
+
+    @staticmethod
+    def _point_touches_boundary(point, polygon, tolerance: float = 0.0015) -> bool:
+        """Recognize shared corners AND T-junctions with no matching P record."""
+        for a, b in zip(polygon.points, polygon.points[1:]):
+            # A P 0 separator may terminate a distinct component.
+            if a.point_type == 0:
+                continue
+            x, y = closest_point_on_edge(
+                point.x, point.y, a.x, a.y, b.x, b.y)
+            if hypot(x - point.x, y - point.y) <= tolerance:
+                return True
+        return False
+
+    def _move_topology_conflicts(self, moving: list) -> list[dict]:
+        """Find stationary SAME-CODE polygons sharing a boundary with the move.
+
+        Both directions are required: in a T-junction only one polygon has
+        a native vertex at the contact. Never propagate the move automatically.
+        """
+        moving_uids = {obj.uid for obj in moving}
+        codes = {obj.code for obj in moving}
+        stationary = [obj for obj in self._doc.objects
+                      if obj.uid not in moving_uids and obj.code in codes
+                      and obj.is_closed and obj.points]
+        if not stationary:
+            return []
+        moving_index = GeometryIndex(moving, hide_connectors=True)
+        stationary_index = GeometryIndex(stationary, hide_connectors=True)
+        found: dict[tuple[str, str], dict] = {}
+
+        def check_points(sources, candidates, source_is_moving):
+            for obj in sources:
+                for point in obj.points[:-1]:
+                    for neighbor in candidates.nearby(point.x, point.y, 0.0015):
+                        if neighbor.code != obj.code:
+                            continue
+                        moved = obj if source_is_moving else neighbor
+                        fixed = neighbor if source_is_moving else obj
+                        key = (moved.uid, fixed.uid)
+                        if key not in found and self._point_touches_boundary(point, neighbor):
+                            found[key] = {
+                                "movingUid": moved.uid,
+                                "stationaryUid": fixed.uid,
+                                "code": moved.code,
+                            }
+                            if len(found) >= 12:
+                                return True
+            return False
+
+        if not check_points(moving, stationary_index, True):
+            check_points(stationary, moving_index, False)
+        return list(found.values())
+
+    def _move_polygon_plan(self, ids: list[str], dx: float, dy: float, *,
+                           allow_detach: bool, document_token: str,
+                           revision: int) -> dict:
+        """Validate every selected polygon and preview the exact coordinate shift.
+
+        dx = native X (northing), dy = native Y (easting), in map units.
+        """
+        if self._doc is None or self._history is None:
+            raise ValueError("Najpierw otwórz mapę GEO-MAP.")
+        if (document_token != self._document_token or
+                type(revision) is not int or revision != self._revision):
+            raise RuntimeError("Mapa została zmieniona. Sprawdź przesunięcie ponownie.")
+        if (not isinstance(ids, list) or not ids or
+                len(ids) > MAX_BULK_EDIT_OBJECTS or
+                any(not isinstance(fid, str) or len(fid) > 20 for fid in ids) or
+                len(set(ids)) != len(ids)):
+            raise ValueError("Wybierz od 1 do 5 000 unikalnych obiektów.")
+        if (type(dx) not in (int, float) or type(dy) not in (int, float) or
+                any(not isfinite(z) or abs(z) > 100000 for z in (dx, dy)) or
+                type(allow_detach) is not bool):
+            raise ValueError("Nieprawidłowe przesunięcie X/Y albo opcja topologii.")
+        dx, dy = round(dx, 3), round(dy, 3)
+        changes: dict[str, dict[int, tuple[float, float]]] = {}
+        moving = []
+        samples: list[dict] = []
+        codes: Counter = Counter()
+        vertex_count = 0
+        for fid in ids:
+            entry = self._lookup.get(fid)
+            if entry is None:
+                raise LookupError("Zaznaczenie zawiera nieistniejący obiekt.")
+            obj = entry.obj
+            if (not obj.uid or self._uid_counts.get(obj.uid) != 1 or
+                    self._doc.by_id.get(obj.uid) is not obj):
+                raise ValueError("Obiekt bez jednoznacznego :ID. Przerwano przesuwanie.")
+            if not obj.is_closed or len(obj.points) < 4:
+                raise ValueError(
+                    "Zaznaczenie zawiera linię lub punkt. Przesuwać można "
+                    "tylko zamknięte poligony (kod " + obj.code + ").")
+            vertex_count += len(obj.points)
+            if vertex_count > 100000:
+                raise ValueError("Zaznaczenie przekracza limit 100 000 węzłów.")
+            # All points, including the repeated closing P, move together.
+            shifted = {}
+            for index, point in enumerate(obj.points[:-1]):
+                x, y = round(point.x + dx, 3), round(point.y + dy, 3)
+                if not (-1e9 < x < 1e9 and -1e9 < y < 1e9):
+                    raise ValueError("Przesunięcie wyprowadza punkt poza zakres współrzędnych.")
+                shifted[index] = (x, y)
+            changes[obj.uid] = shifted
+            moving.append(obj)
+            codes[obj.code] += 1
+            if len(samples) < 10:
+                first = obj.points[0]
+                samples.append({"id": fid, "uid": obj.uid, "code": obj.code,
+                                "before": {"x": first.x, "y": first.y},
+                                "after": {"x": shifted[0][0], "y": shifted[0][1]}})
+        conflicts = (self._move_topology_conflicts(moving)
+                     if dx or dy else [])
+        topology_blocked = bool(conflicts) and not allow_detach
+        payload = {"ids": sorted(ids), "dx": dx, "dy": dy,
+                   "allowDetach": allow_detach, "documentToken": document_token,
+                   "revision": revision}
+        preview_key = sha256(json.dumps(
+            payload, sort_keys=True, ensure_ascii=False,
+            separators=(",", ":")).encode("utf-8")).hexdigest()
+        return {
+            "changes": changes,
+            "selectedUids": {obj.uid for obj in moving},
+            "report": {
+                "selected": len(ids), "vertexCount": vertex_count,
+                "codes": dict(sorted(codes.items())),
+                "delta": {"x": dx, "y": dy},
+                "samples": samples,
+                "topologyConflicts": conflicts,
+                "topologyBlocked": topology_blocked,
+                "allowDetach": allow_detach,
+                "canApply": bool(dx or dy) and not topology_blocked,
+                "previewKey": preview_key,
+                **self._editing_status(),
+            },
+        }
+
+    def preview_move_polygons(self, ids: list[str], dx: float, dy: float, *,
+                              allow_detach: bool, document_token: str,
+                              revision: int) -> dict:
+        with self._lock:
+            report = self._move_polygon_plan(
+                ids, dx, dy, allow_detach=allow_detach,
+                document_token=document_token, revision=revision)["report"]
+            self._move_preview_key = report["previewKey"]
+            return report
+
+    def apply_move_polygons(self, ids: list[str], dx: float, dy: float, *,
+                            allow_detach: bool, preview_key: str,
+                            document_token: str, revision: int) -> dict:
+        with self._lock:
+            plan = self._move_polygon_plan(
+                ids, dx, dy, allow_detach=allow_detach,
+                document_token=document_token, revision=revision)
+            report = plan["report"]
+            if (not isinstance(preview_key, str) or
+                    preview_key != report["previewKey"] or
+                    preview_key != self._move_preview_key):
+                raise RuntimeError("Podgląd wygasł. Ponownie sprawdź przesunięcie.")
+            if report["topologyBlocked"]:
+                raise ValueError(
+                    "Zaznaczenie ma wspólną granicę z nieruchomym "
+                    "poligonem tego samego kodu. Dodaj sąsiada do zaznaczenia "
+                    "lub świadomie zezwól na rozłączenie granicy.")
+            if not report["canApply"]:
+                self._move_preview_key = ""
+                return {**self._editing_status(), "changed": False, "affected": []}
+
+            # Fingerprint raw records of every stationary object, independent
+            # of its code; this also protects overlapping different-code data.
+            h = sha256()
+            for obj in self._doc.objects:
+                if obj.uid not in plan["selectedUids"]:
+                    for line in self._doc.lines[obj.start:obj.end]:
+                        h.update(line)
+            before = h.digest()
+            with self._history.begin(
+                "Przesunięcie " + str(report["selected"]) + " poligonów",
+                selection_before=tuple(plan["selectedUids"]),
+            ):
+                self._doc.move_polygon_vertices(plan["changes"])
+                check = sha256()
+                for obj in self._doc.objects:
+                    if obj.uid not in plan["selectedUids"]:
+                        for line in self._doc.lines[obj.start:obj.end]:
+                            check.update(line)
+                if check.digest() != before:
+                    raise ValueError(
+                        "Zmiana poza zaznaczeniem — cofnięto całą operację.")
+            self._reindex(self._doc, self._doc.filename)
+            self._revision += 1
+            self._move_preview_key = ""
+            self._bulk_preview_key = ""
+            return {**self._editing_status(), "changed": True,
+                    "affected": list(ids), "movedObjects": report["selected"],
+                    "movedVertices": report["vertexCount"],
+                    "delta": report["delta"],
+                    "topologyDetached": bool(report["topologyConflicts"])}
 
     @staticmethod
     def _foreign_code_digest(doc: GeoMap, edited_code: str) -> bytes:
