@@ -189,6 +189,17 @@
   async function downloadMapCopy() {
     if(!state.meta||!state.edit||state.editBusy)return;
     try {
+      // WebView2 can ignore <a download> and produce no file. Use Windows
+      // Save As instead, and display the real path after a successful write.
+      if(window.pywebview?.api?.save_map) {
+        const saved=await window.pywebview.api.save_map();
+        if(saved&&!saved.cancelled){
+          inform("Zapisano kopię MAP: "+saved.path+
+                 " ("+display(saved.bytes)+" bajtów).");
+          window.alert("Kopia GEO-MAP została zapisana w:\n"+saved.path);
+        }
+        return;
+      }
       const params=new URLSearchParams({documentToken:state.edit.documentToken});
       const response=await fetch("/api/export/map?"+params.toString(),{
         headers:{"X-GeoStudio-Token":token},cache:"no-store"
@@ -204,9 +215,10 @@
       const anchor=document.createElement("a");
       anchor.href=url;anchor.download=filename;
       document.body.append(anchor);anchor.click();anchor.remove();
-      setTimeout(()=>URL.revokeObjectURL(url),6000);
-      inform("Przygotowano nowy plik MAP do pobrania. Oryginał pozostaje bez zmian.");
-    }catch(error){inform("Nie udało się przygotować kopii: "+error.message,true);}
+      setTimeout(()=>URL.revokeObjectURL(url),60000);
+      inform("Wysłano "+filename+" do przeglądarki. Sprawdź folder Pobrane "+
+             "(Ctrl+J), a NIE folder źródłowy mapy.");
+    }catch(error){inform("Nie udało się zapisać kopii: "+error.message,true);}
   }
   function inform(msg, isError=false) {
     htmlText($("status-message"), msg);
@@ -599,6 +611,7 @@
     $("move-dx").value=Number(dx).toFixed(3);
     $("move-dy").value=Number(dy).toFixed(3);
     $("move-detach").checked=false;
+    $("move-snap").checked=true;
     $("move-selection-description").textContent=
       "Wybrano "+display(ids.length)+" obiektów. X oznacza północ–południe, "+
       "Y wschód–zachód; dodatnie wartości przesuwają na północ i wschód.";
@@ -615,7 +628,8 @@
     };
     return {...editRequestBody(),ids:state.moveIds.slice(),
       dx:asNumber("move-dx"),dy:asNumber("move-dy"),
-      allowDetach:$("move-detach").checked};
+      allowDetach:$("move-detach").checked,
+      snapDistance:$("move-snap").checked?0.5:0};
   }
   function showMoveSamples(report) {
     const container=$("move-samples");container.replaceChildren();
@@ -657,6 +671,7 @@
       const codes=Object.entries(report.codes||{})
         .map(([key,n])=>key+": "+display(n)).join(", ");
       const neighbors=report.topologyConflicts||[];
+      const overlaps=report.overlapConflicts||[];
       const examples=neighbors.slice(0,4)
         .map(item=>item.code+" ("+item.movingUid+" ↔ "+item.stationaryUid+")").join("; ");
       $("move-summary").textContent=
@@ -665,9 +680,15 @@
         "Przesunięcie: X "+report.delta.x.toFixed(3)+" m; "+
           "Y "+report.delta.y.toFixed(3)+" m\n"+
         "Kody: "+(codes||"brak")+"\n"+
+        "Nakładanie na poligony tego samego kodu: "+
+          (overlaps.length?overlaps.map(x=>x.code+" "+x.stationaryUid).join(", "):"brak")+"\n"+
+        (report.snapApplied?"Przyciągnięto do krawędzi, korekta "+
+           report.snapApplied.distance.toFixed(3)+" m\n":"")+
         "Styki z nieruchomymi poligonami tego samego kodu: "+
           (neighbors.length?examples:"nie wykryto")+"\n"+
-        (report.topologyBlocked
+        (report.overlapBlocked
+          ?"Zablokowano: poligony nachodzą na siebie. Przybliż i dopasuj do krawędzi."
+          :report.topologyBlocked
           ?"Zablokowano: dodaj sąsiadów do zaznaczenia albo świadomie zaznacz rozłączenie granicy."
           :report.canApply
             ?"Sprawdź przykłady poniżej i zatwierdź. Inne obiekty nie zostaną zmienione."
@@ -1798,7 +1819,7 @@
   link("move-close",()=>$("move-dialog").close());
   link("move-preview",previewMoveChanges);
   $("move-form").addEventListener("submit",applyMoveChanges);
-  for(const id of ["move-dx","move-dy","move-detach"])
+  for(const id of ["move-dx","move-dy","move-detach","move-snap"])
     $(id).addEventListener("input",invalidateMovePreview);
   link("bulk-close",()=>$("bulk-dialog").close());
   link("bulk-preview",previewBulkChanges);
