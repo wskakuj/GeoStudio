@@ -78,10 +78,10 @@ class LocalRecoveryStore:
                 return None
         return manifest
 
-    def load(self,source: Path,source_bytes: bytes) -> tuple[dict,bytes,bytes] | None:
+    def load(self,source: Path,source_sha: str) -> tuple[dict,bytes,bytes] | None:
         """Validate a complete candidate against the unmodified source file."""
         manifest=self._metadata(source)
-        if manifest is None or manifest["sourceHash"]!=_digest(source_bytes):
+        if manifest is None or manifest["sourceHash"]!=source_sha:
             return None
         try:
             map_path=self.directory/manifest["mapFile"]
@@ -98,17 +98,18 @@ class LocalRecoveryStore:
             return None
         return manifest,map_bytes,topology_bytes
 
-    def candidate(self,source: Path,source_bytes: bytes) -> dict | None:
-        recovery=self.load(source,source_bytes)
+    def candidate(self,source: Path,source_sha: str) -> dict | None:
+        recovery=self.load(source,source_sha)
         if recovery is None:return None
         manifest,map_bytes,topology=recovery
         return {"available":True,"savedAt":manifest["savedAt"],
                 "revision":manifest["revision"],
                 "bytes":len(map_bytes)}
 
-    def save(self,source: Path,source_bytes: bytes,
+    def save(self,source: Path,source_sha: str,
              map_bytes: bytes,topology_bytes: bytes,revision: int) -> dict:
-        if (not isinstance(source_bytes,bytes) or not source_bytes or
+        if (not isinstance(source_sha,str) or
+                not re.fullmatch(r"[0-9a-f]{64}",source_sha) or
                 not 0<len(map_bytes)<=MAX_RECOVERY_MAP or
                 not 0<len(topology_bytes)<=MAX_RECOVERY_TOPOLOGY or
                 type(revision) is not int or not 0<=revision<1000000):
@@ -121,7 +122,7 @@ class LocalRecoveryStore:
         previous=self._metadata(source)
         manifest={
             "format":"geostudio-recovery-v1",
-            "sourceHash":_digest(source_bytes),
+            "sourceHash":source_sha,
             "mapHash":_digest(map_bytes),
             "topologyHash":_digest(topology_bytes),
             "mapFile":map_name,
