@@ -791,7 +791,7 @@
     state.moveIds=ids.slice();
     $("move-dx").value=Number(dx).toFixed(3);
     $("move-dy").value=Number(dy).toFixed(3);
-    $("move-detach").checked=false;
+    $("move-detach").checked=true;
     $("move-snap").checked=true;
     $("move-selection-description").textContent=
       "Wybrano "+display(ids.length)+" obiektów. X oznacza północ–południe, "+
@@ -924,6 +924,55 @@
       $("move-apply").disabled=true;$("move-preview").disabled=false;
     }
   }
+  async function commitDraggedMove(ids,ghost) {
+    // Zero dialogs: preview and apply are still separate, revision-guarded
+    // server operations. Protect other codes and preserve one undo transaction.
+    if(state.editBusy||!state.edit||!ids?.length||!ghost)return;
+    const before=editRequestBody();
+    const payload={
+      ...before,ids:ids.slice(),
+      dx:Math.round(ghost.dx*1000)/1000,
+      dy:Math.round(ghost.dy*1000)/1000,
+      allowDetach:true,
+      // Canvas magnetic snap has already chosen the exact same-code edge.
+      // Do not perform a second, conflicting server-side correction.
+      snapDistance:ghost.snap?0:
+        Math.round(Math.min(2,Math.max(0.02,10/state.scale))*1000)/1000
+    };
+    state.editBusy=true;updateEditState(state.edit);
+    try{
+      const report=await api("/api/move/preview",{
+        method:"POST",headers:{"Content-Type":"application/json"},
+        body:JSON.stringify(payload)
+      });
+      if(report.documentToken!==before.documentToken||
+         report.revision!==before.revision)
+        throw Error("Mapa zmieniła się podczas przesuwania.");
+      if(!report.canApply||report.topologyBlocked)
+        throw Error("Nie można wykonać przesunięcia: "+
+                    (report.topologyBlocked?"konflikt topologii":"brak zmiany")+".");
+      const result=await api("/api/move/apply",{
+        method:"POST",headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({...payload,previewKey:report.previewKey})
+      });
+      updateEditState(result);
+      if(result.changed){
+        await refreshEditedDocument(state.active);
+        const snap=result.snapApplied?" · przyciągnięto do granicy":
+          ghost.snap?" · magnes: "+ghost.snap.kind:"";
+        inform("Przesunięto "+display(result.movedObjects)+
+          (result.movedObjects===1?" poligon":" poligonów")+snap+
+          ". Cofnij: Ctrl+Z.");
+      }
+    }catch(error){
+      inform("Nie przesunięto obiektów: "+error.message,true);
+      scheduleViewport(true);
+    }finally{
+      state.editBusy=false;
+      updateEditState(state.edit);
+    }
+  }
+
   function drawMoveGhost(features) {
     if(!state.moveGhost)return;
     const ids=new Set(state.moveGhost.ids);
@@ -2415,14 +2464,9 @@
       const ghost=state.moveGhost;
       state.moveGhost=null;requestDraw();
       if(d.moved&&ghost&&(ghost.dx||ghost.dy)){
-        // Make exactly ONE request, AFTER the snap checkbox has its final
-        // value. Parallel previews would race and invalidate the approval key.
-        openMoveEditor(d.moveIds,ghost.dx,ghost.dy,false);
-        if(ghost.snap){
-          $("move-snap").checked=false;
-          inform("Magnes: "+ghost.snap.kind+" tego samego kodu.");
-        }
-        previewMoveChanges();
+        // Dragging is a single action. Keep a guarded server preview/apply
+        // but no interrupting dialog or extra confirmation window.
+        commitDraggedMove(d.moveIds,ghost);
       }
       return;
     }
