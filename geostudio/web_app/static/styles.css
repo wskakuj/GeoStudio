@@ -3,7 +3,7 @@
   color: #dfe9f4; background: #0d1624; font-synthesis: none;
   --shell: #101a2b; --side: #111d2e; --side-soft: #162539;
   --divider: #29394c; --muted: #8d9eaf; --text: #e3edf8;
-  --teal: #45cbbb; --teal-dark: #116c6d; --main-bg: #edf3f6;
+  --teal: #45cbbb; --teal-dark: #116c6d; --main-bg: #FAFCFD;
   --map-ink: #374d65; --map-grid: rgba(92,127,155,.10);
 }
 *, *::before, *::after { box-sizing:border-box; }
