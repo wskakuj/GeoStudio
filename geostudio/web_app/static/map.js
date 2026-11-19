@@ -2183,15 +2183,14 @@
       const ghost=state.moveGhost;
       state.moveGhost=null;requestDraw();
       if(d.moved&&ghost&&(ghost.dx||ghost.dy)){
-        openMoveEditor(d.moveIds,ghost.dx,ghost.dy,true);
+        // Make exactly ONE request, AFTER the snap checkbox has its final
+        // value. Parallel previews would race and invalidate the approval key.
+        openMoveEditor(d.moveIds,ghost.dx,ghost.dy,false);
         if(ghost.snap){
-          // Mouse drag already magnetized to the exact node/edge. Avoid a
-          // second server snap changing the accepted drop location.
           $("move-snap").checked=false;
-          invalidateMovePreview();previewMoveChanges();
-          inform("Magnes: "+ghost.snap.kind+" tego samego kodu — "+
-                 "przesunięcie dokładnie dopasowane.");
+          inform("Magnes: "+ghost.snap.kind+" tego samego kodu.");
         }
+        previewMoveChanges();
       }
       return;
     }
