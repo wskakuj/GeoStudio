@@ -23,6 +23,38 @@ Gdy pywebview/WebView2 nie wyświetla prawidłowo okna, użyj:
 To uruchomi tę samą lokalną aplikację w domyślnej przeglądarce.
 Wymaga Python 3.11+, lokalnego Edge WebView2 dla natywnego okna.
 
+## Etap 3B — edycja węzłów poligonów
+
+1. Otwórz prawdziwy MAP i kliknij zamknięty poligon.
+2. Naciśnij **P** lub wybierz **Węzły** na wstążce.
+3. Uchwyty wybranego poligonu są rysowane na mapie. Złap węzeł
+   i przeciągnij w nowe miejsce. Kreskowany obrys pokazuje podgląd.
+4. **Przyciąganie** (domyślnie włączone) przyciąga do najbliższych
+   wierzchołków i krawędzi z całej mapy, także graniczników i
+   elementów obecnie niewidocznych na ekranie.
+5. **Wspólne węzły (ten sam kod)** (domyślnie wyłączone) włącza
+   przesunięcie współrzędnych wszystkich dotykających się węzłów
+   **wyłącznie kodu aktualnie edytowanego poligonu**. Poligony
+   o innych kodach są chronione, nawet gdy współdzielą narożnik.
+6. **Ctrl+Z / Ctrl+Y** cofają i ponawiają całą zmianę jednym krokiem,
+   także przy przesunięciu kilku poligonów.
+7. **Pobierz kopię** generuje nową mapę z poprawioną sumą kontrolną.
+
+Backend sprawdza poprawność wszystkich zamkniętych poligonów objętych
+operacją. Próby utworzenia degeneracji lub nieprawidłowych współrzędnych
+są odrzucane bez częściowych zmian. Węzły i geometria są zmieniane
+**wyłącznie w pamięci**. Oryginał na dysku nigdy nie jest nadpisywany.
+
+To pierwsza wersja: przeciąganie dotyczy istniejących węzłów
+zamkniętych poligonów z identyfikatorem GEO-MAP. Dodawanie i
+usuwanie węzłów, polilinie i rozbudowane operacje topologiczne
+są przewidziane w kolejnych etapach. Przyciąganie wyświetla
+podgląd najbliższych obiektów załadowanych w kadrze, natomiast
+ostateczne współrzędne potwierdza parser Python na całej mapie.
+
+**Poprawka E:** otwarcie edycji atrybutów skrótem E nie wpisuje
+automatycznie litery „e” do pierwszego pola.
+
 ## Etap 3A — pierwsze funkcje edycji (testowe)
 
 W GeoStudio 2.0 możesz teraz zaznaczyć obiekt na mapie i otworzyć
@@ -91,7 +123,7 @@ podłączenia tych samych bibliotek i testów na tej samej wersji mapy.
 
 ## Celowo NIEZAIMPLEMENTOWANE w tym etapie
 
-- Edycja węzłów, topologia, rysowanie poligonów, zapisywanie oryginału MAP,
+- Dodawanie/usuwanie węzłów, rysowanie nowych poligonów, zapisywanie oryginału MAP,
   import WMS, eksport wielkoformatowy, pełne renderowanie symboli
   .SYM/.LAY/.CDF, raster i georeferencja.
 - PixiJS/WebGL: Canvas 2D jest pierwszym rendererem do sprawdzenia
