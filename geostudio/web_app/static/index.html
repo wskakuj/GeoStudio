@@ -37,6 +37,7 @@
           <button class="tool-button" id="tool-open"><span class="tool-glyph">▱</span>Otwórz</button>
           <button class="tool-button" id="tool-sidecar"><span class="tool-glyph">◈</span>Style JSON</button>
           <button class="tool-button" id="tool-cartography" title="Wczytaj oryginalne biblioteki kartograficzne LAY, CDF i SYM"><span class="tool-glyph">▤</span>LAY/CDF/SYM</button>
+          <button class="tool-button" id="tool-topology" title="Po otwarciu wyciętej mapy MAP w przeglądarce wczytaj jej JSON z odwracalną topologią"><span class="tool-glyph">◇</span>Odtwórz kontury</button>
           <button class="tool-button" id="tool-undo" disabled title="Cofnij (Ctrl+Z)"><span class="tool-glyph">↶</span>Cofnij</button>
           <button class="tool-button" id="tool-redo" disabled title="Ponów (Ctrl+Y)"><span class="tool-glyph">↷</span>Ponów</button>
           <button class="tool-button" id="tool-export-baked" disabled title="Eksperymentalny: zapisz rzeczywiste wycięcia do MAP wraz z plikiem do ich odtworzenia"><span class="tool-glyph">▧</span>Zapisz wycięcia <small>6B</small></button>
@@ -188,6 +189,7 @@
   <input id="file-map" type="file" accept=".map,.MAP" hidden>
   <input id="file-sidecar" type="file" accept=".json" hidden>
   <input id="file-library" type="file" accept=".lay,.cdf,.sym,.LAY,.CDF,.SYM" multiple hidden>
+  <input id="file-topology" type="file" accept=".geostudio-topology.json,.json" hidden>
   <dialog id="select-dialog" class="advanced-select-dialog">
     <form id="select-form" autocomplete="off">
       <div class="select-head">
