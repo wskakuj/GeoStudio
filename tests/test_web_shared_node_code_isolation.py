@@ -52,14 +52,27 @@ def test_5310_linked_moves_only_5310_not_adjacent_5220():
     assert ws.export_copy(token(ws)["document_token"])[1] == raw
 
 
-def test_snapping_to_5220_does_not_move_5220_in_shared_mode():
+def test_shared_mode_does_not_snap_to_5220_at_all():
     raw = crossed_map()
     ws = ws_of(raw)
     before = GeoMap(raw)
     result = ws.move_vertex("f0", 0, 10.03, -7.96,
                             shared=True, snap_radius=.12, **token(ws))
-    assert result["snap"]["code"] == "5220"
+    assert result["snap"] is None
     assert set(result["affected"]) == {"A"}
+    exported = GeoMap(ws.export_copy(token(ws)["document_token"])[1])
+    assert foreign_lines(exported) == foreign_lines(before)
+    assert (exported.by_id["A"].points[0].x,
+            exported.by_id["A"].points[0].y) == (10.03, -7.96)
+
+
+def test_isolated_mode_can_still_snap_to_5220_without_editing_it():
+    raw = crossed_map()
+    ws = ws_of(raw)
+    before = GeoMap(raw)
+    result = ws.move_vertex("f0", 0, 10.03, -7.96,
+                            shared=False, snap_radius=.12, **token(ws))
+    assert result["snap"]["code"] == "5220"
     exported = GeoMap(ws.export_copy(token(ws)["document_token"])[1])
     assert foreign_lines(exported) == foreign_lines(before)
     assert (exported.by_id["A"].points[0].x,
