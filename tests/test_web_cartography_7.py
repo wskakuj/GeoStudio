@@ -269,3 +269,42 @@ def test_browser_library_endpoint_accepts_local_bytes_and_denies_traversal():
         status=client.get("/api/cartography/status",headers={
             "X-GeoStudio-Token":app.state.api_token})
         assert set(status.json()["libraries"])=={"CDF"}
+
+
+def test_browser_reimport_baked_MAP_companion_restores_before_editing():
+    from fastapi.testclient import TestClient
+    source=populated_workspace()
+    token=source.editing_status()["documentToken"]
+    _,baked,companion=source.export_native_cutouts(token)
+    target=PreviewWorkspace()
+    target.load_map(baked,"wyciecia.MAP")
+    assert len(geometry_of(target._doc.by_id["BASE"]).interiors)==1
+    app=create_app(target)
+    with TestClient(app) as client:
+        result=client.post("/api/topology",
+            content=companion,
+            headers={"X-GeoStudio-Token":app.state.api_token,
+                     "Content-Type":"application/octet-stream"})
+        assert result.status_code==200,result.text
+        assert result.json()["topologyImported"]
+        assert result.json()["hasReversibleMasks"]
+        assert geometry_of(target._doc.by_id["BASE"]).area==pytest.approx(400)
+        # Wrong checksum must be rejected with no source data mutation.
+        bad=client.post("/api/topology",
+            content=companion.replace(b"geostudio-topology-v2",b"wrong-topology-v999"),
+            headers={"X-GeoStudio-Token":app.state.api_token,
+                     "Content-Type":"application/octet-stream"})
+        assert bad.status_code==400
+
+
+def test_browser_topology_import_rejects_dirty_map():
+    from fastapi.testclient import TestClient
+    ws=populated_workspace()
+    _,baked,companion=ws.export_native_cutouts(
+        ws.editing_status()["documentToken"])
+    app=create_app(ws)
+    with TestClient(app) as client:
+        response=client.post("/api/topology",content=companion,
+            headers={"X-GeoStudio-Token":app.state.api_token,
+                     "Content-Type":"application/octet-stream"})
+        assert response.status_code==409
