@@ -243,7 +243,8 @@
         }
         return;
       }
-      const params=new URLSearchParams({documentToken:state.edit.documentToken});
+      const params=new URLSearchParams({documentToken:state.edit.documentToken,
+        normalizePositive:"true"});
       const response=await fetch("/api/export/map?"+params.toString(),{
         headers:{"X-GeoStudio-Token":token},cache:"no-store"
       });
