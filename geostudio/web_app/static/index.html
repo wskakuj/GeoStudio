@@ -52,6 +52,9 @@
           <button class="tool-button" id="tool-advanced-select" title="Zaznacz według kodu i atrybutów (Ctrl+H)"><span class="tool-glyph">⌕</span>Filtruj <small>Ctrl+H</small></button>
           <button class="tool-button" id="tool-bulk-edit" disabled title="Zmień A1/A2 wielu zaznaczonych obiektów"><span class="tool-glyph">✎</span>Zbiorowo <small>A1/A2</small></button>
           <button class="tool-button" id="tool-delete-node" disabled title="Zaznacz węzeł i usuń go (Delete)"><span class="tool-glyph">⊖</span>Usuń węzeł <small>Del</small></button>
+          <button class="tool-button" id="tool-copy" title="Kopiuj zaznaczone poligony (Ctrl+D)"><span class="tool-glyph">⧉</span>Kopiuj <small>Ctrl+D</small></button>
+          <button class="tool-button" id="tool-delete-objects" title="Usuń wybrane obiekty (Ctrl+Delete)"><span class="tool-glyph">×</span>Usuń obiekty</button>
+          <button class="tool-button" id="tool-new-polygon" title="Narysuj nowy poligon (N)"><span class="tool-glyph">⬟</span>Nowy poligon <small>N</small></button>
           <button class="tool-button" id="tool-fit"><span class="tool-glyph">⛶</span>Dopasuj</button>
         </div>
       </div>
@@ -284,6 +287,69 @@
       <div class="select-actions">
         <button id="move-preview" type="button" class="button ghost">Sprawdź przesunięcie</button>
         <button id="move-apply" type="submit" class="button primary" disabled>Przesuń poligony</button>
+      </div>
+    </form>
+  </dialog>
+  <dialog id="copy-dialog" class="advanced-select-dialog bulk-dialog">
+    <form id="copy-form" autocomplete="off">
+      <div class="select-head">
+        <div><div class="eyebrow">ETAP 5B · KOPIOWANIE OBIEKTÓW</div>
+          <h2>Kopiuj zaznaczone poligony</h2>
+        </div>
+        <button id="copy-close" type="button" class="select-close" aria-label="Zamknij">×</button>
+      </div>
+      <div class="select-content">
+        <p id="copy-selection-description" class="select-explain">Zaznacz poligony.</p>
+        <div class="select-grid">
+          <div><label for="copy-dx">Przesunięcie kopii X [m]</label>
+            <input id="copy-dx" type="text" inputmode="decimal" value="0,000" required>
+          </div>
+          <div><label for="copy-dy">Przesunięcie kopii Y [m]</label>
+            <input id="copy-dy" type="text" inputmode="decimal" value="20,000" required>
+          </div>
+        </div>
+        <p class="select-explain">Oryginały pozostają bez zmian. Każda kopia otrzyma nowy, unikalny identyfikator :ID. Zachowamy kod, styl, atrybuty i punkty P. Nakładanie na obiekty tego samego kodu jest blokowane.</p>
+        <p class="select-preview" id="copy-summary" role="status">Sprawdź kopie przed zatwierdzeniem.</p>
+      </div>
+      <div class="select-actions">
+        <button id="copy-preview" type="button" class="button ghost">Sprawdź kopie</button>
+        <button id="copy-apply" type="submit" class="button primary" disabled>Utwórz kopie</button>
+      </div>
+    </form>
+  </dialog>
+  <dialog id="create-dialog" class="advanced-select-dialog bulk-dialog">
+    <form id="create-form" autocomplete="off">
+      <div class="select-head">
+        <div><div class="eyebrow">ETAP 5B · NOWY OBIEKT</div>
+          <h2>Utwórz nowy poligon</h2>
+        </div>
+        <button id="create-close" type="button" class="select-close" aria-label="Zamknij">×</button>
+      </div>
+      <div class="select-content">
+        <p id="create-selection-description" class="select-explain">Kliknij na mapie co najmniej 3 punkty.</p>
+        <div class="select-grid">
+          <div><label for="create-code">Kod GEO-MAP</label>
+            <select id="create-code">
+              <option value="5310">5310 — budynek</option>
+              <option value="5230">5230 — użytek</option>
+              <option value="5220">5220 — użytek</option>
+              <option value="5216">5216 — działka</option>
+            </select>
+          </div>
+          <div><label for="create-a1">A1 (opcjonalne)</label>
+            <input id="create-a1" type="text" maxlength="512" placeholder="Np. b">
+          </div>
+          <div><label for="create-a2">A2 (opcjonalne)</label>
+            <input id="create-a2" type="text" maxlength="512" placeholder="Np. bud. mieszk.">
+          </div>
+        </div>
+        <p class="select-explain">Nie zmieniamy innych obiektów. Nowy poligon ma własny identyfikator i domknięty obrys. Zapisz osobną kopię MAP po zatwierdzeniu.</p>
+        <p class="select-preview" id="create-summary" role="status">Sprawdź obrys.</p>
+      </div>
+      <div class="select-actions">
+        <button id="create-back" type="button" class="button ghost">Wróć do rysowania</button>
+        <button id="create-preview" type="button" class="button ghost">Sprawdź obrys</button>
+        <button id="create-apply" type="submit" class="button primary" disabled>Utwórz poligon</button>
       </div>
     </form>
   </dialog>
