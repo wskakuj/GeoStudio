@@ -23,6 +23,7 @@ from geostudio.forest_classes import forest_class_value
 from geostudio.geometry_index import GeometryIndex
 from geostudio.history import History
 from geostudio.topology_edit import linked_vertex_plan
+from geostudio.web_app.topology_safety import rings_overlap, rings_contact, ring_of, nearest_boundary_snap
 from geostudio.interactions import find_snap, closest_point_on_edge
 from geostudio.library_render import native_fill_color
 
@@ -459,45 +460,38 @@ class PreviewWorkspace:
                 return True
         return False
 
-    def _move_topology_conflicts(self, moving: list) -> list[dict]:
-        """Find stationary SAME-CODE polygons sharing a boundary with the move.
-
-        Both directions are required: in a T-junction only one polygon has
-        a native vertex at the contact. Never propagate the move automatically.
-        """
-        moving_uids = {obj.uid for obj in moving}
-        codes = {obj.code for obj in moving}
-        stationary = [obj for obj in self._doc.objects
-                      if obj.uid not in moving_uids and obj.code in codes
-                      and obj.is_closed and obj.points]
-        if not stationary:
-            return []
-        moving_index = GeometryIndex(moving, hide_connectors=True)
-        stationary_index = GeometryIndex(stationary, hide_connectors=True)
-        found: dict[tuple[str, str], dict] = {}
-
-        def check_points(sources, candidates, source_is_moving):
-            for obj in sources:
-                for point in obj.points[:-1]:
-                    for neighbor in candidates.nearby(point.x, point.y, 0.0015):
-                        if neighbor.code != obj.code:
-                            continue
-                        moved = obj if source_is_moving else neighbor
-                        fixed = neighbor if source_is_moving else obj
-                        key = (moved.uid, fixed.uid)
-                        if key not in found and self._point_touches_boundary(point, neighbor):
-                            found[key] = {
-                                "movingUid": moved.uid,
-                                "stationaryUid": fixed.uid,
-                                "code": moved.code,
-                            }
-                            if len(found) >= 12:
-                                return True
-            return False
-
-        if not check_points(moving, stationary_index, True):
-            check_points(stationary, moving_index, False)
-        return list(found.values())
+    def _move_topology_conflicts(self, moving, dx, dy):
+        """Compare old shared borders and new positive-area overlaps."""
+        selected={obj.uid for obj in moving}
+        codes={obj.code for obj in moving}
+        stationary=[o for o in self._doc.objects if o.uid not in selected
+                    and o.is_closed and o.code in codes]
+        conflicts=[]
+        overlaps=[]
+        for obj in moving:
+            old=ring_of(obj)
+            new=ring_of(obj,dx,dy)
+            for neighbor in stationary:
+                if neighbor.code != obj.code:
+                    continue
+                fixed=ring_of(neighbor)
+                # Cheap AABB screening avoids costly edge comparisons.
+                def nearby(a,b,padding=0.0):
+                    return (min(x for x,y in a)<=max(x for x,y in b)+padding and
+                            max(x for x,y in a)>=min(x for x,y in b)-padding and
+                            min(y for x,y in a)<=max(y for x,y in b)+padding and
+                            max(y for x,y in a)>=min(y for x,y in b)-padding)
+                if (len(conflicts)<12 and nearby(old,fixed,.002)
+                        and rings_contact(old,fixed)):
+                    conflicts.append({"movingUid":obj.uid,
+                                      "stationaryUid":neighbor.uid,
+                                      "code":obj.code})
+                if (len(overlaps)<12 and nearby(new,fixed)
+                        and rings_overlap(new,fixed)):
+                    overlaps.append({"movingUid":obj.uid,
+                                     "stationaryUid":neighbor.uid,
+                                     "code":obj.code})
+        return conflicts,overlaps
 
     def _move_polygon_plan(self, ids: list[str], dx: float, dy: float, *,
                            allow_detach: bool, document_token: str,
