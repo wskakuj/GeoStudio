@@ -375,13 +375,15 @@ Dla lokalnego testu bez pywebview:
 - **M**: przeciągnij jeden lub wiele zaznaczonych poligonów; wyświetli się
   podgląd przed zatwierdzeniem. **Ctrl+Shift+M**: dokładne przesunięcie X/Y.
   Wspólne granice ze statycznym poligonem tego samego kodu blokują ruch,
-  dopóki nie zaznaczysz świadomego rozłączenia. Nakładanie wnętrz dwóch
-  poligonów tego samego kodu pozostaje zablokowane niezależnie od opcji.
+  dopóki nie zaznaczysz świadomego rozłączenia. W wersji 6A/6B
+  poligony tego samego kodu mogą nachodzić na siebie: dolny ma
+  odwracalną maskę, bez utraty oryginalnych punktów.
 - **Przyciąganie do granicy** (domyślnie zaznaczone): dla małych odchyleń
   snapuje całą grupę do bliskiej krawędzi; nie wykonuje automatycznej
   operacji unii ani rozpuszczenia poligonów. Wyłącz, aby podać dokładne X/Y.
 - **Ctrl+D**: skopiuj zaznaczone poligony. Każda kopia ma nowy :ID, zachowuje
-  pierwotne kod, styl, atrybuty i flagi P; wymaga przesunięcia bez nakładania.
+  pierwotny kod, styl, atrybuty i flagi P; Ctrl+D umieszcza kopię obok
+  i aktywuje M, aby można było od razu przeciągnąć ją myszą.
 - **Ctrl+Delete**: usuń obiekty z zaznaczenia po potwierdzeniu.
 - **N**: rysuj nowy poligon kliknięciami. **Enter** lub dwuklik kończy obrys,
   **Esc** anuluje. Wybierz kod i opcjonalne A1/A2, kliknij
@@ -415,9 +417,9 @@ pliki MAP w klasycznym programie przed wykorzystaniem do pracy.
    narzędzie. Zapisana kopia MAP będzie miała w tym obiekcie dodatni
    zwrot obrysu, a powierzchnia w klasycznym GEO-MAP powinna być dodatnia.
    Nowe poligony mają orientację dodatnią już przy tworzeniu.
-5. **Scal** (Ctrl+Shift+G): zaznacz co najmniej dwa przylegające
-   poligony tego samego kodu, z jednakowymi A1/A2. Scalanie działa tylko
-   wtedy, gdy wynik jest jednym prostym poligonem bez otworu.
+5. **Scal** (Ctrl+Shift+G): w etapie 6B wynik może zawierać
+   kilka rozłącznych wysp lub styk tylko w węźle. Jedna grupa ma jeden
+   :ID, ten sam kod oraz jednakowe A1/A2. Powierzchnia jest sumowana.
 6. **Podziel** (Ctrl+Shift+X): wybierz jeden poligon, klikaj linię cięcia
    zaczynając i kończąc poza jego obrysem, Enter/dwuklik, podgląd,
    zatwierdzenie. Podział tworzy nowe ID.
@@ -438,3 +440,68 @@ ale wartości powierzchni ewidencyjnych w polach A4/A6 nie są automatycznie
 aktualizowane — należy je sprawdzić ręcznie w klasycznym programie.
 To samo dotyczy specyficznych kodów i stylów używających nietypowych
 wieloczęściowych rekordów P0, których nie zmieniamy w tym etapie.
+
+
+## Etap 6B — natywne kontury MAP i automatycznie dodatnie pola (test)
+
+**Scalanie:** Zaznacz dwa lub więcej poligonów **jednego kodu i o
+jednakowych A1/A2**. Ctrl+Shift+G / „Scal” tworzy jeden rekord
+GEO-MAP (jedno :ID) również wtedy, gdy poszczególne wyspy nie mają
+wspólnej krawędzi ani wierzchołka, albo dotykają się tylko punktem.
+Wiele konturów jest zapisywanych osobnymi komponentami z flagą końca
+komponentu **P 0**. Nie dodajemy sztucznych odcinków łączących wyspy.
+Działa Cofnij/Ponów. Wartości ewidencyjne A4/A6 pozostają do sprawdzenia.
+
+**Dodatnie pola automatycznie:** Rysowanie nowych obrysów, kopiowanie
+prostych obrysów oraz zapisywanie MAP w natywnym Windows **Zapisz jako**
+stosuje dodatnią orientację prostych, zamkniętych poligonów niezależnie
+od kierunku kliknięć. Dotyczy to również prostych starych poligonów
+w nowej zapisywanej kopii. Źródłowy MAP nadal jest chroniony.
+Dla wieloczęściowych obiektów orientacja poszczególnych obrysów pozostaje
+odpowiednia: obwody zewnętrzne dodatnie, otwory ujemne.
+Przycisk „Pole + (stare)” to wyłącznie pomocnicza ręczna naprawa
+oryginalnego obrysu w pamięci.
+
+**Dwa tryby eksportu Windows:**
+
+- **„Pobierz kopię”**: zapisuje zwykły MAP, normalizuje dodatnią
+  orientację prostych obrysów, a odwracalne nałożenia zachowuje przez
+  plik \`.geostudio-topology.json\` v1 (bez wycinania źródłowych konturów).
+- **„Zapisz wycięcia 6B”**: oblicza prawdziwe różnice geometryczne
+  nakładających się poligonów **tego samego kodu** i zapisuje ich
+  obcięte obrysy (wieloczęściowe kontury i otwory) w nowej kopii
+  GEO-MAP \`.MAP\`. Zachowuje wszystkie kody nieobjęte maską.
+  Jednocześnie zapisuje powiązany SHA256 plik
+  \`.geostudio-topology.json\` v2 z oryginalnymi rekordami P.
+  Przy ponownym otwarciu obu plików w GeoStudio 2.0 program odtwarza
+  **oryginalne, niewycięte kontury** w pamięci i nakłada maski ponownie.
+  Odczyt bez JSON pokazuje wycięte kontury zapisane w MAP.
+
+**Bezpieczeństwo:** eksport 6B wymaga nowej nazwy (nie nadpisuje
+istniejącej pary), przygotowuje oba pliki przed zatwierdzeniem i
+sprawdza CHK, liczbę wierszy, identyfikatory, sumę powierzchni oraz
+poprawność otworów po zakodowaniu z dokładnością do 1 mm.
+Nie usuwa obiektu całkowicie przykrytego — taki eksport jest blokowany,
+aby nie utracić jego :ID. Obsługa tego przypadku pozostaje na 6C.
+Zachowaj **oba pliki**, najlepiej dodatkowo osobną kopię oryginału.
+
+**Ograniczenie zgodności:** implementacja flag P0 i kierunku obrysu
+wynika z konwencji parsera GEO-MAP, ale wymaga jeszcze ręcznego
+testu otwarcia i sprawdzenia obiektów wieloczęściowych oraz otworów w
+klasycznym programie GEO-MAP. Nie traktuj eksportu 6B jako zweryfikowanej
+dokumentacji ewidencyjnej. Podział złożonych otworów,
+automatyczne wartości A4/A6 i eksport obiektów całkowicie zakrytych
+nie są jeszcze obsługiwane.
+
+**Test Windows:**
+1. Zaznacz dwa budynki 5310 o tych samych A1/A2, nieprzylegające do
+   siebie lub stykające się w jednym węźle; kliknij **Scal**.
+2. Obejrzyj wieloczęściowy obrys i powierzchnię, wykonaj Cofnij/Ponów.
+3. Narysuj drugi poligon wewnątrz pierwszego, przesuń górny (M),
+   kliknij „Zapisz wycięcia 6B”. Zapisz nowy MAP + JSON.
+4. Sprawdź wycięty obiekt w klasycznym GEO-MAP, w tym powierzchnię.
+5. Otwórz ponownie zapisany MAP w GeoStudio 2.0 razem z JSON:
+   pełny obrys dolnego poligonu powinien zostać odtworzony,
+   a wycięcie ponownie obliczone i pokazane na ekranie.
+6. Sprawdź dodatnią powierzchnię nowo narysowanego poligonu przy
+   zwykłym „Pobierz kopię”. Nie trzeba używać przycisku „Pole +”.

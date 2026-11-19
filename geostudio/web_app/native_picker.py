@@ -138,6 +138,14 @@ class NativeMapPicker:
 
 
     def save_map(self) -> dict:
+        """Ordinary Save As with automatic positive-area ring normalization."""
+        return self._save_map(burn_cutouts=False)
+
+    def save_baked_map(self) -> dict:
+        """Stage 6B: export native holes plus a separate reversible companion."""
+        return self._save_map(burn_cutouts=True)
+
+    def _save_map(self, *, burn_cutouts: bool) -> dict:
         """Save an explicitly named new MAP through an actual Windows Save As dialog.
 
         Unlike a browser Blob download, WebView2 can display and reliably
@@ -148,7 +156,13 @@ class NativeMapPicker:
         status = self._workspace.editing_status()
         if not status.get("documentToken"):
             raise ValueError("Najpierw otwórz mapę GEO-MAP.")
-        suggested_name, content = self._workspace.export_copy(status["documentToken"])
+        if burn_cutouts:
+            suggested_name,content,overlay_bytes=(
+                self._workspace.export_native_cutouts(status["documentToken"]))
+        else:
+            suggested_name,content=self._workspace.export_positive_copy(
+                status["documentToken"])
+            overlay_bytes=self._workspace.export_topology_metadata(content)
         root = tk.Tk()
         try:
             root.withdraw()
@@ -178,45 +192,64 @@ class NativeMapPicker:
             raise ValueError("Nie wolno nadpisać otwartego pliku źródłowego.")
         if chosen.name.casefold() == self._workspace.metadata()["name"].casefold():
             raise ValueError("Podaj inną nazwę niż mapa źródłowa.")
-        # os.replace is atomic on the same volume. Never truncate a valid
-        # target file in place if writing fails halfway.
-        fd, tmp = tempfile.mkstemp(prefix=".geostudio2-",suffix=".tmp",
-                                   dir=str(chosen.parent))
+        if burn_cutouts and chosen.exists():
+            raise ValueError(
+                "Eksport natywnych wycięć wymaga nowej nazwy pliku. "
+                "Nie nadpisuj istniejącej pary MAP/JSON.")
+        # Prepare BOTH files on disk before committing a new 6B pair.
+        # Do not leave behind a MAP without its source-ring recovery JSON.
+        companion=chosen.with_suffix(".geostudio-topology.json")
+        if burn_cutouts and companion.exists():
+            raise ValueError("Plik odwracalności już istnieje. Wybierz nową nazwę.")
+        fd,tmp=tempfile.mkstemp(prefix=".geostudio2-",suffix=".tmp",
+                                dir=str(chosen.parent))
+        tmp_companion=None
+        companion_committed=False
+        map_committed=False
         try:
             with os.fdopen(fd,"wb") as stream:
                 stream.write(content)
                 stream.flush()
                 os.fsync(stream.fileno())
-            os.replace(tmp,chosen)
-        finally:
-            try:
-                os.unlink(tmp)
-            except FileNotFoundError:
-                pass
-        overlay_bytes=self._workspace.export_topology_metadata(content)
-        if overlay_bytes:
-            # Companion is checksum-bound to this exact MAP. GEO-MAP itself
-            # receives an ordinary, uncut polygon dataset; the overlay remains
-            # reversible specifically inside GeoStudio 2.0.
-            companion=chosen.with_suffix(".geostudio-topology.json")
-            fd2,tmp2=tempfile.mkstemp(prefix=".geostudio-topology-",
-                                     suffix=".tmp",dir=str(chosen.parent))
-            try:
+            if overlay_bytes:
+                fd2,tmp_companion=tempfile.mkstemp(
+                    prefix=".geostudio-topology-",suffix=".tmp",
+                    dir=str(chosen.parent))
                 with os.fdopen(fd2,"wb") as stream:
                     stream.write(overlay_bytes)
                     stream.flush()
                     os.fsync(stream.fileno())
-                os.replace(tmp2,companion)
-            finally:
+            if burn_cutouts:
+                # New output name is required, so cleanup cannot delete
+                # any pre-existing project data if the second rename fails.
+                os.replace(tmp_companion,companion)
+                companion_committed=True
+                os.replace(tmp,chosen)
+                map_committed=True
+            else:
+                os.replace(tmp,chosen)
+                map_committed=True
+                if tmp_companion:
+                    os.replace(tmp_companion,companion)
+        except Exception:
+            if burn_cutouts and companion_committed and not map_committed:
                 try:
-                    os.unlink(tmp2)
-                except FileNotFoundError:
+                    companion.unlink()
+                except OSError:
                     pass
+            raise
+        finally:
+            for candidate in (tmp,tmp_companion):
+                if candidate:
+                    try:
+                        os.unlink(candidate)
+                    except FileNotFoundError:
+                        pass
         try:
             save_last_map_directory(self._settings,chosen.parent)
         except OSError:
             pass
         return {"cancelled": False, "path": str(chosen),
-                "bytes": len(content),
+                "bytes": len(content), "nativeCutouts": burn_cutouts,
                 "topologyPath": str(chosen.with_suffix(".geostudio-topology.json"))
                  if overlay_bytes else None}

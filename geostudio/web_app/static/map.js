@@ -45,6 +45,7 @@
     {name:"Cofnij ostatnią zmianę", hint:"Ctrl+Z", run:()=>historyStep("undo")},
     {name:"Ponów zmianę", hint:"Ctrl+Y", run:()=>historyStep("redo")},
     {name:"Pobierz osobną kopię MAP", hint:"Ctrl+Shift+S", run:downloadMapCopy},
+    {name:"Zapisz natywne wycięcia MAP i kopię konturów", hint:"6B", run:downloadNativeCutouts},
     {name:"Zaznaczanie obiektów", hint:"S", run:()=>setTool("select")},
     {name:"Edytuj węzły zaznaczonego poligonu", hint:"P", run:()=>setTool("nodes")},
     {name:"Usuń zaznaczony węzeł poligonu", hint:"Delete", run:deleteSelectedVertex},
@@ -86,6 +87,7 @@
     $("tool-delete-objects").disabled=state.editBusy||!state.meta||!selectedObjectIds().length;
     $("tool-new-polygon").disabled=state.editBusy||!state.meta;
     $("btn-export").disabled=state.editBusy||!state.meta;
+    $("tool-export-baked").disabled=state.editBusy||!state.meta;
     updateBulkButton();
     $("tool-undo").title=state.edit.undoLabel
       ?"Cofnij: "+state.edit.undoLabel+" (Ctrl+Z)":"Cofnij (Ctrl+Z)";
@@ -200,6 +202,31 @@
       inform("Nie można wykonać operacji historii: "+error.message,true);
     }finally{state.editBusy=false;updateEditState(state.edit);}
   }
+  async function downloadNativeCutouts() {
+    if(!state.meta||state.editBusy)return;
+    if(!window.pywebview?.api?.save_baked_map){
+      inform("Natywny eksport wycięć wymaga okna GeoStudio w Windows. "+
+             "Użyj start_web_ui.bat bez --browser.",true);
+      return;
+    }
+    if(!window.confirm(
+        "Eksport eksperymentalny 6B\n\n"+
+        "Poligony pod nałożonymi obiektami tego samego kodu będą "+
+        "faktycznie wycięte w nowym pliku MAP (w tym otwory i wiele wysp).\n"+
+        "Obok zapisze się JSON z oryginalną geometrią do odtworzenia.\n\n"+
+        "Zachowaj OBA pliki i sprawdź wynik w klasycznym GEO-MAP.\n"+
+        "Nie używaj jako danych produkcyjnych przed potwierdzeniem zgodności.\n\n"+
+        "Kontynuować?"))return;
+    try{
+      const res=await window.pywebview.api.save_baked_map();
+      if(res&&!res.cancelled){
+        window.alert("Wycięcia GEO-MAP zapisane:\n"+res.path+
+          "\n\nKopia oryginalnych konturów:\n"+res.topologyPath+
+          "\n\nZachowaj oba pliki. W GEO-MAP sprawdź obrysy i pola.");
+        inform("Zapisano natywne wycięcia i odwracalną kopię JSON.");
+      }
+    }catch(error){inform("Eksport 6B przerwany: "+error.message,true);}
+  }
   async function downloadMapCopy() {
     if(!state.meta||!state.edit||state.editBusy)return;
     try {
@@ -216,7 +243,8 @@
         }
         return;
       }
-      const params=new URLSearchParams({documentToken:state.edit.documentToken});
+      const params=new URLSearchParams({documentToken:state.edit.documentToken,
+        normalizePositive:"true"});
       const response=await fetch("/api/export/map?"+params.toString(),{
         headers:{"X-GeoStudio-Token":token},cache:"no-store"
       });
@@ -1135,7 +1163,9 @@
       const message=action==="repair"
         ?"Odwrócić kolejność punktów w "+report.repairs.length+
           " poligonach, aby w GEO-MAP otrzymać dodatnią powierzchnię?"
-        :"Scalić "+display(ids.length)+" poligonów w jeden?\n"+
+        :"Scalić "+display(ids.length)+" poligonów w jeden obiekt GEO-MAP?\n"+
+          "Po scaleniu części mogą być rozłączne. Liczba wysp: "+
+          report.components+", konturów: "+report.rings+".\n"+
           "Suma przed: "+report.beforeArea+" m²; po: "+
           report.afterArea+" m².\n"+
           "UWAGA: dane powierzchniowe A4/A6 trzeba sprawdzić ręcznie.";
@@ -2431,6 +2461,7 @@
   link("tool-undo",()=>historyStep("undo"));
   link("tool-redo",()=>historyStep("redo"));
   link("btn-export",downloadMapCopy);
+  link("tool-export-baked",downloadNativeCutouts);
   link("inspector-edit-toggle",()=>{
     toggleInspectorEdit($("inspector-edit").hidden);
   });

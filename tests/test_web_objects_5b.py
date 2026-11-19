@@ -164,7 +164,13 @@ def test_native_save_as_writes_to_explicit_path(tmp_path,monkeypatch,ws):
     result=picker.save_map()
     assert not result["cancelled"] and result["path"]==str(destination)
     assert GeoMap(destination.read_bytes()).checksum_valid
-    assert source()==destination.read_bytes()
+    # Native Save As normalizes winding without touching the open original.
+    assert ws.export_copy(ws.editing_status()["documentToken"])[1]==source()
+    output=GeoMap(destination.read_bytes())
+    assert [(p.x,p.y) for p in output.by_id["A"].points]!=[
+        (p.x,p.y) for p in GeoMap(source()).by_id["A"].points]
+    assert output.by_id["A"].area_m2==GeoMap(source()).by_id["A"].area_m2
+    assert output.checksum_valid
 
 
 def test_ui_has_object_tools_and_actions():

@@ -17,6 +17,7 @@ from threading import RLock
 from secrets import token_hex
 import json
 import re
+import base64
 
 from geostudio.geomap import GeoMap
 from geostudio.forest_classes import forest_class_value
@@ -24,7 +25,8 @@ from geostudio.geometry_index import GeometryIndex
 from geostudio.history import History
 from geostudio.topology_edit import linked_vertex_plan
 from geostudio.web_app.topology_safety import rings_overlap, rings_contact, ring_of, nearest_boundary_snap
-from geostudio.web_app.geometry_6a import polygon_of, visible_difference, shape_parts, split_simple, merge_simple
+from geostudio.web_app.geometry_6a import (polygon_of, geometry_of, visible_difference,
+    shape_parts, split_simple, merge_simple, merge_multipart, rings_from_shape)
 from geostudio.interactions import find_snap, closest_point_on_edge, polygon_is_valid
 from geostudio.library_render import native_fill_color
 
@@ -218,11 +220,71 @@ class PreviewWorkspace:
                 "sha256":sha256(map_bytes).hexdigest(),"uids":uids},
                 ensure_ascii=False,indent=2).encode("utf-8")
 
+    def _import_baked_metadata(self, metadata: dict, map_bytes: bytes) -> None:
+        """Restore original P records from SHA-bound native cutout MAP."""
+        expected={"format","sha256","baseSha256","uids","originalP"}
+        if (set(metadata)!=expected or
+                metadata.get("format")!="geostudio-topology-v2" or
+                metadata.get("sha256")!=sha256(map_bytes).hexdigest() or
+                not isinstance(metadata.get("uids"),list) or
+                not isinstance(metadata.get("originalP"),dict) or
+                len(metadata["uids"])>5000 or len(metadata["originalP"])>500):
+            raise ValueError("Plik topologii 6B nie pasuje do MAP.")
+        from geostudio.geomap import POINT_RE
+        with self._lock:
+            if self._doc is None:
+                raise ValueError("Najpierw wczytaj MAP.")
+            if sha256(b"".join(self._doc.lines)).hexdigest()!=metadata["sha256"]:
+                raise ValueError("Plik topologii dotyczy innego MAP.")
+            document=GeoMap(map_bytes,filename=self._doc.filename)
+            if not document.checksum_valid:
+                raise ValueError("Nieprawidłowy CHK mapy.")
+            counts=Counter(o.uid for o in document.objects if o.uid)
+            order=metadata["uids"]
+            if (len(set(str(uid) for uid in order))!=len(order) or
+                    any(not isinstance(uid,str) or counts[uid]!=1 for uid in order)):
+                raise ValueError("Nieprawidłowe identyfikatory w topologii.")
+            for uid,saved in metadata["originalP"].items():
+                if (not isinstance(uid,str) or counts[uid]!=1 or
+                        not isinstance(saved,list) or
+                        not 4<=len(saved)<=50000):
+                    raise ValueError("Uszkodzony zapis oryginalnego poligonu.")
+                obj=document.by_id[uid]
+                self._raw_p_records(document,obj)
+                positions=[i for i in range(obj.start+1,obj.end)
+                           if POINT_RE.match(document.lines[i].rstrip(b'\r\n'))]
+                recovered=[]
+                for encoded in saved:
+                    if not isinstance(encoded,str) or len(encoded)>3000:
+                        raise ValueError("Zbyt duży rekord konturu.")
+                    try:
+                        raw=base64.b64decode(encoded,validate=True)
+                    except (ValueError,base64.binascii.Error) as exc:
+                        raise ValueError("Błędny zapis Base64 konturu.") from exc
+                    if (len(raw)>2000 or
+                            not raw.endswith((b'\r\n',b'\n')) or
+                            not POINT_RE.match(raw.rstrip(b'\r\n'))):
+                        raise ValueError("Niedozwolony rekord P w topologii.")
+                    recovered.append(raw)
+                document.lines[positions[0]:positions[-1]+1]=recovered
+                document._parse()
+            restored=document.to_bytes()
+            if sha256(restored).hexdigest()!=metadata.get("baseSha256"):
+                raise ValueError("Nie udało się bezpiecznie odtworzyć źródłowych konturów.")
+            self._reindex(GeoMap(restored,filename=document.filename),
+                          document.filename)
+            self._styles[TOPOLOGY_STACK_KEY]={"uids":list(order)}
+            self._history=History(_WebHistoryTarget(self))
+            self._revision=0
+
     def import_topology_metadata(self, content: bytes, map_bytes: bytes) -> None:
         """Load saved precedence only when companion checksum and UIDs match."""
         if not content or len(content)>MAX_STYLES_BYTES:
             raise ValueError("Za duży plik topologii.")
         obj=json.loads(content)
+        if isinstance(obj,dict) and obj.get("format")=="geostudio-topology-v2":
+            self._import_baked_metadata(obj,map_bytes)
+            return
         if (not isinstance(obj,dict) or
                 set(obj)!={"format","sha256","uids"} or
                 obj["format"]!="geostudio-topology-v1" or
@@ -237,6 +299,120 @@ class PreviewWorkspace:
                         for uid in obj["uids"])):
                 raise ValueError("Plik topologii zawiera nieprawidłowe identyfikatory.")
             self._styles[TOPOLOGY_STACK_KEY]={"uids":obj["uids"]}
+
+    def export_positive_copy(self, document_token: str) -> tuple[str,bytes]:
+        """Windows Save As: automatically normalize all simple exterior rings.
+
+        The original source map and undo stack stay untouched.
+        """
+        with self._lock:
+            if self._doc is None:
+                raise ValueError("Najpierw otwórz mapę.")
+            if document_token!=self._document_token:
+                raise RuntimeError("Nieaktualny dokument.")
+            name=_display_name(self._doc.filename)
+            return name[:-4]+"_GeoStudio2_kopia.MAP", self._doc.to_bytes_positive_areas()
+
+    @staticmethod
+    def _raw_p_records(doc, obj):
+        """Return a contiguous native P span without stripping source metadata."""
+        from geostudio.geomap import POINT_RE
+        indices=[i for i in range(obj.start+1,obj.end)
+                 if POINT_RE.match(doc.lines[i].rstrip(b'\r\n'))]
+        if not indices or len(indices)!=len(obj.points) or (
+                indices[-1]-indices[0]+1)!=len(indices):
+            raise ValueError("Przeplatane rekordy P. Nie można bezpiecznie wyeksportować wycięć.")
+        return doc.lines[indices[0]:indices[-1]+1]
+
+    def export_native_cutouts(self, document_token: str) -> tuple[str,bytes,bytes]:
+        """Stage 6B: native P0 contours with reversible, checksum-bound backup.
+
+        Foreground objects remain unchanged; lower same-code polygons receive
+        true boolean cutouts in a disposable MAP copy. Full occlusion is
+        explicitly blocked rather than destroying an object's identity.
+        """
+        with self._lock:
+            if self._doc is None:
+                raise ValueError("Najpierw otwórz mapę.")
+            if document_token!=self._document_token:
+                raise RuntimeError("Nieaktualny dokument.")
+            base_bytes=self._doc.to_bytes_positive_areas()
+            base=GeoMap(base_bytes,filename=self._doc.filename)
+            counts=Counter(o.uid for o in base.objects if o.uid)
+            ordered=[uid for uid in self._overlay_uids()
+                     if uid in base.by_id and counts[uid]==1]
+            order_position={uid:i for i,uid in enumerate(ordered)}
+            baked=GeoMap(base_bytes,filename=self._doc.filename)
+            original_p={}
+            expectations={}
+            total_change=0
+            # Establish geometric ground truth from the base BEFORE mutations.
+            for obj in base.objects:
+                if not obj.is_closed or not obj.uid:
+                    continue
+                pos=order_position.get(obj.uid,-1)
+                foreground=[]
+                for uid in ordered[pos+1:]:
+                    upper=base.by_id[uid]
+                    if upper.uid==obj.uid or upper.code!=obj.code or not upper.is_closed:
+                        continue
+                    if (max(p.x for p in upper.points)<min(p.x for p in obj.points) or
+                        min(p.x for p in upper.points)>max(p.x for p in obj.points) or
+                        max(p.y for p in upper.points)<min(p.y for p in obj.points) or
+                        min(p.y for p in upper.points)>max(p.y for p in obj.points)):
+                        continue
+                    foreground.append(upper)
+                if not foreground:
+                    continue
+                base_shape=geometry_of(obj)
+                visible=visible_difference(base_shape,
+                                          [geometry_of(other) for other in foreground])
+                if base_shape.area-visible.area<.000001:
+                    continue
+                if counts[obj.uid]!=1:
+                    raise ValueError("Wycinany obiekt nie ma unikatowego :ID.")
+                if visible.is_empty or visible.area<.000001:
+                    raise ValueError(
+                        "Poligon jest całkowicie przykryty przez inny. "
+                        "Bezpieczny eksport wstrzymano, aby zachować jego :ID.")
+                rings=rings_from_shape(visible)
+                original_p[obj.uid]=[
+                    base64.b64encode(line).decode("ascii")
+                    for line in self._raw_p_records(base,obj)]
+                expectations[obj.uid]=visible
+                total_change+=sum(len(ring) for ring in rings)
+                if len(original_p)>500 or total_change>50000:
+                    raise ValueError("Zbyt wiele wycięć do eksportu.")
+                baked.replace_polygon_components(obj.uid,rings)
+            baked_bytes=baked.to_bytes()
+            reparsed=GeoMap(baked_bytes)
+            if not reparsed.checksum_valid or reparsed.declared_lines!=len(reparsed.lines):
+                raise ValueError("Niepoprawna suma kontrolna wynikowego MAP.")
+            for uid,expected in expectations.items():
+                observed=geometry_of(reparsed.by_id[uid])
+                if expected.symmetric_difference(observed).area>max(
+                        .002,expected.area*1e-5):
+                    raise ValueError("Wycięcie zmieniło geometrię przy zapisie MAP.")
+            for obj in base.objects:
+                if obj.uid not in expectations and obj.uid and counts[obj.uid]==1:
+                    old=base.by_id[obj.uid]
+                    new=reparsed.by_id.get(obj.uid)
+                    if (new is None or base.lines[old.start:old.end]!=
+                            reparsed.lines[new.start:new.end]):
+                        raise ValueError("Nieoczekiwana zmiana innego obiektu MAP.")
+            metadata={
+                "format":"geostudio-topology-v2",
+                "sha256":sha256(baked_bytes).hexdigest(),
+                "baseSha256":sha256(base_bytes).hexdigest(),
+                "uids":ordered,
+                "originalP":original_p,
+            }
+            companion=json.dumps(metadata,ensure_ascii=False,
+                                 separators=(",",":")).encode("utf-8")
+            if len(companion)>MAX_STYLES_BYTES:
+                raise ValueError("Przekroczono limit 2 MB pliku odwracalności.")
+            name=_display_name(self._doc.filename)
+            return name[:-4]+"_GeoStudio2_wyciecia.MAP",baked_bytes,companion
 
     def _editing_status(self) -> dict:
         history = self._history
@@ -516,6 +692,8 @@ class PreviewWorkspace:
         conflicts=[]
         overlaps=[]
         for obj in moving:
+            if len(obj.display_parts)>1:
+                continue  # compound rings are translated intact; P0 has no synthetic connector
             old=ring_of(obj)
             new=ring_of(obj,dx,dy)
             # Spatial-index broad phase: no all-to-all scan over an entire MAP.
@@ -602,6 +780,8 @@ class PreviewWorkspace:
             selected_uids={o.uid for o in moving}
             near_fixed={}
             for obj in moving:
+                if len(obj.display_parts)>1:
+                    continue  # magnetic preview for multipart is handled by the Canvas
                 r=ring_of(obj)
                 a,b=min(x for x,y in r),min(y for x,y in r)
                 c,d=max(x for x,y in r),max(y for x,y in r)
@@ -614,7 +794,10 @@ class PreviewWorkspace:
             fixed=list(near_fixed.values())
             # Large batch moves still work: only interactive small selections
             # request magnetic edge snapping, never all-to-all 100k vertices.
-            if sum(len(obj.points) for obj in moving)>3000:
+            if (sum(len(obj.points) for obj in moving)>3000 or
+                    any(len(obj.display_parts)>1 for obj in moving)):
+                # The legacy ring-based snap assumes one contiguous contour.
+                # Canvas magnetic nodes work per displayed part instead.
                 fixed=[]
             nx,ny,distance=nearest_boundary_snap(
                 moving, fixed, dx, dy, snap_distance)
@@ -623,7 +806,8 @@ class PreviewWorkspace:
                 snap_applied={"distance":round(distance,3)}
         for obj in moving:
             shifted={}
-            for index,point in enumerate(obj.points[:-1]):
+            for index,point in enumerate(
+                    obj.points if len(obj.display_parts)>1 else obj.points[:-1]):
                 x,y=round(point.x+dx,3),round(point.y+dy,3)
                 if not (-1e9<x<1e9 and -1e9<y<1e9):
                     raise ValueError("Przesunięcie przekracza zakres współrzędnych.")
@@ -949,8 +1133,9 @@ class PreviewWorkspace:
         details={}
         if action in {"repair","merge","split"}:
             for obj in selected:
-                if not obj.is_closed or any(p.point_type!=1 for p in obj.points):
-                    raise ValueError("Wybierz proste, zamknięte poligony (bez P 0).")
+                if not obj.is_closed or (action!="merge" and
+                         any(p.point_type!=1 for p in obj.points)):
+                    raise ValueError("Wybierz zamknięte poligony; podział i Pole + wymagają prostego obrysu.")
         if action=="repair":
             repairs=[obj.uid for obj in selected if self._doc.signed_area(
                 [(p.x,p.y) for p in obj.points[:-1]])<0]
@@ -961,10 +1146,14 @@ class PreviewWorkspace:
                    for obj in selected}
             if len(codes)!=1 or len(attrs)!=1:
                 raise ValueError("Scalaj tylko ten sam kod i zgodne wartości A1/A2.")
-            geometry=merge_simple([polygon_of(o) for o in selected])
-            details={"beforeArea":round(sum(polygon_of(o).area
+            geometry=merge_multipart([geometry_of(o) for o in selected])
+            rings=rings_from_shape(geometry)
+            details={"beforeArea":round(sum(geometry_of(o).area
                                                for o in selected),3),
-                     "afterArea":round(abs(self._doc.signed_area(geometry)),3),
+                     "afterArea":round(geometry.area,3),
+                     "components":(len(geometry.geoms)
+                         if geometry.geom_type=="MultiPolygon" else 1),
+                     "rings":len(rings),
                      "metadataWarning":True}
         elif action=="split":
             points=operation.get("points")
@@ -1061,8 +1250,8 @@ class PreviewWorkspace:
                         report["repairs"])
                 elif action=="merge":
                     keeper=selected[0].uid
-                    self._doc.replace_simple_geometry(
-                        keeper,plan["geometry"])
+                    self._doc.replace_polygon_components(
+                        keeper,rings_from_shape(plan["geometry"]))
                     self._doc.delete_objects(
                         [o.uid for o in selected[1:]])
                     self._styles[TOPOLOGY_STACK_KEY]={
@@ -1613,8 +1802,8 @@ class PreviewWorkspace:
                        and max(p.y for p in other.points)>ay0]
                 if upper:
                     try:
-                        base=polygon_of(obj)
-                        shapes=[polygon_of(other) for other in upper]
+                        base=geometry_of(obj)
+                        shapes=[geometry_of(other) for other in upper]
                         result=visible_difference(base,shapes)
                         parts=shape_parts(result)
                         visible_area=round(result.area,3)
