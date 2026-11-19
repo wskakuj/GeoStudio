@@ -165,6 +165,30 @@ def test_preview_fingerprint_prevents_bypassing_confirmation(ws):
     assert ws.export_copy(kwargs(ws)["document_token"])[1] == original
 
 
+def test_bulk_apply_requires_actual_server_preview_not_guessed_key(ws):
+    payload = ["f0", "f1"]
+    changes = {"A1": "N"}
+    # An untrusted caller might know how preview hashes are calculated.
+    # A matching digest must not bypass the server's preview step.
+    internal = ws._bulk_edit_plan(payload, changes, **kwargs(ws))["report"]
+    with pytest.raises(RuntimeError, match="Podgląd"):
+        ws.apply_bulk_fields(
+            payload, changes, preview_key=internal["previewKey"],
+            **kwargs(ws))
+    first = ws.preview_bulk_fields(payload, changes, **kwargs(ws))
+    second = ws.preview_bulk_fields(["f0"], changes, **kwargs(ws))
+    with pytest.raises(RuntimeError, match="Podgląd"):
+        ws.apply_bulk_fields(
+            payload, changes, preview_key=first["previewKey"], **kwargs(ws))
+    valid = ws.apply_bulk_fields(
+        ["f0"], changes, preview_key=second["previewKey"], **kwargs(ws))
+    assert valid["changed"] and valid["changedObjects"] == 1
+    with pytest.raises(RuntimeError, match="wersja"):
+        ws.apply_bulk_fields(
+            ["f0"], changes, preview_key=second["previewKey"],
+            document_token=kwargs(ws)["document_token"], revision=0)
+
+
 def test_stale_revision_or_reloaded_map_refuses_bulk_write(ws):
     selected = ["f0", "f1"]
     old = kwargs(ws)
