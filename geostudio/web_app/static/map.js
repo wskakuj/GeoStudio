@@ -1,7 +1,7 @@
-/* GeoStudio 2.0 — read-only HTML5 map canvas.
+/* GeoStudio 2.0 — experimental HTML5 map canvas and in-memory GEO-MAP editing.
    World coordinates: horizontal = GEO-MAP easting Y, vertical = -northing X.
    This matches the classic geodetic PySide6 orientation.
-   No MAP editing code runs in this preview.
+   Original MAP files are never overwritten: changes are exported as copies.
 */
 (() => {
   "use strict";
