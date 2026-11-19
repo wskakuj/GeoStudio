@@ -22,7 +22,8 @@
     hoverInsert: null, selectedVertex: null
   };
   const commands = [
-    {name:"Otwórz plik GEO-MAP", hint:"Ctrl+O", run:()=> $("file-map").click()},
+    {name:"Otwórz plik GEO-MAP", hint:"Ctrl+O", run:chooseMap},
+    {name:"Wybierz obiekty według kodu, A1, A2", hint:"Ctrl+H", run:openAdvancedSelection},
     {name:"Wczytaj plik stylów GeoStudio", hint:"JSON", run:()=> $("file-sidecar").click()},
     {name:"Dopasuj całą mapę", hint:"0", run:fitToMap},
     {name:"Edytuj atrybuty aktywnego obiektu", hint:"E", run:()=>toggleInspectorEdit(true)},
@@ -222,13 +223,40 @@
     return "#8ea4b7";
   }
 
-  async function openMap(file) {
+  function finishOpeningMap(meta) {
+    state.meta = meta;
+    updateEditState(meta);
+    state.active = null; state.detail = null; state.pinned.clear();
+    populateSelectCodes();
+    state.vertexDrag=null;setTool("select");
+    state.features = []; state.inspectorCache.clear();
+    // Match the old user's map view: survey markers are opt-in.
+    // Their heavy symbol density otherwise hides the parcel boundaries.
+    state.visibleLayers = new Set(
+      meta.layers.map(layer=>layer.name).filter(name=>name!=="Graniczniki"));
+    state.hiddenGrades = new Set(); state.firstLoad = false;
+    $("empty-state").hidden = true;
+    htmlText($("document-title"), meta.name);
+    htmlText($("map-status"), meta.name);
+    htmlText($("layer-count"), meta.layers.length);
+    htmlText($("count-objects"), display(meta.objectCount));
+    htmlText($("count-vertices"), display(meta.vertexCount));
+    const quality = $("checksum-badge");
+    quality.hidden = false;
+    quality.textContent = meta.checksumValid ? "✓ CHK poprawna" : "⚠ CHK niezgodna";
+    quality.classList.toggle("warning", !meta.checksumValid);
+    renderLayers(); updateInspector(); fitToMap(); updateSelectionCount();
+    inform("Wczytano " + display(meta.objectCount) +
+           " obiektów. Oryginalny plik jest chroniony.");
+    return true;
+  }
+  async function openMap(file, alreadyConfirmed=false) {
     if (!file) return;
     if (!file.name.toLowerCase().endsWith(".map")) {
       inform("Wybierz plik z rozszerzeniem .MAP.", true);
       return;
     }
-    if(!confirmDiscardEdits()){$("file-map").value="";return false;}
+    if(!alreadyConfirmed&&!confirmDiscardEdits()){$("file-map").value="";return false;}
     busy(true,"Wczytywanie " + file.name);
     try {
       const meta = await api("/api/map", {
@@ -237,30 +265,7 @@
                   "X-Map-Name":encodeURIComponent(file.name)},
         body: file
       });
-      state.meta = meta;
-      updateEditState(meta);
-      state.active = null; state.detail = null; state.pinned.clear();
-      state.vertexDrag=null;setTool("select");
-      state.features = []; state.inspectorCache.clear();
-      // Match the old user's map view: survey markers are opt-in.
-      // Their heavy symbol density otherwise hides the parcel boundaries.
-      state.visibleLayers = new Set(
-        meta.layers.map(layer=>layer.name).filter(name=>name!=="Graniczniki"));
-      state.hiddenGrades = new Set(); state.firstLoad = false;
-      $("empty-state").hidden = true;
-      htmlText($("document-title"), meta.name);
-      htmlText($("map-status"), meta.name);
-      htmlText($("layer-count"), meta.layers.length);
-      htmlText($("count-objects"), display(meta.objectCount));
-      htmlText($("count-vertices"), display(meta.vertexCount));
-      const quality = $("checksum-badge");
-      quality.hidden = false;
-      quality.textContent = meta.checksumValid ? "✓ CHK poprawna" : "⚠ CHK niezgodna";
-      quality.classList.toggle("warning", !meta.checksumValid);
-      renderLayers(); updateInspector(); fitToMap(); updateSelectionCount();
-      inform("Wczytano " + display(meta.objectCount) +
-             " obiektów. Oryginalny plik jest chroniony.");
-      return true;
+      return finishOpeningMap(meta);
     } catch (error) {
       inform("Nie udało się otworzyć MAP: " + error.message, true);
       return false;
@@ -280,6 +285,130 @@
     } finally { busy(false); $("file-sidecar").value = ""; }
   }
 
+  async function chooseMap() {
+    // Do NOT hold the entire UI busy while a native dialog is open.
+    // The user can always use the independent "Z dysku" label/input,
+    // even if Tk or the pywebview JS bridge is unavailable or blocked.
+    if(window.pywebview){
+      if(window.pywebview.api?.open_map){
+        if(!confirmDiscardEdits())return;
+        try {
+          const answer=await window.pywebview.api.open_map();
+          if(answer&&!answer.cancelled&&answer.metadata)
+            finishOpeningMap(answer.metadata);
+        }catch(error){
+          const message=error?.message||String(error);
+          inform("Nie udało się otworzyć okna z ostatniego folderu: "+
+            message+". Kliknij Z dysku, aby wybrać mapę standardowo.",true);
+        }
+        return;
+      }
+      // Bridge might not be ready when a WebView2 window first appears.
+      // Fall back synchronously on the ORIGINAL click, preserving the
+      // user gesture needed to display the Windows file chooser.
+      $("file-map").click();
+      return;
+    }
+    if(typeof window.showOpenFilePicker==="function"){
+      if(!confirmDiscardEdits())return;
+      try{
+        const handles=await window.showOpenFilePicker({
+          id:"geostudio-map-folder",multiple:false,
+          types:[{description:"Mapa GEO-MAP",accept:{
+            "application/octet-stream":[".map"]
+          }}]
+        });
+        if(handles.length)await openMap(await handles[0].getFile(),true);
+      }catch(error){
+        if(error.name==="AbortError")return;
+        // After an awaited browser call, triggering input.click() might
+        // be blocked due to loss of transient user activation. Explain
+        // that "Z dysku" is an immediate click-based alternative.
+        inform("Przeglądarka nie otworzyła wyboru pliku. "+
+          "Kliknij Z dysku, aby użyć standardowego okna.",true);
+      }
+      return;
+    }
+    $("file-map").click();
+  }
+
+  function populateSelectCodes() {
+    const box=$("select-code");
+    if(!box)return;
+    const old=box.value;
+    box.replaceChildren(new Option("Wszystkie kody (z filtrem A1/A2)",""));
+    for(const [code,count] of Object.entries(state.meta?.codes||{})
+       .sort((a,b)=>Number(a[0])-Number(b[0]))){
+      box.add(new Option(code+" · "+display(count)+" obiektów",code));
+    }
+    if([...box.options].some(x=>x.value===old))box.value=old;
+  }
+  function openAdvancedSelection() {
+    if(!state.meta){inform("Najpierw wczytaj mapę MAP.",true);return;}
+    const dialog=$("select-dialog");
+    if(dialog.open)return;
+    populateSelectCodes();
+    // Default to the selected object's code, never auto-filter A1/A2.
+    if(state.detail?.code&&[...$("select-code").options]
+       .some(o=>o.value===state.detail.code))
+      $("select-code").value=state.detail.code;
+    $("select-preview").textContent=
+      "Przeszukuje całą mapę, nie tylko bieżący widok.";
+    dialog.showModal();
+    $("select-code").focus();
+  }
+  async function applyAdvancedSelection(event) {
+    event.preventDefault();
+    if(!state.meta)return;
+    const code=$("select-code").value;
+    const a1=$("select-a1").value.trim();
+    const a2=$("select-a2").value.trim();
+    const match=$("select-match").value;
+    const action=$("select-action").value;
+    if(!code&&!a1&&!a2){
+      $("select-preview").textContent=
+        "Podaj kod albo wartość A1/A2, aby uniknąć zaznaczenia całej mapy.";
+      return;
+    }
+    const button=$("select-apply");button.disabled=true;
+    const tokenAtStart=state.edit?.documentToken;
+    const revisionAtStart=state.edit?.revision;
+    $("select-preview").textContent="Sprawdzanie obiektów…";
+    try {
+      const params=new URLSearchParams({code,a1,a2,match});
+      const result=await api("/api/select?"+params);
+      if(result.documentToken!==tokenAtStart||
+         result.revision!==revisionAtStart||
+         state.edit?.documentToken!==tokenAtStart||
+         state.edit?.revision!==revisionAtStart)
+        throw Error("Mapa zmieniła się w trakcie wyszukiwania. Spróbuj ponownie.");
+      const previous=new Set(state.pinned);
+      if(state.active)previous.add(state.active);
+      const matches=new Set(result.ids);
+      if(action==="replace")state.pinned=matches;
+      else if(action==="add")for(const id of matches)previous.add(id);
+      else if(action==="subtract")for(const id of matches)previous.delete(id);
+      if(action!=="replace")state.pinned=previous;
+      const selected=state.pinned.has(state.active)?state.active:
+        (state.pinned.values().next().value||null);
+      state.lastPick=null;
+      $("select-dialog").close();
+      await selectFeature(selected);
+      inform("Wyszukano "+display(result.count)+" obiektów. Aktualne zaznaczenie: "+
+        display(state.pinned.size)+".");
+      requestDraw();
+    }catch(error){
+      $("select-preview").textContent="Nie udało się zaznaczyć: "+error.message;
+      inform("Zaznaczanie: "+error.message,true);
+    }finally{button.disabled=false;}
+  }
+  function clearAdvancedSelection() {
+    state.pinned.clear();
+    state.lastPick=null;
+    selectFeature(null);
+    $("select-preview").textContent="Wyczyszczono wszystkie zaznaczenia.";
+    requestDraw();
+  }
   function resizeCanvas() {
     const rect = shell.getBoundingClientRect();
     state.width = Math.max(1, rect.width); state.height = Math.max(1, rect.height);
@@ -809,7 +938,10 @@
     // Parcel numbers are suppressed at map overview scale, but appear
     // when zoomed enough to read them. Building labels remain prioritized.
     const ordered=[...features].sort((a,b)=>{
-      const priority=f=>f.code==="5310"?0:
+      // Active object's A1/A2 should not be hidden by competing labels.
+      const priority=f=>f.id===state.active?-2:
+        state.pinned.has(f.id)?-1:
+        f.code==="5310"?0:
         ["7900","6000","6301","6900"].includes(f.code)?1:
         f.code==="5216"?2:3;
       return priority(a)-priority(b);
@@ -848,6 +980,15 @@
         if(collisions.some(r=>r[0]<rect[2]&&r[2]>rect[0]&&
                               r[1]<rect[3]&&r[3]>rect[1]))continue;
         collisions.push(rect);
+        const showSelectedLabel=feature.id===state.active&&
+          (label.field==="A1"||label.field==="A2");
+        if(showSelectedLabel){
+          // When a polygon 5310 is active, highlight BOTH corresponding
+          // description strings, not just the geometry outline.
+          ctx.fillStyle="rgba(27,150,143,.23)";
+          ctx.fillRect(rect[0]-2,rect[1]-2,
+            rect[2]-rect[0]+4,rect[3]-rect[1]+4);
+        }
         ctx.textBaseline="alphabetic";
         for(let j=0;j<lines.length;j++){
           const line=lines[j].slice(0,100);
@@ -1081,7 +1222,9 @@
       }
     }
     candidates.sort((a,b)=>{
-      const priority=p=>p.code==="5216"?0:p.code==="5230"?1:2;
+      // Put visible buildings first; repeated clicks still cycle all hits.
+      const priority=p=>p.code==="5310"?0:p.code==="5230"?1:
+        p.code==="5220"?2:p.code==="5216"?3:4;
       return priority(a)-priority(b)||(a.inside?1:0)-(b.inside?1:0)||
              a.dist-b.dist||a.area-b.area;
     });
@@ -1162,7 +1305,20 @@
        state.lastPick.p.y-p.y)<8&&hits.includes(state.lastPick.fid))
        index=(hits.indexOf(state.lastPick.fid)+1)%hits.length;
     const fid=hits[index];
-    state.lastPick={p,fid};selectFeature(fid);
+    state.lastPick={p,fid};
+    if(ev.ctrlKey||ev.shiftKey){
+      // Ctrl/Shift-click adds or removes objects without losing the rest
+      // of the multi-selection. Subsequent clicks cycle overlapping hits.
+      const selection=new Set(state.pinned);
+      if(state.active)selection.add(state.active);
+      const wasSelected=selection.has(fid);
+      if(wasSelected)selection.delete(fid);else selection.add(fid);
+      state.pinned=selection;
+      const next=wasSelected?
+        (selection.has(state.active)?state.active:
+          (selection.values().next().value||null)):fid;
+      selectFeature(next);
+    }else selectFeature(fid);
   });
   canvas.addEventListener("dblclick",ev=>{
     if(state.tool!=="nodes"||!state.meta)return;
@@ -1219,7 +1375,10 @@
       ev.preventDefault();openCommands();return;
     }
     if((ev.ctrlKey||ev.metaKey)&&ev.key.toLowerCase()==="o"){
-      ev.preventDefault();$("file-map").click();return;
+      ev.preventDefault();chooseMap();return;
+    }
+    if((ev.ctrlKey||ev.metaKey)&&ev.key.toLowerCase()==="h"){
+      ev.preventDefault();openAdvancedSelection();return;
     }
     if(typing)return;
     if(state.tool==="nodes"&&state.detail&&!ev.ctrlKey&&!ev.metaKey&&!ev.altKey&&
@@ -1260,9 +1419,14 @@
   });
 
   const link=(id,callback)=>$(id).addEventListener("click",callback);
-  link("btn-open",()=> $("file-map").click());
-  link("tool-open",()=> $("file-map").click());
-  link("empty-open",()=> $("file-map").click());
+  link("btn-open",chooseMap);
+  link("tool-open",chooseMap);
+  link("empty-open",chooseMap);
+  link("tool-advanced-select",openAdvancedSelection);
+  link("select-close",()=>$("select-dialog").close());
+  link("select-clear",clearAdvancedSelection);
+  $("select-form").addEventListener("submit",applyAdvancedSelection);
+
   link("tool-sidecar",()=> $("file-sidecar").click());
   link("tool-undo",()=>historyStep("undo"));
   link("tool-redo",()=>historyStep("redo"));

@@ -14,7 +14,7 @@
     <header class="topbar">
       <div class="identity">
         <div class="mark" aria-hidden="true"><span></span><span></span><span></span></div>
-        <div><strong>GeoStudio</strong><span class="brand-version">2.0 <em>WĘZŁY + DWUKLIK — TEST</em></span></div>
+        <div><strong>GeoStudio</strong><span class="brand-version">2.0 <em>MAP · OKNO PLIKÓW — TEST</em></span></div>
       </div>
       <div class="header-center"><span class="top-kicker">OBSZAR ROBOCZY</span>
         <span id="document-title">Nowy projekt</span>
@@ -24,6 +24,8 @@
         <button id="btn-command" class="top-icon" title="Polecenia (Ctrl+K)" aria-label="Wyszukaj polecenie">⌕ <kbd>⌘ K</kbd></button>
         <button id="btn-theme" class="top-icon" title="Przełącz jasny/ciemny wygląd">◐</button>
         <button id="btn-export" class="button export" disabled title="Pobierz oddzielny plik MAP">↓ Pobierz kopię</button>
+        <label id="btn-open-direct" class="button ghost direct-open" for="file-map"
+          title="Zawsze dostępny wybór pliku, niezależny od pywebview">▱ Z dysku</label>
         <button id="btn-open" class="button primary"><span class="button-icon">↗</span> Otwórz MAP</button>
       </div>
     </header>
@@ -45,6 +47,7 @@
           <button class="tool-button active" id="tool-select"><span class="tool-glyph">↖</span>Zaznacz <small>S</small></button>
           <button class="tool-button" id="tool-pan"><span class="tool-glyph">✥</span>Przesuń <small>H</small></button>
           <button class="tool-button" id="tool-nodes" title="Edycja węzłów poligonu (P)"><span class="tool-glyph">⬡</span>Węzły <small>P</small></button>
+          <button class="tool-button" id="tool-advanced-select" title="Zaznacz według kodu i atrybutów (Ctrl+H)"><span class="tool-glyph">⌕</span>Filtruj <small>Ctrl+H</small></button>
           <button class="tool-button" id="tool-delete-node" disabled title="Zaznacz węzeł i usuń go (Delete)"><span class="tool-glyph">⊖</span>Usuń węzeł <small>Del</small></button>
           <button class="tool-button" id="tool-fit"><span class="tool-glyph">⛶</span>Dopasuj</button>
         </div>
@@ -170,6 +173,46 @@
 
   <input id="file-map" type="file" accept=".map,.MAP" hidden>
   <input id="file-sidecar" type="file" accept=".json" hidden>
+  <dialog id="select-dialog" class="advanced-select-dialog">
+    <form id="select-form" autocomplete="off">
+      <div class="select-head">
+        <div><div class="eyebrow">ZAZNACZANIE ZAAWANSOWANE · CTRL+H</div>
+          <h2>Wybierz obiekty z mapy</h2></div>
+        <button type="button" id="select-close" class="select-close" aria-label="Zamknij">×</button>
+      </div>
+      <div class="select-content">
+        <label for="select-code">Kod GEO-MAP</label>
+        <select id="select-code"><option value="">Wszystkie kody (z filtrem A1/A2)</option></select>
+        <div class="select-grid">
+          <div><label for="select-a1">A1 — wartość</label>
+            <input id="select-a1" maxlength="160" placeholder="Np. b lub dr"></div>
+          <div><label for="select-a2">A2 — wartość</label>
+            <input id="select-a2" maxlength="160" placeholder="Np. konkretne oznaczenie"></div>
+        </div>
+        <div class="select-grid">
+          <div><label for="select-match">Dopasowanie A1/A2</label>
+            <select id="select-match">
+              <option value="exact">Dokładnie taka wartość</option>
+              <option value="contains">Zawiera podany tekst</option>
+            </select>
+          </div>
+          <div><label for="select-action">Co zrobić z zaznaczeniem?</label>
+            <select id="select-action">
+              <option value="replace">Zastąp dotychczasowe</option>
+              <option value="add">Dodaj do zaznaczenia</option>
+              <option value="subtract">Odejmij od zaznaczenia</option>
+            </select>
+          </div>
+        </div>
+        <p class="select-explain">Przeszukuje całą wczytaną mapę, również obiekty poza widocznym kadrem. Wystarczy sam kod, np. 5310. A1 i A2 zawężają wynik.</p>
+        <p class="select-preview" id="select-preview">Wybierz przynajmniej jedno kryterium.</p>
+      </div>
+      <div class="select-actions">
+        <button type="button" id="select-clear" class="button ghost">Wyczyść zaznaczenie</button>
+        <button type="submit" id="select-apply" class="button primary">Zaznacz obiekty</button>
+      </div>
+    </form>
+  </dialog>
   <dialog id="command-dialog" class="command-dialog">
     <div class="command-search"><span>⌕</span><input id="command-input" type="search" placeholder="Wpisz polecenie lub nazwę…" autocomplete="off"><kbd>ESC</kbd></div>
     <div id="command-results" class="command-results"></div>

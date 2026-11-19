@@ -29,6 +29,7 @@ from geostudio.library_render import native_fill_color
 MAX_MAP_BYTES = 80 * 1024 * 1024
 MAX_STYLES_BYTES = 2 * 1024 * 1024
 MAX_RENDER_FEATURES = 25000
+MAX_SELECTED_FEATURES = 50000
 HEX = re.compile(r"^#[0-9A-Fa-f]{6}$")
 STYLE_FORMAT = "geostudio-visual-v1"
 CODES = {
@@ -194,6 +195,52 @@ class PreviewWorkspace:
             "revision": self._revision,
             "documentToken": self._document_token,
         }
+
+    def select_by_attributes(self, *, code: str = "", a1: str = "",
+                             a2: str = "", match: str = "exact") -> dict:
+        """Select full-map object IDs from source attributes, independent of viewport.
+
+        Search has no side effects on GEO-MAP bytes, geometry or History.
+        Explicitly refuse oversized results instead of silently omitting
+        hundreds of matches, which could make bulk edits unsafe later.
+        """
+        if any(not isinstance(value, str) or len(value) > 160
+               for value in (code, a1, a2, match)):
+            raise ValueError("Nieprawidłowy filtr zaznaczania.")
+        code, a1, a2 = code.strip(), a1.strip(), a2.strip()
+        if not (code or a1 or a2):
+            raise ValueError("Podaj kod lub przynajmniej jeden atrybut A1/A2.")
+        if code and (not code.isascii() or not code.isdigit() or len(code) > 8):
+            raise ValueError("Kod musi składać się z cyfr.")
+        if match not in {"exact", "contains"}:
+            raise ValueError("Nieobsługiwany sposób dopasowania.")
+        norm1, norm2 = a1.casefold(), a2.casefold()
+        with self._lock:
+            if self._doc is None:
+                raise ValueError("Najpierw otwórz mapę MAP.")
+            hits = []
+            for entry in self._entries:
+                obj = entry.obj
+                if code and obj.code != code:
+                    continue
+                values = obj.fields
+                if a1:
+                    actual = str(values.get("A1", "")).strip().casefold()
+                    if (norm1 != actual if match == "exact" else norm1 not in actual):
+                        continue
+                if a2:
+                    actual = str(values.get("A2", "")).strip().casefold()
+                    if (norm2 != actual if match == "exact" else norm2 not in actual):
+                        continue
+                hits.append(entry.fid)
+                if len(hits) > MAX_SELECTED_FEATURES:
+                    raise ValueError(
+                        "Wynik zawiera ponad 50 000 obiektów. Zawęź kryteria A1/A2.")
+            return {
+                "ids": hits, "count": len(hits),
+                "revision": self._revision, "documentToken": self._document_token,
+                "criteria": {"code": code, "A1": a1, "A2": a2, "match": match},
+            }
 
     def editing_status(self) -> dict:
         with self._lock:
