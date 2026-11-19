@@ -1246,7 +1246,7 @@ class PreviewWorkspace:
             if document_token != self._document_token:
                 raise RuntimeError("Nieaktualny dokument.")
             basename = _display_name(self._doc.filename)
-            return basename[:-4] + "_GeoStudio2_kopia.MAP", self._doc.to_bytes_positive_areas()
+            return basename[:-4] + "_GeoStudio2_kopia.MAP", self._doc.to_bytes()
 
     def metadata(self) -> dict:
         with self._lock:
