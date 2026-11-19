@@ -1967,6 +1967,16 @@ class PreviewWorkspace:
 
 def _label_anchor(obj):
     """Match PySide6's centroid rather than an arbitrary bounding-box centre."""
+    if obj.is_closed and len(obj.display_parts)>1:
+        try:
+            shape=geometry_of(obj)
+            components=(list(shape.geoms) if shape.geom_type=="MultiPolygon"
+                        else [shape])
+            largest=max(components,key=lambda p:p.area)
+            anchor=largest.representative_point()
+            return anchor.x,anchor.y
+        except ValueError:
+            pass
     points = obj.points[:-1] if obj.is_closed else obj.points
     if not points:
         return (0.0, 0.0)
