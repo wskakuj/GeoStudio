@@ -210,3 +210,62 @@ def test_stage7_native_picker_browser_controls_exist():
                  "async function openCartographicFiles(","/api/export/package",
                  "hasReversibleMasks"]:
         assert item in j
+
+
+def test_point_symbol_segments_and_circles_use_real_sym_primitives():
+    raw=(MapBuilder()
+        .object("1246","BOUNDARY",{},[(12.0,34.0)],closed=False)
+        .build())
+    ws=PreviewWorkspace()
+    ws.load_map(raw,"symbols.MAP")
+    sym=(b"*1246 boundary\r\n"
+         b"L 0 0 1 1 0 0\r\n"
+         b"A 0 0 1 0 0 360\r\n")
+    ws.set_cartographic_library("punkty.SYM",sym)
+    point=ws.viewport((30,-20,40,-5))["features"][0]
+    assert len(point["style"]["symbolSegments"])==1
+    assert len(point["style"]["symbolCircles"])==1
+    assert point["style"]["symbolSegments"][0]==[0,0,1,1] or (
+        tuple(point["style"]["symbolSegments"][0])==(0,0,1,1))
+
+
+def test_multipart_label_anchor_is_inside_one_of_merged_islands():
+    raw=(MapBuilder()
+      .object("5310","A",{"A1":"l","A2":"So120|II-0.3"},
+              [(0,0),(0,10),(10,10),(10,0)])
+      .object("5310","B",{"A1":"l","A2":"So120|II-0.3"},
+              [(200,0),(200,10),(210,10),(210,0)])
+      .build())
+    ws=PreviewWorkspace()
+    ws.load_map(raw,"merged.MAP")
+    op={"action":"merge","ids":["f0","f1"]}
+    preview=ws.preview_geometry_operation(op,**auth(ws))
+    ws.apply_geometry_operation(op,preview_key=preview["previewKey"],**auth(ws))
+    obj=ws._doc.by_id["A"]
+    from shapely.geometry import Point
+    geometry=geometry_of(obj)
+    label=next(f for f in ws.viewport((-10,-220,30,10))["features"]
+               if f["id"]=="f0")["labels"][0]
+    assert geometry.contains(Point(-label["y"],label["x"]))
+
+
+def test_browser_library_endpoint_accepts_local_bytes_and_denies_traversal():
+    from fastapi.testclient import TestClient
+    ws=PreviewWorkspace()
+    ws.load_map(map_with_overlay(),"mapa.MAP")
+    app=create_app(ws)
+    with TestClient(app) as client:
+        good=client.post("/api/cartography/library",
+             headers={"X-GeoStudio-Token":app.state.api_token,
+                      "X-Library-Name":"kolory.CDF"},
+             content=b"5310 22 33 44 3 88 99 100 1.2\r\n")
+        assert good.status_code==200
+        assert good.json()["kind"]=="CDF"
+        bad=client.post("/api/cartography/library",
+             headers={"X-GeoStudio-Token":app.state.api_token,
+                      "X-Library-Name":"..%2Fsecret.CDF"},
+             content=b"5310 22 33 44 3 88 99 100 1.2\r\n")
+        assert bad.status_code==400
+        status=client.get("/api/cartography/status",headers={
+            "X-GeoStudio-Token":app.state.api_token})
+        assert set(status.json()["libraries"])=={"CDF"}
