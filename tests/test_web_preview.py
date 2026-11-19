@@ -160,5 +160,5 @@ def test_no_export_write_edit_paths_exposed(client, sample_map, tmp_path):
     assert result.status_code == 200
     assert c.post("/api/save",headers=auth).status_code == 404
     assert c.post("/api/objects/f0",headers=auth).status_code == 404
-    assert c.delete("/api/objects/f0",headers=auth).status_code == 405
+    assert c.delete("/api/objects/f0",headers=auth).status_code == 404
     assert source.read_bytes() == before
