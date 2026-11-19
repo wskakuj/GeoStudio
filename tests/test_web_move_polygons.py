@@ -69,7 +69,7 @@ def test_preview_has_no_side_effects_and_reports_topology(ws):
     assert any(x["stationaryUid"] == "B" for x in report["topologyConflicts"])
     assert ws.export_copy(auth(ws)["document_token"])[1] == raw
     assert ws.editing_status()["canUndo"] is False
-    with pytest.raises(ValueError, match="nachodzą na siebie"):
+    with pytest.raises(ValueError, match="wspólną granicę"):
         apply(ws, ["f0"], report)
 
 
@@ -231,12 +231,13 @@ def test_ui_contains_move_dialog_and_shortcuts():
         assert required in js
 
 
-def test_moving_inside_same_code_is_always_blocked(ws):
+def test_moving_inside_same_code_masks_underlying_geometry(ws):
     plan=preview(ws,["f2"],dx=-35,dy=0,allow_detach=True)
-    assert plan["overlapBlocked"]
-    assert not plan["canApply"]
-    with pytest.raises(ValueError,match="nachodzą"):
-        apply(ws,["f2"],plan,dx=-35,dy=0,allow_detach=True)
+    assert not plan["overlapBlocked"]
+    assert plan["canApply"] and plan["reversibleCutout"]
+    result=apply(ws,["f2"],plan,dx=-35,dy=0,allow_detach=True)
+    assert result["changed"]
+    assert ws.editing_status()["hasReversibleMasks"]
 
 
 def test_magnetic_snap_reaches_shared_border_without_overlap(ws):
