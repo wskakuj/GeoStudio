@@ -286,23 +286,32 @@
   }
 
   async function chooseMap() {
-    if(window.pywebview?.api?.open_map){
-      // Native Windows dialogue: the Python bridge knows the last directory.
-      if(!confirmDiscardEdits())return;
-      busy(true,"Otwieranie mapy z ostatniego katalogu");
-      try {
-        const answer=await window.pywebview.api.open_map();
-        if(answer&&!answer.cancelled&&answer.metadata)
-          finishOpeningMap(answer.metadata);
-      }catch(error){
-        inform("Nie udało się otworzyć MAP: "+error.message,true);
-      }finally{busy(false);}
+    // Do NOT hold the entire UI busy while a native dialog is open.
+    // The user can always use the independent "Z dysku" label/input,
+    // even if Tk or the pywebview JS bridge is unavailable or blocked.
+    if(window.pywebview){
+      if(window.pywebview.api?.open_map){
+        if(!confirmDiscardEdits())return;
+        try {
+          const answer=await window.pywebview.api.open_map();
+          if(answer&&!answer.cancelled&&answer.metadata)
+            finishOpeningMap(answer.metadata);
+        }catch(error){
+          const message=error?.message||String(error);
+          inform("Nie udało się otworzyć okna z ostatniego folderu: "+
+            message+". Kliknij Z dysku, aby wybrać mapę standardowo.",true);
+        }
+        return;
+      }
+      // Bridge might not be ready when a WebView2 window first appears.
+      // Fall back synchronously on the ORIGINAL click, preserving the
+      // user gesture needed to display the Windows file chooser.
+      $("file-map").click();
       return;
     }
     if(typeof window.showOpenFilePicker==="function"){
       if(!confirmDiscardEdits())return;
       try{
-        // Chromium remembers the picker location for a stable page origin.
         const handles=await window.showOpenFilePicker({
           id:"geostudio-map-folder",multiple:false,
           types:[{description:"Mapa GEO-MAP",accept:{
@@ -312,12 +321,14 @@
         if(handles.length)await openMap(await handles[0].getFile(),true);
       }catch(error){
         if(error.name==="AbortError")return;
-        // WebView fallback (e.g. disabled File System Access API).
-        $("file-map").click();
+        // After an awaited browser call, triggering input.click() might
+        // be blocked due to loss of transient user activation. Explain
+        // that "Z dysku" is an immediate click-based alternative.
+        inform("Przeglądarka nie otworzyła wyboru pliku. "+
+          "Kliknij Z dysku, aby użyć standardowego okna.",true);
       }
       return;
     }
-    // Standard file input cannot set a full local directory path.
     $("file-map").click();
   }
 
