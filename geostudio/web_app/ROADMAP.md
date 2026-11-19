@@ -20,18 +20,29 @@ Aktualizacja: 19 listopada 2026. Dokument będziemy uzupełniać po każdym zwer
 - [x] Zapamiętywanie ostatniego folderu MAP i awaryjne „Z dysku” (potwierdzone).
 - [x] Zabezpieczenie pywebview przed rekurencją natywnego WebView2 (testowane).
 
-## W tym PR — etap 4B, wymaga próby użytkownika
+## Potwierdzony etap 4B (PR #51, scalony do main)
 
-- [ ] **Zbiorowo A1/A2**: jawne checkboxy dla pól, obsługa pustych wartości.
-- [ ] Podgląd: liczby zmian, pola niedostępne, przykłady przed/po.
-- [ ] Zmiany w wybranych (a nie wszystkich tego samego kodu), limit 5 000.
-- [ ] Jedna transakcja Cofnij/Ponów, ochrona niezmienionych rekordów MAP.
-- [ ] Zapis bez nadpisywania źródła, walidacja CP1250 i blokada starej rewizji.
+- [x] **Zbiorowo A1/A2**: jawne checkboxy dla pól, obsługa pustych wartości.
+- [x] Podgląd: liczby zmian, pola niedostępne, przykłady przed/po.
+- [x] Zmiany w wybranych (a nie wszystkich tego samego kodu), limit 5 000.
+- [x] Jedna transakcja Cofnij/Ponów, ochrona niezmienionych rekordów MAP.
+- [x] Zapis bez nadpisywania źródła, walidacja CP1250 i blokada starej rewizji.
+
+## W tym PR — etap 5A, wymaga próby użytkownika
+
+- [ ] **Przesuwanie poligonów**: M + przeciągnięcie na mapie, podgląd zarysu na Canvas.
+- [ ] Dokładne przesunięcie X/Y (w natywnych metrach GEO-MAP), Ctrl+Shift+M.
+- [ ] Zaznaczenie pojedyncze lub do 5 000 poligonów przez Ctrl+H.
+- [ ] Podgląd przed zastosowaniem, ochrona niezmienionych obiektów i innych kodów.
+- [ ] Wspólna granica z nieruchomym sąsiadem tego samego kodu blokuje zmianę;
+      można świadomie zezwolić na rozłączenie granicy.
+- [ ] Jedno Cofnij/Ponów, odrzucenie niepoprawnej rewizji, kontrola poprawności
+      zamkniętych poligonów i eksport kopii z CHK.
 
 ## Pozostałe duże obszary
 
 1. **Dopracowanie zaznaczania**: wybór według geometrii, wykluczanie nakładających się obiektów, testy bardzo dużych map.
-2. **Nowe obiekty**: tworzenie polygonów i linii, usuwanie/kopiowanie obiektów, przesuwanie całych geometrii.
+2. **Nowe obiekty**: tworzenie poligonów i linii, usuwanie/kopiowanie obiektów, rozwinięcie przesuwania o przyciąganie grup i precyzyjne łączenie topologii.
 3. **Zaawansowane GIS**: podział i łączenie poligonów, edycja polilinii, pomiary, snapping i kontrola topologii.
 4. **Pełna kartografia**: biblioteki LAY / CDF / SYM, etykiety, wzory, symbole; możliwie wierny klasyczny renderer.
 5. **Wersja produkcyjna**: wydajność na wielkich mapach, zapis bezpośredni z kopią zapasową, odzyskiwanie awaryjne, instalator, testy rzeczywistych plików.
