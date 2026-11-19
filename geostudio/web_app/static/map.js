@@ -20,6 +20,7 @@
     edit: null, editBusy: false, bulkPreview: null, movePreview: null,
     moveIds: [], moveGhost: null, objectPreview:null,
     drawPoints:[], drawHover:null, copyIds:[],
+    geometryPreview:null,cutIds:[],lineEditId:null,
     snapEnabled: true, sharedNodes: false, vertexDrag: null,
     hoverInsert: null, selectedVertex: null
   };
@@ -31,6 +32,11 @@
     {name:"Przeciągaj wybrane poligony", hint:"M", run:()=>setTool("move")},
     {name:"Kopiuj obok i przesuń myszą", hint:"Ctrl+D", run:quickDuplicate},
     {name:"Kopiuj z dokładnym przesunięciem", hint:"X/Y", run:openCopyEditor},
+    {name:"Scal zaznaczone poligony", hint:"Ctrl+Shift+G", run:mergePolygons},
+    {name:"Podziel poligon linią", hint:"Ctrl+Shift+X", run:startSplit},
+    {name:"Napraw kierunek obrysu (dodatnia powierzchnia)", hint:"Pole +", run:repairWinding},
+    {name:"Rysuj nową linię", hint:"L", run:()=>setTool("line")},
+    {name:"Edytuj wybraną linię", hint:"Shift+L", run:startEditLine},
     {name:"Usuń wybrane obiekty", hint:"Ctrl+Delete", run:deleteObjects},
     {name:"Rysuj nowy poligon", hint:"N", run:()=>setTool("draw")},
     {name:"Wczytaj plik stylów GeoStudio", hint:"JSON", run:()=> $("file-sidecar").click()},
@@ -258,6 +264,7 @@
     populateSelectCodes();
     state.vertexDrag=null;state.moveGhost=null;state.movePreview=null;
     state.moveIds=[];state.copyIds=[];state.drawPoints=[];
+    state.cutIds=[];state.lineEditId=null;state.geometryPreview=null;
     state.drawHover=null;state.objectPreview=null;setTool("select");
     state.features = []; state.inspectorCache.clear();
     // Match the old user's map view: survey markers are opt-in.
@@ -974,7 +981,8 @@
     $("create-code").focus();
   }
   function drawDraftPolygon() {
-    if(state.tool!=="draw"||!state.drawPoints.length)return;
+    if(!["draw","cut","line","line-edit"].includes(state.tool)||
+       !state.drawPoints.length)return;
     const points=state.drawPoints.map(p=>[p[1],-p[0]]);
     if(state.drawHover)points.push([state.drawHover.y,-state.drawHover.x]);
     ctx.save();
@@ -1126,12 +1134,15 @@
     shell.classList.toggle("nodes-editing",tool==="nodes");
     shell.classList.toggle("moving-objects",tool==="move");
     shell.classList.toggle("drawing-objects",tool==="draw");
-    if(tool!=="draw"){state.drawPoints=[];state.drawHover=null;}
+    if(!["draw","cut","line","line-edit"].includes(tool)){
+      state.drawPoints=[];state.drawHover=null;
+    }
     $("geometry-help").hidden=tool!=="nodes"||!state.meta;
     updateGeometryHelp();
     for(const [name,id] of [
       ["select","tool-select"],["pan","tool-pan"],["nodes","tool-nodes"],
       ["move","tool-move"],["draw","tool-new-polygon"],
+      ["cut","tool-split"],["line","tool-line"],["line-edit","tool-line"],
       ["select","float-select"],["pan","float-pan"],["nodes","float-nodes"],
       ["move","float-move"]
     ])$(id).classList.toggle("active",name===tool);
@@ -1139,7 +1150,8 @@
       inform("Tryb P: wybierz zamknięty poligon i przeciągnij jego węzeł.");
     else if(tool==="nodes")
       inform("Tryb P: przeciągnij jeden z węzłów. Ctrl+Z cofa zmianę.");
-    else if(tool==="draw")inform("Rysuj: klikaj wierzchołki, Enter lub dwuklik kończy obrys, Esc anuluje.");
+    else if(["draw","cut","line","line-edit"].includes(tool))
+      inform("Klikaj punkty; Enter lub dwuklik kończy rysowanie, Esc anuluje.");
     else if(tool==="move")inform("Tryb M: przeciągnij wybrany poligon lub całą grupę, potem potwierdź podgląd.");
     else inform(tool==="select"
       ?"Tryb zaznaczania obiektów (S).":"Tryb przesuwania mapy (H).");
@@ -1898,7 +1910,8 @@
     canvas.setPointerCapture(ev.pointerId);
     const p=eventCoords(ev);
     state.hoverInsert=null;
-    if(state.tool==="draw"&&ev.button===0&&!state.editBusy&&state.meta){
+    if(["draw","cut","line","line-edit"].includes(state.tool)&&
+       ev.button===0&&!state.editBusy&&state.meta){
       state.drag={pointer:ev.pointerId,start:p,last:p,moved:false,draw:true};
       return;
     }
@@ -1936,7 +1949,7 @@
     const p=eventCoords(ev),world=screenToWorld(p.x,p.y);
     $("cursor-coords").textContent="X: "+(-world.y).toFixed(3)+
                                    "   Y: "+world.x.toFixed(3);
-    if(state.tool==="draw"&&!state.editBusy){
+    if(["draw","cut","line","line-edit"].includes(state.tool)&&!state.editBusy){
       state.drawHover={x:-world.y,y:world.x};requestDraw();
     }
     if(!state.drag&&state.tool==="nodes"&&!state.editBusy){
@@ -1984,7 +1997,7 @@
           else inform("Osiągnięto limit 500 węzłów.",true);
         }
         requestDraw();
-        inform("Rysowanie poligonu: "+state.drawPoints.length+
+        inform("Rysowanie: "+state.drawPoints.length+
           " punktów. Enter/dwuklik — zakończ; Esc — anuluj.");
       }
       return;
@@ -2042,8 +2055,8 @@
     }else selectFeature(fid);
   });
   canvas.addEventListener("dblclick",ev=>{
-    if(state.tool==="draw"&&state.meta){
-      ev.preventDefault();ev.stopPropagation();finishDrawPolygon();return;
+    if(["draw","cut","line","line-edit"].includes(state.tool)&&state.meta){
+      ev.preventDefault();ev.stopPropagation();finishGeometryDrawing();return;
     }
     if(state.tool!=="nodes"||!state.meta)return;
     ev.preventDefault();ev.stopPropagation();
@@ -2114,14 +2127,20 @@
     if($("copy-dialog").open||$("create-dialog").open||$("move-dialog").open||
        $("bulk-dialog").open||$("select-dialog").open)return;
     if(typing)return;
+    if((ev.ctrlKey||ev.metaKey)&&ev.shiftKey&&ev.key.toLowerCase()==="g"){
+      ev.preventDefault();mergePolygons();return;
+    }
+    if((ev.ctrlKey||ev.metaKey)&&ev.shiftKey&&ev.key.toLowerCase()==="x"){
+      ev.preventDefault();startSplit();return;
+    }
     if((ev.ctrlKey||ev.metaKey)&&ev.key==="Delete"){
       ev.preventDefault();deleteObjects();return;
     }
     if((ev.ctrlKey||ev.metaKey)&&ev.key.toLowerCase()==="d"){
       ev.preventDefault();quickDuplicate();return;
     }
-    if(state.tool==="draw"&&ev.key==="Enter"){
-      ev.preventDefault();finishDrawPolygon();return;
+    if(["draw","cut","line","line-edit"].includes(state.tool)&&ev.key==="Enter"){
+      ev.preventDefault();finishGeometryDrawing();return;
     }
     if(state.tool==="nodes"&&state.detail&&!ev.ctrlKey&&!ev.metaKey&&!ev.altKey&&
        (ev.key==="Delete"||ev.key==="Backspace")){
@@ -2148,7 +2167,7 @@
     }
     if(ev.key==="Escape"){
       if(dialog.open)dialog.close();
-      else if(state.tool==="nodes"||state.tool==="move"||state.tool==="draw"){
+      else if(["nodes","move","draw","cut","line","line-edit"].includes(state.tool)){
         state.vertexDrag=null;setTool("select");
       }else selectFeature(null);
       return;
@@ -2156,6 +2175,9 @@
     if(ev.key.toLowerCase()==="s")setTool("select");
     if(ev.key.toLowerCase()==="m")setTool("move");
     if(ev.key.toLowerCase()==="n")setTool("draw");
+    if(ev.key.toLowerCase()==="l"){
+      if(ev.shiftKey)startEditLine();else setTool("line");
+    }
     if(ev.key.toLowerCase()==="h")setTool("pan");
     if(ev.key.toLowerCase()==="b")pinActive();
     if(ev.key==="0")fitToMap();
@@ -2178,6 +2200,10 @@
   link("tool-bulk-edit",openBulkEditor);
   link("tool-move",()=>setTool("move"));
   link("tool-new-polygon",()=>setTool("draw"));
+  link("tool-merge",mergePolygons);
+  link("tool-split",startSplit);
+  link("tool-winding",repairWinding);
+  link("tool-line",()=>setTool("line"));
   link("tool-copy",quickDuplicate);
   link("tool-delete-objects",deleteObjects);
   link("copy-close",()=>$("copy-dialog").close());
