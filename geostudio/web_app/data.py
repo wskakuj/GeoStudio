@@ -466,16 +466,23 @@ class PreviewWorkspace:
         """Compare old shared borders and new positive-area overlaps."""
         selected={obj.uid for obj in moving}
         codes={obj.code for obj in moving}
-        stationary=[o for o in self._doc.objects if o.uid not in selected
-                    and o.is_closed and o.code in codes]
         conflicts=[]
         overlaps=[]
         for obj in moving:
             old=ring_of(obj)
             new=ring_of(obj,dx,dy)
-            for neighbor in stationary:
-                if neighbor.code != obj.code:
-                    continue
+            # Spatial-index broad phase: no all-to-all scan over an entire MAP.
+            box=(min(x for x,y in old),min(y for x,y in old),
+                 max(x for x,y in old),max(y for x,y in old))
+            center=((box[0]+box[2])/2,(box[1]+box[3])/2)
+            radius=hypot(box[2]-box[0],box[3]-box[1])/2+.003
+            nearby={}
+            for cx,cy in (center,(center[0]+dx,center[1]+dy)):
+                for candidate in self._index.nearby(cx,cy,radius):
+                    if (candidate.uid not in selected and candidate.is_closed
+                            and candidate.code==obj.code):
+                        nearby[id(candidate)]=candidate
+            for neighbor in nearby.values():
                 fixed=ring_of(neighbor)
                 # Cheap AABB screening avoids costly edge comparisons.
                 def nearby(a,b,padding=0.0):
@@ -545,8 +552,22 @@ class PreviewWorkspace:
         snap_applied = None
         if snap_distance and (dx or dy):
             selected_uids={o.uid for o in moving}
-            fixed=[o for o in self._doc.objects if o.uid not in selected_uids
-                   and o.is_closed and o.code in codes]
+            near_fixed={}
+            for obj in moving:
+                r=ring_of(obj)
+                a,b=min(x for x,y in r),min(y for x,y in r)
+                c,d=max(x for x,y in r),max(y for x,y in r)
+                center=((a+c)/2+dx,(b+d)/2+dy)
+                radius=hypot(c-a,d-b)/2+snap_distance+.002
+                for item in self._index.nearby(*center,radius):
+                    if (item.uid not in selected_uids and item.is_closed
+                            and item.code==obj.code):
+                        near_fixed[id(item)]=item
+            fixed=list(near_fixed.values())
+            # Large batch moves still work: only interactive small selections
+            # request magnetic edge snapping, never all-to-all 100k vertices.
+            if sum(len(obj.points) for obj in moving)>3000:
+                fixed=[]
             nx,ny,distance=nearest_boundary_snap(
                 moving, fixed, dx, dy, snap_distance)
             if distance is not None:
