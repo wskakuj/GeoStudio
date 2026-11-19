@@ -2035,6 +2035,14 @@
     if(ev.key==="/"){ev.preventDefault();$("layer-search").focus();}
   });
 
+  const toolbar=document.querySelector(".toolbar");
+  toolbar.addEventListener("wheel",ev=>{
+    if(toolbar.scrollWidth>toolbar.clientWidth &&
+       Math.abs(ev.deltaY)>Math.abs(ev.deltaX)){
+      ev.preventDefault();
+      toolbar.scrollLeft+=ev.deltaY;
+    }
+  },{passive:false});
   const link=(id,callback)=>$(id).addEventListener("click",callback);
   link("btn-open",chooseMap);
   link("tool-open",chooseMap);
