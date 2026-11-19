@@ -23,6 +23,28 @@ Gdy pywebview/WebView2 nie wyświetla prawidłowo okna, użyj:
 To uruchomi tę samą lokalną aplikację w domyślnej przeglądarce.
 Wymaga Python 3.11+, lokalnego Edge WebView2 dla natywnego okna.
 
+## Stabilność okna Windows (pywebview / WebView2)
+
+Jeśli w starszej wersji GeoStudio 2.0 pojawiał się ciągły log
+`[pywebview] Error while processing window.native.AccessibilityObject...`,
+`maximum recursion depth exceeded` albo błędy COM związane z wątkiem UI,
+przyczyną było publiczne pole `window` w obiekcie `js_api`.
+
+Pywebview automatycznie analizuje publiczne atrybuty tego obiektu
+i próbowało przeglądać wewnętrzne właściwości natywnego okna WinForms.
+W aktualnym kodzie obiekt `NativeMapPicker` ma jedynie publiczną
+metodę `open_map()`. Okno, workspace i ustawienia są prywatne,
+a `__slots__` blokuje przypadkowe dodanie publicznych zależności.
+
+Przed testem zamknij wszystkie poprzednie okna GeoStudio 2.0
+i uruchom nową wersję z gałęzi PR #50. W nagłówku zobaczysz
+`CTRL+H · STABILNOŚĆ — TEST`.
+
+Jeżeli problem nadal występuje, uruchom awaryjnie
+`start_web_ui.bat --browser`. Tryb ten nie używa pywebview,
+ale zapamiętywanie ostatniego katalogu działa w nim na zasadach
+obsługiwanych przez przeglądarkę.
+
 ## Etap 4A — zaznaczanie zaawansowane i ostatni folder map
 
 ### Ctrl+H — wybór wg kodu, A1 i A2
