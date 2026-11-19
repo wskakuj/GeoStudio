@@ -491,6 +491,46 @@ class GeoMap:
     def delete_object(self, uid: str) -> None:
         self.delete_objects([uid])
 
+    @staticmethod
+    def signed_area(points: list[tuple[float,float]]) -> float:
+        """Stable signed planar area; native GEO-MAP expects positive exterior."""
+        if len(points)<3:
+            return 0.
+        x0,y0=points[0]
+        return sum(((x-x0)*(yn-y0)-(xn-x0)*(y-y0))
+                   for (x,y),(xn,yn) in zip(points,points[1:]+points[:1]))/2
+
+    def to_bytes_positive_areas(self) -> bytes:
+        """Export new MAP with positive-oriented SIMPLE exterior rings.
+
+        Preserve all non-P records, CP1250 data, and every polyline verbatim.
+        Do not rewrite multi-ring P0 objects: their winding can mark holes.
+        Also does not mutate the in-memory editable source or history.
+        """
+        pending={}
+        for obj in self.objects:
+            if (not obj.is_closed or len(obj.points)<4 or
+                    any(p.point_type!=1 for p in obj.points)):
+                continue
+            coords=[(p.x,p.y) for p in obj.points[:-1]]
+            if self.signed_area(coords)>=0:
+                continue
+            indices=[i for i in range(obj.start+1,obj.end)
+                     if POINT_RE.match(self.lines[i].rstrip(b'\r\n'))]
+            if len(indices)!=len(obj.points):
+                raise ValueError("Nie można bezpiecznie zmienić kolejności punktów.")
+            records=[self.lines[i] for i in indices]
+            flipped=[records[0],*reversed(records[1:-1]),records[-1]]
+            for index,record in zip(indices,flipped):
+                pending[index]=record
+        if not pending:
+            return self.to_bytes()
+        clone=GeoMap(b''.join(self.lines),filename=self.filename)
+        for index,record in pending.items():
+            clone.lines[index]=record
+        clone._parse()
+        return clone.to_bytes()
+
     def append_polygon(self, points: list[tuple[float,float]], code='5216',
                        label='', fields: dict[str, str] | None = None) -> str:
         if len(points) < 3:
@@ -503,6 +543,8 @@ class GeoMap:
             raise ValueError('Invalid coordinates')
         if points[0] != points[-1]:
             points = points + [points[0]]
+        if self.signed_area(points[:-1])<0:
+            points = [points[0], *reversed(points[1:-1]), points[0]]
         attrs = dict(fields or {})
         if label and 'A2' not in attrs:
             attrs['A2'] = label
