@@ -17,13 +17,14 @@
     lastPick: null, scheduled: false, refreshTimer: null, queryCounter: 0,
     queryAbort: null, selectionRequest: 0, limited: false,
     firstLoad: true, inspectorCache: new Map(),
-    edit: null, editBusy: false,
+    edit: null, editBusy: false, bulkPreview: null,
     snapEnabled: true, sharedNodes: false, vertexDrag: null,
     hoverInsert: null, selectedVertex: null
   };
   const commands = [
     {name:"Otwórz plik GEO-MAP", hint:"Ctrl+O", run:chooseMap},
     {name:"Wybierz obiekty według kodu, A1, A2", hint:"Ctrl+H", run:openAdvancedSelection},
+    {name:"Edytuj zbiorowo pola A1/A2", hint:"Ctrl+Shift+E", run:openBulkEditor},
     {name:"Wczytaj plik stylów GeoStudio", hint:"JSON", run:()=> $("file-sidecar").click()},
     {name:"Dopasuj całą mapę", hint:"0", run:fitToMap},
     {name:"Edytuj atrybuty aktywnego obiektu", hint:"E", run:()=>toggleInspectorEdit(true)},
@@ -67,6 +68,7 @@
     $("tool-undo").disabled=state.editBusy||!state.edit.canUndo;
     $("tool-redo").disabled=state.editBusy||!state.edit.canRedo;
     $("btn-export").disabled=state.editBusy||!state.meta;
+    updateBulkButton();
     $("tool-undo").title=state.edit.undoLabel
       ?"Cofnij: "+state.edit.undoLabel+" (Ctrl+Z)":"Cofnij (Ctrl+Z)";
     $("tool-redo").title=state.edit.redoLabel
@@ -408,6 +410,171 @@
     selectFeature(null);
     $("select-preview").textContent="Wyczyszczono wszystkie zaznaczenia.";
     requestDraw();
+  }
+  function selectedObjectIds() {
+    const ids=new Set(state.pinned);
+    if(state.active)ids.add(state.active);
+    return [...ids].sort((a,b)=>{
+      const ai=Number(a.slice(1)),bi=Number(b.slice(1));
+      return ai-bi;
+    });
+  }
+  function updateBulkButton() {
+    $("tool-bulk-edit").disabled=!state.meta||!state.edit||
+      state.editBusy||selectedObjectIds().length===0;
+  }
+  function invalidateBulkPreview() {
+    state.bulkPreview=null;
+    $("bulk-apply").disabled=true;
+    $("bulk-summary").textContent=
+      "Wprowadź wartości i kliknij „Sprawdź zmiany” przed zatwierdzeniem.";
+    $("bulk-samples").hidden=true;
+    $("bulk-samples").replaceChildren();
+  }
+  function openBulkEditor() {
+    if(!state.meta||!state.edit||state.editBusy){
+      inform("Najpierw otwórz mapę i wybierz obiekty.",true);return;
+    }
+    const ids=selectedObjectIds();
+    if(!ids.length){
+      inform("Zaznacz obiekty przez Ctrl+H albo na mapie.",true);return;
+    }
+    if(ids.length>5000){
+      inform("Edycja zbiorowa obsługuje do 5 000 obiektów na raz. "+
+        "Zawęź wybór przez Ctrl+H (A1/A2).",true);return;
+    }
+    $("bulk-enable-a1").checked=false;
+    $("bulk-enable-a2").checked=false;
+    $("bulk-value-a1").value="";
+    $("bulk-value-a2").value="";
+    $("bulk-value-a1").disabled=true;
+    $("bulk-value-a2").disabled=true;
+    $("bulk-selection-description").textContent=
+      "Wybrano "+display(ids.length)+" obiektów z całej mapy. "+
+      "Włącz A1 i/lub A2, wpisz nowe wartości i sprawdź podgląd. "+
+      "Żaden plik źródłowy nie zostanie nadpisany.";
+    invalidateBulkPreview();
+    $("bulk-dialog").showModal();
+    $("bulk-enable-a1").focus();
+  }
+  function bulkRequest() {
+    const changes={};
+    if($("bulk-enable-a1").checked)changes.A1=$("bulk-value-a1").value;
+    if($("bulk-enable-a2").checked)changes.A2=$("bulk-value-a2").value;
+    if(!Object.keys(changes).length)throw Error(
+      "Włącz przynajmniej jedno pole A1 lub A2.");
+    return {...editRequestBody(),ids:selectedObjectIds(),changes};
+  }
+  function showBulkSamples(report) {
+    const container=$("bulk-samples");
+    container.replaceChildren();
+    if(!(report.samples||[]).length){container.hidden=true;return;}
+    const table=document.createElement("table");
+    const thead=document.createElement("thead");
+    const headRow=document.createElement("tr");
+    for(const value of ["Kod / ID","Pole","Było","Będzie"]){
+      const cell=document.createElement("th");
+      cell.textContent=value;headRow.append(cell);
+    }
+    thead.append(headRow);table.append(thead);
+    const tbody=document.createElement("tbody");
+    for(const item of report.samples){
+      for(const [field,edit] of Object.entries(item.fields)){
+        const row=document.createElement("tr");
+        for(const text of [item.code+" · "+item.uid,field,
+                           edit.before||"∅",edit.after||"∅"]){
+          const cell=document.createElement("td");
+          cell.textContent=text;row.append(cell);
+        }
+        tbody.append(row);
+      }
+    }
+    table.append(tbody);container.append(table);container.hidden=false;
+  }
+  async function previewBulkChanges() {
+    if(state.editBusy)return;
+    invalidateBulkPreview();
+    let payload;
+    try{payload=bulkRequest();}
+    catch(error){$("bulk-summary").textContent=error.message;return;}
+    const button=$("bulk-preview");button.disabled=true;
+    $("bulk-summary").textContent="Sprawdzanie wszystkich zaznaczonych obiektów…";
+    try{
+      const report=await api("/api/bulk/preview",{
+        method:"POST",
+        headers:{"Content-Type":"application/json"},
+        body:JSON.stringify(payload)
+      });
+      if(report.documentToken!==state.edit?.documentToken||
+         report.revision!==state.edit?.revision)
+        throw Error("Wersja mapy zmieniła się w trakcie podglądu.");
+      const missing=Object.entries(report.missingFields||{})
+        .map(([key,n])=>key+": "+display(n)).join(", ");
+      const unchanged=Object.entries(report.alreadyEqualFields||{})
+        .map(([key,n])=>key+": "+display(n)).join(", ");
+      const codes=Object.entries(report.codes||{})
+        .map(([code,n])=>code+": "+display(n)).join(", ");
+      $("bulk-summary").textContent=
+        "Zaznaczono: "+display(report.selected)+" obiektów\n"+
+        "Zmieni się: "+display(report.changedObjects)+" obiektów / "+
+          display(report.changedFields)+" pól\n"+
+        "Kody zmienianych obiektów: "+(codes||"brak")+"\n"+
+        "Brak pola (zostanie pominięty): "+(missing||"0")+"\n"+
+        "Już taka sama wartość (bez zmiany): "+(unchanged||"0")+
+        (report.canApply
+          ?"\nSprawdź przykłady poniżej, a następnie zatwierdź."
+          :"\nBrak faktycznych zmian do wykonania.");
+      showBulkSamples(report);
+      if(report.canApply){
+        state.bulkPreview={payload,previewKey:report.previewKey,report};
+        $("bulk-apply").disabled=false;
+      }
+    }catch(error){
+      $("bulk-summary").textContent="Nie można sprawdzić zmian: "+error.message;
+      inform("Podgląd edycji zbiorowej: "+error.message,true);
+    }finally{button.disabled=false;}
+  }
+  async function applyBulkChanges(event) {
+    event.preventDefault();
+    if(state.editBusy||!state.bulkPreview)return;
+    const preview=state.bulkPreview;
+    if(JSON.stringify(bulkRequest())!==JSON.stringify(preview.payload)){
+      invalidateBulkPreview();
+      inform("Zmieniono dane po podglądzie. Sprawdź zmiany ponownie.",true);
+      return;
+    }
+    if(preview.report.changedObjects>=100&&!window.confirm(
+      "Potwierdź zbiorową zmianę "+display(preview.report.changedObjects)+
+      " obiektów. Całą operację można cofnąć Ctrl+Z."))
+      return;
+    const button=$("bulk-apply");
+    state.editBusy=true;updateEditState(state.edit);
+    button.disabled=true;$("bulk-preview").disabled=true;
+    try{
+      const result=await api("/api/bulk/apply",{
+        method:"POST",
+        headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({...preview.payload,previewKey:preview.previewKey})
+      });
+      state.bulkPreview=null;
+      updateEditState(result);
+      $("bulk-dialog").close();
+      if(result.changed){
+        await refreshEditedDocument(state.active);
+        inform("Zmieniono "+display(result.changedObjects)+
+          " obiektów, "+display(result.changedFields)+
+          " pól. Cofnij: Ctrl+Z. Pobierz kopię MAP.");
+      }else inform("Nie było żadnych wartości do zmiany.");
+    }catch(error){
+      invalidateBulkPreview();
+      $("bulk-summary").textContent=
+        "Nie udało się zastosować zmian: "+error.message+
+        ". Ponownie sprawdź podgląd.";
+      inform("Edycja zbiorowa: "+error.message,true);
+    }finally{
+      state.editBusy=false;updateEditState(state.edit);
+      button.disabled=true;$("bulk-preview").disabled=false;
+    }
   }
   function resizeCanvas() {
     const rect = shell.getBoundingClientRect();
@@ -1159,6 +1326,7 @@
   function updateSelectionCount(){
     const n=state.pinned.size+(state.active&&!state.pinned.has(state.active)?1:0);
     $("selection-count").textContent="Zaznaczonych: "+n;
+    updateBulkButton();
   }
   async function selectFeature(fid) {
     if(state.active!==fid)state.selectedVertex=null;
@@ -1380,6 +1548,9 @@
     if((ev.ctrlKey||ev.metaKey)&&ev.key.toLowerCase()==="h"){
       ev.preventDefault();openAdvancedSelection();return;
     }
+    if((ev.ctrlKey||ev.metaKey)&&ev.shiftKey&&ev.key.toLowerCase()==="e"){
+      ev.preventDefault();openBulkEditor();return;
+    }
     if(typing)return;
     if(state.tool==="nodes"&&state.detail&&!ev.ctrlKey&&!ev.metaKey&&!ev.altKey&&
        (ev.key==="Delete"||ev.key==="Backspace")){
@@ -1423,6 +1594,18 @@
   link("tool-open",chooseMap);
   link("empty-open",chooseMap);
   link("tool-advanced-select",openAdvancedSelection);
+  link("tool-bulk-edit",openBulkEditor);
+  link("bulk-close",()=>$("bulk-dialog").close());
+  link("bulk-preview",previewBulkChanges);
+  $("bulk-form").addEventListener("submit",applyBulkChanges);
+  for(const field of ["a1","a2"]){
+    const toggle=$("bulk-enable-"+field),value=$("bulk-value-"+field);
+    toggle.addEventListener("change",()=>{
+      value.disabled=!toggle.checked;invalidateBulkPreview();
+      if(toggle.checked)value.focus();
+    });
+    value.addEventListener("input",invalidateBulkPreview);
+  }
   link("select-close",()=>$("select-dialog").close());
   link("select-clear",clearAdvancedSelection);
   $("select-form").addEventListener("submit",applyAdvancedSelection);
