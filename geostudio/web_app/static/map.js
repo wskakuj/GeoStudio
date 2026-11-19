@@ -17,7 +17,9 @@
     lastPick: null, scheduled: false, refreshTimer: null, queryCounter: 0,
     queryAbort: null, selectionRequest: 0, limited: false,
     firstLoad: true, inspectorCache: new Map(),
-    edit: null, editBusy: false, bulkPreview: null,
+    edit: null, editBusy: false, bulkPreview: null, movePreview: null,
+    moveIds: [], moveGhost: null, objectPreview:null,
+    drawPoints:[], drawHover:null, copyIds:[],
     snapEnabled: true, sharedNodes: false, vertexDrag: null,
     hoverInsert: null, selectedVertex: null
   };
@@ -25,6 +27,11 @@
     {name:"Otwórz plik GEO-MAP", hint:"Ctrl+O", run:chooseMap},
     {name:"Wybierz obiekty według kodu, A1, A2", hint:"Ctrl+H", run:openAdvancedSelection},
     {name:"Edytuj zbiorowo pola A1/A2", hint:"Ctrl+Shift+E", run:openBulkEditor},
+    {name:"Dokładnie przesuń poligony X/Y", hint:"Ctrl+Shift+M", run:()=>openMoveEditor()},
+    {name:"Przeciągaj wybrane poligony", hint:"M", run:()=>setTool("move")},
+    {name:"Kopiuj wybrane poligony", hint:"Ctrl+D", run:openCopyEditor},
+    {name:"Usuń wybrane obiekty", hint:"Ctrl+Delete", run:deleteObjects},
+    {name:"Rysuj nowy poligon", hint:"N", run:()=>setTool("draw")},
     {name:"Wczytaj plik stylów GeoStudio", hint:"JSON", run:()=> $("file-sidecar").click()},
     {name:"Dopasuj całą mapę", hint:"0", run:fitToMap},
     {name:"Edytuj atrybuty aktywnego obiektu", hint:"E", run:()=>toggleInspectorEdit(true)},
@@ -67,6 +74,10 @@
     };
     $("tool-undo").disabled=state.editBusy||!state.edit.canUndo;
     $("tool-redo").disabled=state.editBusy||!state.edit.canRedo;
+    $("tool-move-offset").disabled=state.editBusy||!state.meta||!selectedObjectIds().length;
+    $("tool-copy").disabled=state.editBusy||!state.meta||!selectedObjectIds().length;
+    $("tool-delete-objects").disabled=state.editBusy||!state.meta||!selectedObjectIds().length;
+    $("tool-new-polygon").disabled=state.editBusy||!state.meta;
     $("btn-export").disabled=state.editBusy||!state.meta;
     updateBulkButton();
     $("tool-undo").title=state.edit.undoLabel
@@ -185,6 +196,17 @@
   async function downloadMapCopy() {
     if(!state.meta||!state.edit||state.editBusy)return;
     try {
+      // WebView2 can ignore <a download> and produce no file. Use Windows
+      // Save As instead, and display the real path after a successful write.
+      if(window.pywebview?.api?.save_map) {
+        const saved=await window.pywebview.api.save_map();
+        if(saved&&!saved.cancelled){
+          inform("Zapisano kopię MAP: "+saved.path+
+                 " ("+display(saved.bytes)+" bajtów).");
+          window.alert("Kopia GEO-MAP została zapisana w:\n"+saved.path);
+        }
+        return;
+      }
       const params=new URLSearchParams({documentToken:state.edit.documentToken});
       const response=await fetch("/api/export/map?"+params.toString(),{
         headers:{"X-GeoStudio-Token":token},cache:"no-store"
@@ -200,9 +222,10 @@
       const anchor=document.createElement("a");
       anchor.href=url;anchor.download=filename;
       document.body.append(anchor);anchor.click();anchor.remove();
-      setTimeout(()=>URL.revokeObjectURL(url),6000);
-      inform("Przygotowano nowy plik MAP do pobrania. Oryginał pozostaje bez zmian.");
-    }catch(error){inform("Nie udało się przygotować kopii: "+error.message,true);}
+      setTimeout(()=>URL.revokeObjectURL(url),60000);
+      inform("Wysłano "+filename+" do przeglądarki. Sprawdź folder Pobrane "+
+             "(Ctrl+J), a NIE folder źródłowy mapy.");
+    }catch(error){inform("Nie udało się zapisać kopii: "+error.message,true);}
   }
   function inform(msg, isError=false) {
     htmlText($("status-message"), msg);
@@ -230,7 +253,9 @@
     updateEditState(meta);
     state.active = null; state.detail = null; state.pinned.clear();
     populateSelectCodes();
-    state.vertexDrag=null;setTool("select");
+    state.vertexDrag=null;state.moveGhost=null;state.movePreview=null;
+    state.moveIds=[];state.copyIds=[];state.drawPoints=[];
+    state.drawHover=null;state.objectPreview=null;setTool("select");
     state.features = []; state.inspectorCache.clear();
     // Match the old user's map view: survey markers are opt-in.
     // Their heavy symbol density otherwise hides the parcel boundaries.
@@ -576,6 +601,347 @@
       button.disabled=true;$("bulk-preview").disabled=false;
     }
   }
+  function invalidateMovePreview() {
+    state.movePreview=null;
+    $("move-apply").disabled=true;
+    $("move-summary").textContent="Kliknij „Sprawdź przesunięcie” przed zatwierdzeniem.";
+    $("move-samples").hidden=true;
+    $("move-samples").replaceChildren();
+  }
+  function openMoveEditor(ids=selectedObjectIds(),dx=0,dy=0,checkNow=false) {
+    if(!state.meta||!state.edit||state.editBusy){
+      inform("Najpierw otwórz mapę i wybierz poligony.",true);return;
+    }
+    if(!ids.length||ids.length>5000){
+      inform("Zaznacz od 1 do 5 000 poligonów (Ctrl+H lub kliknięcie).",true);return;
+    }
+    state.moveIds=ids.slice();
+    $("move-dx").value=Number(dx).toFixed(3);
+    $("move-dy").value=Number(dy).toFixed(3);
+    $("move-detach").checked=false;
+    $("move-snap").checked=true;
+    $("move-selection-description").textContent=
+      "Wybrano "+display(ids.length)+" obiektów. X oznacza północ–południe, "+
+      "Y wschód–zachód; dodatnie wartości przesuwają na północ i wschód.";
+    invalidateMovePreview();
+    $("move-dialog").showModal();
+    if(checkNow)previewMoveChanges();
+    else $("move-dx").focus();
+  }
+  function moveRequest() {
+    const asNumber=id=>{
+      const raw=$(id).value.trim().replace(",",".");
+      if(!raw||!Number.isFinite(Number(raw)))throw Error("Podaj liczbę w metrach.");
+      return Math.round(Number(raw)*1000)/1000;
+    };
+    return {...editRequestBody(),ids:state.moveIds.slice(),
+      dx:asNumber("move-dx"),dy:asNumber("move-dy"),
+      allowDetach:$("move-detach").checked,
+      snapDistance:$("move-snap").checked?
+        Math.round(Math.min(2,Math.max(0.02,10/state.scale))*1000)/1000:0};
+  }
+  function showMoveSamples(report) {
+    const container=$("move-samples");container.replaceChildren();
+    if(!(report.samples||[]).length){container.hidden=true;return;}
+    const table=document.createElement("table"),head=document.createElement("tr");
+    for(const label of ["Kod / ID","Pierwszy punkt przed (X / Y)","Po przesunięciu (X / Y)"]){
+      const th=document.createElement("th");th.textContent=label;head.append(th);
+    }
+    const thead=document.createElement("thead");thead.append(head);table.append(thead);
+    const body=document.createElement("tbody");
+    for(const item of report.samples) {
+      const tr=document.createElement("tr");
+      const values=[item.code+" · "+item.uid,
+        item.before.x.toFixed(3)+" / "+item.before.y.toFixed(3),
+        item.after.x.toFixed(3)+" / "+item.after.y.toFixed(3)];
+      for(const value of values){
+        const td=document.createElement("td");td.textContent=value;tr.append(td);
+      }
+      body.append(tr);
+    }
+    table.append(body);container.append(table);container.hidden=false;
+  }
+  async function previewMoveChanges() {
+    if(state.editBusy)return;
+    invalidateMovePreview();
+    let payload;
+    try{payload=moveRequest();}
+    catch(error){$("move-summary").textContent=error.message;return;}
+    const button=$("move-preview");button.disabled=true;
+    $("move-summary").textContent="Sprawdzanie geometrii i sąsiedztwa…";
+    try{
+      const report=await api("/api/move/preview",{
+        method:"POST",headers:{"Content-Type":"application/json"},
+        body:JSON.stringify(payload)
+      });
+      if(report.documentToken!==state.edit?.documentToken||
+         report.revision!==state.edit?.revision)
+        throw Error("Zmieniła się wersja mapy. Powtórz podgląd.");
+      const codes=Object.entries(report.codes||{})
+        .map(([key,n])=>key+": "+display(n)).join(", ");
+      const neighbors=report.topologyConflicts||[];
+      const overlaps=report.overlapConflicts||[];
+      const examples=neighbors.slice(0,4)
+        .map(item=>item.code+" ("+item.movingUid+" ↔ "+item.stationaryUid+")").join("; ");
+      $("move-summary").textContent=
+        "Wybrano: "+display(report.selected)+" poligonów / "+
+          display(report.vertexCount)+" węzłów\n"+
+        "Przesunięcie: X "+report.delta.x.toFixed(3)+" m; "+
+          "Y "+report.delta.y.toFixed(3)+" m\n"+
+        "Kody: "+(codes||"brak")+"\n"+
+        "Nakładanie na poligony tego samego kodu: "+
+          (overlaps.length?overlaps.map(x=>x.code+" "+x.stationaryUid).join(", "):"brak")+"\n"+
+        (report.snapApplied?"Przyciągnięto do krawędzi, korekta "+
+           report.snapApplied.distance.toFixed(3)+" m\n":"")+
+        "Styki z nieruchomymi poligonami tego samego kodu: "+
+          (neighbors.length?examples:"nie wykryto")+"\n"+
+        (report.overlapBlocked
+          ?"Zablokowano: poligony nachodzą na siebie. Przybliż i dopasuj do krawędzi."
+          :report.topologyBlocked
+          ?"Zablokowano: dodaj sąsiadów do zaznaczenia albo świadomie zaznacz rozłączenie granicy."
+          :report.canApply
+            ?"Sprawdź przykłady poniżej i zatwierdź. Inne obiekty nie zostaną zmienione."
+            :"Brak przesunięcia (0 m).");
+      showMoveSamples(report);
+      if(report.canApply){
+        state.movePreview={payload,previewKey:report.previewKey,report};
+        $("move-apply").disabled=false;
+      }
+    }catch(error){
+      $("move-summary").textContent="Nie można sprawdzić przesunięcia: "+error.message;
+      inform("Przesuwanie poligonów: "+error.message,true);
+    }finally{button.disabled=false;}
+  }
+  async function applyMoveChanges(ev) {
+    ev.preventDefault();
+    if(state.editBusy||!state.movePreview)return;
+    const preview=state.movePreview;
+    try{
+      if(JSON.stringify(moveRequest())!==JSON.stringify(preview.payload)){
+        invalidateMovePreview();
+        inform("Zmieniono przesunięcie po podglądzie. Sprawdź je jeszcze raz.",true);
+        return;
+      }
+    }catch(error){invalidateMovePreview();inform(error.message,true);return;}
+    if((preview.report.selected>=100||preview.report.topologyConflicts?.length)&&
+       !window.confirm(
+         "Potwierdź przesunięcie "+display(preview.report.selected)+
+         " poligonów. Cofnij: Ctrl+Z."))
+      return;
+    state.editBusy=true;updateEditState(state.edit);
+    $("move-apply").disabled=true;$("move-preview").disabled=true;
+    try{
+      const result=await api("/api/move/apply",{
+        method:"POST",headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({...preview.payload,previewKey:preview.previewKey})
+      });
+      updateEditState(result);
+      state.movePreview=null;
+      $("move-dialog").close();
+      if(result.changed){
+        await refreshEditedDocument(state.active);
+        inform("Przesunięto "+display(result.movedObjects)+
+          " poligonów. Cofnij Ctrl+Z; pobierz kopię MAP.");
+      }
+    }catch(error){
+      invalidateMovePreview();
+      $("move-summary").textContent="Nie zastosowano zmian: "+error.message+
+        ". Ponów podgląd.";
+      inform("Przesunięcie: "+error.message,true);
+    }finally{
+      state.editBusy=false;updateEditState(state.edit);
+      $("move-apply").disabled=true;$("move-preview").disabled=false;
+    }
+  }
+  function drawMoveGhost(features) {
+    if(!state.moveGhost)return;
+    const ids=new Set(state.moveGhost.ids);
+    ctx.save();
+    // Canvas axes: horizontal = GEO-MAP Y, vertical = -GEO-MAP X.
+    ctx.translate(state.moveGhost.dy*state.scale,-state.moveGhost.dx*state.scale);
+    ctx.setLineDash([7,5]);
+    ctx.strokeStyle="#00a3e8";ctx.lineWidth=3;
+    for(const feature of features){
+      if(!ids.has(feature.id))continue;
+      addPath(feature.geometry);ctx.stroke();
+    }
+    ctx.restore();
+  }
+  function readOffset(id) {
+    const value=$(id).value.trim().replace(",",".");
+    if(!value||!Number.isFinite(Number(value)))throw Error("Podaj poprawne X/Y.");
+    return Math.round(Number(value)*1000)/1000;
+  }
+  function objectOperation(which) {
+    if(which==="copy")return {
+      action:"copy",ids:state.copyIds.slice(),
+      dx:readOffset("copy-dx"),dy:readOffset("copy-dy")
+    };
+    if(which==="create")return {
+      action:"create",code:$("create-code").value,
+      fields:Object.fromEntries(["a1","a2"].filter(key=>$("create-"+key).value)
+        .map(key=>[key.toUpperCase(),$("create-"+key).value])),
+      points:state.drawPoints.map(p=>p.slice())
+    };
+    throw Error("Nieznana operacja.");
+  }
+  function invalidateObjectPreview(which){
+    state.objectPreview=null;
+    $(which+"-apply").disabled=true;
+    $(which+"-summary").textContent="Sprawdź operację przed zatwierdzeniem.";
+  }
+  function openCopyEditor() {
+    if(state.editBusy||!state.meta)return;
+    const ids=selectedObjectIds();
+    if(!ids.length||ids.length>500){
+      inform("Zaznacz od 1 do 500 poligonów do skopiowania.",true);return;
+    }
+    state.copyIds=ids;
+    $("copy-selection-description").textContent=
+      "Wybrano "+display(ids.length)+" obiektów. Każda kopia będzie nowym rekordem MAP.";
+    $("copy-dx").value="0,000";$("copy-dy").value="20,000";
+    invalidateObjectPreview("copy");
+    $("copy-dialog").showModal();$("copy-dy").focus();
+  }
+  async function previewObject(which) {
+    if(state.editBusy)return;
+    invalidateObjectPreview(which);
+    let operation;
+    try{operation=objectOperation(which);}
+    catch(err){$(which+"-summary").textContent=err.message;return;}
+    const request={...editRequestBody(),operation};
+    $(which+"-preview").disabled=true;
+    $(which+"-summary").textContent="Sprawdzanie obiektów i mapy…";
+    try{
+      const report=await api("/api/objects/preview",{
+        method:"POST",headers:{"Content-Type":"application/json"},
+        body:JSON.stringify(request)
+      });
+      if(report.documentToken!==state.edit?.documentToken||
+         report.revision!==state.edit?.revision)
+        throw Error("Zmieniono mapę w trakcie podglądu.");
+      const codes=Object.entries(report.codes||{})
+        .map(([code,n])=>code+": "+display(n)).join(", ");
+      $(which+"-summary").textContent=
+        (which==="copy"?"Utworzymy kopie: ":"Utworzymy poligon: ")+
+        (which==="copy"?display(report.selected):"1")+
+        "\nKody: "+codes+"\nPunkty P: "+display(report.vertexCount)+
+        "\nBez zmiany oryginalnych rekordów. Całość można cofnąć Ctrl+Z.";
+      state.objectPreview={which,request,report};
+      $(which+"-apply").disabled=!report.canApply;
+    }catch(error){
+      $(which+"-summary").textContent="Błąd walidacji: "+error.message;
+      inform(error.message,true);
+    }finally{$(which+"-preview").disabled=false;}
+  }
+  async function applyObject(which,ev) {
+    ev.preventDefault();
+    if(state.editBusy||!state.objectPreview||
+       state.objectPreview.which!==which)return;
+    const seen=state.objectPreview;
+    let request;
+    try{request={...editRequestBody(),operation:objectOperation(which)};}
+    catch(error){invalidateObjectPreview(which);inform(error.message,true);return;}
+    if(JSON.stringify(request)!==JSON.stringify(seen.request)){
+      invalidateObjectPreview(which);
+      inform("Zmodyfikowano dane. Wykonaj podgląd ponownie.",true);return;
+    }
+    if(which==="copy"&&seen.report.selected>=100&&!window.confirm(
+        "Potwierdź utworzenie "+display(seen.report.selected)+" kopii?"))
+      return;
+    state.editBusy=true;updateEditState(state.edit);
+    $(which+"-apply").disabled=true;
+    try{
+      const result=await api("/api/objects/apply",{
+        method:"POST",headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({...request,previewKey:seen.report.previewKey})
+      });
+      updateEditState(result);
+      $(which+"-dialog").close();
+      state.objectPreview=null;
+      const newIds=result.createdIds||[];
+      state.pinned=new Set(newIds);
+      state.active=newIds[0]||null;
+      state.drawPoints=[];state.drawHover=null;
+      state.editBusy=false;updateEditState(state.edit);
+      setTool("select");
+      await refreshEditedDocument(state.active);
+      updateSelectionCount();
+      inform(which==="copy"
+        ?"Utworzono "+display(newIds.length)+" kopii. Każda ma nowe ID. Ctrl+Z cofa."
+        :"Utworzono poligon. Ctrl+Z cofa; zapisz kopię MAP.");
+    }catch(error){
+      invalidateObjectPreview(which);
+      $(which+"-summary").textContent="Nie zapisano: "+error.message;
+      inform("Operacja przerwana: "+error.message,true);
+    }finally{
+      state.editBusy=false;updateEditState(state.edit);
+    }
+  }
+  async function deleteObjects() {
+    if(state.editBusy||!state.meta)return;
+    const ids=selectedObjectIds();
+    if(!ids.length||ids.length>5000){
+      inform("Zaznacz od 1 do 5 000 obiektów do usunięcia.",true);return;
+    }
+    const request={...editRequestBody(),operation:{action:"delete",ids}};
+    state.editBusy=true;updateEditState(state.edit);
+    try{
+      const report=await api("/api/objects/preview",{
+        method:"POST",headers:{"Content-Type":"application/json"},
+        body:JSON.stringify(request)
+      });
+      const summary=Object.entries(report.codes||{})
+        .map(([code,n])=>code+": "+display(n)).join(", ");
+      if(!window.confirm("Usunąć "+display(report.selected)+
+        " obiektów z kopii roboczej?\nKody: "+summary+
+        "\nOryginał na dysku pozostanie nienaruszony; Ctrl+Z cofa."))return;
+      if(report.selected>=20&&window.prompt(
+          "Dla bezpieczeństwa wpisz USUŃ, aby potwierdzić:",
+          "")!=="USUŃ")return;
+      const result=await api("/api/objects/apply",{
+        method:"POST",headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({...request,previewKey:report.previewKey})
+      });
+      updateEditState(result);
+      state.pinned.clear();state.active=null;state.detail=null;
+      await refreshEditedDocument(null);
+      updateSelectionCount();
+      inform("Usunięto "+display(report.selected)+
+             " obiektów w kopii roboczej. Ctrl+Z przywraca.");
+    }catch(error){
+      inform("Nie usunięto obiektów: "+error.message,true);
+    }finally{state.editBusy=false;updateEditState(state.edit);}
+  }
+  function finishDrawPolygon() {
+    if(state.tool!=="draw")return;
+    if(state.drawPoints.length<3){
+      inform("Poligon wymaga minimum trzech różnych punktów.",true);return;
+    }
+    $("create-selection-description").textContent=
+      "Obrys: "+display(state.drawPoints.length)+
+      " węzłów. Wybierz kod i atrybuty, a potem sprawdź.";
+    invalidateObjectPreview("create");
+    $("create-dialog").showModal();
+    $("create-code").focus();
+  }
+  function drawDraftPolygon() {
+    if(state.tool!=="draw"||!state.drawPoints.length)return;
+    const points=state.drawPoints.map(p=>[p[1],-p[0]]);
+    if(state.drawHover)points.push([state.drawHover.y,-state.drawHover.x]);
+    ctx.save();
+    ctx.strokeStyle="#0398cb";ctx.lineWidth=2.5;
+    ctx.setLineDash([5,4]);
+    addPath([points]);ctx.stroke();
+    ctx.setLineDash([]);
+    for(const p of state.drawPoints) {
+      const screen=worldToScreen(p[1],-p[0]);
+      ctx.beginPath();ctx.arc(screen.x,screen.y,4,0,Math.PI*2);
+      ctx.fillStyle="#f49f41";ctx.fill();
+      ctx.strokeStyle="#ffffff";ctx.stroke();
+    }
+    ctx.restore();
+  }
   function resizeCanvas() {
     const rect = shell.getBoundingClientRect();
     state.width = Math.max(1, rect.width); state.height = Math.max(1, rect.height);
@@ -644,16 +1010,23 @@
     updateDeleteNodeButton();
     shell.classList.toggle("panning",tool==="pan");
     shell.classList.toggle("nodes-editing",tool==="nodes");
+    shell.classList.toggle("moving-objects",tool==="move");
+    shell.classList.toggle("drawing-objects",tool==="draw");
+    if(tool!=="draw"){state.drawPoints=[];state.drawHover=null;}
     $("geometry-help").hidden=tool!=="nodes"||!state.meta;
     updateGeometryHelp();
     for(const [name,id] of [
       ["select","tool-select"],["pan","tool-pan"],["nodes","tool-nodes"],
-      ["select","float-select"],["pan","float-pan"],["nodes","float-nodes"]
+      ["move","tool-move"],["draw","tool-new-polygon"],
+      ["select","float-select"],["pan","float-pan"],["nodes","float-nodes"],
+      ["move","float-move"]
     ])$(id).classList.toggle("active",name===tool);
     if(tool==="nodes"&&(!state.detail||!state.detail.closed))
       inform("Tryb P: wybierz zamknięty poligon i przeciągnij jego węzeł.");
     else if(tool==="nodes")
       inform("Tryb P: przeciągnij jeden z węzłów. Ctrl+Z cofa zmianę.");
+    else if(tool==="draw")inform("Rysuj: klikaj wierzchołki, Enter lub dwuklik kończy obrys, Esc anuluje.");
+    else if(tool==="move")inform("Tryb M: przeciągnij wybrany poligon lub całą grupę, potem potwierdź podgląd.");
     else inform(tool==="select"
       ?"Tryb zaznaczania obiektów (S).":"Tryb przesuwania mapy (H).");
     requestDraw();
@@ -1190,7 +1563,8 @@
     features.sort((a,b)=>(priorities[a.code]??3)-(priorities[b.code]??3));
     for(const feature of features) renderFill(feature);
     for(const feature of features) renderStroke(feature);
-    renderHighlights(features);renderLabels(features);drawVertexTool();
+    renderHighlights(features);drawMoveGhost(features);
+    renderLabels(features);drawDraftPolygon();drawVertexTool();
     $("scale-label").textContent="Podgląd: "+state.scale.toFixed(state.scale<1?3:1)+" px / jedn.";
     $("count-visible").textContent=display(features.length);
     $("render-hint").textContent=state.limited
@@ -1327,6 +1701,9 @@
     const n=state.pinned.size+(state.active&&!state.pinned.has(state.active)?1:0);
     $("selection-count").textContent="Zaznaczonych: "+n;
     updateBulkButton();
+    $("tool-move-offset").disabled=!state.meta||state.editBusy||n===0;
+    $("tool-copy").disabled=!state.meta||state.editBusy||n===0;
+    $("tool-delete-objects").disabled=!state.meta||state.editBusy||n===0;
   }
   async function selectFeature(fid) {
     if(state.active!==fid)state.selectedVertex=null;
@@ -1407,6 +1784,25 @@
     canvas.setPointerCapture(ev.pointerId);
     const p=eventCoords(ev);
     state.hoverInsert=null;
+    if(state.tool==="draw"&&ev.button===0&&!state.editBusy&&state.meta){
+      state.drag={pointer:ev.pointerId,start:p,last:p,moved:false,draw:true};
+      return;
+    }
+    if(state.tool==="move"&&ev.button===0&&!state.editBusy){
+      const world=screenToWorld(p.x,p.y);
+      const hits=pick(world),selected=selectedObjectIds();
+      const fid=hits.find(id=>selected.includes(id))||hits[0];
+      const feature=state.features.find(item=>item.id===fid);
+      if(!feature||!feature.closed){
+        inform("Kliknij zamknięty poligon, aby go przesunąć.",true);
+        return;
+      }
+      const ids=selected.includes(fid)?selected:[fid];
+      if(!selected.includes(fid)){state.pinned.clear();selectFeature(fid);}
+      state.moveGhost={ids,dx:0,dy:0};
+      state.drag={pointer:ev.pointerId,start:p,last:p,moved:false,moveIds:ids};
+      requestDraw();return;
+    }
     if(state.tool==="nodes"&&ev.button===0&&!state.editBusy){
       const index=closestEditableVertex(p);
       if(index>=0){
@@ -1426,6 +1822,9 @@
     const p=eventCoords(ev),world=screenToWorld(p.x,p.y);
     $("cursor-coords").textContent="X: "+(-world.y).toFixed(3)+
                                    "   Y: "+world.x.toFixed(3);
+    if(state.tool==="draw"&&!state.editBusy){
+      state.drawHover={x:-world.y,y:world.x};requestDraw();
+    }
     if(!state.drag&&state.tool==="nodes"&&!state.editBusy){
       state.hoverInsert=closestEditableSegment(p);
       requestDraw();
@@ -1433,7 +1832,11 @@
     if(!state.drag||state.drag.pointer!==ev.pointerId)return;
     const d=state.drag;
     if(Math.hypot(p.x-d.start.x,p.y-d.start.y)>4)d.moved=true;
-    if(d.node&&state.vertexDrag){
+    if(d.moveIds&&state.moveGhost){
+      state.moveGhost.dx=Math.round((d.start.y-p.y)/state.scale*1000)/1000;
+      state.moveGhost.dy=Math.round((p.x-d.start.x)/state.scale*1000)/1000;
+      requestDraw();
+    }else if(d.node&&state.vertexDrag){
       if(d.moved){
         const snap=previewSnap(world);
         state.vertexDrag.preview=snap.point;
@@ -1452,6 +1855,29 @@
   canvas.addEventListener("pointerup", ev=>{
     const d=state.drag;state.drag=null;shell.classList.remove("dragging");
     if(!d||ev.pointerId!==d.pointer)return;
+    if(d.draw){
+      if(!d.moved){
+        const p=eventCoords(ev),world=screenToWorld(p.x,p.y);
+        const next=[Math.round(-world.y*1000)/1000,
+                    Math.round(world.x*1000)/1000];
+        const last=state.drawPoints[state.drawPoints.length-1];
+        if(!last||Math.hypot(next[0]-last[0],next[1]-last[1])>0.003){
+          if(state.drawPoints.length<500)state.drawPoints.push(next);
+          else inform("Osiągnięto limit 500 węzłów.",true);
+        }
+        requestDraw();
+        inform("Rysowanie poligonu: "+state.drawPoints.length+
+          " punktów. Enter/dwuklik — zakończ; Esc — anuluj.");
+      }
+      return;
+    }
+    if(d.moveIds){
+      const ghost=state.moveGhost;
+      state.moveGhost=null;requestDraw();
+      if(d.moved&&ghost&&(ghost.dx||ghost.dy))
+        openMoveEditor(d.moveIds,ghost.dx,ghost.dy,true);
+      return;
+    }
     if(d.node){
       const moving=state.vertexDrag;
       state.vertexDrag=null;requestDraw();
@@ -1489,6 +1915,9 @@
     }else selectFeature(fid);
   });
   canvas.addEventListener("dblclick",ev=>{
+    if(state.tool==="draw"&&state.meta){
+      ev.preventDefault();ev.stopPropagation();finishDrawPolygon();return;
+    }
     if(state.tool!=="nodes"||!state.meta)return;
     ev.preventDefault();ev.stopPropagation();
     if(state.editBusy||state.vertexDrag)return;
@@ -1502,8 +1931,9 @@
   });
   canvas.addEventListener("pointerleave",()=>{
     if(state.hoverInsert){state.hoverInsert=null;requestDraw();}
+    if(state.drawHover){state.drawHover=null;requestDraw();}
   });
-  canvas.addEventListener("pointercancel",()=>{state.drag=null;state.vertexDrag=null;shell.classList.remove("dragging");requestDraw();});
+  canvas.addEventListener("pointercancel",()=>{state.drag=null;state.vertexDrag=null;state.moveGhost=null;shell.classList.remove("dragging");requestDraw();});
   canvas.addEventListener("wheel",ev=>{
     if(!state.meta)return;
     ev.preventDefault();
@@ -1551,7 +1981,21 @@
     if((ev.ctrlKey||ev.metaKey)&&ev.shiftKey&&ev.key.toLowerCase()==="e"){
       ev.preventDefault();openBulkEditor();return;
     }
+    if((ev.ctrlKey||ev.metaKey)&&ev.shiftKey&&ev.key.toLowerCase()==="m"){
+      ev.preventDefault();openMoveEditor();return;
+    }
+    if($("copy-dialog").open||$("create-dialog").open||$("move-dialog").open||
+       $("bulk-dialog").open||$("select-dialog").open)return;
     if(typing)return;
+    if((ev.ctrlKey||ev.metaKey)&&ev.key==="Delete"){
+      ev.preventDefault();deleteObjects();return;
+    }
+    if((ev.ctrlKey||ev.metaKey)&&ev.key.toLowerCase()==="d"){
+      ev.preventDefault();openCopyEditor();return;
+    }
+    if(state.tool==="draw"&&ev.key==="Enter"){
+      ev.preventDefault();finishDrawPolygon();return;
+    }
     if(state.tool==="nodes"&&state.detail&&!ev.ctrlKey&&!ev.metaKey&&!ev.altKey&&
        (ev.key==="Delete"||ev.key==="Backspace")){
       ev.preventDefault();deleteSelectedVertex();return;
@@ -1577,24 +2021,56 @@
     }
     if(ev.key==="Escape"){
       if(dialog.open)dialog.close();
-      else if(state.tool==="nodes"){
+      else if(state.tool==="nodes"||state.tool==="move"||state.tool==="draw"){
         state.vertexDrag=null;setTool("select");
       }else selectFeature(null);
       return;
     }
     if(ev.key.toLowerCase()==="s")setTool("select");
+    if(ev.key.toLowerCase()==="m")setTool("move");
+    if(ev.key.toLowerCase()==="n")setTool("draw");
     if(ev.key.toLowerCase()==="h")setTool("pan");
     if(ev.key.toLowerCase()==="b")pinActive();
     if(ev.key==="0")fitToMap();
     if(ev.key==="/"){ev.preventDefault();$("layer-search").focus();}
   });
 
+  const toolbar=document.querySelector(".toolbar");
+  toolbar.addEventListener("wheel",ev=>{
+    if(toolbar.scrollWidth>toolbar.clientWidth &&
+       Math.abs(ev.deltaY)>Math.abs(ev.deltaX)){
+      ev.preventDefault();
+      toolbar.scrollLeft+=ev.deltaY;
+    }
+  },{passive:false});
   const link=(id,callback)=>$(id).addEventListener("click",callback);
   link("btn-open",chooseMap);
   link("tool-open",chooseMap);
   link("empty-open",chooseMap);
   link("tool-advanced-select",openAdvancedSelection);
   link("tool-bulk-edit",openBulkEditor);
+  link("tool-move",()=>setTool("move"));
+  link("tool-new-polygon",()=>setTool("draw"));
+  link("tool-copy",openCopyEditor);
+  link("tool-delete-objects",deleteObjects);
+  link("copy-close",()=>$("copy-dialog").close());
+  link("create-close",()=>$("create-dialog").close());
+  link("create-back",()=>$("create-dialog").close());
+  link("copy-preview",()=>previewObject("copy"));
+  link("create-preview",()=>previewObject("create"));
+  $("copy-form").addEventListener("submit",ev=>applyObject("copy",ev));
+  $("create-form").addEventListener("submit",ev=>applyObject("create",ev));
+  for(const id of ["copy-dx","copy-dy"])
+    $(id).addEventListener("input",()=>invalidateObjectPreview("copy"));
+  for(const id of ["create-code","create-a1","create-a2"])
+    $(id).addEventListener("input",()=>invalidateObjectPreview("create"));
+  link("float-move",()=>setTool("move"));
+  link("tool-move-offset",()=>openMoveEditor());
+  link("move-close",()=>$("move-dialog").close());
+  link("move-preview",previewMoveChanges);
+  $("move-form").addEventListener("submit",applyMoveChanges);
+  for(const id of ["move-dx","move-dy","move-detach","move-snap"])
+    $(id).addEventListener("input",invalidateMovePreview);
   link("bulk-close",()=>$("bulk-dialog").close());
   link("bulk-preview",previewBulkChanges);
   $("bulk-form").addEventListener("submit",applyBulkChanges);

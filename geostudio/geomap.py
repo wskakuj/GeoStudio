@@ -407,6 +407,62 @@ class GeoMap:
             del self.lines[line_no]
         self._parse()
 
+    def duplicate_polygons(self, uids: list[str], dx: float, dy: float) -> list[str]:
+        """Copy full native records, changing ONLY :ID and P coordinates.
+
+        Existing style, A-fields, unknown attributes and P flags are retained.
+        The original source object records remain byte-identical.
+        """
+        from math import isfinite
+        if not uids or len(set(uids)) != len(uids):
+            raise ValueError("Choose distinct polygons to duplicate")
+        if not all(isfinite(v) and -1e9<v<1e9 for v in (dx,dy)):
+            raise ValueError("Invalid copy offset")
+        raw_records=[]
+        new_uids=[]
+        existing=set(self.by_id)
+        for uid in uids:
+            obj=self.by_id[uid]
+            if not obj.is_closed:
+                raise ValueError("Only closed polygons may be duplicated")
+            new_uid=str(uuid.uuid4()).upper()
+            while new_uid in existing:
+                new_uid=str(uuid.uuid4()).upper()
+            existing.add(new_uid)
+            new_uids.append(new_uid)
+            found_id=False
+            records=[]
+            point_count=0
+            for raw in self.lines[obj.start:obj.end]:
+                eol = b'\r\n' if raw.endswith(b'\r\n') else (
+                    b'\n' if raw.endswith(b'\n') else b'')
+                text=raw.rstrip(b'\r\n')
+                if text.startswith(b':ID['):
+                    if found_id:
+                        raise ValueError("Duplicate ID records in source")
+                    text=b':ID['+new_uid.encode('ascii')+b']'
+                    found_id=True
+                else:
+                    point=POINT_RE.match(text)
+                    if point:
+                        x=round(float(point.group(2))+dx,3)
+                        y=round(float(point.group(3))+dy,3)
+                        if not (-1e9<x<1e9 and -1e9<y<1e9):
+                            raise ValueError("Copied point outside coordinate bounds")
+                        # Retain the P flag and any native trailing notes.
+                        text=(text[:point.start(2)]+f'{x:.3f}'.encode('ascii')+
+                              b'   '+f'{y:.3f}'.encode('ascii')+point.group(4))
+                        point_count+=1
+                records.append(text+eol)
+            if not found_id or point_count != len(obj.points):
+                raise ValueError("Malformed source polygon: copying refused")
+            raw_records.extend(records)
+        if self.lines and not self.lines[-1].endswith((b'\r',b'\n')):
+            self.lines[-1]+=b'\r\n'
+        self.lines.extend(raw_records)
+        self._parse()
+        return new_uids
+
     def delete_objects(self, uids: list[str] | set[str]) -> int:
         """Delete entire object records in one pass without touching adjacent objects.
 

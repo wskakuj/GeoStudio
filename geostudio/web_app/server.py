@@ -163,6 +163,76 @@ def create_app(workspace: PreviewWorkspace | None = None) -> FastAPI:
         except ValueError as exc:
             raise HTTPException(400, str(exc)) from exc
 
+    @app.post("/api/move/preview")
+    async def move_preview(request: Request):
+        payload = await edit_payload(request, 256 * 1024)
+        try:
+            return state.preview_move_polygons(
+                payload.get("ids"), payload.get("dx"), payload.get("dy"),
+                allow_detach=payload.get("allowDetach", False),
+                snap_distance=payload.get("snapDistance", 0),
+                document_token=payload.get("documentToken"),
+                revision=payload.get("revision"),
+            )
+        except LookupError as exc:
+            raise HTTPException(404, str(exc)) from exc
+        except RuntimeError as exc:
+            raise HTTPException(409, str(exc)) from exc
+        except (ValueError, KeyError) as exc:
+            raise HTTPException(400, str(exc)) from exc
+
+    @app.post("/api/move/apply")
+    async def move_apply(request: Request):
+        payload = await edit_payload(request, 256 * 1024)
+        try:
+            return state.apply_move_polygons(
+                payload.get("ids"), payload.get("dx"), payload.get("dy"),
+                allow_detach=payload.get("allowDetach", False),
+                snap_distance=payload.get("snapDistance", 0),
+                preview_key=payload.get("previewKey"),
+                document_token=payload.get("documentToken"),
+                revision=payload.get("revision"),
+            )
+        except LookupError as exc:
+            raise HTTPException(404, str(exc)) from exc
+        except RuntimeError as exc:
+            raise HTTPException(409, str(exc)) from exc
+        except (ValueError, KeyError) as exc:
+            raise HTTPException(400, str(exc)) from exc
+
+    @app.post("/api/objects/preview")
+    async def objects_preview(request: Request):
+        payload = await edit_payload(request, 256 * 1024)
+        try:
+            return state.preview_object_operation(
+                payload.get("operation"),
+                document_token=payload.get("documentToken"),
+                revision=payload.get("revision"),
+            )
+        except LookupError as exc:
+            raise HTTPException(404, str(exc)) from exc
+        except RuntimeError as exc:
+            raise HTTPException(409, str(exc)) from exc
+        except (ValueError, KeyError, TypeError) as exc:
+            raise HTTPException(400, str(exc)) from exc
+
+    @app.post("/api/objects/apply")
+    async def objects_apply(request: Request):
+        payload = await edit_payload(request, 256 * 1024)
+        try:
+            return state.apply_object_operation(
+                payload.get("operation"),
+                preview_key=payload.get("previewKey"),
+                document_token=payload.get("documentToken"),
+                revision=payload.get("revision"),
+            )
+        except LookupError as exc:
+            raise HTTPException(404, str(exc)) from exc
+        except RuntimeError as exc:
+            raise HTTPException(409, str(exc)) from exc
+        except (ValueError, KeyError, TypeError) as exc:
+            raise HTTPException(400, str(exc)) from exc
+
     @app.patch("/api/object/{fid}/fields")
     async def update_object_fields(fid: str, request: Request):
         payload = await edit_payload(request)

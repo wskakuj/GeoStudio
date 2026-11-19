@@ -69,12 +69,13 @@ class NativeMapPicker:
     synchronous HTML file input fallback.
     """
 
-    __slots__ = ("_workspace", "_settings")
+    __slots__ = ("_workspace", "_settings", "_source_path")
 
     def __init__(self, workspace: PreviewWorkspace,
                  *, settings: Path | None = None):
         self._workspace = workspace
         self._settings = settings if settings is not None else preference_file()
+        self._source_path = None
 
     def _choose_path(self) -> str:
         # Called on pywebview's JS API worker thread, *not* the WebView2
@@ -116,8 +117,73 @@ class NativeMapPicker:
         if not 0 < chosen.stat().st_size <= MAX_MAP_BYTES:
             raise ValueError("Plik MAP jest pusty lub przekracza limit 80 MB.")
         meta = self._workspace.load_map(chosen.read_bytes(), chosen.name)
+        self._source_path = chosen.resolve()
         try:
             save_last_map_directory(self._settings, chosen.parent)
         except OSError:
             pass
         return {"cancelled": False, "metadata": meta}
+
+
+    def save_map(self) -> dict:
+        """Save an explicitly named new MAP through an actual Windows Save As dialog.
+
+        Unlike a browser Blob download, WebView2 can display and reliably
+        persist this path. Never guess the destination or overwrite source.
+        """
+        import tkinter as tk
+        from tkinter import filedialog
+        status = self._workspace.editing_status()
+        if not status.get("documentToken"):
+            raise ValueError("Najpierw otwórz mapę GEO-MAP.")
+        suggested_name, content = self._workspace.export_copy(status["documentToken"])
+        root = tk.Tk()
+        try:
+            root.withdraw()
+            root.attributes("-topmost", True)
+            root.update()
+            directory = (self._source_path.parent if self._source_path
+                         else Path(read_last_map_directory(self._settings) or
+                                   str(Path.home() / "Documents")))
+            chosen_name = filedialog.asksaveasfilename(
+                parent=root,
+                title="GeoStudio 2.0 — Zapisz kopię mapy MAP",
+                initialdir=str(directory),
+                initialfile=suggested_name,
+                defaultextension=".MAP",
+                filetypes=(("Mapy GEO-MAP", "*.MAP"),),
+                confirmoverwrite=True,
+            )
+        finally:
+            root.destroy()
+        if not chosen_name:
+            return {"cancelled": True}
+        chosen = Path(chosen_name)
+        if chosen.suffix.casefold() != ".map":
+            raise ValueError("Kopia musi mieć rozszerzenie .MAP.")
+        if (self._source_path is not None and
+                chosen.resolve() == self._source_path):
+            raise ValueError("Nie wolno nadpisać otwartego pliku źródłowego.")
+        if chosen.name.casefold() == self._workspace.metadata()["name"].casefold():
+            raise ValueError("Podaj inną nazwę niż mapa źródłowa.")
+        # os.replace is atomic on the same volume. Never truncate a valid
+        # target file in place if writing fails halfway.
+        fd, tmp = tempfile.mkstemp(prefix=".geostudio2-",suffix=".tmp",
+                                   dir=str(chosen.parent))
+        try:
+            with os.fdopen(fd,"wb") as stream:
+                stream.write(content)
+                stream.flush()
+                os.fsync(stream.fileno())
+            os.replace(tmp,chosen)
+        finally:
+            try:
+                os.unlink(tmp)
+            except FileNotFoundError:
+                pass
+        try:
+            save_last_map_directory(self._settings,chosen.parent)
+        except OSError:
+            pass
+        return {"cancelled": False, "path": str(chosen),
+                "bytes": len(content)}

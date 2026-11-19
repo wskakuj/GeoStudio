@@ -23,7 +23,8 @@ from geostudio.forest_classes import forest_class_value
 from geostudio.geometry_index import GeometryIndex
 from geostudio.history import History
 from geostudio.topology_edit import linked_vertex_plan
-from geostudio.interactions import find_snap, closest_point_on_edge
+from geostudio.web_app.topology_safety import rings_overlap, rings_contact, ring_of, nearest_boundary_snap
+from geostudio.interactions import find_snap, closest_point_on_edge, polygon_is_valid
 from geostudio.library_render import native_fill_color
 
 MAX_MAP_BYTES = 80 * 1024 * 1024
@@ -112,6 +113,8 @@ class PreviewWorkspace:
         self._revision = 0
         self._document_token = ""
         self._bulk_preview_key = ""
+        self._move_preview_key = ""
+        self._objects_preview_key = ""
 
     def load_map(self, content: bytes, filename: str) -> dict:
         if not content or len(content) > MAX_MAP_BYTES:
@@ -129,6 +132,8 @@ class PreviewWorkspace:
             self._revision = 0
             self._document_token = token_hex(16)
             self._bulk_preview_key = ""
+            self._move_preview_key = ""
+            self._objects_preview_key = ""
             self._reindex(doc, name)
             self._styles = {}
             self._label_positions = {}
@@ -443,6 +448,421 @@ class PreviewWorkspace:
                 "missingFields": report["missingFields"],
                 "affected": plan["selectedIds"],
             }
+
+    @staticmethod
+    def _point_touches_boundary(point, polygon, tolerance: float = 0.0015) -> bool:
+        """Recognize shared corners AND T-junctions with no matching P record."""
+        for a, b in zip(polygon.points, polygon.points[1:]):
+            # A P 0 separator may terminate a distinct component.
+            if a.point_type == 0:
+                continue
+            x, y = closest_point_on_edge(
+                point.x, point.y, a.x, a.y, b.x, b.y)
+            if hypot(x - point.x, y - point.y) <= tolerance:
+                return True
+        return False
+
+    def _move_topology_conflicts(self, moving, dx, dy):
+        """Compare old shared borders and new positive-area overlaps."""
+        selected={obj.uid for obj in moving}
+        codes={obj.code for obj in moving}
+        conflicts=[]
+        overlaps=[]
+        for obj in moving:
+            old=ring_of(obj)
+            new=ring_of(obj,dx,dy)
+            # Spatial-index broad phase: no all-to-all scan over an entire MAP.
+            box=(min(x for x,y in old),min(y for x,y in old),
+                 max(x for x,y in old),max(y for x,y in old))
+            center=((box[0]+box[2])/2,(box[1]+box[3])/2)
+            radius=hypot(box[2]-box[0],box[3]-box[1])/2+.003
+            nearby={}
+            for cx,cy in (center,(center[0]+dx,center[1]+dy)):
+                for candidate in self._index.nearby(cx,cy,radius):
+                    if (candidate.uid not in selected and candidate.is_closed
+                            and candidate.code==obj.code):
+                        nearby[id(candidate)]=candidate
+            for neighbor in nearby.values():
+                fixed=ring_of(neighbor)
+                # Cheap AABB screening avoids costly edge comparisons.
+                def nearby(a,b,padding=0.0):
+                    return (min(x for x,y in a)<=max(x for x,y in b)+padding and
+                            max(x for x,y in a)>=min(x for x,y in b)-padding and
+                            min(y for x,y in a)<=max(y for x,y in b)+padding and
+                            max(y for x,y in a)>=min(y for x,y in b)-padding)
+                if (len(conflicts)<12 and nearby(old,fixed,.002)
+                        and rings_contact(old,fixed)):
+                    conflicts.append({"movingUid":obj.uid,
+                                      "stationaryUid":neighbor.uid,
+                                      "code":obj.code})
+                if (len(overlaps)<12 and nearby(new,fixed)
+                        and rings_overlap(new,fixed)):
+                    overlaps.append({"movingUid":obj.uid,
+                                     "stationaryUid":neighbor.uid,
+                                     "code":obj.code})
+        return conflicts,overlaps
+
+    def _move_polygon_plan(self, ids: list[str], dx: float, dy: float, *,
+                           allow_detach: bool, document_token: str,
+                           revision: int, snap_distance: float = 0) -> dict:
+        """Validate every selected polygon and preview the exact coordinate shift.
+
+        dx = native X (northing), dy = native Y (easting), in map units.
+        """
+        if self._doc is None or self._history is None:
+            raise ValueError("Najpierw otwórz mapę GEO-MAP.")
+        if (document_token != self._document_token or
+                type(revision) is not int or revision != self._revision):
+            raise RuntimeError("Mapa została zmieniona. Sprawdź przesunięcie ponownie.")
+        if (not isinstance(ids, list) or not ids or
+                len(ids) > MAX_BULK_EDIT_OBJECTS or
+                any(not isinstance(fid, str) or len(fid) > 20 for fid in ids) or
+                len(set(ids)) != len(ids)):
+            raise ValueError("Wybierz od 1 do 5 000 unikalnych obiektów.")
+        if (type(dx) not in (int, float) or type(dy) not in (int, float) or
+                any(not isfinite(z) or abs(z) > 100000 for z in (dx, dy)) or
+                type(allow_detach) is not bool or
+                type(snap_distance) not in (int, float) or
+                not isfinite(snap_distance) or not 0 <= snap_distance <= 2):
+            raise ValueError("Nieprawidłowe przesunięcie X/Y albo opcja topologii.")
+        dx, dy = round(dx, 3), round(dy, 3)
+        changes: dict[str, dict[int, tuple[float, float]]] = {}
+        moving = []
+        samples: list[dict] = []
+        codes: Counter = Counter()
+        vertex_count = 0
+        for fid in ids:
+            entry = self._lookup.get(fid)
+            if entry is None:
+                raise LookupError("Zaznaczenie zawiera nieistniejący obiekt.")
+            obj = entry.obj
+            if (not obj.uid or self._uid_counts.get(obj.uid) != 1 or
+                    self._doc.by_id.get(obj.uid) is not obj):
+                raise ValueError("Obiekt bez jednoznacznego :ID. Przerwano przesuwanie.")
+            if not obj.is_closed or len(obj.points) < 4:
+                raise ValueError(
+                    "Zaznaczenie zawiera linię lub punkt. Przesuwać można "
+                    "tylko zamknięte poligony (kod " + obj.code + ").")
+            vertex_count += len(obj.points)
+            if vertex_count > 100000:
+                raise ValueError("Zaznaczenie przekracza limit 100 000 węzłów.")
+            moving.append(obj)
+            codes[obj.code] += 1
+        requested_dx, requested_dy = dx, dy
+        snap_applied = None
+        if snap_distance and (dx or dy):
+            selected_uids={o.uid for o in moving}
+            near_fixed={}
+            for obj in moving:
+                r=ring_of(obj)
+                a,b=min(x for x,y in r),min(y for x,y in r)
+                c,d=max(x for x,y in r),max(y for x,y in r)
+                center=((a+c)/2+dx,(b+d)/2+dy)
+                radius=hypot(c-a,d-b)/2+snap_distance+.002
+                for item in self._index.nearby(*center,radius):
+                    if (item.uid not in selected_uids and item.is_closed
+                            and item.code==obj.code):
+                        near_fixed[id(item)]=item
+            fixed=list(near_fixed.values())
+            # Large batch moves still work: only interactive small selections
+            # request magnetic edge snapping, never all-to-all 100k vertices.
+            if sum(len(obj.points) for obj in moving)>3000:
+                fixed=[]
+            nx,ny,distance=nearest_boundary_snap(
+                moving, fixed, dx, dy, snap_distance)
+            if distance is not None:
+                dx,dy=nx,ny
+                snap_applied={"distance":round(distance,3)}
+        for obj in moving:
+            shifted={}
+            for index,point in enumerate(obj.points[:-1]):
+                x,y=round(point.x+dx,3),round(point.y+dy,3)
+                if not (-1e9<x<1e9 and -1e9<y<1e9):
+                    raise ValueError("Przesunięcie przekracza zakres współrzędnych.")
+                shifted[index]=(x,y)
+            changes[obj.uid]=shifted
+            if len(samples)<10:
+                first=obj.points[0]
+                samples.append({"uid":obj.uid,"code":obj.code,
+                    "before":{"x":first.x,"y":first.y},
+                    "after":{"x":shifted[0][0],"y":shifted[0][1]}})
+        conflicts, overlaps = (self._move_topology_conflicts(moving,dx,dy)
+                               if dx or dy else ([],[]))
+        topology_blocked = bool(conflicts) and not allow_detach
+        overlap_blocked = bool(overlaps)
+        payload = {"ids": sorted(ids), "dx": dx, "dy": dy,
+                   "allowDetach": allow_detach, "snapDistance": snap_distance,
+                   "documentToken": document_token,
+                   "revision": revision}
+        preview_key = sha256(json.dumps(
+            payload, sort_keys=True, ensure_ascii=False,
+            separators=(",", ":")).encode("utf-8")).hexdigest()
+        return {
+            "changes": changes,
+            "selectedUids": {obj.uid for obj in moving},
+            "report": {
+                "selected": len(ids), "vertexCount": vertex_count,
+                "codes": dict(sorted(codes.items())),
+                "delta": {"x": dx, "y": dy},
+                "requestedDelta": {"x": requested_dx, "y": requested_dy},
+                "snapApplied": snap_applied,
+                "overlapConflicts": overlaps,
+                "overlapBlocked": overlap_blocked,
+                "samples": samples,
+                "topologyConflicts": conflicts,
+                "topologyBlocked": topology_blocked,
+                "allowDetach": allow_detach,
+                "canApply": bool(dx or dy) and not topology_blocked and not overlap_blocked,
+                "previewKey": preview_key,
+                **self._editing_status(),
+            },
+        }
+
+    def preview_move_polygons(self, ids: list[str], dx: float, dy: float, *,
+                              allow_detach: bool, document_token: str,
+                              revision: int, snap_distance: float = 0) -> dict:
+        with self._lock:
+            report = self._move_polygon_plan(
+                ids, dx, dy, allow_detach=allow_detach,
+                document_token=document_token, revision=revision,
+                snap_distance=snap_distance)["report"]
+            self._move_preview_key = report["previewKey"]
+            return report
+
+    def apply_move_polygons(self, ids: list[str], dx: float, dy: float, *,
+                            allow_detach: bool, preview_key: str,
+                            document_token: str, revision: int,
+                            snap_distance: float = 0) -> dict:
+        with self._lock:
+            plan = self._move_polygon_plan(
+                ids, dx, dy, allow_detach=allow_detach,
+                document_token=document_token, revision=revision,
+                snap_distance=snap_distance)
+            report = plan["report"]
+            if (not isinstance(preview_key, str) or
+                    preview_key != report["previewKey"] or
+                    preview_key != self._move_preview_key):
+                raise RuntimeError("Podgląd wygasł. Ponownie sprawdź przesunięcie.")
+            if report["overlapBlocked"]:
+                raise ValueError("Poligony tego samego kodu nachodzą na siebie. "
+                                 "Dopasuj je do wspólnej granicy.")
+            if report["topologyBlocked"]:
+                raise ValueError(
+                    "Zaznaczenie ma wspólną granicę z nieruchomym "
+                    "poligonem tego samego kodu. Dodaj sąsiada do zaznaczenia "
+                    "lub świadomie zezwól na rozłączenie granicy.")
+            if not report["canApply"]:
+                self._move_preview_key = ""
+                return {**self._editing_status(), "changed": False, "affected": []}
+
+            # Fingerprint raw records of every stationary object, independent
+            # of its code; this also protects overlapping different-code data.
+            h = sha256()
+            for obj in self._doc.objects:
+                if obj.uid not in plan["selectedUids"]:
+                    for line in self._doc.lines[obj.start:obj.end]:
+                        h.update(line)
+            before = h.digest()
+            with self._history.begin(
+                "Przesunięcie " + str(report["selected"]) + " poligonów",
+                selection_before=tuple(plan["selectedUids"]),
+            ):
+                self._doc.move_polygon_vertices(plan["changes"])
+                check = sha256()
+                for obj in self._doc.objects:
+                    if obj.uid not in plan["selectedUids"]:
+                        for line in self._doc.lines[obj.start:obj.end]:
+                            check.update(line)
+                if check.digest() != before:
+                    raise ValueError(
+                        "Zmiana poza zaznaczeniem — cofnięto całą operację.")
+            self._reindex(self._doc, self._doc.filename)
+            self._revision += 1
+            self._move_preview_key = ""
+            self._bulk_preview_key = ""
+            return {**self._editing_status(), "changed": True,
+                    "affected": list(ids), "movedObjects": report["selected"],
+                    "movedVertices": report["vertexCount"],
+                    "delta": report["delta"],
+                    "snapApplied": report["snapApplied"],
+                    "topologyDetached": bool(report["topologyConflicts"])}
+
+    def _object_operation_plan(self, payload: dict, *, document_token: str,
+                               revision: int) -> dict:
+        """Preflight copy/delete/create against the exact current MAP revision."""
+        if self._doc is None or self._history is None:
+            raise ValueError("Najpierw otwórz mapę.")
+        if (document_token != self._document_token or
+                type(revision) is not int or revision != self._revision):
+            raise RuntimeError("Mapa zmieniła się. Otwórz podgląd ponownie.")
+        if not isinstance(payload, dict):
+            raise ValueError("Nieprawidłowe dane operacji.")
+        action=payload.get("action")
+        if action not in {"copy","delete","create"}:
+            raise ValueError("Nieznany rodzaj operacji na poligonach.")
+        allowed_keys={
+            "copy":{"action","ids","dx","dy"},
+            "delete":{"action","ids"},
+            "create":{"action","code","points","fields"},
+        }[action]
+        if set(payload)-allowed_keys:
+            raise ValueError("Nieznane pola polecenia.")
+        selected=[]
+        code_counts=Counter()
+        coordinates=[]
+        if action in {"copy","delete"}:
+            ids=payload.get("ids")
+            if (not isinstance(ids,list) or not ids or
+                    len(ids)>(500 if action=="copy" else MAX_BULK_EDIT_OBJECTS) or
+                    len(set(str(i) for i in ids))!=len(ids)):
+                raise ValueError("Nieprawidłowe lub zbyt duże zaznaczenie.")
+            for fid in ids:
+                if not isinstance(fid,str):
+                    raise ValueError("ID musi być tekstem.")
+                entry=self._lookup.get(fid)
+                if entry is None:
+                    raise LookupError("Zaznaczenie zawiera nieistniejący obiekt.")
+                obj=entry.obj
+                if (not obj.uid or self._uid_counts.get(obj.uid)!=1 or
+                        self._doc.by_id.get(obj.uid) is not obj):
+                    raise ValueError("Brak unikatowego identyfikatora :ID.")
+                if action=="copy" and (not obj.is_closed or len(obj.points)<4):
+                    raise ValueError("Kopiowanie dotyczy tylko poligonów.")
+                selected.append(obj)
+                code_counts[obj.code]+=1
+        if action=="delete" and sum(bool(o.points) for o in selected)>=sum(
+                bool(o.points) for o in self._doc.objects):
+            raise ValueError("Nie można usunąć wszystkich obiektów mapy.")
+        if action=="copy":
+            dx,dy=payload.get("dx"),payload.get("dy")
+            if (type(dx) not in (int,float) or type(dy) not in (int,float) or
+                    not isfinite(dx) or not isfinite(dy) or
+                    abs(dx)>100000 or abs(dy)>100000):
+                raise ValueError("Nieprawidłowe przesunięcie kopii.")
+            dx,dy=round(dx,3),round(dy,3)
+            if dx==0 and dy==0:
+                raise ValueError("Kopia musi mieć inne położenie niż oryginał.")
+            if sum(len(obj.points) for obj in selected)>50000:
+                raise ValueError("Zbyt dużo węzłów do skopiowania.")
+            # Unlike MOVE, the original polygon remains. Every new polygon
+            # must not overlap ANY existing polygon with the same code.
+            for obj in selected:
+                candidate=ring_of(obj,dx,dy)
+                xs=[p[0] for p in candidate]
+                ys=[p[1] for p in candidate]
+                center=((min(xs)+max(xs))/2,(min(ys)+max(ys))/2)
+                radius=hypot(max(xs)-min(xs),max(ys)-min(ys))/2+.002
+                for other in self._index.nearby(*center,radius):
+                    if not other.is_closed or other.code!=obj.code:
+                        continue
+                    if rings_overlap(candidate,ring_of(other)):
+                        raise ValueError("Kopia nakłada się na poligon kodu "+
+                                         obj.code+". Zmień przesunięcie.")
+            coordinates=[{"uid":obj.uid,"code":obj.code} for obj in selected[:10]]
+        elif action=="create":
+            code=payload.get("code")
+            if code not in {"5216","5220","5230","5310"}:
+                raise ValueError("Wybierz kod poligonu: 5216, 5220, 5230 lub 5310.")
+            coords=payload.get("points")
+            if not isinstance(coords,list) or not 3<=len(coords)<=500:
+                raise ValueError("Poligon wymaga 3–500 punktów.")
+            for point in coords:
+                if (not isinstance(point,list) or len(point)!=2 or
+                        any(type(v) not in (int,float) or
+                            not isfinite(v) or abs(v)>=1e9 for v in point)):
+                    raise ValueError("Nieprawidłowe współrzędne poligonu.")
+                coordinates.append((round(point[0],3),round(point[1],3)))
+            if coordinates[0]==coordinates[-1]:
+                coordinates.pop()
+            if len(coordinates)<3 or not polygon_is_valid(coordinates):
+                raise ValueError("Poligon ma niepoprawny obrys lub za małe pole.")
+            fields=payload.get("fields")
+            if not isinstance(fields,dict) or set(fields)-{"A1","A2"}:
+                raise ValueError("Atrybuty nowego poligonu mogą zawierać A1/A2.")
+            for value in fields.values():
+                if not isinstance(value,str) or any(c in value for c in "\r\n]"):
+                    raise ValueError("Nieprawidłowa wartość A1 lub A2.")
+                try:
+                    if len(value.encode("cp1250"))>512:
+                        raise ValueError("Atrybut przekracza 512 bajtów.")
+                except UnicodeEncodeError as exc:
+                    raise ValueError("Atrybut musi mieć kodowanie CP1250.") from exc
+            xs=[p[0] for p in coordinates]
+            ys=[p[1] for p in coordinates]
+            center=((min(xs)+max(xs))/2,(min(ys)+max(ys))/2)
+            radius=hypot(max(xs)-min(xs),max(ys)-min(ys))/2+.002
+            for other in self._index.nearby(*center,radius):
+                if other.is_closed and other.code==code and rings_overlap(
+                        coordinates,ring_of(other)):
+                    raise ValueError(
+                        "Nowy poligon nakłada się na istniejący poligon tego samego kodu.")
+            code_counts[code]=1
+        canonical={"action":action,"payload":payload,
+                   "documentToken":document_token,"revision":revision}
+        preview_key=sha256(json.dumps(
+            canonical,sort_keys=True,ensure_ascii=False,
+            separators=(",",":")).encode("utf-8")).hexdigest()
+        return {"action":action,"selected":selected,"coords":coordinates,
+                "report":{"action":action,"selected":len(selected),
+                          "codes":dict(sorted(code_counts.items())),
+                          "vertexCount":(len(coordinates) if action=="create"
+                            else sum(len(o.points) for o in selected)),
+                          "previewKey":preview_key,"canApply":True,
+                          **self._editing_status()}}
+
+    def preview_object_operation(self, payload: dict, *,
+                                 document_token: str, revision: int) -> dict:
+        with self._lock:
+            plan=self._object_operation_plan(payload,
+                document_token=document_token,revision=revision)
+            self._objects_preview_key=plan["report"]["previewKey"]
+            return plan["report"]
+
+    def apply_object_operation(self, payload: dict, *, preview_key: str,
+                               document_token: str, revision: int) -> dict:
+        with self._lock:
+            plan=self._object_operation_plan(payload,
+                document_token=document_token,revision=revision)
+            report=plan["report"]
+            if (not isinstance(preview_key,str) or
+                    preview_key!=report["previewKey"] or
+                    preview_key!=self._objects_preview_key):
+                raise RuntimeError("Przed zatwierdzeniem wykonaj świeży podgląd.")
+            action=plan["action"]
+            selected=plan["selected"]
+            before=b"".join(self._doc.lines)
+            created=[]
+            with self._history.begin(
+                {"copy":"Kopiuj poligony","delete":"Usuń poligony",
+                 "create":"Nowy poligon"}[action],
+                selection_before=tuple(o.uid for o in selected),
+            ):
+                if action=="delete":
+                    self._doc.delete_objects([o.uid for o in selected])
+                elif action=="copy":
+                    created=self._doc.duplicate_polygons(
+                        [o.uid for o in selected],
+                        round(payload["dx"],3),round(payload["dy"],3))
+                else:
+                    created=[self._doc.append_polygon(
+                        plan["coords"],code=payload["code"],
+                        fields=payload["fields"])]
+                # For append/copy, all original MAP records must survive.
+                if action!="delete":
+                    if not b"".join(self._doc.lines).startswith(
+                            before):
+                        raise ValueError(
+                            "Wykryto zmianę oryginalnego rekordu. Cofnięto operację.")
+            self._reindex(self._doc,self._doc.filename)
+            self._revision+=1
+            self._objects_preview_key=""
+            self._move_preview_key=""
+            self._bulk_preview_key=""
+            return {**self._editing_status(),"changed":True,"action":action,
+                    "affected":payload.get("ids",[]),
+                    "createdUids":created,
+                    "createdIds":[self._object_id[id(self._doc.by_id[uid])]
+                                  for uid in created]}
 
     @staticmethod
     def _foreign_code_digest(doc: GeoMap, edited_code: str) -> bytes:

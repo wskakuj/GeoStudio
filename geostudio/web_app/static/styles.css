@@ -88,6 +88,7 @@ kbd { font:inherit; font-size:10px; color:#9aabbb; background:#1c2a3b; border:1p
 .canvas-shell { position:relative; overflow:hidden; background:var(--main-bg); min-width:0; }
 #map-canvas { position:absolute; inset:0; width:100%; height:100%; display:block; touch-action:none; outline:0; cursor:crosshair; }
 .canvas-shell.panning #map-canvas { cursor:grab; }
+.canvas-shell.moving-objects #map-canvas { cursor:move; }
 .canvas-shell.dragging #map-canvas { cursor:grabbing; }
 .map-top-left { position:absolute; top:20px; left:20px; display:flex; gap:9px; flex-wrap:wrap; pointer-events:none; }
 .map-chip { background:rgba(255,255,255,.92); border:1px solid #d6e3eb; box-shadow:0 5px 16px #29405714; border-radius:9px; padding:9px 13px; display:flex; align-items:center; gap:9px; font-size:11px; color:#34536a; font-weight:620; backdrop-filter:blur(10px); }
@@ -306,5 +307,25 @@ button:disabled { opacity:.38; cursor:not-allowed; filter:none !important; }
 }
 .bulk-samples th { color:#7ed0c6; font-weight:680; }
 .bulk-samples td { color:#e2ecf2; }
-.bulk-dialog #bulk-summary { white-space:pre-line; }
+.bulk-dialog #bulk-summary, .bulk-dialog #move-summary { white-space:pre-line; }
 .toolbar #tool-bulk-edit small { color:inherit; }
+
+/* Narrow desktop / WebView2 window: every editing section remains available. */
+.toolbar {
+  overflow-x:auto;
+  overflow-y:hidden;
+  scrollbar-width:thin;
+  scrollbar-color:#57b7b0 #182536;
+  scroll-behavior:smooth;
+  flex-shrink:0;
+}
+.toolbar .tool-section { flex:0 0 auto; }
+.toolbar .tool-divider { flex:0 0 1px; }
+.toolbar .toolbar-fill { min-width:12px; }
+@media (max-width:970px) {
+  .toolbar .tool-section:last-of-type { display:flex; }
+}
+@media (max-width:680px) {
+  .toolbar .tool-section:nth-of-type(3),
+  .toolbar .tool-divider:nth-of-type(2) { display:flex; }
+}
