@@ -495,7 +495,7 @@ class PreviewWorkspace:
 
     def _move_polygon_plan(self, ids: list[str], dx: float, dy: float, *,
                            allow_detach: bool, document_token: str,
-                           revision: int) -> dict:
+                           revision: int, snap_distance: float = 0) -> dict:
         """Validate every selected polygon and preview the exact coordinate shift.
 
         dx = native X (northing), dy = native Y (easting), in map units.
@@ -512,7 +512,9 @@ class PreviewWorkspace:
             raise ValueError("Wybierz od 1 do 5 000 unikalnych obiektów.")
         if (type(dx) not in (int, float) or type(dy) not in (int, float) or
                 any(not isfinite(z) or abs(z) > 100000 for z in (dx, dy)) or
-                type(allow_detach) is not bool):
+                type(allow_detach) is not bool or
+                type(snap_distance) not in (int, float) or
+                not isfinite(snap_distance) or not 0 <= snap_distance <= 2):
             raise ValueError("Nieprawidłowe przesunięcie X/Y albo opcja topologii.")
         dx, dy = round(dx, 3), round(dy, 3)
         changes: dict[str, dict[int, tuple[float, float]]] = {}
@@ -535,26 +537,39 @@ class PreviewWorkspace:
             vertex_count += len(obj.points)
             if vertex_count > 100000:
                 raise ValueError("Zaznaczenie przekracza limit 100 000 węzłów.")
-            # All points, including the repeated closing P, move together.
-            shifted = {}
-            for index, point in enumerate(obj.points[:-1]):
-                x, y = round(point.x + dx, 3), round(point.y + dy, 3)
-                if not (-1e9 < x < 1e9 and -1e9 < y < 1e9):
-                    raise ValueError("Przesunięcie wyprowadza punkt poza zakres współrzędnych.")
-                shifted[index] = (x, y)
-            changes[obj.uid] = shifted
             moving.append(obj)
             codes[obj.code] += 1
-            if len(samples) < 10:
-                first = obj.points[0]
-                samples.append({"id": fid, "uid": obj.uid, "code": obj.code,
-                                "before": {"x": first.x, "y": first.y},
-                                "after": {"x": shifted[0][0], "y": shifted[0][1]}})
-        conflicts = (self._move_topology_conflicts(moving)
-                     if dx or dy else [])
+        requested_dx, requested_dy = dx, dy
+        snap_applied = None
+        if snap_distance and (dx or dy):
+            selected_uids={o.uid for o in moving}
+            fixed=[o for o in self._doc.objects if o.uid not in selected_uids
+                   and o.is_closed and o.code in codes]
+            nx,ny,distance=nearest_boundary_snap(
+                moving, fixed, dx, dy, snap_distance)
+            if distance is not None:
+                dx,dy=nx,ny
+                snap_applied={"distance":round(distance,3)}
+        for obj in moving:
+            shifted={}
+            for index,point in enumerate(obj.points[:-1]):
+                x,y=round(point.x+dx,3),round(point.y+dy,3)
+                if not (-1e9<x<1e9 and -1e9<y<1e9):
+                    raise ValueError("Przesunięcie przekracza zakres współrzędnych.")
+                shifted[index]=(x,y)
+            changes[obj.uid]=shifted
+            if len(samples)<10:
+                first=obj.points[0]
+                samples.append({"uid":obj.uid,"code":obj.code,
+                    "before":{"x":first.x,"y":first.y},
+                    "after":{"x":shifted[0][0],"y":shifted[0][1]}})
+        conflicts, overlaps = (self._move_topology_conflicts(moving,dx,dy)
+                               if dx or dy else ([],[]))
         topology_blocked = bool(conflicts) and not allow_detach
+        overlap_blocked = bool(overlaps)
         payload = {"ids": sorted(ids), "dx": dx, "dy": dy,
-                   "allowDetach": allow_detach, "documentToken": document_token,
+                   "allowDetach": allow_detach, "snapDistance": snap_distance,
+                   "documentToken": document_token,
                    "revision": revision}
         preview_key = sha256(json.dumps(
             payload, sort_keys=True, ensure_ascii=False,
@@ -566,11 +581,15 @@ class PreviewWorkspace:
                 "selected": len(ids), "vertexCount": vertex_count,
                 "codes": dict(sorted(codes.items())),
                 "delta": {"x": dx, "y": dy},
+                "requestedDelta": {"x": requested_dx, "y": requested_dy},
+                "snapApplied": snap_applied,
+                "overlapConflicts": overlaps,
+                "overlapBlocked": overlap_blocked,
                 "samples": samples,
                 "topologyConflicts": conflicts,
                 "topologyBlocked": topology_blocked,
                 "allowDetach": allow_detach,
-                "canApply": bool(dx or dy) and not topology_blocked,
+                "canApply": bool(dx or dy) and not topology_blocked and not overlap_blocked,
                 "previewKey": preview_key,
                 **self._editing_status(),
             },
@@ -578,26 +597,32 @@ class PreviewWorkspace:
 
     def preview_move_polygons(self, ids: list[str], dx: float, dy: float, *,
                               allow_detach: bool, document_token: str,
-                              revision: int) -> dict:
+                              revision: int, snap_distance: float = 0) -> dict:
         with self._lock:
             report = self._move_polygon_plan(
                 ids, dx, dy, allow_detach=allow_detach,
-                document_token=document_token, revision=revision)["report"]
+                document_token=document_token, revision=revision,
+                snap_distance=snap_distance)["report"]
             self._move_preview_key = report["previewKey"]
             return report
 
     def apply_move_polygons(self, ids: list[str], dx: float, dy: float, *,
                             allow_detach: bool, preview_key: str,
-                            document_token: str, revision: int) -> dict:
+                            document_token: str, revision: int,
+                            snap_distance: float = 0) -> dict:
         with self._lock:
             plan = self._move_polygon_plan(
                 ids, dx, dy, allow_detach=allow_detach,
-                document_token=document_token, revision=revision)
+                document_token=document_token, revision=revision,
+                snap_distance=snap_distance)
             report = plan["report"]
             if (not isinstance(preview_key, str) or
                     preview_key != report["previewKey"] or
                     preview_key != self._move_preview_key):
                 raise RuntimeError("Podgląd wygasł. Ponownie sprawdź przesunięcie.")
+            if report["overlapBlocked"]:
+                raise ValueError("Poligony tego samego kodu nachodzą na siebie. "
+                                 "Dopasuj je do wspólnej granicy.")
             if report["topologyBlocked"]:
                 raise ValueError(
                     "Zaznaczenie ma wspólną granicę z nieruchomym "
@@ -636,6 +661,7 @@ class PreviewWorkspace:
                     "affected": list(ids), "movedObjects": report["selected"],
                     "movedVertices": report["vertexCount"],
                     "delta": report["delta"],
+                    "snapApplied": report["snapApplied"],
                     "topologyDetached": bool(report["topologyConflicts"])}
 
     @staticmethod
