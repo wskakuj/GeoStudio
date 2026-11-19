@@ -101,6 +101,16 @@ def create_app(workspace: PreviewWorkspace | None = None) -> FastAPI:
         except ValueError as exc:
             raise HTTPException(400, str(exc)) from exc
 
+    @app.post("/api/topology")
+    async def import_reversible_topology(request: Request):
+        try:
+            return state.import_topology_for_open_map(
+                await receive(request,MAX_STYLES_BYTES))
+        except RuntimeError as exc:
+            raise HTTPException(409,str(exc)) from exc
+        except (ValueError,TypeError) as exc:
+            raise HTTPException(400,str(exc)) from exc
+
     @app.post("/api/cartography/library")
     async def import_cartography_library(request: Request):
         filename=unquote(request.headers.get("x-library-name",""))
