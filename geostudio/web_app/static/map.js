@@ -637,7 +637,8 @@
     return {...editRequestBody(),ids:state.moveIds.slice(),
       dx:asNumber("move-dx"),dy:asNumber("move-dy"),
       allowDetach:$("move-detach").checked,
-      snapDistance:$("move-snap").checked?0.5:0};
+      snapDistance:$("move-snap").checked?
+        Math.round(Math.min(2,Math.max(0.02,10/state.scale))*1000)/1000:0};
   }
   function showMoveSamples(report) {
     const container=$("move-samples");container.replaceChildren();
@@ -862,6 +863,7 @@
       state.pinned=new Set(newIds);
       state.active=newIds[0]||null;
       state.drawPoints=[];state.drawHover=null;
+      state.editBusy=false;updateEditState(state.edit);
       setTool("select");
       await refreshEditedDocument(state.active);
       updateSelectionCount();
