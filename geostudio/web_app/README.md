@@ -23,6 +23,28 @@ Gdy pywebview/WebView2 nie wyświetla prawidłowo okna, użyj:
 To uruchomi tę samą lokalną aplikację w domyślnej przeglądarce.
 Wymaga Python 3.11+, lokalnego Edge WebView2 dla natywnego okna.
 
+## Etap 3D — usuwanie wybranego węzła
+
+W trybie **P — Węzły** kliknij pojedynczy istniejący węzeł.
+Uchwyt podświetli się na żółto. Naciśnij **Delete** (lub
+**Backspace**) albo wybierz **Usuń węzeł** na wstążce.
+
+- **Wspólne węzły wyłączone:** usunięcie jednego P dotyczy tylko
+  aktywnego poligonu.
+- **Wspólne węzły włączone:** identyczne węzły w sąsiednich
+  poligonach **tego samego kodu** są usuwane jednym krokiem.
+  Inne kody są zawsze nietykalne.
+- **Ograniczenia bezpieczeństwa:** co najmniej trzy niezależne
+  wierzchołki, bez duplikatów, z zerwanych domknięć,
+  samoprzecięć i niewidocznych łączników P0.
+  Niejednoznaczne styki typu T bez odpowiadającego punktu
+  na drugim poligonie są blokowane.
+- **Ctrl+Z / Ctrl+Y** przywracają lub ponawiają całe usunięcie.
+  Wszystkie zmiany pozostają w pamięci do pobrania nowego MAP.
+
+Węzły nie są usuwane przy samym przeciąganiu. Przycisk
+**Usuń węzeł** staje się aktywny dopiero po wybraniu konkretnego punktu.
+
 ## Etap 3C — dodawanie wierzchołka przez dwuklik
 
 1. Zaznacz zamknięty poligon w trybie **S** i włącz **P — Węzły**.
@@ -121,7 +143,7 @@ są odrzucane bez częściowych zmian. Węzły i geometria są zmieniane
 
 Edycja dotyczy istniejących węzłów oraz dodawania nowych
 węzłów na krawędziach zamkniętych poligonów z ID GEO-MAP.
-Usuwanie węzłów, edycja polilinii i rozbudowane operacje topologiczne
+Edycja polilinii i rozbudowane operacje topologiczne
 są przewidziane w kolejnych etapach. Przyciąganie wyświetla
 podgląd najbliższych obiektów załadowanych w kadrze, natomiast
 ostateczne współrzędne potwierdza parser Python na całej mapie.
