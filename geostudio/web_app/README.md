@@ -23,6 +23,24 @@ Gdy pywebview/WebView2 nie wyświetla prawidłowo okna, użyj:
 To uruchomi tę samą lokalną aplikację w domyślnej przeglądarce.
 Wymaga Python 3.11+, lokalnego Edge WebView2 dla natywnego okna.
 
+## Awaryjne otwieranie mapy — Z dysku
+
+Od tej poprawki w nagłówku jest dodatkowy przycisk **Z dysku**.
+Bezpośrednio otwiera ukryte pole `input type=file` poprzez etykietę HTML;
+nie korzysta z `pywebview.api`, niezależnych wątków, Tk ani WebView2 COM.
+W razie awarii lub braku dialogu wybierania przez **Otwórz MAP** można
+zawsze kliknąć **Z dysku**, wczytać MAP i kontynuować edycję.
+
+**Otwórz MAP** w natywnym oknie pywebview korzysta teraz z krótkotrwałego
+dialogu Tk/Windows, który jest tworzony oraz niszczony na tym samym wątku
+wywołania, zapamiętuje ostatni katalog w
+`%LOCALAPPDATA%\\GeoStudio2\\preferences.json`. Nie korzysta już z
+`Window.create_file_dialog`, którego wywołanie mogło przestać pokazywać
+okno lub zawieszać UI. Jeśli Tk/Python nie ma obsługi dialogów,
+próba daje czytelny błąd i należy kliknąć **Z dysku**.
+
+Zamknięcie okna, pliki źródłowe i zapis pozostają bez zmian.
+
 ## Stabilność okna Windows (pywebview / WebView2)
 
 Jeśli w starszej wersji GeoStudio 2.0 pojawiał się ciągły log
@@ -70,7 +88,8 @@ niepełne zaznaczenie.
 ### Zapamiętywanie folderu z mapami
 
 **Natywne okno GeoStudio 2.0 uruchamiane przez `start_web_ui.bat`:**
-przycisk Otwórz / Ctrl+O używa natywnego dialogu Windows. Po
+przycisk Otwórz / Ctrl+O używa niezależnego dialogu Tk/Windows
+(nie zależy od natywnych obiektów WebView2). Po
 pomyślnym wyborze MAP zapamiętuje jego katalog w ustawieniach
 użytkownika (`%LOCALAPPDATA%\\GeoStudio2\\preferences.json`).
 Przy kolejnym otwieraniu, również po restarcie aplikacji,
