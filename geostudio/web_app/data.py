@@ -220,6 +220,63 @@ class PreviewWorkspace:
                 "sha256":sha256(map_bytes).hexdigest(),"uids":uids},
                 ensure_ascii=False,indent=2).encode("utf-8")
 
+    def _import_baked_metadata(self, metadata: dict, map_bytes: bytes) -> None:
+        """Restore original P records from SHA-bound native cutout MAP."""
+        expected={"format","sha256","baseSha256","uids","originalP"}
+        if (set(metadata)!=expected or
+                metadata.get("format")!="geostudio-topology-v2" or
+                metadata.get("sha256")!=sha256(map_bytes).hexdigest() or
+                not isinstance(metadata.get("uids"),list) or
+                not isinstance(metadata.get("originalP"),dict) or
+                len(metadata["uids"])>5000 or len(metadata["originalP"])>500):
+            raise ValueError("Plik topologii 6B nie pasuje do MAP.")
+        from geostudio.geomap import POINT_RE
+        with self._lock:
+            if self._doc is None:
+                raise ValueError("Najpierw wczytaj MAP.")
+            if sha256(b"".join(self._doc.lines)).hexdigest()!=metadata["sha256"]:
+                raise ValueError("Plik topologii dotyczy innego MAP.")
+            document=GeoMap(map_bytes,filename=self._doc.filename)
+            if not document.checksum_valid:
+                raise ValueError("Nieprawidłowy CHK mapy.")
+            counts=Counter(o.uid for o in document.objects if o.uid)
+            order=metadata["uids"]
+            if (len(set(str(uid) for uid in order))!=len(order) or
+                    any(not isinstance(uid,str) or counts[uid]!=1 for uid in order)):
+                raise ValueError("Nieprawidłowe identyfikatory w topologii.")
+            for uid,saved in metadata["originalP"].items():
+                if (not isinstance(uid,str) or counts[uid]!=1 or
+                        not isinstance(saved,list) or
+                        not 4<=len(saved)<=50000):
+                    raise ValueError("Uszkodzony zapis oryginalnego poligonu.")
+                obj=document.by_id[uid]
+                self._raw_p_records(document,obj)
+                positions=[i for i in range(obj.start+1,obj.end)
+                           if POINT_RE.match(document.lines[i].rstrip(b'\r\n'))]
+                recovered=[]
+                for encoded in saved:
+                    if not isinstance(encoded,str) or len(encoded)>3000:
+                        raise ValueError("Zbyt duży rekord konturu.")
+                    try:
+                        raw=base64.b64decode(encoded,validate=True)
+                    except (ValueError,base64.binascii.Error) as exc:
+                        raise ValueError("Błędny zapis Base64 konturu.") from exc
+                    if (len(raw)>2000 or
+                            not raw.endswith((b'\r\n',b'\n')) or
+                            not POINT_RE.match(raw.rstrip(b'\r\n'))):
+                        raise ValueError("Niedozwolony rekord P w topologii.")
+                    recovered.append(raw)
+                document.lines[positions[0]:positions[-1]+1]=recovered
+                document._parse()
+            restored=document.to_bytes()
+            if sha256(restored).hexdigest()!=metadata.get("baseSha256"):
+                raise ValueError("Nie udało się bezpiecznie odtworzyć źródłowych konturów.")
+            self._reindex(GeoMap(restored,filename=document.filename),
+                          document.filename)
+            self._styles[TOPOLOGY_STACK_KEY]={"uids":list(order)}
+            self._history=History(_WebHistoryTarget(self))
+            self._revision=0
+
     def import_topology_metadata(self, content: bytes, map_bytes: bytes) -> None:
         """Load saved precedence only when companion checksum and UIDs match."""
         if not content or len(content)>MAX_STYLES_BYTES:
