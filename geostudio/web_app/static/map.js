@@ -41,6 +41,7 @@
     {name:"Rysuj nowy poligon", hint:"N", run:()=>setTool("draw")},
     {name:"Wczytaj plik stylów GeoStudio", hint:"JSON", run:()=> $("file-sidecar").click()},
     {name:"Wczytaj biblioteki kartograficzne GEO-MAP LAY/CDF/SYM", hint:"Etap 7", run:chooseCartographicLibraries},
+    {name:"Odtwórz oryginalną geometrię z JSON topologii", hint:"MAP+JSON", run:()=> $("file-topology").click()},
     {name:"Dopasuj całą mapę", hint:"0", run:fitToMap},
     {name:"Edytuj atrybuty aktywnego obiektu", hint:"E", run:()=>toggleInspectorEdit(true)},
     {name:"Cofnij ostatnią zmianę", hint:"Ctrl+Z", run:()=>historyStep("undo")},
@@ -395,6 +396,33 @@
     } catch (error) {
       inform("Nie udało się wczytać JSON: " + error.message, true);
     } finally { busy(false); $("file-sidecar").value = ""; }
+  }
+
+  async function openTopologyFile(file) {
+    if(!file||!state.meta)return;
+    if(!file.name.toLowerCase().endsWith(".json")||
+       file.size>2*1024*1024){
+      inform("Wybierz plik .geostudio-topology.json (do 2 MB).",true);
+      return;
+    }
+    if(state.edit?.dirty){
+      inform("Najpierw otwórz oryginalny MAP bez nowych edycji, "+
+        "a następnie jego JSON topologii.",true);
+      return;
+    }
+    busy(true,"Odtwarzanie oryginalnych konturów z JSON");
+    try{
+      const meta=await api("/api/topology",{
+        method:"POST",
+        headers:{"Content-Type":"application/octet-stream"},
+        body:await file.arrayBuffer()
+      });
+      finishOpeningMap(meta);
+      inform("Wczytano MAP+JSON. Odzyskano źródłowe kontury; "+
+        "wycięcia pozostają dynamiczne i odwracalne.");
+    }catch(error){
+      inform("Nie udało się odtworzyć geometrii: "+error.message,true);
+    }finally{busy(false);$("file-topology").value="";}
   }
 
   function cartographyMessage(payload) {
@@ -2633,6 +2661,7 @@
 
   link("tool-sidecar",()=> $("file-sidecar").click());
   link("tool-cartography",chooseCartographicLibraries);
+  link("tool-topology",()=> $("file-topology").click());
   link("tool-undo",()=>historyStep("undo"));
   link("tool-redo",()=>historyStep("redo"));
   link("btn-export",downloadMapCopy);
@@ -2666,6 +2695,7 @@
   $("file-map").addEventListener("change",ev=>openMap(ev.target.files?.[0]));
   $("file-sidecar").addEventListener("change",ev=>openStyles(ev.target.files?.[0]));
   $("file-library").addEventListener("change",ev=>openCartographicFiles(ev.target.files));
+  $("file-topology").addEventListener("change",ev=>openTopologyFile(ev.target.files?.[0]));
 
   document.addEventListener("dragover",ev=>{
     if(ev.dataTransfer&&Array.from(ev.dataTransfer.types).includes("Files"))ev.preventDefault();
