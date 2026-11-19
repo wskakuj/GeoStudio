@@ -67,6 +67,19 @@ class GeoObject:
                     parts.append(current)
                 current = []
         if current:
+            # GEO-MAP GMW 10.x closes the WHOLE multipart object with one
+            # additional P 1 that repeats the very first P of the object.
+            # The last individual island/inner ring is already closed just
+            # before that global sentinel. This record is structural, not
+            # another contour edge; never render or measure it.
+            if (parts and len(current)>=5 and
+                    current[-2].x==current[0].x and
+                    current[-2].y==current[0].y and
+                    current[-1].x==parts[0][0].x and
+                    current[-1].y==parts[0][0].y and
+                    (current[-1].x,current[-1].y)!=
+                    (current[0].x,current[0].y)):
+                current=current[:-1]
             parts.append(current)
         return parts
 
@@ -661,6 +674,13 @@ class GeoMap:
                 # the next contour. Keep the last contour's closure P 1.
                 flag=0 if offset==len(ring)-1 and index<len(rings)-1 else 1
                 lines.append(f'P {flag}   {x:.3f}   {y:.3f}'.encode()+eol)
+        if len(rings)>1:
+            # Verified against GMW 10.52 Save As: the native object MUST
+            # repeat its GLOBAL start vertex after the final ring's closure.
+            # Without it GMW hides native A1/A2 labels even when L 1/2/3
+            # descriptors and all separate contours are correct.
+            first_x,first_y=rings[0][0]
+            lines.append(f'P 1   {first_x:.3f}   {first_y:.3f}'.encode()+eol)
         self.lines[indices[0]:indices[-1]+1]=lines
         self._parse()
 
