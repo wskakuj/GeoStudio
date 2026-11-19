@@ -145,6 +145,54 @@ def test_native_picker_remembers_previous_folder_across_new_instances(
     assert second_window.arguments["directory"] == str(folder)
 
 
+def test_pywebview_js_bridge_never_exposes_native_window_or_workspace(tmp_path):
+    """Prevent WinForms COM recursion through pywebview public discovery.
+
+    Regression for errors:
+      window.native.AccessibilityObject.Bounds.Empty...
+      maximum recursion depth exceeded / WebView2 UI thread exception.
+    Public js_api fields must be only safe callable entry points. If the
+    Window leaks as a member, pywebview walks its .native COM graph.
+    """
+    class DangerousWindow:
+        def __init__(self):
+            self.native_accesses = 0
+        @property
+        def native(self):
+            self.native_accesses += 1
+            raise RuntimeError("Native COM object must never be inspected")
+
+    fake_window = DangerousWindow()
+    workspace = PreviewWorkspace()
+    picker = NativeMapPicker(
+        workspace, settings=tmp_path / "preferences.json",
+        window=fake_window)
+    # Simulate pywebview's public attribute traversal.
+    members = [
+        name for name in dir(picker)
+        if not name.startswith("_")
+    ]
+    assert members == ["open_map"]
+    assert callable(getattr(picker, "open_map"))
+    assert fake_window.native_accesses == 0
+    assert picker._window is fake_window
+    assert picker._workspace is workspace
+    assert not hasattr(picker, "__dict__")
+    with pytest.raises(AttributeError):
+        picker.window = fake_window
+    with pytest.raises(AttributeError):
+        picker.workspace = workspace
+    assert fake_window.native_accesses == 0
+
+
+def test_desktop_window_assignment_is_private_in_launcher():
+    from geostudio.web_app import __main__ as entry
+    import inspect
+    source = inspect.getsource(entry.main)
+    assert "native_picker._window = window" in source
+    assert "native_picker.window = window" not in source
+
+
 def test_bad_map_does_not_replace_last_folder(tmp_path, monkeypatch):
     monkeypatch.setitem(sys.modules, "webview",
                        SimpleNamespace(FileDialog=SimpleNamespace(OPEN=10)))
