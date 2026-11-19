@@ -150,7 +150,7 @@ def parse_lay_pen_styles(path: str | Path | bytes) -> dict[str,LAYPenStyle]:
     its own line-pattern definition. Only known 008 is drawn dashed.
     """
     result={}
-    for line in Path(path).read_bytes().decode('cp1250',errors='replace').splitlines():
+    for line in _library_lines(path):
         if not line.strip() or line.lstrip().startswith((';','*')):
             continue
         match=re.match(r'^\s*([0-9?]{4})\s+(\d+)\s+([0-9]+\.[0-9]+)\s+\d+\s+\S+\s+([\d.]+)',line)
