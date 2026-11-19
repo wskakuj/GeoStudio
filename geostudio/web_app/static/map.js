@@ -17,7 +17,8 @@
     lastPick: null, scheduled: false, refreshTimer: null, queryCounter: 0,
     queryAbort: null, selectionRequest: 0, limited: false,
     firstLoad: true, inspectorCache: new Map(),
-    edit: null, editBusy: false
+    edit: null, editBusy: false,
+    snapEnabled: true, sharedNodes: false, vertexDrag: null
   };
   const commands = [
     {name:"Otwórz plik GEO-MAP", hint:"Ctrl+O", run:()=> $("file-map").click()},
@@ -28,6 +29,7 @@
     {name:"Ponów zmianę", hint:"Ctrl+Y", run:()=>historyStep("redo")},
     {name:"Pobierz osobną kopię MAP", hint:"Ctrl+Shift+S", run:downloadMapCopy},
     {name:"Zaznaczanie obiektów", hint:"S", run:()=>setTool("select")},
+    {name:"Edytuj węzły zaznaczonego poligonu", hint:"P", run:()=>setTool("nodes")},
     {name:"Przesuwanie mapy", hint:"H", run:()=>setTool("pan")},
     {name:"Włącz / wyłącz etykiety", hint:"Aa", run:toggleLabels},
     {name:"Włącz / wyłącz siatkę", hint:"▦", run:toggleGrid},
@@ -236,6 +238,7 @@
       state.meta = meta;
       updateEditState(meta);
       state.active = null; state.detail = null; state.pinned.clear();
+      state.vertexDrag=null;setTool("select");
       state.features = []; state.inspectorCache.clear();
       // Match the old user's map view: survey markers are opt-in.
       // Their heavy symbol density otherwise hides the parcel boundaries.
@@ -318,12 +321,22 @@
     requestDraw(); scheduleViewport();
   }
   function setTool(tool) {
+    if(state.editBusy)return;
     state.tool=tool;
     shell.classList.toggle("panning",tool==="pan");
-    for (const [name, id] of [["select","tool-select"],["pan","tool-pan"],
-                              ["select","float-select"],["pan","float-pan"]])
-      $(id).classList.toggle("active",name===tool);
-    inform(tool==="select" ? "Tryb zaznaczania obiektów (S)." : "Tryb przesuwania mapy (H).");
+    shell.classList.toggle("nodes-editing",tool==="nodes");
+    $("geometry-help").hidden=tool!=="nodes"||!state.meta;
+    for(const [name,id] of [
+      ["select","tool-select"],["pan","tool-pan"],["nodes","tool-nodes"],
+      ["select","float-select"],["pan","float-pan"],["nodes","float-nodes"]
+    ])$(id).classList.toggle("active",name===tool);
+    if(tool==="nodes"&&(!state.detail||!state.detail.closed))
+      inform("Tryb P: wybierz zamknięty poligon i przeciągnij jego węzeł.");
+    else if(tool==="nodes")
+      inform("Tryb P: przeciągnij jeden z węzłów. Ctrl+Z cofa zmianę.");
+    else inform(tool==="select"
+      ?"Tryb zaznaczania obiektów (S).":"Tryb przesuwania mapy (H).");
+    requestDraw();
   }
   function toggleLabels() {
     state.labels=!state.labels;
@@ -418,6 +431,115 @@
       ctx.stroke();ctx.shadowBlur=0;
     }
   }
+  function nativeWorldPoint(point) {
+    return {x:point.y,y:-point.x};
+  }
+  function editableVertices() {
+    if(!state.detail||!state.detail.closed||state.detail.geometryTruncated)
+      return [];
+    const pts=state.detail.points||[];
+    return pts.length>1?pts.slice(0,-1):[];
+  }
+  function closestEditableVertex(screen) {
+    let index=-1,best=11*11;
+    const pts=editableVertices();
+    for(let i=0;i<pts.length;i++){
+      const p=worldToScreen(...Object.values(nativeWorldPoint(pts[i])));
+      const dist=(screen.x-p.x)**2+(screen.y-p.y)**2;
+      if(dist<best){best=dist;index=i;}
+    }
+    return index;
+  }
+  function previewSnap(world) {
+    if(!state.snapEnabled)return {point:world,kind:null};
+    const radius=11/state.scale;
+    let bestVertex=null,bestEdge=null;
+    for(const feature of state.features){
+      if(feature.id===state.active)continue;
+      const b=feature.bbox;
+      if(world.x<b[0]-radius||world.x>b[2]+radius||
+         world.y<b[1]-radius||world.y>b[3]+radius)continue;
+      for(const part of feature.geometry){
+        for(let i=0;i<part.length;i++){
+          const point=part[i];
+          const dist=Math.hypot(point[0]-world.x,point[1]-world.y);
+          if(dist<=radius&&(!bestVertex||dist<bestVertex.dist))
+            bestVertex={dist,point:{x:point[0],y:point[1]},kind:"węzeł"};
+          if(i===0)continue;
+          const a=part[i-1], b=point;
+          const dx=b[0]-a[0],dy=b[1]-a[1],len=dx*dx+dy*dy;
+          if(!len)continue;
+          const t=Math.max(0,Math.min(1,
+            ((world.x-a[0])*dx+(world.y-a[1])*dy)/len));
+          const px=a[0]+t*dx,py=a[1]+t*dy;
+          const d=Math.hypot(px-world.x,py-world.y);
+          if(d<=radius&&(!bestEdge||d<bestEdge.dist))
+            bestEdge={dist:d,point:{x:px,y:py},kind:"krawędź"};
+        }
+      }
+    }
+    const match=bestVertex||bestEdge;
+    return match?{point:match.point,kind:match.kind}:{point:world,kind:null};
+  }
+  function drawVertexTool() {
+    if(state.tool!=="nodes"||!state.detail?.closed)return;
+    const points=editableVertices();
+    if(!points.length)return;
+    const drag=state.vertexDrag;
+    if(drag){
+      ctx.beginPath();
+      for(let i=0;i<points.length;i++){
+        const world=i===drag.index?drag.preview:nativeWorldPoint(points[i]);
+        const p=worldToScreen(world.x,world.y);
+        if(i===0)ctx.moveTo(p.x,p.y);else ctx.lineTo(p.x,p.y);
+      }
+      ctx.closePath();
+      ctx.strokeStyle="#0b958b";
+      ctx.lineWidth=2.2;
+      ctx.setLineDash([6,4]);
+      ctx.stroke();
+      ctx.setLineDash([]);
+    }
+    for(let i=0;i<points.length;i++){
+      const world=drag&&drag.index===i?drag.preview:nativeWorldPoint(points[i]);
+      const p=worldToScreen(world.x,world.y);
+      if(p.x< -10||p.x>state.width+10||p.y< -10||p.y>state.height+10)continue;
+      ctx.beginPath();ctx.arc(p.x,p.y,i===drag?.index?6:4,0,2*Math.PI);
+      ctx.fillStyle=i===drag?.index?"#ffc263":"#f8ffff";
+      ctx.fill();ctx.lineWidth=2;ctx.strokeStyle="#078d89";ctx.stroke();
+    }
+    if(drag?.snap){
+      const p=worldToScreen(drag.preview.x,drag.preview.y);
+      ctx.beginPath();ctx.arc(p.x,p.y,10,0,2*Math.PI);
+      ctx.lineWidth=1.5;ctx.strokeStyle="#dc8c32";ctx.stroke();
+    }
+  }
+  async function commitVertexDrag(drag) {
+    if(state.editBusy||!state.edit||!state.active)return;
+    const before=nativeWorldPoint(editableVertices()[drag.index]);
+    if(!before)return;
+    if(Math.hypot(drag.preview.x-before.x,drag.preview.y-before.y)*
+       state.scale<.5){requestDraw();return;}
+    state.editBusy=true;updateEditState(state.edit);
+    try {
+      // Native GEO-MAP coordinate order: X=northing, Y=easting.
+      const response=await api("/api/object/"+encodeURIComponent(drag.fid)+"/vertex",{
+        method:"PATCH", headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({...editRequestBody(),index:drag.index,
+          x:-drag.preview.y,y:drag.preview.x,shared:state.sharedNodes,
+          snapRadius:state.snapEnabled?Math.min(50,11/state.scale):0})
+      });
+      updateEditState(response);
+      if(response.changed){
+        await refreshEditedDocument(drag.fid);
+        inform("Przesunięto węzeł ("+response.affected.length+
+          " obiektów). Ctrl+Z cofa.");
+      }
+    }catch(error){
+      inform("Nie udało się przesunąć węzła: "+error.message,true);
+      requestDraw();
+    }finally{state.editBusy=false;updateEditState(state.edit);}
+  }
   function renderLabels(features) {
     if(!state.labels) return;
     let painted=0;
@@ -499,7 +621,7 @@
     features.sort((a,b)=>(priorities[a.code]??3)-(priorities[b.code]??3));
     for(const feature of features) renderFill(feature);
     for(const feature of features) renderStroke(feature);
-    renderHighlights(features);renderLabels(features);
+    renderHighlights(features);renderLabels(features);drawVertexTool();
     $("scale-label").textContent="Podgląd: "+state.scale.toFixed(state.scale<1?3:1)+" px / jedn.";
     $("count-visible").textContent=display(features.length);
     $("render-hint").textContent=state.limited
@@ -703,6 +825,15 @@
     if(ev.button!==0&&ev.button!==1)return;
     canvas.setPointerCapture(ev.pointerId);
     const p=eventCoords(ev);
+    if(state.tool==="nodes"&&ev.button===0&&!state.editBusy){
+      const index=closestEditableVertex(p);
+      if(index>=0){
+        const world=nativeWorldPoint(editableVertices()[index]);
+        state.vertexDrag={fid:state.active,index,preview:world,snap:null};
+        state.drag={pointer:ev.pointerId,start:p,last:p,moved:false,node:true};
+        requestDraw();return;
+      }
+    }
     state.drag={pointer:ev.pointerId,start:p,last:p,moved:false,
                 pan:ev.button===1||state.tool==="pan"};
   });
@@ -713,7 +844,14 @@
     if(!state.drag||state.drag.pointer!==ev.pointerId)return;
     const d=state.drag;
     if(Math.hypot(p.x-d.start.x,p.y-d.start.y)>4)d.moved=true;
-    if(d.moved){
+    if(d.node&&state.vertexDrag){
+      if(d.moved){
+        const snap=previewSnap(world);
+        state.vertexDrag.preview=snap.point;
+        state.vertexDrag.snap=snap.kind;
+        requestDraw();
+      }
+    }else if(d.moved){
       if(d.pan||state.tool==="select"){
         state.center.x-=(p.x-d.last.x)/state.scale;
         state.center.y-=(p.y-d.last.y)/state.scale;
@@ -725,6 +863,12 @@
   canvas.addEventListener("pointerup", ev=>{
     const d=state.drag;state.drag=null;shell.classList.remove("dragging");
     if(!d||ev.pointerId!==d.pointer)return;
+    if(d.node){
+      const moving=state.vertexDrag;
+      state.vertexDrag=null;requestDraw();
+      if(d.moved&&moving)commitVertexDrag(moving);
+      return;
+    }
     if(d.moved){scheduleViewport();return;}
     if(d.pan)return;
     const p=eventCoords(ev),world=screenToWorld(p.x,p.y),hits=pick(world);
@@ -736,7 +880,7 @@
     const fid=hits[index];
     state.lastPick={p,fid};selectFeature(fid);
   });
-  canvas.addEventListener("pointercancel",()=>{state.drag=null;shell.classList.remove("dragging");});
+  canvas.addEventListener("pointercancel",()=>{state.drag=null;state.vertexDrag=null;shell.classList.remove("dragging");requestDraw();});
   canvas.addEventListener("wheel",ev=>{
     if(!state.meta)return;
     ev.preventDefault();
@@ -788,10 +932,21 @@
     if((ev.ctrlKey||ev.metaKey)&&ev.shiftKey&&ev.key.toLowerCase()==="s"){
       ev.preventDefault();downloadMapCopy();return;
     }
-    if(ev.key.toLowerCase()==="e"&&state.detail){toggleInspectorEdit(true);return;}
+    if(!ev.ctrlKey&&!ev.metaKey&&!ev.altKey&&ev.key.toLowerCase()==="e"&&state.detail){
+      // Prevent the original E keypress from entering the newly focused A1.
+      ev.preventDefault();
+      ev.stopPropagation();
+      toggleInspectorEdit(true);
+      return;
+    }
+    if(!ev.ctrlKey&&!ev.metaKey&&!ev.altKey&&ev.key.toLowerCase()==="p"){
+      ev.preventDefault();setTool("nodes");return;
+    }
     if(ev.key==="Escape"){
       if(dialog.open)dialog.close();
-      else selectFeature(null);
+      else if(state.tool==="nodes"){
+        state.vertexDrag=null;setTool("select");
+      }else selectFeature(null);
       return;
     }
     if(ev.key.toLowerCase()==="s")setTool("select");
@@ -816,6 +971,10 @@
   $("inspector-edit-form").addEventListener("submit",saveAttributeChanges);
   link("tool-select",()=>setTool("select"));
   link("tool-pan",()=>setTool("pan"));
+  link("tool-nodes",()=>setTool("nodes"));
+  link("float-nodes",()=>setTool("nodes"));
+  $("opt-snap").addEventListener("change",ev=>{state.snapEnabled=ev.target.checked;});
+  $("opt-shared").addEventListener("change",ev=>{state.sharedNodes=ev.target.checked;});
   link("tool-fit",fitToMap);
   link("float-select",()=>setTool("select"));
   link("float-pan",()=>setTool("pan"));
