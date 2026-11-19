@@ -116,7 +116,19 @@ class NativeMapPicker:
             raise ValueError("Wybierz prawidłowy plik GEO-MAP .MAP.")
         if not 0 < chosen.stat().st_size <= MAX_MAP_BYTES:
             raise ValueError("Plik MAP jest pusty lub przekracza limit 80 MB.")
-        meta = self._workspace.load_map(chosen.read_bytes(), chosen.name)
+        raw=chosen.read_bytes()
+        meta=self._workspace.load_map(raw,chosen.name)
+        metadata_path=chosen.with_suffix(".geostudio-topology.json")
+        if metadata_path.is_file():
+            try:
+                self._workspace.import_topology_metadata(
+                    metadata_path.read_bytes(),raw)
+                meta=self._workspace.metadata()
+                meta["topologyImported"]=True
+            except (ValueError, OSError, TypeError):
+                meta["topologyWarning"]=(
+                    "Pominięto niezgodny plik topologii. "
+                    "Mapa bazowa została wczytana bez odwracalnych wycięć.")
         self._source_path = chosen.resolve()
         try:
             save_last_map_directory(self._settings, chosen.parent)
@@ -181,9 +193,30 @@ class NativeMapPicker:
                 os.unlink(tmp)
             except FileNotFoundError:
                 pass
+        overlay_bytes=self._workspace.export_topology_metadata(content)
+        if overlay_bytes:
+            # Companion is checksum-bound to this exact MAP. GEO-MAP itself
+            # receives an ordinary, uncut polygon dataset; the overlay remains
+            # reversible specifically inside GeoStudio 2.0.
+            companion=chosen.with_suffix(".geostudio-topology.json")
+            fd2,tmp2=tempfile.mkstemp(prefix=".geostudio-topology-",
+                                     suffix=".tmp",dir=str(chosen.parent))
+            try:
+                with os.fdopen(fd2,"wb") as stream:
+                    stream.write(overlay_bytes)
+                    stream.flush()
+                    os.fsync(stream.fileno())
+                os.replace(tmp2,companion)
+            finally:
+                try:
+                    os.unlink(tmp2)
+                except FileNotFoundError:
+                    pass
         try:
             save_last_map_directory(self._settings,chosen.parent)
         except OSError:
             pass
         return {"cancelled": False, "path": str(chosen),
-                "bytes": len(content)}
+                "bytes": len(content),
+                "topologyPath": str(chosen.with_suffix(".geostudio-topology.json"))
+                 if overlay_bytes else None}
