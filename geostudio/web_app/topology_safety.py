@@ -117,24 +117,79 @@ def ring_of(obj, dx=0.0, dy=0.0):
 
 
 def nearest_boundary_snap(moving, fixed, dx, dy, tolerance):
-    """Closest native vertex to any stationary edge within tolerance.
+    """Translate the WHOLE group to a close same-code edge, without overlap.
 
-    Returns snapped (dx, dy) and distance. Caller must still validate overlap
-    and new topology; snapping never grants permission to break a shared edge.
+    Prefer candidates creating a shared EDGE (rather than a single-point
+    touch). Never return a snap that would place any moved polygon inside
+    another polygon of the same code.
     """
-    best=None
+    fixed=[obj for obj in fixed if obj.is_closed]
+    if not fixed or not moving:
+        return dx,dy,None
+    candidates={(round(dx,3),round(dy,3)):0.0}
     for obj in moving:
-        candidates=[p for p in obj.points[:-1]]
         for neighbor in fixed:
             if neighbor.code!=obj.code:
                 continue
-            boundary=ring_of(neighbor)
-            for p in candidates:
+            ring=ring_of(neighbor)
+            # Only search objects near the desired moved location.
+            changed=ring_of(obj,dx,dy)
+            if (max(x for x,y in changed)<min(x for x,y in ring)-tolerance or
+                min(x for x,y in changed)>max(x for x,y in ring)+tolerance or
+                max(y for x,y in changed)<min(y for x,y in ring)-tolerance or
+                min(y for x,y in changed)>max(y for x,y in ring)+tolerance):
+                continue
+            for p in obj.points[:-1]:
                 position=(p.x+dx,p.y+dy)
-                for a,b in _segments(boundary):
+                for a,b in _segments(ring):
                     dist,target=_segment_distance(position,a,b)
-                    if dist<=tolerance and (best is None or dist<best[0]):
-                        proposed=(round(target[0]-p.x,3),round(target[1]-p.y,3))
-                        if proposed!=(0.0,0.0) or dx==0.0 and dy==0.0:
-                            best=(dist,*proposed)
-    return (best[1],best[2],best[0]) if best else (dx,dy,None)
+                    if dist<=tolerance:
+                        offset=(round(target[0]-p.x,3),
+                                round(target[1]-p.y,3))
+                        if offset not in candidates or dist<candidates[offset]:
+                            candidates[offset]=dist
+    def valid(offset):
+        for source in moving:
+            new=ring_of(source,*offset)
+            for target in fixed:
+                if target.code==source.code and rings_overlap(new,ring_of(target)):
+                    return False
+        return True
+
+    def common_edge(offset):
+        """Length of aligned collinear edge shared by moved and fixed rings."""
+        amount=0.0
+        for source in moving:
+            moved=ring_of(source,*offset)
+            for target in fixed:
+                if target.code!=source.code:
+                    continue
+                other=ring_of(target)
+                for a,b in _segments(moved):
+                    for c,d in _segments(other):
+                        if (abs(_cross(a,b,c))>0.002 or
+                            abs(_cross(a,b,d))>0.002):
+                            continue
+                        length=hypot(b[0]-a[0],b[1]-a[1])
+                        if length<EPS:
+                            continue
+                        ux=(b[0]-a[0])/length
+                        uy=(b[1]-a[1])/length
+                        project=lambda p:p[0]*ux+p[1]*uy
+                        overlap=min(max(project(a),project(b)),
+                                    max(project(c),project(d)))-max(
+                                    min(project(a),project(b)),
+                                    min(project(c),project(d)))
+                        amount=max(amount,overlap)
+        return amount
+
+    good=[(offset,dist) for offset,dist in candidates.items() if valid(offset)]
+    if not good:
+        return dx,dy,None
+    # If the requested position is already valid and nowhere near a shared
+    # edge, an exact match is not a snap and should not be advertised as one.
+    good.sort(key=lambda item:(-common_edge(item[0]),item[1]))
+    result,distance=good[0]
+    if result==(round(dx,3),round(dy,3)):
+        return dx,dy,None
+    return result[0],result[1],distance
