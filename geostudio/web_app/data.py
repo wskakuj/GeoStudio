@@ -23,7 +23,7 @@ from geostudio.forest_classes import forest_class_value
 from geostudio.geometry_index import GeometryIndex
 from geostudio.history import History
 from geostudio.topology_edit import linked_vertex_plan
-from geostudio.interactions import find_snap
+from geostudio.interactions import find_snap, closest_point_on_edge
 from geostudio.library_render import native_fill_color
 
 MAX_MAP_BYTES = 80 * 1024 * 1024
@@ -370,6 +370,112 @@ class PreviewWorkspace:
                     "snap": ({"kind": snapped.kind, "code": snapped.code,
                               "uid": snapped.uid, "x": x, "y": y}
                              if snapped else None)}
+
+    def insert_vertex(self, fid: str, segment_index: int, x: float, y: float,
+                      *, shared: bool, document_token: str, revision: int,
+                      edge_radius: float = 0.0) -> dict:
+        """Insert a P record on the selected polygon edge (double click).
+
+        If shared topology is requested, split precisely coincident edges of
+        OTHER SAME-CODE closed polygons in the SAME transaction. 5220 or any
+        unrelated code must stay byte-identical. No vertex is invented off
+        the selected edge; only its orthogonal projection can be inserted.
+        """
+        with self._lock:
+            if self._doc is None or self._history is None:
+                raise ValueError("Najpierw otwórz mapę.")
+            if (document_token != self._document_token or
+                    type(revision) is not int or revision != self._revision):
+                raise RuntimeError("Dokument zmienił się od rozpoczęcia edycji.")
+            if (type(segment_index) is not int or type(shared) is not bool or
+                    type(x) not in (int, float) or type(y) not in (int, float) or
+                    type(edge_radius) not in (int, float) or
+                    not all(isfinite(v) for v in (x, y, edge_radius)) or
+                    not (-1e9 < x < 1e9 and -1e9 < y < 1e9) or
+                    not 0 <= edge_radius <= 50):
+                raise ValueError("Nieprawidłowy punkt lub promień wstawienia.")
+            entry = self._lookup.get(fid)
+            if entry is None:
+                raise LookupError("Nie znaleziono obiektu.")
+            obj = entry.obj
+            if (not obj.uid or self._uid_counts.get(obj.uid) != 1 or
+                    self._doc.by_id.get(obj.uid) is not obj):
+                raise ValueError("Niejednoznaczny lub brakujący :ID poligonu.")
+            if not obj.is_closed or len(obj.points) < 4:
+                raise ValueError("Dwuklik działa tylko na zamkniętych poligonach.")
+            if not 0 <= segment_index < len(obj.points) - 1:
+                raise ValueError("Wskazana krawędź nie należy do poligonu.")
+            a, b = obj.points[segment_index:segment_index + 2]
+            if a.point_type == 0:
+                raise ValueError("Nie wolno dodawać punktu na ukrytym łączniku P 0.")
+            px, py = closest_point_on_edge(x, y, a.x, a.y, b.x, b.y)
+            if hypot(px - x, py - y) > max(0.002, edge_radius):
+                raise ValueError("Kliknij bezpośrednio na krawędzi poligonu.")
+            px, py = round(px, 3), round(py, 3)
+            # Native precision is 1 mm. Avoid splitting at endpoints or
+            # creating duplicate P records that are nearly coincident.
+            if min(hypot(px - a.x, py - a.y),
+                   hypot(px - b.x, py - b.y)) < 0.006:
+                raise ValueError("Kliknięto zbyt blisko istniejącego węzła.")
+            neighbors = []
+            if shared:
+                # This checks the SOURCE geometry, not potentially altered
+                # indexes. One candidate edge per neighbor or abort.
+                for other in self._doc.objects:
+                    if (other is obj or other.code != obj.code or
+                            not other.is_closed or not other.uid):
+                        continue
+                    candidates = []
+                    already_present = any(
+                        hypot(p.x - px, p.y - py) <= .0015
+                        for p in other.points[:-1])
+                    if already_present:
+                        continue
+                    for i, (oa, ob) in enumerate(zip(
+                            other.points, other.points[1:])):
+                        if oa.point_type == 0:
+                            continue
+                        ex, ey = closest_point_on_edge(
+                            px, py, oa.x, oa.y, ob.x, ob.y)
+                        if (hypot(px - ex, py - ey) <= .0015 and
+                                hypot(ex - oa.x, ey - oa.y) >= .006 and
+                                hypot(ex - ob.x, ey - ob.y) >= .006):
+                            candidates.append(i)
+                    if len(candidates) > 1:
+                        raise ValueError(
+                            "Niejednoznaczna krawędź wspólna kodu " + obj.code)
+                    if candidates:
+                        if (self._uid_counts.get(other.uid) != 1 or
+                                self._doc.by_id.get(other.uid) is not other):
+                            raise ValueError(
+                                "Niejednoznaczny identyfikator sąsiedniego poligonu.")
+                        neighbors.append((other.uid, candidates[0]))
+            foreign_before = self._foreign_code_digest(self._doc, obj.code)
+            with self._history.begin(
+                "Dodanie węzła " + obj.code,
+                selection_before=(obj.uid,),
+            ):
+                self._doc.insert_polygon_vertex(
+                    obj.uid, segment_index, px, py)
+                for uid, edge_index in neighbors:
+                    self._doc.insert_polygon_vertex(uid, edge_index, px, py)
+                if self._foreign_code_digest(self._doc, obj.code) != foreign_before:
+                    raise ValueError(
+                        "Wykryto zmianę innego kodu. Operację w całości cofnięto.")
+            self._reindex(self._doc, self._doc.filename)
+            self._revision += 1
+            uids = [obj.uid] + [uid for uid, _ in neighbors]
+            return {
+                **self._editing_status(), "changed": True,
+                "sourceCode": obj.code, "foreignCodesProtected": True,
+                "insertedVertexIndex": segment_index + 1,
+                "insertedSameCodeVertices": len(neighbors),
+                "newVertex": {"x": px, "y": py},
+                "affected": uids,
+                "affectedObjects": [
+                    {"uid": uid, "code": obj.code} for uid in uids],
+                "object": self.details(fid),
+            }
 
     def step_history(self, direction: str, *, document_token: str,
                      revision: int) -> dict:
