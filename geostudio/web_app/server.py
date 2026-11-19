@@ -99,6 +99,19 @@ def create_app(workspace: PreviewWorkspace | None = None) -> FastAPI:
         except ValueError as exc:
             raise HTTPException(400, str(exc)) from exc
 
+    @app.post("/api/cartography/library")
+    async def import_cartography_library(request: Request):
+        filename=unquote(request.headers.get("x-library-name",""))
+        try:
+            return state.set_cartographic_library(
+                filename,await receive(request,8*1024*1024))
+        except ValueError as exc:
+            raise HTTPException(400,str(exc)) from exc
+
+    @app.get("/api/cartography/status")
+    async def cartography_status():
+        return state.cartography_status()
+
     @app.get("/api/viewport")
     async def viewport(xmin: float, ymin: float, xmax: float, ymax: float,
                        limit: int = MAX_RENDER_FEATURES):
