@@ -257,15 +257,22 @@ class PreviewWorkspace:
             raise ValueError("Nieprawidłowy obszar widoku.")
         limit = max(1, min(MAX_RENDER_FEATURES, int(limit)))
         with self._lock:
-            if self._index is None:
+            if self._index is None or self._bounds is None:
                 return {"features": [], "limited": False, "total": 0}
-            # Bbox in browser coords (east, -north), then back to native X/Y.
-            radius = max(east - west, north - south) / 2
-            candidates = self._index.nearby(-(south + north) / 2,
-                                            (west + east) / 2, radius)
+            area = self._bounds
+            if not _intersects(area, bounds):
+                return {"features": [], "limited": False, "total": 0}
+            # Never allow a huge zoom-out request to make GeometryIndex
+            # iterate over millions of empty tiles far beyond the source MAP.
+            clipped = (max(west, area[0]), max(south, area[1]),
+                       min(east, area[2]), min(north, area[3]))
+            w, s, e, n = clipped
+            radius = max(e - w, n - s) / 2
+            candidates = self._index.nearby(-(s + n) / 2,
+                                            (w + e) / 2, radius)
             ids = {id(item) for item in candidates}
             visible = [entry for entry in self._entries
-                       if id(entry.obj) in ids and _intersects(entry.bbox, bounds)]
+                       if id(entry.obj) in ids and _intersects(entry.bbox, clipped)]
             total = len(visible)
             return {
                 "features": [self._feature(entry) for entry in visible[:limit]],
