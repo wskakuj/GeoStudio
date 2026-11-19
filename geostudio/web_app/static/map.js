@@ -990,6 +990,72 @@
     }
     ctx.restore();
   }
+  function magneticMove(ids,rawDx,rawDy) {
+    // Only snap to other polygons with the SAME native object code. Foreign
+    // layers are never targets and are never moved.
+    if(!$("opt-snap")?.checked||ids.length>100)return null;
+    const group=new Set(ids);
+    const moving=state.features.filter(f=>group.has(f.id)&&f.closed);
+    const codes=new Set(moving.map(f=>f.code));
+    const fixed=state.features.filter(f=>!group.has(f.id)&&
+      f.closed&&codes.has(f.code));
+    if(!moving.length||!fixed.length)return null;
+    const threshold=12/Math.max(.000001,state.scale);
+    let best=null,movingCount=0,edgeCount=0;
+    for(const obj of moving){
+      for(const part of obj.geometry){
+        for(const vertex of part){
+          if(++movingCount>900)return best;
+          const origin=[vertex[0]+rawDy,vertex[1]-rawDx];
+          for(const target of fixed){
+            if(obj.code!==target.code)continue;
+            if(origin[0]<target.bbox[0]-threshold||
+               origin[0]>target.bbox[2]+threshold||
+               origin[1]<target.bbox[1]-threshold||
+               origin[1]>target.bbox[3]+threshold)continue;
+            for(const track of target.geometry){
+              for(let i=0;i<track.length;i++){
+                if(++edgeCount>35000)return best;
+                const a=track[i],b=track[(i+1)%track.length];
+                const u=b[0]-a[0],v=b[1]-a[1];
+                const div=u*u+v*v;
+                const t=div?Math.max(0,Math.min(1,(
+                  (origin[0]-a[0])*u+(origin[1]-a[1])*v)/div)):0;
+                for(const [candidate,kind,rank] of [
+                  [a,"węzeł",0],[div?[a[0]+u*t,a[1]+v*t]:a,"krawędź",1]]){
+                  const dist=Math.hypot(candidate[0]-origin[0],
+                                        candidate[1]-origin[1]);
+                  if(dist>threshold)continue;
+                  // Prefer a matching vertex over an edge at comparable distance.
+                  const score=dist+rank*Math.min(threshold*.18,.025);
+                  if(best===null||score<best.score){
+                    best={dx:Math.round((rawDx+origin[1]-candidate[1])*1000)/1000,
+                          dy:Math.round((rawDy+candidate[0]-origin[0])*1000)/1000,
+                          point:candidate,kind,score,dist};
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+    return best;
+  }
+  function drawMoveMagnet() {
+    const snap=state.moveGhost?.snap;
+    if(!snap)return;
+    const p=worldToScreen(snap.point[0],snap.point[1]);
+    ctx.save();
+    ctx.lineWidth=2;ctx.strokeStyle="#dc8500";
+    ctx.beginPath();ctx.arc(p.x,p.y,8,0,2*Math.PI);ctx.stroke();
+    ctx.beginPath();ctx.moveTo(p.x-12,p.y);ctx.lineTo(p.x+12,p.y);
+    ctx.moveTo(p.x,p.y-12);ctx.lineTo(p.x,p.y+12);ctx.stroke();
+    ctx.font="600 11px Segoe UI";
+    ctx.fillStyle="#c66b00";
+    ctx.fillText("MAGNES: "+snap.kind,p.x+15,p.y-12);
+    ctx.restore();
+  }
   function resizeCanvas() {
     const rect = shell.getBoundingClientRect();
     state.width = Math.max(1, rect.width); state.height = Math.max(1, rect.height);
@@ -1611,7 +1677,7 @@
     features.sort((a,b)=>(priorities[a.code]??3)-(priorities[b.code]??3));
     for(const feature of features) renderFill(feature);
     for(const feature of features) renderStroke(feature);
-    renderHighlights(features);drawMoveGhost(features);
+    renderHighlights(features);drawMoveGhost(features);drawMoveMagnet();
     renderLabels(features);drawDraftPolygon();drawVertexTool();
     $("scale-label").textContent="Podgląd: "+state.scale.toFixed(state.scale<1?3:1)+" px / jedn.";
     $("count-visible").textContent=display(features.length);
@@ -1881,8 +1947,12 @@
     const d=state.drag;
     if(Math.hypot(p.x-d.start.x,p.y-d.start.y)>4)d.moved=true;
     if(d.moveIds&&state.moveGhost){
-      state.moveGhost.dx=Math.round((d.start.y-p.y)/state.scale*1000)/1000;
-      state.moveGhost.dy=Math.round((p.x-d.start.x)/state.scale*1000)/1000;
+      let dx=Math.round((d.start.y-p.y)/state.scale*1000)/1000;
+      let dy=Math.round((p.x-d.start.x)/state.scale*1000)/1000;
+      const snap=magneticMove(d.moveIds,dx,dy);
+      if(snap){dx=snap.dx;dy=snap.dy;}
+      state.moveGhost.dx=dx;state.moveGhost.dy=dy;
+      state.moveGhost.snap=snap;
       requestDraw();
     }else if(d.node&&state.vertexDrag){
       if(d.moved){
@@ -1922,8 +1992,17 @@
     if(d.moveIds){
       const ghost=state.moveGhost;
       state.moveGhost=null;requestDraw();
-      if(d.moved&&ghost&&(ghost.dx||ghost.dy))
+      if(d.moved&&ghost&&(ghost.dx||ghost.dy)){
         openMoveEditor(d.moveIds,ghost.dx,ghost.dy,true);
+        if(ghost.snap){
+          // Mouse drag already magnetized to the exact node/edge. Avoid a
+          // second server snap changing the accepted drop location.
+          $("move-snap").checked=false;
+          invalidateMovePreview();previewMoveChanges();
+          inform("Magnes: "+ghost.snap.kind+" tego samego kodu — "+
+                 "przesunięcie dokładnie dopasowane.");
+        }
+      }
       return;
     }
     if(d.node){
