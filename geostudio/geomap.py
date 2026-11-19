@@ -553,6 +553,76 @@ class GeoMap:
         self.lines[positions[0]:positions[-1]+1]=written
         self._parse()
 
+    def ensure_native_label_records(self, uid: str,
+                                    donor_uids: list[str] | tuple[str, ...] = ()) -> int:
+        """Keep the native L 1/2/3 label descriptors after building a polygon.
+
+        GEO-MAP's label-placement records are *not* derived from :A1/:A2.
+        Merging into a newly-created polygon that has no L records otherwise
+        loses native labels. Preserve the keeper's descriptors first, then
+        copy missing records from same-code, same-A1/A2 donor components.
+        Only for 5310; other codes have different placement semantics.
+
+        Our fallback uses the complete observed GEO-MAP v8 L record syntax;
+        independent GEO-MAP visual verification is still required.
+        """
+        if uid not in self.by_id:
+            raise LookupError(uid)
+        obj=self.by_id[uid]
+        if obj.code!="5310" or not obj.is_closed or not (
+                obj.fields.get("A1") or obj.fields.get("A2")):
+            return 0
+        native_re=re.compile(rb"^L\s+([123])\s+")
+        records={}
+        for raw in self.lines[obj.start:obj.end]:
+            match=native_re.match(raw)
+            if match:
+                records[int(match.group(1))]=raw
+        missing={1,2,3}-set(records)
+        if not missing:
+            return 0
+        for source_uid in donor_uids:
+            donor=self.by_id.get(source_uid)
+            if (donor is None or donor.code!=obj.code or
+                    donor.fields.get("A1")!=obj.fields.get("A1") or
+                    donor.fields.get("A2")!=obj.fields.get("A2")):
+                continue
+            for raw in self.lines[donor.start:donor.end]:
+                match=native_re.match(raw)
+                if match:
+                    number=int(match.group(1))
+                    if number in missing:
+                        records[number]=raw
+                        missing.remove(number)
+            if not missing:
+                break
+        # Real GEO-MAP 5310 examples carry L2 (label offset), L3 and L1.
+        # Use a bounded conservative offset proportional to the main contour
+        # only when an existing record cannot be retained.
+        extent=max((max(p.x for p in obj.points)-min(p.x for p in obj.points)),
+                   (max(p.y for p in obj.points)-min(p.y for p in obj.points)))
+        offset=min(25.,max(1.,round(extent*.08,3)))
+        eol=b'\r\n' if any(x.endswith(b'\r\n') for x in
+                           self.lines[obj.start:obj.end]) else b'\n'
+        defaults={
+            2:f"L 2 0.000 {-offset:.3f} 0.0000000 1.0000000 21".encode()+eol,
+            3:b"L 3 0.000 0.000 0.0015708 1.0000000 21"+eol,
+            1:b"L 1 0.000 0.000 0.0015708 1.0000000 21"+eol,
+        }
+        records.update({key:defaults[key] for key in missing})
+        to_insert=[records[key] for key in (2,3,1) if key not in {
+            int(m.group(1)) for raw in self.lines[obj.start:obj.end]
+            if (m:=native_re.match(raw))}]
+        if not to_insert:
+            return 0
+        starts=[i for i in range(obj.start,obj.end)
+                if POINT_RE.match(self.lines[i].rstrip(b'\r\n'))]
+        if not starts:
+            raise ValueError("Nie można bezpiecznie zakotwiczyć etykiet bez P.")
+        self.lines[starts[0]:starts[0]]=to_insert
+        self._parse()
+        return len(to_insert)
+
     def replace_polygon_components(self, uid: str,
                                    rings: list[list[tuple[float,float]]]) -> None:
         """Write a true P0-separated multipart GEO-MAP object in one replace.
@@ -702,6 +772,8 @@ class GeoMap:
             self.lines[-1] += b'\r\n'
         self.lines.extend(encoded)
         self._parse()
+        if code=='5310':
+            self.ensure_native_label_records(uid)
         return uid
 
     def append_polyline(self, points: list[tuple[float, float]], code='6900',
