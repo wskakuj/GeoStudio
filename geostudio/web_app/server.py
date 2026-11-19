@@ -347,9 +347,10 @@ def create_app(workspace: PreviewWorkspace | None = None) -> FastAPI:
             raise HTTPException(400, str(exc)) from exc
 
     @app.get("/api/export/map")
-    async def download_map_copy(documentToken: str):
+    async def download_map_copy(documentToken: str, normalizePositive: bool = False):
         try:
-            filename, content = state.export_copy(documentToken)
+            filename, content = (state.export_positive_copy(documentToken)
+                if normalizePositive else state.export_copy(documentToken))
         except RuntimeError as exc:
             raise HTTPException(409, str(exc)) from exc
         except ValueError as exc:
