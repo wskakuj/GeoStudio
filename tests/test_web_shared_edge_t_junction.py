@@ -80,6 +80,24 @@ def test_shared_mode_moves_neighboring_5310_side_and_not_5220():
     assert snapshot(before, "LAND_5220") == snapshot(redone, "LAND_5220")
 
 
+def test_shared_mode_does_not_snap_back_to_old_moving_5310_edge():
+    raw = touching_map()
+    ws = PreviewWorkspace()
+    ws.load_map(raw, "test.MAP")
+    result = ws.move_vertex("f0", 1, 10.5, .8, shared=True,
+                            snap_radius=2, **auth(ws))
+    # Both B (5310) and the foreign 5220 could previously constrain this
+    # dragged vertex. Both moving borders and other codes must be ignored.
+    assert result["snap"] is None
+    assert result["affected"] == ["BUILDING_A", "BUILDING_B"]
+    output = GeoMap(ws.export_copy(auth(ws)["document_token"])[1])
+    assert (output.by_id["BUILDING_A"].points[1].x,
+            output.by_id["BUILDING_A"].points[1].y) == (10.5, .8)
+    assert (output.by_id["BUILDING_B"].points[4].x,
+            output.by_id["BUILDING_B"].points[4].y) == (10.5, .8)
+    assert snapshot(GeoMap(raw), "LAND_5220") == snapshot(output, "LAND_5220")
+
+
 def test_shared_off_does_not_insert_neighboring_5310_vertex():
     raw = touching_map()
     ws = PreviewWorkspace()
