@@ -304,19 +304,20 @@ class PreviewWorkspace:
             snapped = None
             if snap_radius > 0:
                 candidates = self._index.nearby(x, y, snap_radius)
-                # In shared-node mode, foreign codes are NOT snapping targets.
-                # Otherwise a dragged 5310 may appear glued to a 5220 even
-                # when 5220 source bytes remain unchanged.
                 if shared:
-                    candidates = [item for item in candidates if item.code == obj.code]
+                    # A linked neighbor must MOVE with this corner, so its
+                    # OLD edge must never behave as a snap target. That
+                    # otherwise pins a T-junction to the stationary edge.
+                    linked_at_start = linked_vertex_plan(
+                        self._doc, obj.uid, index,
+                        obj.points[index].x, obj.points[index].y)
+                    moving_uids = set(linked_at_start.moves)
+                    candidates = [
+                        item for item in candidates
+                        if item.code == obj.code and item.uid not in moving_uids
+                    ]
                 snapped = find_snap(x, y, candidates, snap_radius,
                                     exclude_uid=obj.uid, hide_connectors=True)
-                if (shared and snapped and
-                        hypot(snapped.x - obj.points[index].x,
-                              snapped.y - obj.points[index].y) <= .002):
-                    # Do not stick a dragged corner to its own old location
-                    # on a neighboring 5310 outline.
-                    snapped = None
                 if snapped:
                     x, y = snapped.x, snapped.y
             # Match the source precision: sending higher precision from a
