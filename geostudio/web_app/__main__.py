@@ -16,7 +16,7 @@ from .server import create_app
 
 def main(argv=None):
     parser = argparse.ArgumentParser(
-        description="GeoStudio 2.0 — nowy interfejs testowy (tylko odczyt)"
+        description="GeoStudio 2.0 — testowy interfejs GIS (edycja kopii w pamięci)"
     )
     parser.add_argument("--browser", action="store_true",
                         help="Otwórz interfejs w przeglądarce zamiast pywebview")
@@ -34,14 +34,27 @@ def main(argv=None):
     # user's map files to LAN clients.
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-    sock.bind(("127.0.0.1", 0))
+    # A stable origin makes the Chromium file picker's named directory
+    # preference survive browser restarts. Native pywebview still uses
+    # ephemeral loopback ports and its own persisted Windows file dialog.
+    preferred_port = 63871 if args.browser else 0
+    try:
+        sock.bind(("127.0.0.1", preferred_port))
+    except OSError:
+        if not args.browser:
+            sock.close()
+            raise
+        # A previous test instance might still own that port.
+        # Never connect to it by mistake: start a distinct localhost server.
+        sock.bind(("127.0.0.1", 0))
+        print("Port 63871 zajęty; przeglądarka może nie zapamiętać katalogu.", flush=True)
     sock.listen(128)
     port = sock.getsockname()[1]
     address = f"http://127.0.0.1:{port}/"
     config = uvicorn.Config(
         app=app, log_level="warning", access_log=False, server_header=False)
     server = uvicorn.Server(config)
-    print("GeoStudio 2.0 — lokalny prototyp tylko do odczytu", flush=True)
+    print("GeoStudio 2.0 — edycja w pamięci, oryginał chroniony", flush=True)
     print(address, flush=True)
 
     if args.browser:
