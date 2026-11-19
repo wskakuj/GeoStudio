@@ -324,10 +324,10 @@
     if(state.tool!=="nodes")return;
     const code=state.detail?.code||"brak aktywnego obiektu";
     const link=state.sharedNodes
-      ?"Wspólne węzły: wyłącznie kod "+code
+      ?"Wspólne węzły i przyciąganie: tylko kod "+code
       :"Wspólne węzły: wyłączone";
     $("geometry-help").textContent="P · Aktywny kod: "+code+". "+link+
-      ". Przyciąganie nie zmienia geometrii innych kodów.";
+      ". Innych kodów nie można przesunąć w trybie P.";
   }
   function setTool(tool) {
     if(state.editBusy)return;
@@ -466,6 +466,9 @@
     let bestVertex=null,bestEdge=null;
     for(const feature of state.features){
       if(feature.id===state.active)continue;
+      // Shared-node mode must never snap a 5310 corner onto 5220.
+      // Python enforces the same restriction on the entire source MAP.
+      if(state.sharedNodes&&feature.code!==state.detail?.code)continue;
       const b=feature.bbox;
       if(world.x<b[0]-radius||world.x>b[2]+radius||
          world.y<b[1]-radius||world.y>b[3]+radius)continue;
@@ -489,14 +492,81 @@
       }
     }
     const match=bestVertex||bestEdge;
+    if(match&&state.sharedNodes){
+      const active=editableVertices()[state.vertexDrag?.index];
+      if(active){
+        const original=nativeWorldPoint(active);
+        if(Math.hypot(original.x-match.point.x,
+                      original.y-match.point.y)<=.002)
+          return {point:world,kind:null,code:null};
+      }
+    }
     return match?{point:match.point,kind:match.kind,code:match.code}
                 :{point:world,kind:null,code:null};
+  }
+  function sameCodeNeighborPreview(feature, source, destination) {
+    // Display the SAME-CODE topology that will be committed to native MAP.
+    // A neighbor may not have a vertex at the shared T-junction yet; the
+    // backend inserts it at the original point before the move.
+    let touched=false;
+    const parts=feature.geometry.map(part=>{
+      let changed=false;
+      const changedPart=[];
+      for(let i=0;i<part.length;i++){
+        const node=part[i];
+        const near=Math.hypot(node[0]-source.x,node[1]-source.y)<=.0015;
+        if(near){
+          changedPart.push([destination.x,destination.y]);
+          changed=true;
+        }else{
+          if(i>0){
+            const prev=part[i-1],dx=node[0]-prev[0],dy=node[1]-prev[1];
+            const len=dx*dx+dy*dy;
+            if(len>1e-12){
+              const t=((source.x-prev[0])*dx+(source.y-prev[1])*dy)/len;
+              const px=prev[0]+Math.max(0,Math.min(1,t))*dx;
+              const py=prev[1]+Math.max(0,Math.min(1,t))*dy;
+              if(t>0&&t<1&&
+                 Math.hypot(px-source.x,py-source.y)<=.0015&&
+                 Math.hypot(px-prev[0],py-prev[1])>.005&&
+                 Math.hypot(px-node[0],py-node[1])>.005){
+                changedPart.push([destination.x,destination.y]);
+                changed=true;
+              }
+            }
+          }
+          changedPart.push(node);
+        }
+      }
+      if(changed)touched=true;
+      return changedPart;
+    });
+    return touched?parts:null;
   }
   function drawVertexTool() {
     if(state.tool!=="nodes"||!state.detail?.closed)return;
     const points=editableVertices();
     if(!points.length)return;
     const drag=state.vertexDrag;
+    if(drag&&state.sharedNodes){
+      const source=nativeWorldPoint(points[drag.index]);
+      for(const feature of state.features){
+        if(feature.id===drag.fid||feature.code!==drag.code||!isVisible(feature))
+          continue;
+        if(source.x<feature.bbox[0]-.002||source.x>feature.bbox[2]+.002||
+           source.y<feature.bbox[1]-.002||source.y>feature.bbox[3]+.002)
+          continue;
+        const preview=sameCodeNeighborPreview(feature,source,drag.preview);
+        if(preview){
+          addPath(preview);
+          ctx.strokeStyle="#05a989";
+          ctx.lineWidth=2.4;
+          ctx.setLineDash([5,3]);
+          ctx.stroke();
+          ctx.setLineDash([]);
+        }
+      }
+    }
     if(drag){
       ctx.beginPath();
       for(let i=0;i<points.length;i++){
@@ -572,7 +642,9 @@
         }
         await refreshEditedDocument(drag.fid);
         const snappedForeign=response.snap?.code&&response.snap.code!==drag.code;
+        const added=response.insertedSameCodeVertices||0;
         inform("Przesunięto "+affected.length+" obiektów kodu "+drag.code+
+          (added?" (uzupełniono "+added+" węzłów na sąsiednich bokach).":"")+
           ". "+(snappedForeign
             ?"Przyciągnięto do "+response.snap.code+" (bez zmiany jego geometrii). "
             :"")+ "Ctrl+Z cofa.");
@@ -843,6 +915,10 @@
     const candidates=[];
     for(const f of state.features){
       if(!isVisible(f))continue;
+      // While editing one code, do not silently switch the active object
+      // to an overlapping 5220 on a subsequent canvas click.
+      if(state.tool==="nodes"&&state.detail?.code&&
+         f.code!==state.detail.code)continue;
       const b=f.bbox;
       if(world.x<b[0]-radius||world.x>b[2]+radius||
          world.y<b[1]-radius||world.y>b[3]+radius)continue;
