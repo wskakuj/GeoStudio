@@ -63,6 +63,41 @@ Jeżeli problem nadal występuje, uruchom awaryjnie
 ale zapamiętywanie ostatniego katalogu działa w nim na zasadach
 obsługiwanych przez przeglądarkę.
 
+## Etap 4B — zbiorowa edycja atrybutów A1 i A2
+
+1. Otwórz MAP, użyj **Ctrl+H** i zaznacz np. wszystkie obiekty `5310`
+   albo wyłącznie `5310` z określoną wartością A2. Możesz też
+   dodać kilka elementów przez Ctrl+klik.
+2. Kliknij **Zbiorowo A1/A2** na wstążce lub **Ctrl+Shift+E**.
+3. Zaznacz checkbox przy **A1**, **A2** albo przy obu. Wprowadź nowe
+   wartości. Puste pole po zaznaczeniu checkboxa **celowo czyści
+   istniejącą wartość** — nie usuwa samego atrybutu.
+4. Kliknij **Sprawdź zmiany**. Zobaczysz liczbę zaznaczonych obiektów,
+   liczbę faktycznych zmian, kod(y), brakujące pola (pominięte),
+   wartości już zgodne oraz przykłady **przed / po**.
+5. Jeśli wszystko się zgadza, kliknij **Zastosuj zmiany**.
+   Przy 100+ obiektach pojawia się dodatkowe potwierdzenie.
+6. **Ctrl+Z** cofa **całą serię** jako jedną operację, **Ctrl+Y**
+   ją ponawia. **Pobierz kopię** eksportuje osobny MAP.
+
+Zasady bezpieczeństwa:
+
+- Co najwyżej **5 000 obiektów na jedną serię**. Dla większych zbiorów
+  zawęź wybór w Ctrl+H i podziel pracę na partie.
+- Edycja obejmuje **wyłącznie jawnie zaznaczone obiekty**.
+  Nie wolno automatycznie zmieniać wszystkich obiektów tego samego kodu.
+- Jeśli na niektórych obiektach nie istnieje pole A1 lub A2, program
+  **pomija brakujące pole**, wskazując liczbę pominiętych w podglądzie.
+  Nie dodaje nowych atrybutów do GEO-MAP.
+- Przed jakąkolwiek zmianą sprawdza format CP1250, długość, niepowtarzalne
+  ID, wersję mapy oraz identyczność zakresu i wartości względem podglądu.
+- Po modyfikacji porównuje pełne rekordy wszystkich niezaznaczonych
+  obiektów. Każdy nieoczekiwany zapis oznacza cofnięcie całej transakcji.
+- Oryginalny plik nigdy nie jest nadpisywany.
+
+**Status:** funkcja nadal weryfikowana na rzeczywistych plikach przed
+scaleniem PR do `main`.
+
 ## Etap 4A — zaznaczanie zaawansowane i ostatni folder map
 
 ### Ctrl+H — wybór wg kodu, A1 i A2
