@@ -18,7 +18,8 @@
     queryAbort: null, selectionRequest: 0, limited: false,
     firstLoad: true, inspectorCache: new Map(),
     edit: null, editBusy: false, bulkPreview: null, movePreview: null,
-    moveIds: [], moveGhost: null,
+    moveIds: [], moveGhost: null, objectPreview:null,
+    drawPoints:[], drawHover:null, copyIds:[],
     snapEnabled: true, sharedNodes: false, vertexDrag: null,
     hoverInsert: null, selectedVertex: null
   };
@@ -28,6 +29,9 @@
     {name:"Edytuj zbiorowo pola A1/A2", hint:"Ctrl+Shift+E", run:openBulkEditor},
     {name:"Dokładnie przesuń poligony X/Y", hint:"Ctrl+Shift+M", run:()=>openMoveEditor()},
     {name:"Przeciągaj wybrane poligony", hint:"M", run:()=>setTool("move")},
+    {name:"Kopiuj wybrane poligony", hint:"Ctrl+D", run:openCopyEditor},
+    {name:"Usuń wybrane obiekty", hint:"Ctrl+Delete", run:deleteObjects},
+    {name:"Rysuj nowy poligon", hint:"N", run:()=>setTool("draw")},
     {name:"Wczytaj plik stylów GeoStudio", hint:"JSON", run:()=> $("file-sidecar").click()},
     {name:"Dopasuj całą mapę", hint:"0", run:fitToMap},
     {name:"Edytuj atrybuty aktywnego obiektu", hint:"E", run:()=>toggleInspectorEdit(true)},
@@ -71,6 +75,9 @@
     $("tool-undo").disabled=state.editBusy||!state.edit.canUndo;
     $("tool-redo").disabled=state.editBusy||!state.edit.canRedo;
     $("tool-move-offset").disabled=state.editBusy||!state.meta||!selectedObjectIds().length;
+    $("tool-copy").disabled=state.editBusy||!state.meta||!selectedObjectIds().length;
+    $("tool-delete-objects").disabled=state.editBusy||!state.meta||!selectedObjectIds().length;
+    $("tool-new-polygon").disabled=state.editBusy||!state.meta;
     $("btn-export").disabled=state.editBusy||!state.meta;
     updateBulkButton();
     $("tool-undo").title=state.edit.undoLabel
@@ -247,7 +254,8 @@
     state.active = null; state.detail = null; state.pinned.clear();
     populateSelectCodes();
     state.vertexDrag=null;state.moveGhost=null;state.movePreview=null;
-    state.moveIds=[];setTool("select");
+    state.moveIds=[];state.copyIds=[];state.drawPoints=[];
+    state.drawHover=null;state.objectPreview=null;setTool("select");
     state.features = []; state.inspectorCache.clear();
     // Match the old user's map view: survey markers are opt-in.
     // Their heavy symbol density otherwise hides the parcel boundaries.
@@ -827,11 +835,13 @@
     shell.classList.toggle("panning",tool==="pan");
     shell.classList.toggle("nodes-editing",tool==="nodes");
     shell.classList.toggle("moving-objects",tool==="move");
+    shell.classList.toggle("drawing-objects",tool==="draw");
+    if(tool!=="draw"){state.drawPoints=[];state.drawHover=null;}
     $("geometry-help").hidden=tool!=="nodes"||!state.meta;
     updateGeometryHelp();
     for(const [name,id] of [
       ["select","tool-select"],["pan","tool-pan"],["nodes","tool-nodes"],
-      ["move","tool-move"],
+      ["move","tool-move"],["draw","tool-new-polygon"],
       ["select","float-select"],["pan","float-pan"],["nodes","float-nodes"],
       ["move","float-move"]
     ])$(id).classList.toggle("active",name===tool);
@@ -839,6 +849,7 @@
       inform("Tryb P: wybierz zamknięty poligon i przeciągnij jego węzeł.");
     else if(tool==="nodes")
       inform("Tryb P: przeciągnij jeden z węzłów. Ctrl+Z cofa zmianę.");
+    else if(tool==="draw")inform("Rysuj: klikaj wierzchołki, Enter lub dwuklik kończy obrys, Esc anuluje.");
     else if(tool==="move")inform("Tryb M: przeciągnij wybrany poligon lub całą grupę, potem potwierdź podgląd.");
     else inform(tool==="select"
       ?"Tryb zaznaczania obiektów (S).":"Tryb przesuwania mapy (H).");
@@ -1377,7 +1388,7 @@
     for(const feature of features) renderFill(feature);
     for(const feature of features) renderStroke(feature);
     renderHighlights(features);drawMoveGhost(features);
-    renderLabels(features);drawVertexTool();
+    renderLabels(features);drawDraftPolygon();drawVertexTool();
     $("scale-label").textContent="Podgląd: "+state.scale.toFixed(state.scale<1?3:1)+" px / jedn.";
     $("count-visible").textContent=display(features.length);
     $("render-hint").textContent=state.limited
@@ -1515,6 +1526,8 @@
     $("selection-count").textContent="Zaznaczonych: "+n;
     updateBulkButton();
     $("tool-move-offset").disabled=!state.meta||state.editBusy||n===0;
+    $("tool-copy").disabled=!state.meta||state.editBusy||n===0;
+    $("tool-delete-objects").disabled=!state.meta||state.editBusy||n===0;
   }
   async function selectFeature(fid) {
     if(state.active!==fid)state.selectedVertex=null;
