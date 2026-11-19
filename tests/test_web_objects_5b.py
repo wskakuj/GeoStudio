@@ -72,12 +72,16 @@ def test_copy_preserves_native_records_and_unique_ids_and_undo(ws):
         GeoMap(ws.export_copy(auth(ws)["document_token"])[1]).by_id)
 
 
-def test_copy_never_overlaps_same_code_even_own_original(ws):
+def test_copy_overlaps_as_reversible_overlay_without_changing_original(ws):
     original=ws.export_copy(auth(ws)["document_token"])[1]
-    with pytest.raises(ValueError,match="nakłada"):
-        ws.preview_object_operation(
-            {"action":"copy","ids":["f0"],"dx":1,"dy":0},**auth(ws))
-    assert ws.export_copy(auth(ws)["document_token"])[1]==original
+    operation={"action":"copy","ids":["f0"],"dx":1,"dy":0}
+    report=ws.preview_object_operation(operation,**auth(ws))
+    assert report["canApply"]
+    result=ws.apply_object_operation(operation,preview_key=report["previewKey"],**auth(ws))
+    assert len(result["createdUids"])==1
+    after=GeoMap(ws.export_copy(auth(ws)["document_token"])[1])
+    assert objlines(after,"A")==objlines(GeoMap(original),"A")
+    assert ws.editing_status()["hasReversibleMasks"]
 
 
 def test_delete_exact_selection_and_restore(ws):
