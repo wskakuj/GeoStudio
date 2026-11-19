@@ -505,3 +505,71 @@ nie są jeszcze obsługiwane.
    a wycięcie ponownie obliczone i pokazane na ekranie.
 6. Sprawdź dodatnią powierzchnię nowo narysowanego poligonu przy
    zwykłym „Pobierz kopię”. Nie trzeba używać przycisku „Pole +”.
+
+
+## Etap 7 — kartografia LAY/CDF/SYM, natywne etykiety i automatyczne wycięcia
+
+### Etykiety A1/A2 po scaleniu GEO-MAP 5310
+
+Klasyczny GEO-MAP używa **osobnych rekordów L 1/L 2/L 3**
+dla położenia natywnych napisów. Samo zachowanie A1/A2 nie wystarcza.
+W scaleniu jednego kodu i identycznych atrybutów GeoStudio:
+- zachowuje rekordy L z obiektu zachowanego jako :ID i pierwszy
+  punkt/referencyjną wyspę tak stabilnie, jak pozwala wynik unii;
+- jeśli brak części L, pobiera zgodne rekordy z pozostałych scalanych
+  poligonów przed ich usunięciem;
+- gdy żadna część nie posiada L, tworzy pełny zestaw w formacie
+  zaobserwowanym w oryginalnym GEO-MAP v8;
+- nowo narysowane poligony 5310 z A1/A2 również otrzymują L.
+Nie zmienia się kod, wartość A1/A2 ani niezaznaczone obiekty.
+**Do ręcznego sprawdzenia w klasycznym GEO-MAP**, szczególnie
+złożone obiekty rozłączne — rekordy L zawierają także informacje
+o zakotwiczeniu napisów i mogą wymagać dodatkowego dopasowania.
+
+### Zwykłe „Pobierz MAP” zapisuje wycięcia automatycznie
+
+Przy nakładaniu poligonów tego samego kodu i zapisaniu:
+- W **Windows** standardowe „Pobierz MAP” otwiera Zapisz jako,
+  automatycznie zapisuje wynikowe obrysy z otworami do pliku
+  \`.MAP\` i obok \`.geostudio-topology.json\` v2;
+- W **przeglądarce** przy obecnych maskach jeden plik ZIP
+  zawiera oba pliki MAP oraz JSON — rozpakuj je do tego samego
+  folderu, aby GeoStudio mogło odtworzyć oryginalne kontury.
+- Bez masek powstaje zwykły MAP z dodatnio zorientowanymi
+  prostymi obrysami; bez konieczności użycia „Pole +”.
+- Zachowano zaawansowane **„Zapisz wycięcia 6B”** (ręczne
+  wymuszenie zapisu). Dostępny jest też awaryjny eksport
+  bazowej kopii bez wycięć, gdy złożony przypadek jest
+  celowo blokowany, np. całkowite przykrycie obiektu.
+
+Natywne P 0 / otwory wymagają nadal porównania w klasycznym GEO-MAP.
+Gdy obiekt jest całkowicie zakryty, eksport 6B nie usuwa jego :ID
+ani nie próbuje niebezpiecznie zapisać pustego poligonu — zwraca błąd.
+
+### Biblioteki kartograficzne
+
+Kliknij **LAY/CDF/SYM** w sekcji Projekt.
+W oknie Windows wskaż pliki bibliotek (maksymalnie 1 plik każdego
+typu, 8 MB na plik); w trybie przeglądarki otwiera się
+systemowe okno wyboru plików.
+
+Biblioteki są wczytywane w pamięci jako **CP1250**, bez modyfikacji
+ich zawartości i bez zapisywania w źródłowym MAP. Można ładować je
+przed mapą lub już po otwarciu; status pokazuje liczbę rozpoznanych
+wpisów w LAY/CDF/SYM.
+
+- **LAY** — znane definicje linii (np. identyfikator 2.008),
+  bez dorabiania niezrozumianych stylów;
+- **CDF** — kolory wypełnienia i obrysu, grubość obrysu,
+  prosty szraf 0–8 zgodny z wcześniejszym rendererem Qt;
+- **SYM** — zweryfikowane wzory kreskowane z katalogu 400x
+  oraz linie/okręgi prostych symboli punktowych.
+- Oryginalne kolory z MAP, klasoużytki leśne, wyjątek 5230
+  z A1=dr/droga oraz ręczne jawne style nadal zachowują
+  pierwszeństwo zgodne z wcześniejszym modelem GeoStudio.
+
+**Zakres celowo częściowy:** SYM ma też złożone komendy O/T,
+łuki i makra; w tym etapie nie udajemy, że renderujemy
+niezweryfikowane instrukcje. Dokładna zgodność z klasycznym GEO-MAP
+wymaga dostarczenia tych samych bibliotek używanych przez program,
+testów wielu kodów oraz oceny wydruków w tej samej skali.
