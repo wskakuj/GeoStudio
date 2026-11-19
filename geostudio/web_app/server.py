@@ -120,8 +120,8 @@ def create_app(workspace: PreviewWorkspace | None = None) -> FastAPI:
     async def edit_status():
         return state.editing_status()
 
-    async def edit_payload(request: Request) -> dict:
-        body = await receive(request, 8 * 1024)
+    async def edit_payload(request: Request, limit: int = 8 * 1024) -> dict:
+        body = await receive(request, limit)
         try:
             payload = __import__("json").loads(body)
         except (ValueError, UnicodeDecodeError) as exc:
@@ -129,6 +129,39 @@ def create_app(workspace: PreviewWorkspace | None = None) -> FastAPI:
         if not isinstance(payload, dict):
             raise HTTPException(400, "Oczekiwano obiektu JSON.")
         return payload
+
+    @app.post("/api/bulk/preview")
+    async def bulk_preview(request: Request):
+        payload = await edit_payload(request, 256 * 1024)
+        try:
+            return state.preview_bulk_fields(
+                payload.get("ids"), payload.get("changes"),
+                document_token=payload.get("documentToken"),
+                revision=payload.get("revision"),
+            )
+        except LookupError as exc:
+            raise HTTPException(404, str(exc)) from exc
+        except RuntimeError as exc:
+            raise HTTPException(409, str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from exc
+
+    @app.post("/api/bulk/apply")
+    async def bulk_apply(request: Request):
+        payload = await edit_payload(request, 256 * 1024)
+        try:
+            return state.apply_bulk_fields(
+                payload.get("ids"), payload.get("changes"),
+                preview_key=payload.get("previewKey"),
+                document_token=payload.get("documentToken"),
+                revision=payload.get("revision"),
+            )
+        except LookupError as exc:
+            raise HTTPException(404, str(exc)) from exc
+        except RuntimeError as exc:
+            raise HTTPException(409, str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from exc
 
     @app.patch("/api/object/{fid}/fields")
     async def update_object_fields(fid: str, request: Request):

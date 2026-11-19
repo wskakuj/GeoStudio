@@ -30,6 +30,7 @@ MAX_MAP_BYTES = 80 * 1024 * 1024
 MAX_STYLES_BYTES = 2 * 1024 * 1024
 MAX_RENDER_FEATURES = 25000
 MAX_SELECTED_FEATURES = 50000
+MAX_BULK_EDIT_OBJECTS = 5000
 HEX = re.compile(r"^#[0-9A-Fa-f]{6}$")
 STYLE_FORMAT = "geostudio-visual-v1"
 CODES = {
@@ -110,6 +111,7 @@ class PreviewWorkspace:
         self._history: History | None = None
         self._revision = 0
         self._document_token = ""
+        self._bulk_preview_key = ""
 
     def load_map(self, content: bytes, filename: str) -> dict:
         if not content or len(content) > MAX_MAP_BYTES:
@@ -126,6 +128,7 @@ class PreviewWorkspace:
         with self._lock:
             self._revision = 0
             self._document_token = token_hex(16)
+            self._bulk_preview_key = ""
             self._reindex(doc, name)
             self._styles = {}
             self._label_positions = {}
@@ -292,6 +295,154 @@ class PreviewWorkspace:
             self._reindex(self._doc, self._doc.filename)
             self._revision += 1
             return {**self._editing_status(), "changed": True, "object": self.details(fid)}
+
+    def _bulk_edit_plan(self, ids: list[str], changes: dict, *,
+                        document_token: str, revision: int) -> dict:
+        """Preflight the entire selection before mutating any GEO-MAP bytes."""
+        if self._doc is None or self._history is None:
+            raise ValueError("Najpierw otwórz mapę GEO-MAP.")
+        if (document_token != self._document_token or
+                type(revision) is not int or revision != self._revision):
+            raise RuntimeError("Mapa lub jej wersja uległy zmianie. Ponów podgląd.")
+        if (not isinstance(ids, list) or not ids or
+                len(ids) > MAX_BULK_EDIT_OBJECTS or
+                any(not isinstance(fid, str) or len(fid) > 20 for fid in ids) or
+                len(set(ids)) != len(ids)):
+            raise ValueError(
+                "Zaznacz od 1 do 5 000 unikalnych obiektów do edycji.")
+        if (not isinstance(changes, dict) or not changes or
+                set(changes) - {"A1", "A2"}):
+            raise ValueError("Edycja zbiorowa obsługuje tylko wybrane pola A1/A2.")
+        for field, value in changes.items():
+            if (not isinstance(value, str) or len(value) > 512 or
+                    any(ch in value for ch in "\r\n]")):
+                raise ValueError(f"Nieprawidłowa nowa wartość pola {field}.")
+            try:
+                encoded = value.encode("cp1250", errors="strict")
+            except UnicodeEncodeError as exc:
+                raise ValueError(
+                    f"Pole {field} zawiera znak spoza kodowania CP1250.") from exc
+            if len(encoded) > 512:
+                raise ValueError(f"Wartość pola {field} przekracza 512 bajtów.")
+
+        edits: dict[tuple[str, str], str] = {}
+        skipped: Counter = Counter()
+        unchanged: Counter = Counter()
+        code_counts: Counter = Counter()
+        samples: list[dict] = []
+        unique_ids: set[str] = set()
+        for fid in ids:
+            entry = self._lookup.get(fid)
+            if entry is None:
+                raise LookupError("Zaznaczenie zawiera nieistniejący obiekt.")
+            obj = entry.obj
+            if (not obj.uid or self._uid_counts.get(obj.uid) != 1 or
+                    self._doc.by_id.get(obj.uid) is not obj or
+                    obj.uid in unique_ids):
+                raise ValueError(
+                    "Zaznaczenie zawiera obiekt bez jednoznacznego :ID. "
+                    "Przerwano całą operację.")
+            unique_ids.add(obj.uid)
+            field_changes = {}
+            for field, value in changes.items():
+                if field not in obj.fields:
+                    skipped[field] += 1
+                    continue
+                old = obj.fields[field]
+                if old == value:
+                    unchanged[field] += 1
+                    continue
+                edits[(obj.uid, field)] = value
+                field_changes[field] = {"before": old, "after": value}
+            if field_changes:
+                code_counts[obj.code] += 1
+                if len(samples) < 12:
+                    samples.append({
+                        "id": fid, "uid": obj.uid, "code": obj.code,
+                        "fields": field_changes,
+                    })
+
+        # Bind the preview to the exact selected objects, requested values,
+        # document token and version; a stale browser cannot apply another plan.
+        payload = {"ids": sorted(ids), "changes": changes,
+                   "documentToken": document_token, "revision": revision}
+        preview_key = sha256(json.dumps(
+            payload, ensure_ascii=False, sort_keys=True,
+            separators=(",", ":")).encode("utf-8")).hexdigest()
+        return {
+            "edits": edits, "selectedIds": list(ids),
+            "report": {
+                "selected": len(ids), "changedObjects": sum(code_counts.values()),
+                "changedFields": len(edits), "missingFields": dict(skipped),
+                "alreadyEqualFields": dict(unchanged),
+                "codes": dict(sorted(code_counts.items())),
+                "samples": samples, "previewKey": preview_key,
+                "canApply": bool(edits),
+                **self._editing_status(),
+            },
+        }
+
+    def preview_bulk_fields(self, ids: list[str], changes: dict, *,
+                            document_token: str, revision: int) -> dict:
+        with self._lock:
+            report = self._bulk_edit_plan(
+                ids, changes, document_token=document_token,
+                revision=revision)["report"]
+            # A calculated key alone does not authorize a write: the server
+            # must have really issued this preview for the current map.
+            self._bulk_preview_key = report["previewKey"]
+            return report
+
+    def apply_bulk_fields(self, ids: list[str], changes: dict, *,
+                          document_token: str, revision: int,
+                          preview_key: str) -> dict:
+        with self._lock:
+            plan = self._bulk_edit_plan(
+                ids, changes, document_token=document_token,
+                revision=revision)
+            report = plan["report"]
+            if (not isinstance(preview_key, str) or
+                    preview_key != report["previewKey"] or
+                    preview_key != self._bulk_preview_key):
+                raise RuntimeError(
+                    "Podgląd zmian wygasł. Sprawdź zaznaczenie i wykonaj podgląd ponownie.")
+            if not report["canApply"]:
+                self._bulk_preview_key = ""
+                return {**self._editing_status(), "changed": False,
+                        "changedObjects": 0, "changedFields": 0}
+            edited_uids = {uid for uid, _ in plan["edits"]}
+            untouched = sha256()
+            # Fingerprint every NON-TARGET object, including same-code peers.
+            # If any such record changes, History rolls back the transaction.
+            for obj in self._doc.objects:
+                if obj.uid not in edited_uids:
+                    for line in self._doc.lines[obj.start:obj.end]:
+                        untouched.update(line)
+            before = untouched.digest()
+            with self._history.begin(
+                "Zbiorowa edycja A1/A2 ("+str(report["changedObjects"])+")",
+                selection_before=tuple(edited_uids),
+            ):
+                self._doc.bulk_update_fields(plan["edits"])
+                after_hash = sha256()
+                for obj in self._doc.objects:
+                    if obj.uid not in edited_uids:
+                        for line in self._doc.lines[obj.start:obj.end]:
+                            after_hash.update(line)
+                if after_hash.digest() != before:
+                    raise ValueError(
+                        "Wykryto zmianę poza zaznaczeniem. Cofnięto całą edycję.")
+            self._reindex(self._doc, self._doc.filename)
+            self._revision += 1
+            self._bulk_preview_key = ""
+            return {
+                **self._editing_status(), "changed": True,
+                "selected": report["selected"],
+                "changedObjects": report["changedObjects"],
+                "changedFields": report["changedFields"],
+                "missingFields": report["missingFields"],
+                "affected": plan["selectedIds"],
+            }
 
     @staticmethod
     def _foreign_code_digest(doc: GeoMap, edited_code: str) -> bytes:

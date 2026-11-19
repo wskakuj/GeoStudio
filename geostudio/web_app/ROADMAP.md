@@ -15,19 +15,22 @@ Aktualizacja: 19 listopada 2026. Dokument będziemy uzupełniać po każdym zwer
 - [x] Delete usuwa węzeł, z kontrolą liczby punktów i domknięcia.
 - [x] Cofnij/Ponów oraz eksport nowej kopii MAP z przeliczonym CHK.
 - [x] Testy automatyczne wraz z kontrolą niezmienności rekordów innych kodów.
+- [x] Ctrl+H: wybór wg kodu oraz A1/A2, operacje na zaznaczeniu (potwierdzone).
+- [x] Priorytet wyboru 5310, aktywne etykiety A1/A2 (wstępne).
+- [x] Zapamiętywanie ostatniego folderu MAP i awaryjne „Z dysku” (potwierdzone).
+- [x] Zabezpieczenie pywebview przed rekurencją natywnego WebView2 (testowane).
 
-## W tym PR — wymaga jeszcze próby na rzeczywistej mapie
+## W tym PR — etap 4B, wymaga próby użytkownika
 
-- [ ] **Ctrl+H**: zaznaczanie wszystkich obiektów według kodu oraz A1/A2.
-- [ ] Dopasowanie dokładne / zawiera, zastąp / dodaj / odejmij.
-- [ ] Ctrl/Shift+klik dla wielu obiektów, szybciej wybierany kod 5310.
-- [ ] Podświetlanie A1/A2 aktywnego obiektu.
-- [ ] Pamięć ostatniego folderu w natywnym oknie Windows.
-- [ ] Stabilny port w trybie --browser i systemowy picker z pamięcią katalogu (z ograniczeniami przeglądarki).
+- [ ] **Zbiorowo A1/A2**: jawne checkboxy dla pól, obsługa pustych wartości.
+- [ ] Podgląd: liczby zmian, pola niedostępne, przykłady przed/po.
+- [ ] Zmiany w wybranych (a nie wszystkich tego samego kodu), limit 5 000.
+- [ ] Jedna transakcja Cofnij/Ponów, ochrona niezmienionych rekordów MAP.
+- [ ] Zapis bez nadpisywania źródła, walidacja CP1250 i blokada starej rewizji.
 
 ## Pozostałe duże obszary
 
-1. **Edycja zbiorowa**: aktualizacja A1/A2 u wielu obiektów, transakcja dla wielu rekordów i kontrola zakresu.
+1. **Dopracowanie zaznaczania**: wybór według geometrii, wykluczanie nakładających się obiektów, testy bardzo dużych map.
 2. **Nowe obiekty**: tworzenie polygonów i linii, usuwanie/kopiowanie obiektów, przesuwanie całych geometrii.
 3. **Zaawansowane GIS**: podział i łączenie poligonów, edycja polilinii, pomiary, snapping i kontrola topologii.
 4. **Pełna kartografia**: biblioteki LAY / CDF / SYM, etykiety, wzory, symbole; możliwie wierny klasyczny renderer.
@@ -37,8 +40,8 @@ Aktualizacja: 19 listopada 2026. Dokument będziemy uzupełniać po każdym zwer
 
 To przybliżony **zakres funkcji**, nie wskaźnik jakości/testów:
 
-- Użyteczny edytor do codziennej pracy: **około 70%** po potwierdzeniu tego PR.
-- Całkowity zamiennik klasycznego GeoStudio: **około 45%**.
+- Użyteczny edytor do codziennej pracy: **około 75%** po potwierdzeniu etapu 4B.
+- Całkowity zamiennik klasycznego GeoStudio: **około 48%** po potwierdzeniu etapu 4B.
 
 Najwięcej pozostałej pracy to integracja wielu operacji na obiektach oraz pełna zgodność renderowania i formatów.
 Do pracy produkcyjnej używaj zweryfikowanej aplikacji klasycznej lub dokładnie sprawdzonej wyeksportowanej kopii MAP.

@@ -14,7 +14,7 @@
     <header class="topbar">
       <div class="identity">
         <div class="mark" aria-hidden="true"><span></span><span></span><span></span></div>
-        <div><strong>GeoStudio</strong><span class="brand-version">2.0 <em>MAP · OKNO PLIKÓW — TEST</em></span></div>
+        <div><strong>GeoStudio</strong><span class="brand-version">2.0 <em>ETAP 4B · A1/A2 — TEST</em></span></div>
       </div>
       <div class="header-center"><span class="top-kicker">OBSZAR ROBOCZY</span>
         <span id="document-title">Nowy projekt</span>
@@ -48,6 +48,7 @@
           <button class="tool-button" id="tool-pan"><span class="tool-glyph">✥</span>Przesuń <small>H</small></button>
           <button class="tool-button" id="tool-nodes" title="Edycja węzłów poligonu (P)"><span class="tool-glyph">⬡</span>Węzły <small>P</small></button>
           <button class="tool-button" id="tool-advanced-select" title="Zaznacz według kodu i atrybutów (Ctrl+H)"><span class="tool-glyph">⌕</span>Filtruj <small>Ctrl+H</small></button>
+          <button class="tool-button" id="tool-bulk-edit" disabled title="Zmień A1/A2 wielu zaznaczonych obiektów"><span class="tool-glyph">✎</span>Zbiorowo <small>A1/A2</small></button>
           <button class="tool-button" id="tool-delete-node" disabled title="Zaznacz węzeł i usuń go (Delete)"><span class="tool-glyph">⊖</span>Usuń węzeł <small>Del</small></button>
           <button class="tool-button" id="tool-fit"><span class="tool-glyph">⛶</span>Dopasuj</button>
         </div>
@@ -210,6 +211,37 @@
       <div class="select-actions">
         <button type="button" id="select-clear" class="button ghost">Wyczyść zaznaczenie</button>
         <button type="submit" id="select-apply" class="button primary">Zaznacz obiekty</button>
+      </div>
+    </form>
+  </dialog>
+  <dialog id="bulk-dialog" class="advanced-select-dialog bulk-dialog">
+    <form id="bulk-form" autocomplete="off">
+      <div class="select-head">
+        <div>
+          <div class="eyebrow">ETAP 4B · BEZPIECZNA EDYCJA ZBIOROWA</div>
+          <h2>Zmień atrybuty A1 / A2</h2>
+        </div>
+        <button type="button" id="bulk-close" class="select-close" aria-label="Zamknij">×</button>
+      </div>
+      <div class="select-content">
+        <p class="select-explain" id="bulk-selection-description">Wybierz najpierw obiekty na mapie lub przez Ctrl+H.</p>
+        <label class="bulk-checkbox-line" for="bulk-enable-a1">
+          <input type="checkbox" id="bulk-enable-a1">
+          <span><strong>Zmień pole A1</strong><small>Tylko jeśli pole już istnieje</small></span>
+        </label>
+        <input type="text" id="bulk-value-a1" maxlength="512" disabled placeholder="Nowa wartość A1">
+        <label class="bulk-checkbox-line" for="bulk-enable-a2">
+          <input type="checkbox" id="bulk-enable-a2">
+          <span><strong>Zmień pole A2</strong><small>Tylko jeśli pole już istnieje</small></span>
+        </label>
+        <input type="text" id="bulk-value-a2" maxlength="512" disabled placeholder="Nowa wartość A2">
+        <p class="select-explain">Zaznacz wyłącznie pola, które chcesz zmienić. Puste pole jest dozwolone i oznacza wyczyszczenie istniejącej wartości. Pozostałe pola i geometria zostają nietknięte.</p>
+        <p class="select-preview" id="bulk-summary" role="status">Najpierw kliknij „Sprawdź zmiany”.</p>
+        <div class="bulk-samples" id="bulk-samples" hidden></div>
+      </div>
+      <div class="select-actions">
+        <button type="button" id="bulk-preview" class="button ghost">Sprawdź zmiany</button>
+        <button type="submit" id="bulk-apply" class="button primary" disabled>Zastosuj zmiany</button>
       </div>
     </form>
   </dialog>
