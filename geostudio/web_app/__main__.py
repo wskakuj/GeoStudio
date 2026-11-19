@@ -95,7 +95,10 @@ def main(argv=None):
             address, width=1480, height=940, min_size=(960, 640),
             background_color="#101A2B", js_api=native_picker,
         )
-        native_picker.window = window
+        # Never expose Window as a public js_api attribute: pywebview
+        # recursively walks public members and would inspect WinForms COM
+        # objects until maximum recursion depth / UI-thread violations.
+        native_picker._window = window
         webview.start()
     finally:
         server.should_exit = True
