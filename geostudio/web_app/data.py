@@ -111,6 +111,7 @@ class PreviewWorkspace:
         self._history: History | None = None
         self._revision = 0
         self._document_token = ""
+        self._bulk_preview_key = ""
 
     def load_map(self, content: bytes, filename: str) -> dict:
         if not content or len(content) > MAX_MAP_BYTES:
@@ -127,6 +128,7 @@ class PreviewWorkspace:
         with self._lock:
             self._revision = 0
             self._document_token = token_hex(16)
+            self._bulk_preview_key = ""
             self._reindex(doc, name)
             self._styles = {}
             self._label_positions = {}
@@ -383,9 +385,13 @@ class PreviewWorkspace:
     def preview_bulk_fields(self, ids: list[str], changes: dict, *,
                             document_token: str, revision: int) -> dict:
         with self._lock:
-            return self._bulk_edit_plan(
+            report = self._bulk_edit_plan(
                 ids, changes, document_token=document_token,
                 revision=revision)["report"]
+            # A calculated key alone does not authorize a write: the server
+            # must have really issued this preview for the current map.
+            self._bulk_preview_key = report["previewKey"]
+            return report
 
     def apply_bulk_fields(self, ids: list[str], changes: dict, *,
                           document_token: str, revision: int,
@@ -396,10 +402,12 @@ class PreviewWorkspace:
                 revision=revision)
             report = plan["report"]
             if (not isinstance(preview_key, str) or
-                    preview_key != report["previewKey"]):
+                    preview_key != report["previewKey"] or
+                    preview_key != self._bulk_preview_key):
                 raise RuntimeError(
                     "Podgląd zmian wygasł. Sprawdź zaznaczenie i wykonaj podgląd ponownie.")
             if not report["canApply"]:
+                self._bulk_preview_key = ""
                 return {**self._editing_status(), "changed": False,
                         "changedObjects": 0, "changedFields": 0}
             edited_uids = {uid for uid, _ in plan["edits"]}
@@ -426,6 +434,7 @@ class PreviewWorkspace:
                         "Wykryto zmianę poza zaznaczeniem. Cofnięto całą edycję.")
             self._reindex(self._doc, self._doc.filename)
             self._revision += 1
+            self._bulk_preview_key = ""
             return {
                 **self._editing_status(), "changed": True,
                 "selected": report["selected"],
