@@ -18,11 +18,12 @@
       </div>
       <div class="header-center"><span class="top-kicker">OBSZAR ROBOCZY</span>
         <span id="document-title">Nowy projekt</span>
-        <span id="dirty-marker" class="document-meta">Tylko podgląd</span>
+        <span id="dirty-marker" class="document-meta">Oryginał chroniony</span>
       </div>
       <div class="header-actions">
         <button id="btn-command" class="top-icon" title="Polecenia (Ctrl+K)" aria-label="Wyszukaj polecenie">⌕ <kbd>⌘ K</kbd></button>
         <button id="btn-theme" class="top-icon" title="Przełącz jasny/ciemny wygląd">◐</button>
+        <button id="btn-export" class="button export" disabled title="Pobierz oddzielny plik MAP">↓ Pobierz kopię</button>
         <button id="btn-open" class="button primary"><span class="button-icon">↗</span> Otwórz MAP</button>
       </div>
     </header>
@@ -33,6 +34,8 @@
         <div class="tool-row">
           <button class="tool-button" id="tool-open"><span class="tool-glyph">▱</span>Otwórz</button>
           <button class="tool-button" id="tool-sidecar"><span class="tool-glyph">◈</span>Style JSON</button>
+          <button class="tool-button" id="tool-undo" disabled title="Cofnij (Ctrl+Z)"><span class="tool-glyph">↶</span>Cofnij</button>
+          <button class="tool-button" id="tool-redo" disabled title="Ponów (Ctrl+Y)"><span class="tool-glyph">↷</span>Ponów</button>
         </div>
       </div>
       <span class="tool-divider"></span>
@@ -53,7 +56,7 @@
         </div>
       </div>
       <div class="toolbar-fill"></div>
-      <div class="safe-state"><span class="state-dot"></span> BEZPIECZNY PODGLĄD · EDYCJA WYŁĄCZONA</div>
+      <div class="safe-state"><span class="state-dot"></span> ORYGINAŁ CHRONIONY · EDYCJA W PAMIĘCI</div>
     </div>
 
     <div class="workspace">
@@ -114,7 +117,7 @@
       <aside class="right-panel side-panel">
         <div class="panel-head">
           <div><div class="eyebrow">AKTYWNY OBIEKT</div><h2>Inspektor</h2></div>
-          <span class="read-only-pill">ODCZYT</span>
+          <span class="read-only-pill">KOPIA ROBOCZA</span>
         </div>
         <div id="inspector-empty" class="inspector-empty">
           <div class="inspector-symbol">⌖</div>
@@ -126,10 +129,23 @@
             <span id="inspector-code" class="code-pill">—</span>
             <div><strong id="inspector-layer">—</strong><span id="inspector-uid">—</span></div>
           </div>
-          <div class="inspector-section"><h3>Atrybuty opisowe</h3><div id="inspector-fields" class="inspector-fields"></div></div>
+          <div class="inspector-section">
+            <div class="inspector-section-heading"><h3>Atrybuty opisowe</h3><button type="button" id="inspector-edit-toggle" class="text-edit-button">✎ Edytuj</button></div>
+            <div id="inspector-fields" class="inspector-fields"></div>
+            <div id="inspector-edit" class="inspector-edit" hidden>
+              <p>Zmiany dotyczą tylko kopii w pamięci. Dostępne są istniejące pola obiektu.</p>
+              <form id="inspector-edit-form" autocomplete="off">
+                <div id="inspector-edit-fields" class="inspector-edit-fields"></div>
+                <div class="inspector-edit-actions">
+                  <button class="button primary" type="submit" id="inspector-apply">Zastosuj</button>
+                  <button class="button ghost" type="button" id="inspector-cancel">Anuluj</button>
+                </div>
+              </form>
+            </div>
+          </div>
           <div class="inspector-section"><h3>Geometria</h3><div id="inspector-geometry" class="inspector-fields"></div></div>
         </div>
-        <div class="inspector-bottom"><div class="lock-symbol">⌁</div><span>W tej wersji wszystkie dane są chronione przed edycją.</span></div>
+        <div class="inspector-bottom"><div class="lock-symbol">⌁</div><span>Plik źródłowy pozostaje nienaruszony. Po edycji pobierz osobną kopię MAP.</span></div>
       </aside>
     </div>
 

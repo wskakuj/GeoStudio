@@ -23,6 +23,32 @@ Gdy pywebview/WebView2 nie wyświetla prawidłowo okna, użyj:
 To uruchomi tę samą lokalną aplikację w domyślnej przeglądarce.
 Wymaga Python 3.11+, lokalnego Edge WebView2 dla natywnego okna.
 
+## Etap 3A — pierwsze funkcje edycji (testowe)
+
+W GeoStudio 2.0 możesz teraz zaznaczyć obiekt na mapie i otworzyć
+**Inspektor → Edytuj** (skrót **E**). Edytowane są wyłącznie **istniejące**
+pola A1–A6, TX, MP, KR z identyfikatorem GEO-MAP `:ID`:
+nie są dodawane nowe pola, nie można zmienić kodu obiektu ani geometrii.
+Wartości muszą dać się zapisać w kodowaniu CP1250; odrzucane są
+niedozwolone znaki i zbyt długie dane.
+
+- **Ctrl+Z / Cofnij** i **Ctrl+Y / Ponów** korzystają z dotychczasowego
+  silnika historii GeoStudio. Kilka pól obiektu zapisanych naraz to
+  **jedna operacja cofania**.
+- **Pobierz kopię** generuje nowy plik
+  `Nazwa_GeoStudio2_kopia.MAP` z poprawionymi `N` i `CHK`,
+  ale **nie zapisuje nic na dysku po stronie serwera**.
+  Przeglądarka pyta o miejsce lub używa katalogu Pobrane.
+- Oryginał MAP jest nietknięty; wprowadzone zmiany istnieją tylko
+  w pamięci aż do pobrania kopii. Zamykanie lub otwieranie innej mapy
+  pokazuje ostrzeżenie o niepobranej kopii.
+- Nie ma jeszcze edycji węzłów / geometrii ani zapisu oryginału.
+  Nie używaj tego prototypu jako jedynego źródła dokumentacji.
+
+**Ważne:** jeśli wczytasz osobny plik stylów `*.geostudio.json`,
+pobierany MAP nie zawiera tego sidecara. Stylów nadal należy używać
+osobno, wraz z tą samą wersją mapy.
+
 ## Co jest naprawdę zaimplementowane
 
 - Otwieranie prawdziwego .MAP przez dotychczasowy parser **GeoMap**.
@@ -37,7 +63,8 @@ Wymaga Python 3.11+, lokalnego Edge WebView2 dla natywnego okna.
 - Wszystko działa bez zewnętrznych CDN i bez wysyłania danych mapy
   do chmury. FastAPI nasłuchuje wyłącznie na losowym porcie
   **127.0.0.1**, z lokalnym tokenem żądania.
-- Żadna z tych operacji **nie zapisuje ani nie zmienia** pliku .MAP.
+- Otwarty źródłowy plik `.MAP` nigdy nie jest nadpisywany;
+  nowe pola atrybutów modyfikujemy tylko w kopii w pamięci.
 
 ## Jak porównać nową i starą mapę?
 
@@ -64,7 +91,7 @@ podłączenia tych samych bibliotek i testów na tej samej wersji mapy.
 
 ## Celowo NIEZAIMPLEMENTOWANE w tym etapie
 
-- Edycja węzłów, topologia, rysowanie poligonów, zapisywanie MAP,
+- Edycja węzłów, topologia, rysowanie poligonów, zapisywanie oryginału MAP,
   import WMS, eksport wielkoformatowy, pełne renderowanie symboli
   .SYM/.LAY/.CDF, raster i georeferencja.
 - PixiJS/WebGL: Canvas 2D jest pierwszym rendererem do sprawdzenia

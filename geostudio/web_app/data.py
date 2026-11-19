@@ -13,12 +13,14 @@ from dataclasses import dataclass
 from math import isfinite
 from pathlib import Path
 from threading import RLock
+from secrets import token_hex
 import json
 import re
 
 from geostudio.geomap import GeoMap
 from geostudio.forest_classes import forest_class_value
 from geostudio.geometry_index import GeometryIndex
+from geostudio.history import History
 from geostudio.library_render import native_fill_color
 
 MAX_MAP_BYTES = 80 * 1024 * 1024
@@ -63,8 +65,31 @@ class _Entry:
     bbox: tuple[float, float, float, float]  # east_min, south_min, east_max, south_max
 
 
+class _WebHistoryTarget:
+    """Qt-free adapter for the original GEO-MAP transaction engine."""
+
+    def __init__(self, workspace):
+        self.workspace = workspace
+
+    @property
+    def lines(self):
+        return self.workspace._doc.lines
+
+    @property
+    def visual_styles(self):
+        return self.workspace._styles
+
+    @property
+    def label_positions(self):
+        return self.workspace._label_positions
+
+    def reparse(self):
+        self.workspace._doc._parse()
+        self.workspace._reindex(self.workspace._doc, self.workspace._doc.filename)
+
+
 class PreviewWorkspace:
-    """Exactly one immutable uploaded source map plus optional visual sidecar."""
+    """One original MAP with a disposable working copy held exclusively in RAM."""
 
     def __init__(self):
         self._lock = RLock()
@@ -77,6 +102,9 @@ class PreviewWorkspace:
         self._label_positions: dict[str, dict] = {}
         self._bounds: list[float] | None = None
         self._meta: dict = {"loaded": False}
+        self._history: History | None = None
+        self._revision = 0
+        self._document_token = ""
 
     def load_map(self, content: bytes, filename: str) -> dict:
         if not content or len(content) > MAX_MAP_BYTES:
@@ -90,6 +118,17 @@ class PreviewWorkspace:
         if not any(obj.points for obj in doc.objects):
             raise ValueError("Plik nie zawiera geometrii do wyświetlenia.")
 
+        with self._lock:
+            self._revision = 0
+            self._document_token = token_hex(16)
+            self._reindex(doc, name)
+            self._styles = {}
+            self._label_positions = {}
+            self._history = History(_WebHistoryTarget(self))
+            return self.metadata()
+
+    def _reindex(self, doc: GeoMap, name: str) -> dict:
+        """Refresh object references after an attribute edit or history action."""
         entries: list[_Entry] = []
         layer_counts = Counter()
         codes = Counter()
@@ -125,8 +164,9 @@ class PreviewWorkspace:
             "layers": [{"name": key, "count": n} for key, n in sorted(layer_counts.items())],
             "codes": dict(codes),
             "forestClasses": dict(sorted(forest.items())),
-            "readOnly": True,
-            "renderer": "HTML Canvas 2D — preview",
+            "readOnly": True,  # uploaded source is never changed on disk
+            "editingEnabled": True,
+            "renderer": "HTML Canvas 2D — editable in-memory copy",
         }
         with self._lock:
             self._doc = doc
@@ -134,15 +174,99 @@ class PreviewWorkspace:
             self._lookup = {entry.fid: entry for entry in entries}
             self._object_id = {id(entry.obj): entry.fid for entry in entries}
             self._index = index
-            self._styles = {}
-            self._label_positions = {}
             self._bounds = extent
             self._meta = metadata
         return dict(metadata)
 
+    def _editing_status(self) -> dict:
+        history = self._history
+        return {
+            "dirty": bool(history and history.is_dirty),
+            "canUndo": bool(history and history.can_undo),
+            "canRedo": bool(history and history.can_redo),
+            "undoLabel": history.next_undo_label if history else "",
+            "redoLabel": history.next_redo_label if history else "",
+            "revision": self._revision,
+            "documentToken": self._document_token,
+        }
+
+    def editing_status(self) -> dict:
+        with self._lock:
+            return self._editing_status()
+
+    def edit_fields(self, fid: str, changes: dict, *,
+                    document_token: str, revision: int) -> dict:
+        """Edit existing fields only. Preserve all unrelated MAP source bytes."""
+        with self._lock:
+            if self._doc is None or self._history is None:
+                raise ValueError("Najpierw otwórz plik MAP.")
+            if (document_token != self._document_token or
+                    type(revision) is not int or revision != self._revision):
+                raise RuntimeError("Mapa została zmieniona. Odśwież wybrany obiekt.")
+            entry = self._lookup.get(fid)
+            if entry is None or not entry.obj.uid:
+                raise LookupError("Nie znaleziono edytowalnego obiektu z ID.")
+            if (not isinstance(changes, dict) or not changes or
+                    len(changes) > len(LABEL_FIELDS)):
+                raise ValueError("Podaj zmiany w znanych atrybutach.")
+            edits = {}
+            for field, value in changes.items():
+                if field not in LABEL_FIELDS or field not in entry.obj.fields:
+                    raise ValueError(f"Pole {field} nie istnieje lub nie jest edytowalne.")
+                if (not isinstance(value, str) or len(value) > 512 or
+                        any(ch in value for ch in "\r\n]")):
+                    raise ValueError(f"Nieprawidłowa wartość pola {field}.")
+                try:
+                    if len(value.encode("cp1250", errors="strict")) > 512:
+                        raise ValueError("Zbyt długa wartość atrybutu.")
+                except UnicodeEncodeError as exc:
+                    raise ValueError(
+                        "Ten znak nie jest obsługiwany przez kodowanie GEO-MAP CP1250."
+                    ) from exc
+                if entry.obj.fields[field] != value:
+                    edits[(entry.obj.uid, field)] = value
+            if not edits:
+                return {**self._editing_status(), "changed": False, "object": self.details(fid)}
+            with self._history.begin(
+                "Atrybuty obiektu " + entry.obj.code,
+                selection_before=(entry.obj.uid,),
+            ):
+                self._doc.bulk_update_fields(edits)
+            self._reindex(self._doc, self._doc.filename)
+            self._revision += 1
+            return {**self._editing_status(), "changed": True, "object": self.details(fid)}
+
+    def step_history(self, direction: str, *, document_token: str,
+                     revision: int) -> dict:
+        with self._lock:
+            if self._history is None:
+                raise ValueError("Najpierw otwórz mapę.")
+            if (document_token != self._document_token or
+                    type(revision) is not int or revision != self._revision):
+                raise RuntimeError("Nieaktualny dokument lub jego wersja.")
+            if direction == "undo":
+                item = self._history.undo()
+            elif direction == "redo":
+                item = self._history.redo()
+            else:
+                raise ValueError("Nieznana operacja historii.")
+            if item is not None:
+                self._revision += 1
+            return {**self._editing_status(), "changed": item is not None}
+
+    def export_copy(self, document_token: str) -> tuple[str, bytes]:
+        """Return a valid MAP download; never write it on the server."""
+        with self._lock:
+            if self._doc is None:
+                raise ValueError("Najpierw otwórz mapę.")
+            if document_token != self._document_token:
+                raise RuntimeError("Nieaktualny dokument.")
+            basename = _display_name(self._doc.filename)
+            return basename[:-4] + "_GeoStudio2_kopia.MAP", self._doc.to_bytes()
+
     def metadata(self) -> dict:
         with self._lock:
-            return dict(self._meta)
+            return {**self._meta, **self._editing_status()}
 
     def set_visual_sidecar(self, content: bytes) -> dict:
         """Accept a user-selected GeoStudio JSON as read-only visual input."""
@@ -346,6 +470,10 @@ class PreviewWorkspace:
                 "areaM2": obj.area_m2,
                 "closed": obj.is_closed,
                 "geometryTruncated": len(obj.points) > 500,
+                "editableFields": [key for key in LABEL_FIELDS if key in obj.fields]
+                                  if obj.uid else [],
+                "revision": self._revision,
+                "documentToken": self._document_token,
             }
 
 
