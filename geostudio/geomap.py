@@ -456,6 +456,18 @@ class GeoMap:
                 records.append(text+eol)
             if not found_id or point_count != len(obj.points):
                 raise ValueError("Malformed source polygon: copying refused")
+            # A newly copied polygon must also have positive winding in native
+            # GEO-MAP, without touching the source object's original records.
+            old_coords=[(p.x,p.y) for p in obj.points[:-1]]
+            if (all(p.point_type==1 for p in obj.points)
+                    and self.signed_area(old_coords)<0):
+                positions=[i for i,v in enumerate(records)
+                           if POINT_RE.match(v.rstrip(b'\r\n'))]
+                if len(positions)==len(obj.points):
+                    old=[records[i] for i in positions]
+                    new=[old[0],*reversed(old[1:-1]),old[-1]]
+                    for i,v in zip(positions,new):
+                        records[i]=v
             raw_records.extend(records)
         if self.lines and not self.lines[-1].endswith((b'\r',b'\n')):
             self.lines[-1]+=b'\r\n'
