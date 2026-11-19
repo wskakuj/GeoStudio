@@ -14,7 +14,7 @@
     <header class="topbar">
       <div class="identity">
         <div class="mark" aria-hidden="true"><span></span><span></span><span></span></div>
-        <div><strong>GeoStudio</strong><span class="brand-version">2.0 <em>ETAP 6B · NATYWNE WYCIĘCIA — TEST</em></span></div>
+        <div><strong>GeoStudio</strong><span class="brand-version">2.0 <em>ETAP 7 · KARTOGRAFIA — TEST</em></span></div>
       </div>
       <div class="header-center"><span class="top-kicker">OBSZAR ROBOCZY</span>
         <span id="document-title">Nowy projekt</span>
@@ -23,7 +23,7 @@
       <div class="header-actions">
         <button id="btn-command" class="top-icon" title="Polecenia (Ctrl+K)" aria-label="Wyszukaj polecenie">⌕ <kbd>⌘ K</kbd></button>
         <button id="btn-theme" class="top-icon" title="Przełącz jasny/ciemny wygląd">◐</button>
-        <button id="btn-export" class="button export" disabled title="Pobierz oddzielny plik MAP">↓ Pobierz kopię</button>
+        <button id="btn-export" class="button export" disabled title="Zapisz MAP z rzeczywistymi wycięciami automatycznie, z plikiem odtworzenia oryginału">↓ Pobierz MAP</button>
         <label id="btn-open-direct" class="button ghost direct-open" for="file-map"
           title="Zawsze dostępny wybór pliku, niezależny od pywebview">▱ Z dysku</label>
         <button id="btn-open" class="button primary"><span class="button-icon">↗</span> Otwórz MAP</button>
@@ -36,6 +36,7 @@
         <div class="tool-row">
           <button class="tool-button" id="tool-open"><span class="tool-glyph">▱</span>Otwórz</button>
           <button class="tool-button" id="tool-sidecar"><span class="tool-glyph">◈</span>Style JSON</button>
+          <button class="tool-button" id="tool-cartography" title="Wczytaj oryginalne biblioteki kartograficzne LAY, CDF i SYM"><span class="tool-glyph">▤</span>LAY/CDF/SYM</button>
           <button class="tool-button" id="tool-undo" disabled title="Cofnij (Ctrl+Z)"><span class="tool-glyph">↶</span>Cofnij</button>
           <button class="tool-button" id="tool-redo" disabled title="Ponów (Ctrl+Y)"><span class="tool-glyph">↷</span>Ponów</button>
           <button class="tool-button" id="tool-export-baked" disabled title="Eksperymentalny: zapisz rzeczywiste wycięcia do MAP wraz z plikiem do ich odtworzenia"><span class="tool-glyph">▧</span>Zapisz wycięcia <small>6B</small></button>
@@ -65,8 +66,9 @@
       </div>
       <span class="tool-divider"></span>
       <div class="tool-section">
-        <span class="section-label">WIDOK MAPY</span>
+        <span class="section-label">KARTOGRAFIA · WIDOK</span>
         <div class="tool-row">
+          <span id="cartography-status" class="section-label" title="Załadowane biblioteki kartograficzne">Brak bibliotek</span>
           <button class="tool-button active" id="tool-labels"><span class="tool-glyph">Aa</span>Etykiety</button>
           <button class="tool-button" id="tool-grid"><span class="tool-glyph">▦</span>Siatka</button>
         </div>
@@ -185,6 +187,7 @@
 
   <input id="file-map" type="file" accept=".map,.MAP" hidden>
   <input id="file-sidecar" type="file" accept=".json" hidden>
+  <input id="file-library" type="file" accept=".lay,.cdf,.sym,.LAY,.CDF,.SYM" multiple hidden>
   <dialog id="select-dialog" class="advanced-select-dialog">
     <form id="select-form" autocomplete="off">
       <div class="select-head">
