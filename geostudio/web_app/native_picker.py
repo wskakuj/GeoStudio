@@ -8,11 +8,13 @@ to the native bridge, and only GEO-MAP metadata is returned to the UI.
 from __future__ import annotations
 
 import json
+from hashlib import sha256
 import os
 from pathlib import Path
 import tempfile
 
 from .data import MAX_MAP_BYTES, PreviewWorkspace
+from .recovery import LocalRecoveryStore
 
 
 def preference_file() -> Path:
@@ -69,13 +71,14 @@ class NativeMapPicker:
     synchronous HTML file input fallback.
     """
 
-    __slots__ = ("_workspace", "_settings", "_source_path")
+    __slots__ = ("_workspace", "_settings", "_source_path", "_source_sha")
 
     def __init__(self, workspace: PreviewWorkspace,
                  *, settings: Path | None = None):
         self._workspace = workspace
         self._settings = settings if settings is not None else preference_file()
         self._source_path = None
+        self._source_sha = None
 
     def _choose_path(self) -> str:
         # Called on pywebview's JS API worker thread, *not* the WebView2
@@ -130,12 +133,66 @@ class NativeMapPicker:
                     "Pominięto niezgodny plik topologii. "
                     "Mapa bazowa została wczytana bez odwracalnych wycięć.")
         self._source_path = chosen.resolve()
+        self._source_sha = sha256(raw).hexdigest()
+        available=self._recovery_store().candidate(
+            self._source_path,self._source_sha)
+        if available:
+            meta["recoveryAvailable"]=available
         try:
             save_last_map_directory(self._settings, chosen.parent)
         except OSError:
             pass
         return {"cancelled": False, "metadata": meta}
 
+
+    def _recovery_store(self) -> LocalRecoveryStore:
+        return LocalRecoveryStore(self._settings.parent/"recovery")
+
+    def save_recovery(self) -> dict:
+        """Debounced from UI after edits; NEVER overwrites the input map."""
+        path=self._source_path
+        identity=self._source_sha
+        status=self._workspace.editing_status()
+        if not path or not identity or not status["dirty"]:
+            return {"saved":False,"reason":"Brak niezapisanych zmian lub pliku źródłowego."}
+        _,raw=self._workspace.export_copy(status["documentToken"])
+        companion=self._workspace.export_topology_metadata(raw)
+        if companion is None:
+            companion=json.dumps({
+                "format":"geostudio-topology-v1",
+                "sha256":sha256(raw).hexdigest(),"uids":[]
+            },separators=(",",":")).encode("utf-8")
+        new=self._workspace.editing_status()
+        if (new["revision"]!=status["revision"] or
+                new["documentToken"]!=status["documentToken"] or
+                path!=self._source_path or identity!=self._source_sha):
+            return {"saved":False,"reason":"Zmieniono mapę podczas tworzenia migawki."}
+        result=self._recovery_store().save(
+            path,identity,raw,companion,status["revision"])
+        return result
+
+    def restore_recovery(self) -> dict:
+        """Restore only when the source file still matches its original SHA."""
+        path=self._source_path
+        identity=self._source_sha
+        if not path or not identity or not path.is_file():
+            raise ValueError("Najpierw otwórz źródłowy MAP z dysku.")
+        # Do not restore a journal over an externally updated source.
+        if sha256(path.read_bytes()).hexdigest()!=identity:
+            raise ValueError("MAP zmienił się na dysku. Nie odtworzono migawki.")
+        recovery=self._recovery_store().load(path,identity)
+        if recovery is None:
+            raise ValueError("Brak zgodnej, kompletnej migawki odzyskiwania.")
+        _,raw,companion=recovery
+        from geostudio.geomap import GeoMap
+        check=GeoMap(raw,filename=path.name)
+        if (not check.checksum_valid or
+                check.declared_lines!=len(check.lines)):
+            raise ValueError("Migawka zawiera nieprawidłową sumę GEO-MAP.")
+        self._workspace.load_map(raw,path.name)
+        self._workspace.import_topology_metadata(companion,raw)
+        self._workspace.mark_recovered_unsaved()
+        return {"restored":True,"metadata":self._workspace.metadata()}
 
     def open_libraries(self) -> dict:
         """Choose LAY/CDF/SYM with a real Windows dialog, never via JS paths."""
