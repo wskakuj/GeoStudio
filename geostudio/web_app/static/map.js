@@ -17,7 +17,8 @@
     lastPick: null, scheduled: false, refreshTimer: null, queryCounter: 0,
     queryAbort: null, selectionRequest: 0, limited: false,
     firstLoad: true, inspectorCache: new Map(),
-    edit: null, editBusy: false, bulkPreview: null,
+    edit: null, editBusy: false, bulkPreview: null, movePreview: null,
+    moveIds: [], moveGhost: null,
     snapEnabled: true, sharedNodes: false, vertexDrag: null,
     hoverInsert: null, selectedVertex: null
   };
@@ -25,6 +26,8 @@
     {name:"Otwórz plik GEO-MAP", hint:"Ctrl+O", run:chooseMap},
     {name:"Wybierz obiekty według kodu, A1, A2", hint:"Ctrl+H", run:openAdvancedSelection},
     {name:"Edytuj zbiorowo pola A1/A2", hint:"Ctrl+Shift+E", run:openBulkEditor},
+    {name:"Dokładnie przesuń poligony X/Y", hint:"Ctrl+Shift+M", run:()=>openMoveEditor()},
+    {name:"Przeciągaj wybrane poligony", hint:"M", run:()=>setTool("move")},
     {name:"Wczytaj plik stylów GeoStudio", hint:"JSON", run:()=> $("file-sidecar").click()},
     {name:"Dopasuj całą mapę", hint:"0", run:fitToMap},
     {name:"Edytuj atrybuty aktywnego obiektu", hint:"E", run:()=>toggleInspectorEdit(true)},
@@ -67,6 +70,7 @@
     };
     $("tool-undo").disabled=state.editBusy||!state.edit.canUndo;
     $("tool-redo").disabled=state.editBusy||!state.edit.canRedo;
+    $("tool-move-offset").disabled=state.editBusy||!state.meta||!selectedObjectIds().length;
     $("btn-export").disabled=state.editBusy||!state.meta;
     updateBulkButton();
     $("tool-undo").title=state.edit.undoLabel
@@ -230,7 +234,8 @@
     updateEditState(meta);
     state.active = null; state.detail = null; state.pinned.clear();
     populateSelectCodes();
-    state.vertexDrag=null;setTool("select");
+    state.vertexDrag=null;state.moveGhost=null;state.movePreview=null;
+    state.moveIds=[];setTool("select");
     state.features = []; state.inspectorCache.clear();
     // Match the old user's map view: survey markers are opt-in.
     // Their heavy symbol density otherwise hides the parcel boundaries.
@@ -644,16 +649,20 @@
     updateDeleteNodeButton();
     shell.classList.toggle("panning",tool==="pan");
     shell.classList.toggle("nodes-editing",tool==="nodes");
+    shell.classList.toggle("moving-objects",tool==="move");
     $("geometry-help").hidden=tool!=="nodes"||!state.meta;
     updateGeometryHelp();
     for(const [name,id] of [
       ["select","tool-select"],["pan","tool-pan"],["nodes","tool-nodes"],
-      ["select","float-select"],["pan","float-pan"],["nodes","float-nodes"]
+      ["move","tool-move"],
+      ["select","float-select"],["pan","float-pan"],["nodes","float-nodes"],
+      ["move","float-move"]
     ])$(id).classList.toggle("active",name===tool);
     if(tool==="nodes"&&(!state.detail||!state.detail.closed))
       inform("Tryb P: wybierz zamknięty poligon i przeciągnij jego węzeł.");
     else if(tool==="nodes")
       inform("Tryb P: przeciągnij jeden z węzłów. Ctrl+Z cofa zmianę.");
+    else if(tool==="move")inform("Tryb M: przeciągnij wybrany poligon lub całą grupę, potem potwierdź podgląd.");
     else inform(tool==="select"
       ?"Tryb zaznaczania obiektów (S).":"Tryb przesuwania mapy (H).");
     requestDraw();
@@ -1190,7 +1199,8 @@
     features.sort((a,b)=>(priorities[a.code]??3)-(priorities[b.code]??3));
     for(const feature of features) renderFill(feature);
     for(const feature of features) renderStroke(feature);
-    renderHighlights(features);renderLabels(features);drawVertexTool();
+    renderHighlights(features);drawMoveGhost(features);
+    renderLabels(features);drawVertexTool();
     $("scale-label").textContent="Podgląd: "+state.scale.toFixed(state.scale<1?3:1)+" px / jedn.";
     $("count-visible").textContent=display(features.length);
     $("render-hint").textContent=state.limited
@@ -1327,6 +1337,7 @@
     const n=state.pinned.size+(state.active&&!state.pinned.has(state.active)?1:0);
     $("selection-count").textContent="Zaznaczonych: "+n;
     updateBulkButton();
+    $("tool-move-offset").disabled=!state.meta||state.editBusy||n===0;
   }
   async function selectFeature(fid) {
     if(state.active!==fid)state.selectedVertex=null;
@@ -1551,6 +1562,9 @@
     if((ev.ctrlKey||ev.metaKey)&&ev.shiftKey&&ev.key.toLowerCase()==="e"){
       ev.preventDefault();openBulkEditor();return;
     }
+    if((ev.ctrlKey||ev.metaKey)&&ev.shiftKey&&ev.key.toLowerCase()==="m"){
+      ev.preventDefault();openMoveEditor();return;
+    }
     if(typing)return;
     if(state.tool==="nodes"&&state.detail&&!ev.ctrlKey&&!ev.metaKey&&!ev.altKey&&
        (ev.key==="Delete"||ev.key==="Backspace")){
@@ -1577,12 +1591,13 @@
     }
     if(ev.key==="Escape"){
       if(dialog.open)dialog.close();
-      else if(state.tool==="nodes"){
+      else if(state.tool==="nodes"||state.tool==="move"){
         state.vertexDrag=null;setTool("select");
       }else selectFeature(null);
       return;
     }
     if(ev.key.toLowerCase()==="s")setTool("select");
+    if(ev.key.toLowerCase()==="m")setTool("move");
     if(ev.key.toLowerCase()==="h")setTool("pan");
     if(ev.key.toLowerCase()==="b")pinActive();
     if(ev.key==="0")fitToMap();
@@ -1595,6 +1610,14 @@
   link("empty-open",chooseMap);
   link("tool-advanced-select",openAdvancedSelection);
   link("tool-bulk-edit",openBulkEditor);
+  link("tool-move",()=>setTool("move"));
+  link("float-move",()=>setTool("move"));
+  link("tool-move-offset",()=>openMoveEditor());
+  link("move-close",()=>$("move-dialog").close());
+  link("move-preview",previewMoveChanges);
+  $("move-form").addEventListener("submit",applyMoveChanges);
+  for(const id of ["move-dx","move-dy","move-detach"])
+    $(id).addEventListener("input",invalidateMovePreview);
   link("bulk-close",()=>$("bulk-dialog").close());
   link("bulk-preview",previewBulkChanges);
   $("bulk-form").addEventListener("submit",applyBulkChanges);
