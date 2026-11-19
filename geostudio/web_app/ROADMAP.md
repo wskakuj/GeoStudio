@@ -117,6 +117,28 @@ Aktualizacja: 19 listopada 2026. Dokument będziemy uzupełniać po każdym zwer
 - [ ] Ręczny test eksportu wieloczęściowych 5310, 5220 i 5230
   oraz otwartych linii przy rzeczywistej MOKRA WIEŚ.MAP.
 
+## Etap 7 — biblioteki kartograficzne i etykiety (PR testowy)
+
+- [ ] Scalone 5310 zachowują albo uzupełniają natywne L 1/L 2/L 3;
+  pierwsza wyspa i węzeł bazowego :ID są utrzymywane przy zapisie,
+  aby ograniczyć przemieszczenie napisów.
+- [ ] Nowo narysowane 5310 z A1/A2 otrzymują natywne rekordy L.
+  Wymagany test rzeczywistego opisu po scaleniu A1=l/A2=So120|II-0.3
+  z analogicznym wzorcem GEO-MAP A1=b/A2=So80|I-0.5.
+- [ ] Zwykły „Pobierz MAP” w Windows **automatycznie** wypala
+  wycięcia tego samego kodu, jeśli istnieją maski — bez oddzielnego
+  przycisku. Zachowuje dodatkowy JSON v2 do odtwarzania.
+- [ ] W przeglądarce pobieranie maskowanych obiektów odbywa
+  się jako ZIP (MAP + JSON); bez masek pojedynczy MAP.
+- [ ] Import oryginalnych LAY/CDF/SYM z Windows / przeglądarki
+  bez ścieżek użytkownika w HTTP API, limit 8 MB, CP1250.
+- [ ] Canvas: CDF 0–8 (wypełnienia/hatch/obrysy),
+  LAY/SYM przerywane granice oraz SYM proste symbole punktowe.
+- [ ] Zaawansowane symbole O/T, niestandardowe kroje/pozycje
+  napisów, wszystkie katalogi LAY i pełny wydruk klasycznego
+  GEO-MAP nadal wymagają odrębnych badań z rzeczywistymi
+  bibliotekami i ręcznych testów zgodności.
+
 ## Pozostałe duże obszary
 
 1. **Dopracowanie zaznaczania**: wybór według geometrii, wykluczanie nakładających się obiektów, testy bardzo dużych map.

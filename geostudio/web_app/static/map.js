@@ -40,11 +40,14 @@
     {name:"Usuń wybrane obiekty", hint:"Ctrl+Delete", run:deleteObjects},
     {name:"Rysuj nowy poligon", hint:"N", run:()=>setTool("draw")},
     {name:"Wczytaj plik stylów GeoStudio", hint:"JSON", run:()=> $("file-sidecar").click()},
+    {name:"Wczytaj biblioteki kartograficzne GEO-MAP LAY/CDF/SYM", hint:"Etap 7", run:chooseCartographicLibraries},
+    {name:"Odtwórz oryginalną geometrię z JSON topologii", hint:"MAP+JSON", run:()=> $("file-topology").click()},
     {name:"Dopasuj całą mapę", hint:"0", run:fitToMap},
     {name:"Edytuj atrybuty aktywnego obiektu", hint:"E", run:()=>toggleInspectorEdit(true)},
     {name:"Cofnij ostatnią zmianę", hint:"Ctrl+Z", run:()=>historyStep("undo")},
     {name:"Ponów zmianę", hint:"Ctrl+Y", run:()=>historyStep("redo")},
     {name:"Pobierz osobną kopię MAP", hint:"Ctrl+Shift+S", run:downloadMapCopy},
+    {name:"Awaryjna kopia MAP bez wycięć", hint:"Baza", run:downloadBaseMapCopy},
     {name:"Zapisz natywne wycięcia MAP i kopię konturów", hint:"6B", run:downloadNativeCutouts},
     {name:"Zaznaczanie obiektów", hint:"S", run:()=>setTool("select")},
     {name:"Edytuj węzły zaznaczonego poligonu", hint:"P", run:()=>setTool("nodes")},
@@ -75,6 +78,7 @@
       dirty:!!status.dirty,
       canUndo:!!status.canUndo,
       canRedo:!!status.canRedo,
+      hasReversibleMasks:!!status.hasReversibleMasks,
       revision:status.revision,
       documentToken:status.documentToken,
       undoLabel:status.undoLabel||"",
@@ -88,6 +92,8 @@
     $("tool-new-polygon").disabled=state.editBusy||!state.meta;
     $("btn-export").disabled=state.editBusy||!state.meta;
     $("tool-export-baked").disabled=state.editBusy||!state.meta;
+    $("btn-export").textContent=state.edit.hasReversibleMasks
+      ?"↓ Pobierz MAP + JSON":"↓ Pobierz MAP";
     updateBulkButton();
     $("tool-undo").title=state.edit.undoLabel
       ?"Cofnij: "+state.edit.undoLabel+" (Ctrl+Z)":"Cofnij (Ctrl+Z)";
@@ -227,6 +233,43 @@
       }
     }catch(error){inform("Eksport 6B przerwany: "+error.message,true);}
   }
+  async function downloadBaseMapCopy() {
+    if(!state.meta||!state.edit||state.editBusy)return;
+    if(!window.confirm("Zapiszesz MAP z oryginalnymi obrysami bez wycięć. "+
+      "Pozostałe zmiany geometrii i atrybutów pozostaną. "+
+      "Używaj tej opcji tylko do awaryjnej kopii bazowej."))return;
+    try{
+      if(window.pywebview?.api?.save_base_map){
+        const saved=await window.pywebview.api.save_base_map();
+        if(saved&&!saved.cancelled){
+          inform("Zapisano kopię MAP bez wycięć: "+saved.path);
+          window.alert("Bazowa kopia MAP zapisana w:\n"+saved.path+
+            (saved.topologyPath?"\nTopologia: "+saved.topologyPath:""));
+        }
+        return;
+      }
+      const params=new URLSearchParams({
+        documentToken:state.edit.documentToken,normalizePositive:"true"});
+      const response=await fetch("/api/export/map?"+params.toString(),{
+        headers:{"X-GeoStudio-Token":token},cache:"no-store"});
+      if(!response.ok){
+        const err=await response.json().catch(()=>({}));
+        throw Error(err.detail||"Nie można zapisać MAP.");
+      }
+      const original=state.meta.name.replace(/\\/g,"/").split("/").pop();
+      const filename=original.replace(/\.map$/i,"")+
+        "_GeoStudio2_kopia_bez_wyciec.MAP";
+      const url=URL.createObjectURL(await response.blob());
+      const a=document.createElement("a");
+      a.href=url;a.download=filename;document.body.append(a);
+      a.click();a.remove();
+      setTimeout(()=>URL.revokeObjectURL(url),60000);
+      inform("Pobrano bazowy MAP bez wycięć: "+filename);
+    }catch(error){
+      inform("Błąd zapisu bazowego MAP: "+error.message,true);
+    }
+  }
+
   async function downloadMapCopy() {
     if(!state.meta||!state.edit||state.editBusy)return;
     try {
@@ -243,9 +286,11 @@
         }
         return;
       }
+      const hasMasks=!!state.edit.hasReversibleMasks;
       const params=new URLSearchParams({documentToken:state.edit.documentToken,
         normalizePositive:"true"});
-      const response=await fetch("/api/export/map?"+params.toString(),{
+      const response=await fetch((hasMasks?"/api/export/package":"/api/export/map")+
+        "?"+params.toString(),{
         headers:{"X-GeoStudio-Token":token},cache:"no-store"
       });
       if(!response.ok){
@@ -254,14 +299,16 @@
       }
       const blob=await response.blob();
       const original=state.meta.name.replace(/\\/g,"/").split("/").pop();
-      const filename=original.replace(/\.map$/i,"")+"_GeoStudio2_kopia.MAP";
+      const filename=original.replace(/\.map$/i,"")+
+        (hasMasks?"_GeoStudio2_wyciecia.zip":"_GeoStudio2_kopia.MAP");
       const url=URL.createObjectURL(blob);
       const anchor=document.createElement("a");
       anchor.href=url;anchor.download=filename;
       document.body.append(anchor);anchor.click();anchor.remove();
       setTimeout(()=>URL.revokeObjectURL(url),60000);
-      inform("Wysłano "+filename+" do przeglądarki. Sprawdź folder Pobrane "+
-             "(Ctrl+J), a NIE folder źródłowy mapy.");
+      inform(hasMasks
+        ?"Zapisano ZIP zawierający rzeczywiście wycięty MAP oraz plik JSON do odtworzenia. Rozpakuj oba razem."
+        :"Wysłano "+filename+" do pobrania; sprawdź Pobrane (Ctrl+J).");
     }catch(error){inform("Nie udało się zapisać kopii: "+error.message,true);}
   }
   function inform(msg, isError=false) {
@@ -311,6 +358,7 @@
     quality.textContent = meta.checksumValid ? "✓ CHK poprawna" : "⚠ CHK niezgodna";
     quality.classList.toggle("warning", !meta.checksumValid);
     renderLayers(); updateInspector(); fitToMap(); updateSelectionCount();
+    cartographyMessage({libraries:meta.cartographicLibraries});
     inform("Wczytano " + display(meta.objectCount) +
            " obiektów. Oryginalny plik jest chroniony.");
     return true;
@@ -348,6 +396,91 @@
     } catch (error) {
       inform("Nie udało się wczytać JSON: " + error.message, true);
     } finally { busy(false); $("file-sidecar").value = ""; }
+  }
+
+  async function openTopologyFile(file) {
+    if(!file||!state.meta)return;
+    if(!file.name.toLowerCase().endsWith(".json")||
+       file.size>2*1024*1024){
+      inform("Wybierz plik .geostudio-topology.json (do 2 MB).",true);
+      return;
+    }
+    if(state.edit?.dirty){
+      inform("Najpierw otwórz oryginalny MAP bez nowych edycji, "+
+        "a następnie jego JSON topologii.",true);
+      return;
+    }
+    busy(true,"Odtwarzanie oryginalnych konturów z JSON");
+    try{
+      const meta=await api("/api/topology",{
+        method:"POST",
+        headers:{"Content-Type":"application/octet-stream"},
+        body:await file.arrayBuffer()
+      });
+      finishOpeningMap(meta);
+      inform("Wczytano MAP+JSON. Odzyskano źródłowe kontury; "+
+        "wycięcia pozostają dynamiczne i odwracalne.");
+    }catch(error){
+      inform("Nie udało się odtworzyć geometrii: "+error.message,true);
+    }finally{busy(false);$("file-topology").value="";}
+  }
+
+  function cartographyMessage(payload) {
+    const libs=payload?.libraries||{};
+    const summary=Object.entries(libs).map(([name,item])=>
+      name+" ("+(item.definitions||0)+")").join(" · ");
+    $("cartography-status").textContent=summary||"Brak bibliotek";
+    $("cartography-status").title=summary
+      ?"Załadowane biblioteki: "+summary:"Brak dodatkowych bibliotek GEO-MAP";
+  }
+  async function chooseCartographicLibraries() {
+    if(window.pywebview?.api?.open_libraries){
+      try {
+        const result=await window.pywebview.api.open_libraries();
+        if(result&&!result.cancelled){
+          cartographyMessage(result.status);
+          inform("Załadowano biblioteki kartograficzne: "+
+            result.libraries.map(item=>item.kind+" "+item.definitions).join(", "));
+          await refreshViewport();
+        }
+      }catch(error){
+        inform("Nie można załadować bibliotek: "+error.message,true);
+      }
+    }else $("file-library").click();
+  }
+  async function openCartographicFiles(files) {
+    const list=Array.from(files||[]);
+    if(!list.length)return;
+    if(list.length>3){
+      inform("Wybierz najwyżej LAY, CDF i SYM (po jednym pliku).",true);return;
+    }
+    const kinds=new Set();
+    for(const file of list){
+      const type=file.name.split(".").pop().toUpperCase();
+      if(!["LAY","CDF","SYM"].includes(type)||kinds.has(type)||
+         file.size>8*1024*1024){
+        inform("Nieprawidłowe biblioteki: po jednym LAY/CDF/SYM, max 8 MB.",true);
+        return;
+      }
+      kinds.add(type);
+    }
+    busy(true,"Wczytywanie bibliotek kartograficznych");
+    try{
+      for(const file of list){
+        await api("/api/cartography/library",{
+          method:"POST",
+          headers:{"Content-Type":"application/octet-stream",
+                   "X-Library-Name":encodeURIComponent(file.name)},
+          body:await file.arrayBuffer()
+        });
+      }
+      const status=await api("/api/cartography/status");
+      cartographyMessage(status);
+      inform("Załadowano "+list.length+" bibliotek. Renderowanie mapy odświeżone.");
+      await refreshViewport();
+    }catch(error){
+      inform("Błąd biblioteki GEO-MAP: "+error.message,true);
+    }finally{busy(false);$("file-library").value="";}
   }
 
   async function chooseMap() {
@@ -1420,11 +1553,58 @@
           part[0][1]===part[part.length-1][1]) ctx.closePath();
     }
   }
+  const hatchCache=new Map();
+  function hatchPattern(style) {
+    if(!style.hatch)return style.fill;
+    const key=style.fill+"|"+style.hatch;
+    if(hatchCache.has(key))return hatchCache.get(key);
+    const size=12;
+    const tile=document.createElement("canvas");
+    tile.width=tile.height=size;
+    const g=tile.getContext("2d");
+    g.clearRect(0,0,size,size);
+    g.strokeStyle=style.fill;
+    g.fillStyle=style.fill;
+    g.lineWidth=1;
+    const segment=(x1,y1,x2,y2)=>{
+      g.beginPath();g.moveTo(x1,y1);g.lineTo(x2,y2);g.stroke();
+    };
+    switch(style.hatch){
+      case 1:
+        for(const x of [1,5,9])for(const y of [1,5,9])
+          g.fillRect(x,y,2,2);
+        break;
+      case 2:
+        for(const x of [1,4,7,10])for(const y of [1,4,7,10])
+          g.fillRect(x,y,2,2);
+        break;
+      case 3: segment(0,6,12,6); break;
+      case 4: segment(6,0,6,12); break;
+      case 5: segment(0,6,12,6);segment(6,0,6,12); break;
+      case 6:
+        for(const d of [-12,0,12])segment(d,0,d+12,12);
+        break;
+      case 7:
+        for(const d of [0,12,24])segment(d,0,d-12,12);
+        break;
+      case 8:
+        for(const d of [-12,0,12])segment(d,0,d+12,12);
+        for(const d of [0,12,24])segment(d,0,d-12,12);
+        break;
+      default:
+        return style.fill;
+    }
+    const pattern=ctx.createPattern(tile,"repeat")||style.fill;
+    if(hatchCache.size>128)hatchCache.clear();
+    hatchCache.set(key,pattern);
+    return pattern;
+  }
+
   function renderFill(feature) {
     const style=feature.style;
     if(!feature.closed||!style.hasFill||style.opacity<=0)return;
     addPath(feature.geometry);
-    ctx.fillStyle=style.fill;
+    ctx.fillStyle=hatchPattern(style);
     ctx.globalAlpha=Math.min(1,Math.max(0,style.opacity));
     ctx.fill("evenodd");
     ctx.globalAlpha=1;
@@ -1434,15 +1614,37 @@
     if(!style.drawStroke)return; // GEO-MAP text anchors aren't printed lines.
     if(feature.geometry.length===1 && feature.geometry[0].length===1) {
       const p=worldToScreen(...feature.geometry[0][0]);
-      const radius=Math.max(.6,Math.min(2,style.pointSize||1));
-      ctx.fillStyle=style.stroke;ctx.beginPath();
-      ctx.arc(p.x,p.y,radius,0,Math.PI*2);ctx.fill();
+      const segments=style.symbolSegments||[];
+      const circles=style.symbolCircles||[];
+      ctx.save();
+      ctx.strokeStyle=style.stroke;
+      ctx.lineWidth=Math.max(.8,Math.min(3,style.strokeWidth||1));
+      if(segments.length||circles.length){
+        ctx.beginPath();
+        for(const [x1,y1,x2,y2] of segments.slice(0,64)){
+          ctx.moveTo(p.x+x1*5,p.y-y1*5);
+          ctx.lineTo(p.x+x2*5,p.y-y2*5);
+        }
+        for(const [x,y,radius] of circles.slice(0,32)){
+          ctx.moveTo(p.x+x*5+radius*5,p.y-y*5);
+          ctx.arc(p.x+x*5,p.y-y*5,radius*5,0,2*Math.PI);
+        }
+        ctx.stroke();
+      }else{
+        ctx.fillStyle=style.stroke;ctx.beginPath();
+        ctx.arc(p.x,p.y,Math.max(.6,Math.min(2,style.pointSize||1)),
+                0,Math.PI*2);
+        ctx.fill();
+      }
+      ctx.restore();
       return;
     }
     addPath(feature.geometry);
     ctx.strokeStyle=style.stroke;
     ctx.lineWidth=Math.max(.5,Math.min(12,style.strokeWidth));
-    ctx.lineCap="round";ctx.lineJoin="round";ctx.stroke();
+    ctx.lineCap="round";ctx.lineJoin="round";
+    ctx.setLineDash(Array.isArray(style.dash)?style.dash:[]);
+    ctx.stroke();ctx.setLineDash([]);
   }
   function renderHighlights(features) {
     const selected=new Set(state.pinned);
@@ -2458,6 +2660,8 @@
   $("select-form").addEventListener("submit",applyAdvancedSelection);
 
   link("tool-sidecar",()=> $("file-sidecar").click());
+  link("tool-cartography",chooseCartographicLibraries);
+  link("tool-topology",()=> $("file-topology").click());
   link("tool-undo",()=>historyStep("undo"));
   link("tool-redo",()=>historyStep("redo"));
   link("btn-export",downloadMapCopy);
@@ -2490,6 +2694,8 @@
   $("layer-search").addEventListener("input",renderLayers);
   $("file-map").addEventListener("change",ev=>openMap(ev.target.files?.[0]));
   $("file-sidecar").addEventListener("change",ev=>openStyles(ev.target.files?.[0]));
+  $("file-library").addEventListener("change",ev=>openCartographicFiles(ev.target.files));
+  $("file-topology").addEventListener("change",ev=>openTopologyFile(ev.target.files?.[0]));
 
   document.addEventListener("dragover",ev=>{
     if(ev.dataTransfer&&Array.from(ev.dataTransfer.types).includes("Files"))ev.preventDefault();

@@ -8,6 +8,8 @@ from __future__ import annotations
 from html import escape
 from pathlib import Path
 from urllib.parse import unquote, quote
+from io import BytesIO
+from zipfile import ZipFile,ZIP_STORED
 import secrets
 
 from fastapi import FastAPI, HTTPException, Request
@@ -98,6 +100,29 @@ def create_app(workspace: PreviewWorkspace | None = None) -> FastAPI:
                 await receive(request, MAX_STYLES_BYTES))
         except ValueError as exc:
             raise HTTPException(400, str(exc)) from exc
+
+    @app.post("/api/topology")
+    async def import_reversible_topology(request: Request):
+        try:
+            return state.import_topology_for_open_map(
+                await receive(request,MAX_STYLES_BYTES))
+        except RuntimeError as exc:
+            raise HTTPException(409,str(exc)) from exc
+        except (ValueError,TypeError) as exc:
+            raise HTTPException(400,str(exc)) from exc
+
+    @app.post("/api/cartography/library")
+    async def import_cartography_library(request: Request):
+        filename=unquote(request.headers.get("x-library-name",""))
+        try:
+            return state.set_cartographic_library(
+                filename,await receive(request,8*1024*1024))
+        except ValueError as exc:
+            raise HTTPException(400,str(exc)) from exc
+
+    @app.get("/api/cartography/status")
+    async def cartography_status():
+        return state.cartography_status()
 
     @app.get("/api/viewport")
     async def viewport(xmin: float, ymin: float, xmax: float, ymax: float,
@@ -345,6 +370,27 @@ def create_app(workspace: PreviewWorkspace | None = None) -> FastAPI:
             raise HTTPException(409, str(exc)) from exc
         except ValueError as exc:
             raise HTTPException(400, str(exc)) from exc
+
+    @app.get("/api/export/package")
+    async def export_native_map_with_recovery(documentToken: str):
+        """One browser download with both the baked MAP and its source rings."""
+        try:
+            name,content,companion=state.export_native_cutouts(documentToken)
+        except RuntimeError as exc:
+            raise HTTPException(409,str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(400,str(exc)) from exc
+        target=name[:-4]+".geostudio-topology.json"
+        stream=BytesIO()
+        with ZipFile(stream,"w",compression=ZIP_STORED) as archive:
+            archive.writestr(name,content)
+            archive.writestr(target,companion)
+        archive_name=name[:-4]+".zip"
+        disposition=("attachment; filename=GeoStudio2_MAP_i_topologia.zip; "
+                     "filename*=UTF-8''"+quote(archive_name,safe=""))
+        return Response(stream.getvalue(),media_type="application/zip",
+                        headers={"Content-Disposition":disposition,
+                                 "X-GeoStudio-Export":"native-cutouts-and-recovery"})
 
     @app.get("/api/export/map")
     async def download_map_copy(documentToken: str, normalizePositive: bool = False):

@@ -11,7 +11,7 @@ native GEO-MAP (X northing, Y easting) in metres.
 from __future__ import annotations
 
 from math import isfinite, hypot
-from shapely.geometry import Polygon, LineString, MultiPolygon, GeometryCollection
+from shapely.geometry import Polygon, LineString, MultiPolygon, GeometryCollection, Point
 from shapely.ops import orient
 from shapely.ops import split as shapely_split, unary_union
 
@@ -59,7 +59,7 @@ def geometry_of(obj):
     return geometry
 
 
-def rings_from_shape(shape, *, max_rings=256, max_vertices=50000):
+def rings_from_shape(shape, *, prefer_anchor=None, max_rings=256, max_vertices=50000):
     """Native X/Y closed rings; exterior CCW, holes CW.
 
     P0 component separator is created by GeoMap. Exact geometry is checked
@@ -73,16 +73,25 @@ def rings_from_shape(shape, *, max_rings=256, max_vertices=50000):
         raise ValueError("Wynik operacji nie jest poligonem / multipoligonem.")
     if not shape.is_valid or shape.is_empty or len(polygons)>max_rings:
         raise ValueError("Nieprawidłowy wynik operacji geometrycznej.")
+    # Stable primary island and start point help retain GEO-MAP L records.
+    if prefer_anchor is not None:
+        location=Point(*prefer_anchor)
+        polygons.sort(key=lambda item:item.distance(location))
     rings=[]
     for poly in polygons:
         poly=orient(poly,sign=1.0)
-        for ring in [poly.exterior,*poly.interiors]:
+        for ring_number,ring in enumerate([poly.exterior,*poly.interiors]):
             coords=[(round(x,3),round(y,3))
                     for x,y in list(ring.coords)[:-1]]
             if len(set(coords))<3:
                 raise ValueError("Kontur zanikł po zaokrągleniu do 1 mm.")
             if coords[0]==coords[-1]:
                 coords.pop()
+            if prefer_anchor is not None and ring_number==0 and coords:
+                i=min(range(len(coords)),key=lambda index:
+                      (coords[index][0]-prefer_anchor[0])**2+
+                      (coords[index][1]-prefer_anchor[1])**2)
+                coords=coords[i:]+coords[:i]
             coords.append(coords[0])
             if not Polygon(coords).is_valid or Polygon(coords).area<.000001:
                 raise ValueError("Po zaokrągleniu powstał niepoprawny kontur.")

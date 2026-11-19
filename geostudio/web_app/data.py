@@ -28,7 +28,10 @@ from geostudio.web_app.topology_safety import rings_overlap, rings_contact, ring
 from geostudio.web_app.geometry_6a import (polygon_of, geometry_of, visible_difference,
     shape_parts, split_simple, merge_simple, merge_multipart, rings_from_shape)
 from geostudio.interactions import find_snap, closest_point_on_edge, polygon_is_valid
-from geostudio.library_render import native_fill_color
+from geostudio.library_render import (native_fill_color,parse_cdf,
+    cdf_for_object,parse_lay_pen_styles,lay_for_code,parse_sym_primitives,
+    parse_sym_line_patterns,object_sym_line_pattern,simple_point_segments,
+    simple_point_circles)
 
 MAX_MAP_BYTES = 80 * 1024 * 1024
 MAX_STYLES_BYTES = 2 * 1024 * 1024
@@ -111,6 +114,12 @@ class PreviewWorkspace:
         self._index: GeometryIndex | None = None
         self._styles: dict[str, dict] = {}
         self._label_positions: dict[str, dict] = {}
+        self._carto_cdf={}
+        self._carto_lay={}
+        self._carto_sym={}
+        self._carto_patterns={}
+        self._carto_loaded={}
+        self._carto_match_cache={}
         self._bounds: list[float] | None = None
         self._meta: dict = {"loaded": False}
         self._history: History | None = None
@@ -299,6 +308,19 @@ class PreviewWorkspace:
                         for uid in obj["uids"])):
                 raise ValueError("Plik topologii zawiera nieprawidłowe identyfikatory.")
             self._styles[TOPOLOGY_STACK_KEY]={"uids":obj["uids"]}
+
+    def import_topology_for_open_map(self, content: bytes) -> dict:
+        """Browser-selected reversible MAP companion, never an arbitrary path."""
+        with self._lock:
+            if self._doc is None or self._history is None:
+                raise ValueError("Najpierw wczytaj towarzyszący plik MAP.")
+            if self._history.is_dirty:
+                raise RuntimeError(
+                    "Nie można zaimportować topologii po rozpoczęciu edycji. "
+                    "Otwórz ponownie MAP, a potem jego JSON.")
+            map_bytes=self._doc.to_bytes()
+            self.import_topology_metadata(content,map_bytes)
+            return {**self.metadata(),"topologyImported":True}
 
     def export_positive_copy(self, document_token: str) -> tuple[str,bytes]:
         """Windows Save As: automatically normalize all simple exterior rings.
@@ -1147,7 +1169,8 @@ class PreviewWorkspace:
             if len(codes)!=1 or len(attrs)!=1:
                 raise ValueError("Scalaj tylko ten sam kod i zgodne wartości A1/A2.")
             geometry=merge_multipart([geometry_of(o) for o in selected])
-            rings=rings_from_shape(geometry)
+            rings=rings_from_shape(geometry,
+                prefer_anchor=(selected[0].points[0].x,selected[0].points[0].y))
             details={"beforeArea":round(sum(geometry_of(o).area
                                                for o in selected),3),
                      "afterArea":round(geometry.area,3),
@@ -1250,8 +1273,14 @@ class PreviewWorkspace:
                         report["repairs"])
                 elif action=="merge":
                     keeper=selected[0].uid
+                    anchor=selected[0].points[0]
                     self._doc.replace_polygon_components(
-                        keeper,rings_from_shape(plan["geometry"]))
+                        keeper,rings_from_shape(plan["geometry"],
+                          prefer_anchor=(anchor.x,anchor.y)))
+                    # GEO-MAP requires explicit L 1/2/3 placements for
+                    # showing A1/A2 labels. Keep source entries when possible.
+                    self._doc.ensure_native_label_records(
+                        keeper,[o.uid for o in selected[1:]])
                     self._doc.delete_objects(
                         [o.uid for o in selected[1:]])
                     self._styles[TOPOLOGY_STACK_KEY]={
@@ -1631,7 +1660,48 @@ class PreviewWorkspace:
 
     def metadata(self) -> dict:
         with self._lock:
-            return {**self._meta, **self._editing_status()}
+            return {**self._meta, **self._editing_status(),
+                'cartographicLibraries':dict(self._carto_loaded)}
+
+    def set_cartographic_library(self, filename: str, content: bytes) -> dict:
+        """Load one local CP1250 GEO-MAP library without writing to disk."""
+        if (not isinstance(filename,str) or
+                not re.fullmatch(r"[^/\\\r\n]{1,140}\.(?:LAY|CDF|SYM)",
+                                 filename,re.IGNORECASE) or
+                not isinstance(content,bytes) or
+                not 0<len(content)<=8*1024*1024):
+            raise ValueError("Wybierz bibliotekę LAY/CDF/SYM (max 8 MB).")
+        kind=filename.rsplit(".",1)[1].upper()
+        if kind=="LAY":
+            parsed=parse_lay_pen_styles(content)
+            if len(parsed)>10000:raise ValueError("Za wiele wpisów LAY.")
+        elif kind=="CDF":
+            parsed=parse_cdf(content)
+            if len(parsed)>10000:raise ValueError("Za wiele wpisów CDF.")
+        else:
+            primitives=parse_sym_primitives(content)
+            patterns=parse_sym_line_patterns(content)
+            if len(primitives)>15000 or len(patterns)>5000:
+                raise ValueError("Za wiele definicji SYM.")
+            parsed=primitives
+        if not parsed:
+            raise ValueError("Nie rozpoznano obsługiwanych definicji "+kind)
+        with self._lock:
+            if kind=="LAY":self._carto_lay=parsed
+            elif kind=="CDF":self._carto_cdf=parsed
+            else:
+                self._carto_sym=parsed
+                self._carto_patterns=patterns
+            self._carto_loaded[kind]={"filename":filename,
+                                      "definitions":len(parsed)}
+            self._carto_match_cache.clear()
+            return {"loaded":True,"kind":kind,"definitions":len(parsed),
+                    "libraries":dict(self._carto_loaded)}
+
+    def cartography_status(self) -> dict:
+        with self._lock:
+            return {"libraries":dict(self._carto_loaded),
+                    "loaded":bool(self._carto_loaded)}
 
     def set_visual_sidecar(self, content: bytes) -> dict:
         """Accept a user-selected GeoStudio JSON as read-only visual input."""
@@ -1670,7 +1740,15 @@ class PreviewWorkspace:
         obj = entry.obj
         code_style = self._styles.get("code:" + obj.code, {})
         item_style = self._styles.get(obj.uid, {}) if obj.uid else {}
-        border = "#" + "".join(f"{c:02X}" for c in obj.colorref)
+        cache_key=(obj.code,obj.fields.get("A1",""),obj.fields.get("A2",""))
+        if cache_key not in self._carto_match_cache:
+            self._carto_match_cache[cache_key]=cdf_for_object(
+                self._carto_cdf,*cache_key)
+        cdf=self._carto_match_cache[cache_key]
+        lay=lay_for_code(self._carto_lay,obj.code)
+        border_rgb=(cdf.border if cdf and cdf.border!=(0,0,0)
+                    else obj.colorref)
+        border = "#" + "".join(f"{c:02X}" for c in border_rgb)
         native = native_fill_color(obj.style)
         land_use = obj.fields.get("A1", "").strip().casefold()
         force = (code_style.get("force_fill") is True
@@ -1697,6 +1775,9 @@ class PreviewWorkspace:
         elif native:
             fill_color = "#" + "".join(f"{c:02X}" for c in native)
             opacity = _opacity(code_style.get("opacity", 100), 100)
+        elif cdf:
+            fill_color = "#" + "".join(f"{c:02X}" for c in cdf.fill)
+            opacity = _opacity(code_style.get("opacity", 100), 100)
         elif obj.code == "5200" and len(obj.points) == 4 and obj.fields.get("FA") == "0":
             # Black quarters of the native north arrow; not its border
             # boxes / sample swatches on a sheet.
@@ -1704,8 +1785,19 @@ class PreviewWorkspace:
             opacity = 100
 
         stroke = _color(code_style.get("stroke"), border)
-        width = min(12, max(.5, float(code_style.get("stroke_width", 1.0)))) \
-            if _valid_number(code_style.get("stroke_width", 1.0)) else 1.0
+        width_default=(max(.8,min(3.,cdf.width)) if cdf and cdf.width>0
+                       else 1.)
+        width = min(12, max(.5, float(code_style.get(
+            "stroke_width",width_default)))) \
+            if _valid_number(code_style.get("stroke_width",width_default)) else width_default
+        sym_dash=object_sym_line_pattern(self._carto_sym,
+                                         self._carto_patterns,obj.code)
+        dash=[max(.5,sym_dash[0]*3),max(.5,sym_dash[1]*3)] if sym_dash else (
+            [6,4] if sym_dash is None and lay and lay.line_id.endswith(".008")
+            else [])
+        symbols=self._carto_sym.get(obj.code,[]) if len(obj.points)==1 else []
+        segments=simple_point_segments(symbols)[:64]
+        circles=simple_point_circles(symbols)[:32]
         no_baseline = (obj.code in {"6900", "7900", "6000", "6301"}
                        and bool(obj.fields.get("TX")))
         return {
@@ -1716,6 +1808,13 @@ class PreviewWorkspace:
             "strokeWidth": width,
             "drawStroke": not no_baseline,
             "pointSize": 1.0,
+            "dash": dash,
+            "hatch": (cdf.hatch if cdf and not native and
+                      not (obj.code=="5230" and land_use.startswith("ls"))
+                      and not force and "fill" not in item_style and
+                      "fill" not in code_style else 0),
+            "symbolSegments": segments,
+            "symbolCircles": circles,
         }
 
     def _labels(self, entry: _Entry) -> list[dict]:
@@ -1881,6 +1980,16 @@ class PreviewWorkspace:
 
 def _label_anchor(obj):
     """Match PySide6's centroid rather than an arbitrary bounding-box centre."""
+    if obj.is_closed and len(obj.display_parts)>1:
+        try:
+            shape=geometry_of(obj)
+            components=(list(shape.geoms) if shape.geom_type=="MultiPolygon"
+                        else [shape])
+            largest=max(components,key=lambda p:p.area)
+            anchor=largest.representative_point()
+            return anchor.x,anchor.y
+        except ValueError:
+            pass
     points = obj.points[:-1] if obj.is_closed else obj.points
     if not points:
         return (0.0, 0.0)
