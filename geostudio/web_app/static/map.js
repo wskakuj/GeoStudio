@@ -469,6 +469,18 @@
       // Shared-node mode must never snap a 5310 corner onto 5220.
       // Python enforces the same restriction on the entire source MAP.
       if(state.sharedNodes&&feature.code!==state.detail?.code)continue;
+      // The neighbor that moves together with a dragged corner cannot be
+      // the snap target of its own OLD, stationary boundary.
+      if(state.sharedNodes&&state.vertexDrag){
+        const activePoint=editableVertices()[state.vertexDrag.index];
+        if(activePoint){
+          const original=nativeWorldPoint(activePoint), bb=feature.bbox;
+          if(original.x>=bb[0]-.002&&original.x<=bb[2]+.002&&
+             original.y>=bb[1]-.002&&original.y<=bb[3]+.002&&
+             sameCodeNeighborPreview(feature,original,original))
+            continue;
+        }
+      }
       const b=feature.bbox;
       if(world.x<b[0]-radius||world.x>b[2]+radius||
          world.y<b[1]-radius||world.y>b[3]+radius)continue;
