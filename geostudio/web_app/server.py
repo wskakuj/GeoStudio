@@ -144,6 +144,7 @@ def create_app(workspace: PreviewWorkspace | None = None) -> FastAPI:
             return state.move_vertex(
                 fid, payload.get("index"), payload.get("x"), payload.get("y"),
                 shared=payload.get("shared", False),
+                snap_radius=payload.get("snapRadius", 0),
                 document_token=payload.get("documentToken"),
                 revision=payload.get("revision"),
             )
