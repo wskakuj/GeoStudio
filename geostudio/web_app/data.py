@@ -22,7 +22,7 @@ from geostudio.geomap import GeoMap
 from geostudio.forest_classes import forest_class_value
 from geostudio.geometry_index import GeometryIndex
 from geostudio.history import History
-from geostudio.topology_edit import linked_vertex_moves
+from geostudio.topology_edit import linked_vertex_plan
 from geostudio.interactions import find_snap
 from geostudio.library_render import native_fill_color
 
@@ -303,10 +303,20 @@ class PreviewWorkspace:
                 raise ValueError("Nieprawidłowy promień przyciągania.")
             snapped = None
             if snap_radius > 0:
-                # Use all GEO-MAP lines and markers, regardless of map visibility.
                 candidates = self._index.nearby(x, y, snap_radius)
+                # In shared-node mode, foreign codes are NOT snapping targets.
+                # Otherwise a dragged 5310 may appear glued to a 5220 even
+                # when 5220 source bytes remain unchanged.
+                if shared:
+                    candidates = [item for item in candidates if item.code == obj.code]
                 snapped = find_snap(x, y, candidates, snap_radius,
                                     exclude_uid=obj.uid, hide_connectors=True)
+                if (shared and snapped and
+                        hypot(snapped.x - obj.points[index].x,
+                              snapped.y - obj.points[index].y) <= .002):
+                    # Do not stick a dragged corner to its own old location
+                    # on a neighboring 5310 outline.
+                    snapped = None
                 if snapped:
                     x, y = snapped.x, snapped.y
             # Match the source precision: sending higher precision from a
@@ -316,8 +326,10 @@ class PreviewWorkspace:
             if hypot(old.x - x, old.y - y) < 0.0005:
                 return {**self._editing_status(), "changed": False,
                         "affected": [], "object": self.details(fid)}
-            changes = (linked_vertex_moves(self._doc, obj.uid, index, x, y)
-                       if shared else {obj.uid: {index: (x, y)}})
+            plan = (linked_vertex_plan(self._doc, obj.uid, index, x, y)
+                    if shared else None)
+            changes = plan.moves if plan else {obj.uid: {index: (x, y)}}
+            insertions = plan.inserts if plan else {}
             # Defense in depth: never trust an input ID or the planner's
             # resulting UID dictionary without resolving each exact object.
             for uid in changes:
@@ -332,6 +344,12 @@ class PreviewWorkspace:
                 "Przesunięcie węzła " + obj.code,
                 selection_before=(obj.uid,),
             ):
+                # A neighboring 5310 may share an edge but have NO P record
+                # exactly where the selected 5310 corner touches it.
+                # Insert the missing native P at that old border coordinate,
+                # then move both vertices. Undo reverses insertion + motion.
+                for uid, (segment, corner) in insertions.items():
+                    self._doc.insert_polygon_vertex(uid, segment, *corner)
                 self._doc.move_polygon_vertices(changes)
                 if self._foreign_code_digest(self._doc, obj.code) != foreign_before:
                     raise ValueError(
@@ -341,6 +359,7 @@ class PreviewWorkspace:
             self._revision += 1
             return {**self._editing_status(), "changed": True,
                     "affected": list(changes),
+                    "insertedSameCodeVertices": len(insertions),
                     "affectedObjects": [
                         {"uid": uid, "code": obj.code} for uid in changes
                     ],
