@@ -204,3 +204,28 @@ button:disabled { opacity:.38; cursor:not-allowed; filter:none !important; }
 .inspector-edit-actions { display:flex; gap:7px; padding-top:14px; }
 .inspector-edit-actions .button { flex:1; padding:9px 7px; font-size:11px; }
 @media (max-width:1120px) { .toolbar .tool-button { padding:6px 7px; } .button.export { padding:9px; } }
+
+/* GeoStudio 2.0 polygon vertex editing */
+.toolbar-checkbox {
+  display:flex; gap:7px; align-items:center; white-space:nowrap;
+  font-size:10px; font-weight:600; color:#a4cfcc;
+  cursor:pointer; border:1px solid #355569;
+  padding:9px 8px; border-radius:7px; background:#152c3a;
+}
+.toolbar-checkbox:hover { background:#1c3a4a; }
+.toolbar-checkbox input { margin:0; width:14px; height:14px; accent-color:#37c6b5; cursor:pointer; }
+.canvas-shell.nodes-editing #map-canvas { cursor:crosshair; }
+.canvas-shell.nodes-editing #map-canvas:active { cursor:grabbing; }
+.geometry-help {
+  position:absolute; bottom:52px; right:17px; z-index:2;
+  background:#183748ed; color:#d8f9ef; border:1px solid #478c8b;
+  box-shadow:0 5px 20px #172e4524; border-radius:9px;
+  padding:9px 12px; font-size:11px; max-width:min(430px,68%);
+}
+@media(max-width:1370px) {
+  .toolbar .geometry-options .tool-row { gap:3px; }
+  .toolbar-checkbox { font-size:9px; padding:8px 5px; }
+}
+@media(max-width:1080px) {
+  .toolbar .geometry-options { display:none; }
+}
