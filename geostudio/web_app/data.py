@@ -290,6 +290,7 @@ class PreviewWorkspace:
                     "font", "Times New Roman" if is_sheet and obj.code in {"7900","6900"}
                     else "Segoe UI"))[:80],
                 "bold": bool(style.get("bold", is_building or obj.code in {"7900","6900"})),
+                "worldTextHeight": _sheet_text_height(obj.fields) if is_sheet else None,
             })
         return result
 
@@ -378,6 +379,16 @@ def _label_anchor(obj):
         return (sum(p.x for p in points) / len(points),
                 sum(p.y for p in points) / len(points))
     return (x0 + cx / (3 * area2), y0 + cy / (3 * area2))
+
+
+def _sheet_text_height(fields):
+    """GEO-MAP sheet annotations use their A1 height in map units."""
+    raw = str(fields.get("A1", "12")).replace(",", ".")
+    try:
+        n = float(raw)
+        return min(2000., max(1., n)) if isfinite(n) and n > 0 else 12.
+    except (TypeError, ValueError):
+        return 12.
 
 
 def _valid_number(value):
