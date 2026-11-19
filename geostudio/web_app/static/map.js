@@ -16,12 +16,17 @@
     width: 1, height: 1, pixelRatio: 1, isDragging: false, drag: null,
     lastPick: null, scheduled: false, refreshTimer: null, queryCounter: 0,
     queryAbort: null, selectionRequest: 0, limited: false,
-    firstLoad: true, inspectorCache: new Map()
+    firstLoad: true, inspectorCache: new Map(),
+    edit: null, editBusy: false
   };
   const commands = [
     {name:"Otwórz plik GEO-MAP", hint:"Ctrl+O", run:()=> $("file-map").click()},
     {name:"Wczytaj plik stylów GeoStudio", hint:"JSON", run:()=> $("file-sidecar").click()},
     {name:"Dopasuj całą mapę", hint:"0", run:fitToMap},
+    {name:"Edytuj atrybuty aktywnego obiektu", hint:"E", run:()=>toggleInspectorEdit(true)},
+    {name:"Cofnij ostatnią zmianę", hint:"Ctrl+Z", run:()=>historyStep("undo")},
+    {name:"Ponów zmianę", hint:"Ctrl+Y", run:()=>historyStep("redo")},
+    {name:"Pobierz osobną kopię MAP", hint:"Ctrl+Shift+S", run:downloadMapCopy},
     {name:"Zaznaczanie obiektów", hint:"S", run:()=>setTool("select")},
     {name:"Przesuwanie mapy", hint:"H", run:()=>setTool("pan")},
     {name:"Włącz / wyłącz etykiety", hint:"Aa", run:toggleLabels},
@@ -43,6 +48,155 @@
     }
     return res.json();
   };
+  function updateEditState(status) {
+    if(!status)return;
+    state.edit={
+      dirty:!!status.dirty,
+      canUndo:!!status.canUndo,
+      canRedo:!!status.canRedo,
+      revision:status.revision,
+      documentToken:status.documentToken,
+      undoLabel:status.undoLabel||"",
+      redoLabel:status.redoLabel||""
+    };
+    $("tool-undo").disabled=state.editBusy||!state.edit.canUndo;
+    $("tool-redo").disabled=state.editBusy||!state.edit.canRedo;
+    $("btn-export").disabled=state.editBusy||!state.meta;
+    $("tool-undo").title=state.edit.undoLabel
+      ?"Cofnij: "+state.edit.undoLabel+" (Ctrl+Z)":"Cofnij (Ctrl+Z)";
+    $("tool-redo").title=state.edit.redoLabel
+      ?"Ponów: "+state.edit.redoLabel+" (Ctrl+Y)":"Ponów (Ctrl+Y)";
+    const marker=$("dirty-marker");
+    marker.textContent=state.edit.dirty?"Niezapisane zmiany w pamięci":"Oryginał chroniony";
+    marker.classList.toggle("unsaved",state.edit.dirty);
+  }
+  function editRequestBody() {
+    return {documentToken:state.edit?.documentToken,
+            revision:state.edit?.revision};
+  }
+  function confirmDiscardEdits() {
+    return !state.edit?.dirty || window.confirm(
+      "W kopii roboczej są niezapisane zmiany. Otworzenie kolejnej mapy "+
+      "usunie je z pamięci. Czy chcesz kontynuować?");
+  }
+  function toggleInspectorEdit(on) {
+    if(!state.detail||!state.meta)return;
+    const supported=state.detail.editableFields||[];
+    if(on&&!supported.length) {
+      inform("Ten obiekt nie ma istniejących pól, które można bezpiecznie edytować.",true);
+      return;
+    }
+    $("inspector-edit").hidden=!on;
+    $("inspector-fields").hidden=!!on;
+    $("inspector-edit-toggle").textContent=on?"Zamknij":"✎ Edytuj";
+    if(!on)return;
+    const list=$("inspector-edit-fields");
+    list.replaceChildren();
+    for(const key of supported) {
+      const row=document.createElement("div");
+      row.className="inspector-edit-field";
+      const label=document.createElement("label");
+      label.textContent=key;
+      const input=document.createElement("input");
+      input.type="text"; input.dataset.field=key; input.id="edit-field-"+key;
+      input.value=state.detail.fields[key]??"";
+      input.maxLength=512;
+      label.htmlFor=input.id;
+      row.append(label,input);list.append(row);
+    }
+    const first=list.querySelector("input");
+    if(first)first.focus();
+  }
+  async function refreshEditedDocument(activeId) {
+    const oldLayers=new Set(state.meta.layers.map(item=>item.name));
+    const refreshed=await api("/api/map");
+    state.meta=refreshed;
+    updateEditState(refreshed);
+    for(const layer of refreshed.layers) {
+      if(!oldLayers.has(layer.name))state.visibleLayers.add(layer.name);
+    }
+    $("layer-count").textContent=refreshed.layers.length;
+    $("count-objects").textContent=display(refreshed.objectCount);
+    $("count-vertices").textContent=display(refreshed.vertexCount);
+    state.inspectorCache.clear();
+    renderLayers();
+    await refreshViewport();
+    if(activeId)await selectFeature(activeId);
+    else {state.detail=null;updateInspector();}
+  }
+  async function saveAttributeChanges(event) {
+    event.preventDefault();
+    if(state.editBusy||!state.edit||!state.detail)return;
+    const fid=state.detail.id;
+    const changes={};
+    for(const input of $("inspector-edit-fields").querySelectorAll("input[data-field]")){
+      const field=input.dataset.field;
+      if(input.value!==(state.detail.fields[field]??""))changes[field]=input.value;
+    }
+    if(!Object.keys(changes).length) {
+      toggleInspectorEdit(false);
+      inform("Nie wprowadzono zmian.");
+      return;
+    }
+    state.editBusy=true;updateEditState(state.edit);
+    $("inspector-apply").disabled=true;
+    try {
+      const response=await api("/api/object/"+encodeURIComponent(fid)+"/fields",{
+        method:"PATCH",
+        headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({...editRequestBody(),changes})
+      });
+      updateEditState(response);
+      await refreshEditedDocument(fid);
+      inform("Zmieniono atrybuty kopii roboczej. Ctrl+Z cofa; pobierz nową kopię MAP.");
+    } catch(error){
+      inform("Nie można zmienić atrybutów: "+error.message,true);
+    } finally {
+      state.editBusy=false;$("inspector-apply").disabled=false;
+      updateEditState(state.edit);
+    }
+  }
+  async function historyStep(direction) {
+    if(state.editBusy||!state.edit)return;
+    if(direction==="undo"&&!state.edit.canUndo)return;
+    if(direction==="redo"&&!state.edit.canRedo)return;
+    state.editBusy=true;updateEditState(state.edit);
+    try {
+      const response=await api("/api/edit/"+direction,{
+        method:"POST",headers:{"Content-Type":"application/json"},
+        body:JSON.stringify(editRequestBody())
+      });
+      updateEditState(response);
+      if(response.changed) {
+        await refreshEditedDocument(state.active);
+        inform(direction==="undo"?"Cofnięto zmianę w kopii.":"Ponowiono zmianę w kopii.");
+      }
+    }catch(error){
+      inform("Nie można wykonać operacji historii: "+error.message,true);
+    }finally{state.editBusy=false;updateEditState(state.edit);}
+  }
+  async function downloadMapCopy() {
+    if(!state.meta||!state.edit||state.editBusy)return;
+    try {
+      const params=new URLSearchParams({documentToken:state.edit.documentToken});
+      const response=await fetch("/api/export/map?"+params.toString(),{
+        headers:{"X-GeoStudio-Token":token},cache:"no-store"
+      });
+      if(!response.ok){
+        const problem=await response.json().catch(()=>({}));
+        throw Error(problem.detail||"Błąd tworzenia pliku MAP.");
+      }
+      const blob=await response.blob();
+      const original=state.meta.name.replace(/\\/g,"/").split("/").pop();
+      const filename=original.replace(/\\.map$/i,"")+"_GeoStudio2_kopia.MAP";
+      const url=URL.createObjectURL(blob);
+      const anchor=document.createElement("a");
+      anchor.href=url;anchor.download=filename;
+      document.body.append(anchor);anchor.click();anchor.remove();
+      setTimeout(()=>URL.revokeObjectURL(url),6000);
+      inform("Przygotowano nowy plik MAP do pobrania. Oryginał pozostaje bez zmian.");
+    }catch(error){inform("Nie udało się przygotować kopii: "+error.message,true);}
+  }
   function inform(msg, isError=false) {
     htmlText($("status-message"), msg);
     const toast = $("toast"); toast.textContent = msg;
@@ -70,6 +224,7 @@
       inform("Wybierz plik z rozszerzeniem .MAP.", true);
       return;
     }
+    if(!confirmDiscardEdits()){$("file-map").value="";return;}
     busy(true,"Wczytywanie " + file.name);
     try {
       const meta = await api("/api/map", {
@@ -79,6 +234,7 @@
         body: file
       });
       state.meta = meta;
+      updateEditState(meta);
       state.active = null; state.detail = null; state.pinned.clear();
       state.features = []; state.inspectorCache.clear();
       // Match the old user's map view: survey markers are opt-in.
@@ -452,7 +608,11 @@
     $("inspector-empty").hidden=!!detail;
     $("inspector-data").hidden=!detail;
     document.body.classList.toggle("has-inspector",!!detail);
+    $("inspector-edit").hidden=true;
+    $("inspector-fields").hidden=false;
+    $("inspector-edit-toggle").textContent="✎ Edytuj";
     if(!detail)return;
+    $("inspector-edit-toggle").disabled=!(detail.editableFields||[]).length;
     $("inspector-code").textContent=detail.code;
     $("inspector-layer").textContent=detail.layer;
     $("inspector-uid").textContent=detail.sourceUid||detail.id;
@@ -617,6 +777,16 @@
       ev.preventDefault();$("file-map").click();return;
     }
     if(typing)return;
+    if((ev.ctrlKey||ev.metaKey)&&ev.key.toLowerCase()==="z"){
+      ev.preventDefault();historyStep("undo");return;
+    }
+    if((ev.ctrlKey||ev.metaKey)&&ev.key.toLowerCase()==="y"){
+      ev.preventDefault();historyStep("redo");return;
+    }
+    if((ev.ctrlKey||ev.metaKey)&&ev.shiftKey&&ev.key.toLowerCase()==="s"){
+      ev.preventDefault();downloadMapCopy();return;
+    }
+    if(ev.key.toLowerCase()==="e"&&state.detail){toggleInspectorEdit(true);return;}
     if(ev.key==="Escape"){
       if(dialog.open)dialog.close();
       else selectFeature(null);
@@ -634,6 +804,14 @@
   link("tool-open",()=> $("file-map").click());
   link("empty-open",()=> $("file-map").click());
   link("tool-sidecar",()=> $("file-sidecar").click());
+  link("tool-undo",()=>historyStep("undo"));
+  link("tool-redo",()=>historyStep("redo"));
+  link("btn-export",downloadMapCopy);
+  link("inspector-edit-toggle",()=>{
+    toggleInspectorEdit($("inspector-edit").hidden);
+  });
+  link("inspector-cancel",()=>toggleInspectorEdit(false));
+  $("inspector-edit-form").addEventListener("submit",saveAttributeChanges);
   link("tool-select",()=>setTool("select"));
   link("tool-pan",()=>setTool("pan"));
   link("tool-fit",fitToMap);
@@ -665,11 +843,17 @@
     }
   });
 
+  window.addEventListener("beforeunload",ev=>{
+    if(state.edit?.dirty){
+      ev.preventDefault();ev.returnValue="";
+    }
+  });
   new ResizeObserver(()=>{resizeCanvas();if(state.meta)scheduleViewport();}).observe(shell);
   resizeCanvas();
   api("/api/map").then(meta=>{
     if(meta.loaded){
       state.meta=meta;
+      updateEditState(meta);
       state.visibleLayers=new Set(
         meta.layers.map(layer=>layer.name).filter(name=>name!=="Graniczniki"));
       state.firstLoad=false;
