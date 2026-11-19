@@ -196,38 +196,55 @@ class NativeMapPicker:
             raise ValueError(
                 "Eksport natywnych wycięć wymaga nowej nazwy pliku. "
                 "Nie nadpisuj istniejącej pary MAP/JSON.")
-        # os.replace is atomic on the same volume. Never truncate a valid
-        # target file in place if writing fails halfway.
-        fd, tmp = tempfile.mkstemp(prefix=".geostudio2-",suffix=".tmp",
-                                   dir=str(chosen.parent))
+        # Prepare BOTH files on disk before committing a new 6B pair.
+        # Do not leave behind a MAP without its source-ring recovery JSON.
+        companion=chosen.with_suffix(".geostudio-topology.json")
+        if burn_cutouts and companion.exists():
+            raise ValueError("Plik odwracalności już istnieje. Wybierz nową nazwę.")
+        fd,tmp=tempfile.mkstemp(prefix=".geostudio2-",suffix=".tmp",
+                                dir=str(chosen.parent))
+        tmp_companion=None
+        companion_committed=False
+        map_committed=False
         try:
             with os.fdopen(fd,"wb") as stream:
                 stream.write(content)
                 stream.flush()
                 os.fsync(stream.fileno())
-            os.replace(tmp,chosen)
-        finally:
-            try:
-                os.unlink(tmp)
-            except FileNotFoundError:
-                pass
-        if overlay_bytes:
-            # Companion is checksum-bound to this exact MAP. For 6B it also
-            # backs up source P contours and allows safe in-memory restoration.
-            companion=chosen.with_suffix(".geostudio-topology.json")
-            fd2,tmp2=tempfile.mkstemp(prefix=".geostudio-topology-",
-                                     suffix=".tmp",dir=str(chosen.parent))
-            try:
+            if overlay_bytes:
+                fd2,tmp_companion=tempfile.mkstemp(
+                    prefix=".geostudio-topology-",suffix=".tmp",
+                    dir=str(chosen.parent))
                 with os.fdopen(fd2,"wb") as stream:
                     stream.write(overlay_bytes)
                     stream.flush()
                     os.fsync(stream.fileno())
-                os.replace(tmp2,companion)
-            finally:
+            if burn_cutouts:
+                # New output name is required, so cleanup cannot delete
+                # any pre-existing project data if the second rename fails.
+                os.replace(tmp_companion,companion)
+                companion_committed=True
+                os.replace(tmp,chosen)
+                map_committed=True
+            else:
+                os.replace(tmp,chosen)
+                map_committed=True
+                if tmp_companion:
+                    os.replace(tmp_companion,companion)
+        except Exception:
+            if burn_cutouts and companion_committed and not map_committed:
                 try:
-                    os.unlink(tmp2)
-                except FileNotFoundError:
+                    companion.unlink()
+                except OSError:
                     pass
+            raise
+        finally:
+            for candidate in (tmp,tmp_companion):
+                if candidate:
+                    try:
+                        os.unlink(candidate)
+                    except FileNotFoundError:
+                        pass
         try:
             save_last_map_directory(self._settings,chosen.parent)
         except OSError:
