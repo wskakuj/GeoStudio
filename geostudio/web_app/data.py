@@ -538,7 +538,8 @@ class PreviewWorkspace:
                             min(y for x,y in a)<=max(y for x,y in b)+padding and
                             max(y for x,y in a)>=min(y for x,y in b)-padding)
                 if (len(conflicts)<12 and nearby(old,fixed,.002)
-                        and rings_contact(old,fixed)):
+                        and rings_contact(old,fixed)
+                        and not rings_overlap(old,fixed)):
                     conflicts.append({"movingUid":obj.uid,
                                       "stationaryUid":neighbor.uid,
                                       "code":obj.code})
