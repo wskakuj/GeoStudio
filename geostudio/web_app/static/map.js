@@ -980,6 +980,183 @@
     $("create-dialog").showModal();
     $("create-code").focus();
   }
+  function finishGeometryDrawing() {
+    if(state.tool==="draw"){finishDrawPolygon();return;}
+    if(state.tool==="cut"){
+      if(state.drawPoints.length<2){
+        inform("Podział wymaga linii przecinającej poligon.",true);return;
+      }
+      $("split-summary").textContent="Przed podziałem sprawdź linię.";
+      state.geometryPreview=null;$("split-apply").disabled=true;
+      $("split-dialog").showModal();return;
+    }
+    if(["line","line-edit"].includes(state.tool)){
+      if(state.drawPoints.length<2){
+        inform("Linia wymaga przynajmniej dwóch punktów.",true);return;
+      }
+      const editing=state.tool==="line-edit";
+      $("line-dialog-title").textContent=editing?"Edytuj istniejącą linię":"Nowa linia";
+      $("line-code").disabled=editing;
+      $("line-a1").disabled=editing;
+      $("line-a2").disabled=editing;
+      $("line-count").textContent=state.drawPoints.length+" węzłów P — "+
+        (editing?"zmiana istniejącego obrysu":"nowy obiekt GEO-MAP");
+      $("line-apply").textContent=editing?"Zapisz linię":"Utwórz linię";
+      $("line-summary").textContent="Sprawdź linię przed zatwierdzeniem.";
+      state.geometryPreview=null;$("line-apply").disabled=true;
+      $("line-dialog").showModal();
+    }
+  }
+  function startSplit() {
+    const ids=selectedObjectIds();
+    if(ids.length!==1){
+      inform("Najpierw zaznacz dokładnie jeden poligon do podziału.",true);
+      return;
+    }
+    state.cutIds=ids.slice();
+    setTool("cut");
+    inform("Narysuj linię przez wybrany poligon. Zacznij i zakończ poza jego obrysem. Enter kończy.");
+  }
+  function startEditLine() {
+    const ids=selectedObjectIds();
+    if(ids.length!==1){
+      inform("Zaznacz dokładnie jedną linię, potem Shift+L.",true);return;
+    }
+    const feature=state.features.find(f=>f.id===ids[0]);
+    if(!feature||feature.closed){
+      inform("Zaznacz istniejącą linię 6900/6000/6301/2364, nie poligon.",true);
+      return;
+    }
+    state.lineEditId=ids[0];
+    setTool("line-edit");
+    inform("Narysuj nowy przebieg wybranej linii. Enter — sprawdź i zapisz.");
+  }
+  function operationForGeometry(which) {
+    if(which==="split")return {
+      action:"split",ids:state.cutIds.slice(),
+      points:state.drawPoints.map(p=>p.slice())
+    };
+    if(which==="line"){
+      const points=state.drawPoints.map(p=>p.slice());
+      if(state.tool==="line-edit")return {
+        action:"edit_line",ids:[state.lineEditId],points
+      };
+      return {
+        action:"create_line",code:$("line-code").value,points,
+        fields:Object.fromEntries(["a1","a2"].filter(k=>$("line-"+k).value)
+          .map(k=>[k.toUpperCase(),$("line-"+k).value]))
+      };
+    }
+    throw Error("Nieznane polecenie geometrii.");
+  }
+  async function previewGeometryForm(which) {
+    state.geometryPreview=null;
+    $(which+"-apply").disabled=true;
+    const request={...editRequestBody(),
+      operation:operationForGeometry(which)};
+    $(which+"-preview").disabled=true;
+    $(which+"-summary").textContent="Sprawdzanie topologii i powierzchni…";
+    try{
+      const report=await api("/api/geometry/preview",{
+        method:"POST",headers:{"Content-Type":"application/json"},
+        body:JSON.stringify(request)});
+      const notes=report.metadataWarning
+        ?"\nUWAGA: stare dane powierzchniowe w A4/A6 wymagają sprawdzenia!"
+        :"";
+      $(which+"-summary").textContent=
+        (report.parts?"Liczba części: "+report.parts+"\n":"")+
+        (report.beforeArea!==undefined?"Powierzchnia przed: "+
+          report.beforeArea+" m², po: "+report.afterArea+" m²\n":"")+
+        "Można cofnąć jednym Ctrl+Z."+notes;
+      state.geometryPreview={which,report,request};
+      $(which+"-apply").disabled=!report.canApply;
+    }catch(err){
+      $(which+"-summary").textContent="Nie można zastosować: "+err.message;
+      inform(err.message,true);
+    }finally{$(which+"-preview").disabled=false;}
+  }
+  async function applyGeometryForm(which,ev) {
+    ev.preventDefault();
+    const current=state.geometryPreview;
+    if(!current||current.which!==which||state.editBusy)return;
+    const request={...editRequestBody(),
+      operation:operationForGeometry(which)};
+    if(JSON.stringify(current.request)!==JSON.stringify(request)){
+      state.geometryPreview=null;$(which+"-apply").disabled=true;
+      inform("Obrys został zmieniony. Sprawdź ponownie.",true);return;
+    }
+    if(current.report.metadataWarning&&!window.confirm(
+      "Scalenie/podział wymaga ręcznego sprawdzenia danych powierzchniowych "+
+      "A4/A6 w GEO-MAP. Czy kontynuować?"))return;
+    state.editBusy=true;updateEditState(state.edit);
+    try{
+      const res=await api("/api/geometry/apply",{
+        method:"POST",headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({...request,previewKey:current.report.previewKey})
+      });
+      updateEditState(res);
+      $(which+"-dialog").close();
+      state.geometryPreview=null;
+      state.drawPoints=[];state.drawHover=null;
+      state.lineEditId=null;state.cutIds=[];
+      state.pinned=new Set(res.createdIds||[]);
+      state.active=res.createdIds?.[0]||null;
+      state.editBusy=false;updateEditState(state.edit);
+      setTool("select");
+      await refreshEditedDocument(state.active);
+      updateSelectionCount();
+      inform("Geometria zapisana w kopii roboczej. Ctrl+Z cofa.");
+    }catch(error){
+      state.geometryPreview=null;
+      $(which+"-apply").disabled=true;
+      $(which+"-summary").textContent=error.message;
+      inform("Nie zapisano geometrii: "+error.message,true);
+    }finally{state.editBusy=false;updateEditState(state.edit);}
+  }
+  async function simpleGeometryAction(action) {
+    if(state.editBusy||!state.meta)return;
+    const ids=selectedObjectIds();
+    if(action==="merge"&&(ids.length<2||ids.length>100)){
+      inform("Zaznacz od 2 do 100 poligonów tego samego kodu.",true);return;
+    }
+    if(action==="repair"&&(!ids.length||ids.length>100)){
+      inform("Zaznacz 1–100 poligonów do poprawy kierunku.",true);return;
+    }
+    const request={...editRequestBody(),operation:{action,ids}};
+    state.editBusy=true;updateEditState(state.edit);
+    try{
+      const report=await api("/api/geometry/preview",{
+        method:"POST",headers:{"Content-Type":"application/json"},
+        body:JSON.stringify(request)});
+      if(!report.canApply){
+        inform("Wybrane obrysy już mają prawidłowy kierunek i dodatnią powierzchnię.");
+        return;
+      }
+      const message=action==="repair"
+        ?"Odwrócić kolejność punktów w "+report.repairs.length+
+          " poligonach, aby w GEO-MAP otrzymać dodatnią powierzchnię?"
+        :"Scalić "+display(ids.length)+" poligonów w jeden?\n"+
+          "Suma przed: "+report.beforeArea+" m²; po: "+
+          report.afterArea+" m².\n"+
+          "UWAGA: dane powierzchniowe A4/A6 trzeba sprawdzić ręcznie.";
+      if(!window.confirm(message))return;
+      const result=await api("/api/geometry/apply",{
+        method:"POST",headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({...request,previewKey:report.previewKey})
+      });
+      updateEditState(result);
+      state.pinned.clear();state.active=null;
+      await refreshEditedDocument(null);
+      updateSelectionCount();
+      inform(action==="repair"
+        ?"Naprawiono kierunek obrysu. GEO-MAP pokaże dodatnią powierzchnię po eksporcie."
+        :"Scalono poligony. Sprawdź A4/A6. Ctrl+Z cofa.");
+    }catch(error){
+      inform("Operacja nieudana: "+error.message,true);
+    }finally{state.editBusy=false;updateEditState(state.edit);}
+  }
+  const mergePolygons=()=>simpleGeometryAction("merge");
+  const repairWinding=()=>simpleGeometryAction("repair");
   function drawDraftPolygon() {
     if(!["draw","cut","line","line-edit"].includes(state.tool)||
        !state.drawPoints.length)return;
@@ -2124,7 +2301,8 @@
     if((ev.ctrlKey||ev.metaKey)&&ev.shiftKey&&ev.key.toLowerCase()==="m"){
       ev.preventDefault();openMoveEditor();return;
     }
-    if($("copy-dialog").open||$("create-dialog").open||$("move-dialog").open||
+    if($("line-dialog").open||$("split-dialog").open||
+       $("copy-dialog").open||$("create-dialog").open||$("move-dialog").open||
        $("bulk-dialog").open||$("select-dialog").open)return;
     if(typing)return;
     if((ev.ctrlKey||ev.metaKey)&&ev.shiftKey&&ev.key.toLowerCase()==="g"){
@@ -2204,6 +2382,17 @@
   link("tool-split",startSplit);
   link("tool-winding",repairWinding);
   link("tool-line",()=>setTool("line"));
+  link("line-close",()=>$("line-dialog").close());
+  link("line-back",()=>$("line-dialog").close());
+  link("line-preview",()=>previewGeometryForm("line"));
+  $("line-form").addEventListener("submit",ev=>applyGeometryForm("line",ev));
+  for(const key of ["line-code","line-a1","line-a2"])
+    $(key).addEventListener("input",()=>{state.geometryPreview=null;
+      $("line-apply").disabled=true;});
+  link("split-close",()=>$("split-dialog").close());
+  link("split-back",()=>$("split-dialog").close());
+  link("split-preview",()=>previewGeometryForm("split"));
+  $("split-form").addEventListener("submit",ev=>applyGeometryForm("split",ev));
   link("tool-copy",quickDuplicate);
   link("tool-delete-objects",deleteObjects);
   link("copy-close",()=>$("copy-dialog").close());
