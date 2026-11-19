@@ -200,6 +200,51 @@ def test_encoding_line_endings_and_unknown_records_survive():
     assert b'\r\n' not in doc.lines[ID_LINE]
 
 
+def test_many_distant_insertions_in_one_history_step_are_fully_reversible():
+    original = [f"row-{i:03d}\n".encode() for i in range(40)]
+    doc = FakeDoc(lines=original)
+    history = History(doc)
+    with history.begin("Wspólne wierzchołki"):
+        doc.lines.insert(5, b"vertex-A\n")
+        doc.lines.insert(29, b"vertex-B\n")
+        doc.lines.insert(35, b"vertex-C\n")
+    edited = list(doc.lines)
+    assert len(history._entries[0].hunks) >= 2
+    history.undo()
+    assert doc.lines == original
+    history.redo()
+    assert doc.lines == edited
+
+
+def test_many_distant_deletions_in_one_history_step_are_reversible():
+    original = [f"row-{i:03d}\n".encode() for i in range(35)]
+    doc = FakeDoc(lines=original)
+    history = History(doc)
+    with history.begin("Usuń dwa węzły"):
+        del doc.lines[25]
+        del doc.lines[5]
+    edited = list(doc.lines)
+    history.undo()
+    assert doc.lines == original
+    history.redo()
+    assert doc.lines == edited
+
+
+def test_mixed_insertion_and_replacement_one_transaction_is_reversible():
+    original = [f"row-{i:03d}\n".encode() for i in range(40)]
+    doc = FakeDoc(lines=original)
+    history = History(doc)
+    with history.begin("Wspólne węzły"):
+        doc.lines[2] = b"changed\n"
+        doc.lines.insert(11, b"new-P\n")
+        doc.lines[32] = b"changed-later\n"
+    edited = list(doc.lines)
+    history.undo()
+    assert doc.lines == original
+    history.redo()
+    assert doc.lines == edited
+
+
 # --- sidecar -------------------------------------------------------------
 
 def test_styles_are_restored_in_the_same_entry(history, doc):
