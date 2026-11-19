@@ -22,7 +22,8 @@
     hoverInsert: null, selectedVertex: null
   };
   const commands = [
-    {name:"Otwórz plik GEO-MAP", hint:"Ctrl+O", run:()=> $("file-map").click()},
+    {name:"Otwórz plik GEO-MAP", hint:"Ctrl+O", run:chooseMap},
+    {name:"Wybierz obiekty według kodu, A1, A2", hint:"Ctrl+H", run:openAdvancedSelection},
     {name:"Wczytaj plik stylów GeoStudio", hint:"JSON", run:()=> $("file-sidecar").click()},
     {name:"Dopasuj całą mapę", hint:"0", run:fitToMap},
     {name:"Edytuj atrybuty aktywnego obiektu", hint:"E", run:()=>toggleInspectorEdit(true)},
@@ -222,13 +223,40 @@
     return "#8ea4b7";
   }
 
-  async function openMap(file) {
+  function finishOpeningMap(meta) {
+    state.meta = meta;
+    updateEditState(meta);
+    state.active = null; state.detail = null; state.pinned.clear();
+    populateSelectCodes();
+    state.vertexDrag=null;setTool("select");
+    state.features = []; state.inspectorCache.clear();
+    // Match the old user's map view: survey markers are opt-in.
+    // Their heavy symbol density otherwise hides the parcel boundaries.
+    state.visibleLayers = new Set(
+      meta.layers.map(layer=>layer.name).filter(name=>name!=="Graniczniki"));
+    state.hiddenGrades = new Set(); state.firstLoad = false;
+    $("empty-state").hidden = true;
+    htmlText($("document-title"), meta.name);
+    htmlText($("map-status"), meta.name);
+    htmlText($("layer-count"), meta.layers.length);
+    htmlText($("count-objects"), display(meta.objectCount));
+    htmlText($("count-vertices"), display(meta.vertexCount));
+    const quality = $("checksum-badge");
+    quality.hidden = false;
+    quality.textContent = meta.checksumValid ? "✓ CHK poprawna" : "⚠ CHK niezgodna";
+    quality.classList.toggle("warning", !meta.checksumValid);
+    renderLayers(); updateInspector(); fitToMap(); updateSelectionCount();
+    inform("Wczytano " + display(meta.objectCount) +
+           " obiektów. Oryginalny plik jest chroniony.");
+    return true;
+  }
+  async function openMap(file, alreadyConfirmed=false) {
     if (!file) return;
     if (!file.name.toLowerCase().endsWith(".map")) {
       inform("Wybierz plik z rozszerzeniem .MAP.", true);
       return;
     }
-    if(!confirmDiscardEdits()){$("file-map").value="";return false;}
+    if(!alreadyConfirmed&&!confirmDiscardEdits()){$("file-map").value="";return false;}
     busy(true,"Wczytywanie " + file.name);
     try {
       const meta = await api("/api/map", {
@@ -237,30 +265,7 @@
                   "X-Map-Name":encodeURIComponent(file.name)},
         body: file
       });
-      state.meta = meta;
-      updateEditState(meta);
-      state.active = null; state.detail = null; state.pinned.clear();
-      state.vertexDrag=null;setTool("select");
-      state.features = []; state.inspectorCache.clear();
-      // Match the old user's map view: survey markers are opt-in.
-      // Their heavy symbol density otherwise hides the parcel boundaries.
-      state.visibleLayers = new Set(
-        meta.layers.map(layer=>layer.name).filter(name=>name!=="Graniczniki"));
-      state.hiddenGrades = new Set(); state.firstLoad = false;
-      $("empty-state").hidden = true;
-      htmlText($("document-title"), meta.name);
-      htmlText($("map-status"), meta.name);
-      htmlText($("layer-count"), meta.layers.length);
-      htmlText($("count-objects"), display(meta.objectCount));
-      htmlText($("count-vertices"), display(meta.vertexCount));
-      const quality = $("checksum-badge");
-      quality.hidden = false;
-      quality.textContent = meta.checksumValid ? "✓ CHK poprawna" : "⚠ CHK niezgodna";
-      quality.classList.toggle("warning", !meta.checksumValid);
-      renderLayers(); updateInspector(); fitToMap(); updateSelectionCount();
-      inform("Wczytano " + display(meta.objectCount) +
-             " obiektów. Oryginalny plik jest chroniony.");
-      return true;
+      return finishOpeningMap(meta);
     } catch (error) {
       inform("Nie udało się otworzyć MAP: " + error.message, true);
       return false;
@@ -278,6 +283,42 @@
     } catch (error) {
       inform("Nie udało się wczytać JSON: " + error.message, true);
     } finally { busy(false); $("file-sidecar").value = ""; }
+  }
+
+  async function chooseMap() {
+    if(window.pywebview?.api?.open_map){
+      // Native Windows dialogue: the Python bridge knows the last directory.
+      if(!confirmDiscardEdits())return;
+      busy(true,"Otwieranie mapy z ostatniego katalogu");
+      try {
+        const answer=await window.pywebview.api.open_map();
+        if(answer&&!answer.cancelled&&answer.metadata)
+          finishOpeningMap(answer.metadata);
+      }catch(error){
+        inform("Nie udało się otworzyć MAP: "+error.message,true);
+      }finally{busy(false);}
+      return;
+    }
+    if(typeof window.showOpenFilePicker==="function"){
+      if(!confirmDiscardEdits())return;
+      try{
+        // Chromium remembers the picker location for a stable page origin.
+        const handles=await window.showOpenFilePicker({
+          id:"geostudio-map-folder",multiple:false,
+          types:[{description:"Mapa GEO-MAP",accept:{
+            "application/octet-stream":[".map"]
+          }}]
+        });
+        if(handles.length)await openMap(await handles[0].getFile(),true);
+      }catch(error){
+        if(error.name==="AbortError")return;
+        // WebView fallback (e.g. disabled File System Access API).
+        $("file-map").click();
+      }
+      return;
+    }
+    // Standard file input cannot set a full local directory path.
+    $("file-map").click();
   }
 
   function resizeCanvas() {
@@ -1219,7 +1260,10 @@
       ev.preventDefault();openCommands();return;
     }
     if((ev.ctrlKey||ev.metaKey)&&ev.key.toLowerCase()==="o"){
-      ev.preventDefault();$("file-map").click();return;
+      ev.preventDefault();chooseMap();return;
+    }
+    if((ev.ctrlKey||ev.metaKey)&&ev.key.toLowerCase()==="h"){
+      ev.preventDefault();openAdvancedSelection();return;
     }
     if(typing)return;
     if(state.tool==="nodes"&&state.detail&&!ev.ctrlKey&&!ev.metaKey&&!ev.altKey&&
@@ -1260,9 +1304,10 @@
   });
 
   const link=(id,callback)=>$(id).addEventListener("click",callback);
-  link("btn-open",()=> $("file-map").click());
-  link("tool-open",()=> $("file-map").click());
-  link("empty-open",()=> $("file-map").click());
+  link("btn-open",chooseMap);
+  link("tool-open",chooseMap);
+  link("empty-open",chooseMap);
+  link("tool-advanced-select",openAdvancedSelection);
   link("tool-sidecar",()=> $("file-sidecar").click());
   link("tool-undo",()=>historyStep("undo"));
   link("tool-redo",()=>historyStep("redo"));
