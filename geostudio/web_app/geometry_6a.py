@@ -80,14 +80,14 @@ def rings_from_shape(shape, *, prefer_anchor=None, max_rings=256, max_vertices=5
     rings=[]
     for poly in polygons:
         poly=orient(poly,sign=1.0)
-        for ring in [poly.exterior,*poly.interiors]:
+        for ring_number,ring in enumerate([poly.exterior,*poly.interiors]):
             coords=[(round(x,3),round(y,3))
                     for x,y in list(ring.coords)[:-1]]
             if len(set(coords))<3:
                 raise ValueError("Kontur zanikł po zaokrągleniu do 1 mm.")
             if coords[0]==coords[-1]:
                 coords.pop()
-            if prefer_anchor is not None and ring is poly.exterior and coords:
+            if prefer_anchor is not None and ring_number==0 and coords:
                 i=min(range(len(coords)),key=lambda index:
                       (coords[index][0]-prefer_anchor[0])**2+
                       (coords[index][1]-prefer_anchor[1])**2)
