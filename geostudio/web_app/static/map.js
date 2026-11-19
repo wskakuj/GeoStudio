@@ -19,7 +19,7 @@
     firstLoad: true, inspectorCache: new Map(),
     edit: null, editBusy: false,
     snapEnabled: true, sharedNodes: false, vertexDrag: null,
-    hoverInsert: null
+    hoverInsert: null, selectedVertex: null
   };
   const commands = [
     {name:"Otwórz plik GEO-MAP", hint:"Ctrl+O", run:()=> $("file-map").click()},
@@ -31,6 +31,7 @@
     {name:"Pobierz osobną kopię MAP", hint:"Ctrl+Shift+S", run:downloadMapCopy},
     {name:"Zaznaczanie obiektów", hint:"S", run:()=>setTool("select")},
     {name:"Edytuj węzły zaznaczonego poligonu", hint:"P", run:()=>setTool("nodes")},
+    {name:"Usuń zaznaczony węzeł poligonu", hint:"Delete", run:deleteSelectedVertex},
     {name:"Przesuwanie mapy", hint:"H", run:()=>setTool("pan")},
     {name:"Włącz / wyłącz etykiety", hint:"Aa", run:toggleLabels},
     {name:"Włącz / wyłącz siatkę", hint:"▦", run:toggleGrid},
@@ -328,13 +329,23 @@
       ?"Wspólne węzły i przyciąganie: tylko kod "+code
       :"Wspólne węzły: wyłączone";
     $("geometry-help").textContent="P · Aktywny kod: "+code+
-      ". Przeciągnij węzeł lub kliknij DWUKROTNIE na krawędzi, by dodać punkt. "+
-      link+". Inne kody pozostają bez zmian.";
+      ". Kliknij węzeł + Delete, aby usunąć; przeciągnij, żeby przesunąć; "+
+      "dwuklik na krawędzi dodaje węzeł. "+link+". Inne kody bez zmian.";
+  }
+  function updateDeleteNodeButton() {
+    const enabled=state.tool==="nodes"&&state.meta&&state.detail?.closed&&
+      state.selectedVertex!==null&&!state.editBusy;
+    $("tool-delete-node").disabled=!enabled;
+    $("tool-delete-node").title=enabled
+      ?"Usuń węzeł nr "+(state.selectedVertex+1)+" (Delete)"
+      :"Kliknij węzeł w trybie P, następnie naciśnij Delete";
   }
   function setTool(tool) {
     if(state.editBusy)return;
     state.tool=tool;
     state.hoverInsert=null;
+    if(tool!=="nodes")state.selectedVertex=null;
+    updateDeleteNodeButton();
     shell.classList.toggle("panning",tool==="pan");
     shell.classList.toggle("nodes-editing",tool==="nodes");
     $("geometry-help").hidden=tool!=="nodes"||!state.meta;
@@ -628,8 +639,10 @@
       const p=worldToScreen(world.x,world.y);
       if(p.x< -10||p.x>state.width+10||p.y< -10||p.y>state.height+10)continue;
       ctx.beginPath();ctx.arc(p.x,p.y,i===drag?.index?6:4,0,2*Math.PI);
-      ctx.fillStyle=i===drag?.index?"#ffc263":"#f8ffff";
-      ctx.fill();ctx.lineWidth=2;ctx.strokeStyle="#078d89";ctx.stroke();
+      ctx.fillStyle=i===drag?.index?"#ffc263":
+        i===state.selectedVertex?"#ffd86a":"#f8ffff";
+      ctx.fill();ctx.lineWidth=i===state.selectedVertex?3:2;
+      ctx.strokeStyle=i===state.selectedVertex?"#d34b22":"#078d89";ctx.stroke();
     }
     if(!drag&&state.hoverInsert){
       const p=state.hoverInsert.screen;
@@ -703,6 +716,44 @@
       state.editBusy=false;
       updateEditState(state.edit);
       requestDraw();
+    }
+  }
+  async function deleteSelectedVertex() {
+    if(state.tool!=="nodes"||!state.detail?.closed||!state.edit||
+       state.editBusy)return;
+    const index=state.selectedVertex;
+    if(index===null||!Number.isInteger(index)){
+      inform("Najpierw kliknij konkretny węzeł poligonu w trybie P.");
+      return;
+    }
+    const fid=state.active,code=state.detail.code;
+    state.editBusy=true;updateEditState(state.edit);
+    updateDeleteNodeButton();
+    try {
+      const response=await api("/api/object/"+
+        encodeURIComponent(fid)+"/vertices/"+index,{
+        method:"DELETE",headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({...editRequestBody(),shared:state.sharedNodes})
+      });
+      updateEditState(response);
+      const affected=response.affectedObjects||[];
+      if(response.sourceCode!==code||
+         response.foreignCodesProtected!==true||
+         affected.some(o=>o.code!==code)){
+        inform("Nieprawidłowa odpowiedź edytora. Sprawdź kopię MAP.",true);
+        await refreshEditedDocument(fid);return;
+      }
+      state.selectedVertex=null;
+      await refreshEditedDocument(fid);
+      inform("Usunięto węzeł "+code+
+        (response.removedSameCodeVertices
+          ?" i "+response.removedSameCodeVertices+" wspólnych węzłów "+code:"")+
+        ". Ctrl+Z przywraca węzły.");
+    }catch(error){
+      inform("Nie udało się usunąć węzła: "+error.message,true);
+    }finally{
+      state.editBusy=false;updateEditState(state.edit);
+      updateDeleteNodeButton();requestDraw();
     }
   }
   async function commitVertexDrag(drag) {
@@ -967,7 +1018,8 @@
     $("selection-count").textContent="Zaznaczonych: "+n;
   }
   async function selectFeature(fid) {
-    state.active=fid;state.detail=null;updateInspector();
+    if(state.active!==fid)state.selectedVertex=null;
+    state.active=fid;state.detail=null;updateDeleteNodeButton();updateInspector();
     updateSelectionCount();requestDraw();
     if(fid===null)return;
     const ticket=++state.selectionRequest;
@@ -975,7 +1027,10 @@
       const detail=state.inspectorCache.get(fid)||await api("/api/object/"+encodeURIComponent(fid));
       if(ticket!==state.selectionRequest||state.active!==fid)return;
       state.inspectorCache.set(fid,detail);state.detail=detail;
-      updateInspector();
+      if(state.selectedVertex!==null&&
+         state.selectedVertex>=Math.max(0,detail.pointCount-1))
+        state.selectedVertex=null;
+      updateDeleteNodeButton();updateInspector();
       $("map-status").textContent=detail.code+" · "+detail.layer;
     }catch(error){inform("Nie można odczytać obiektu: "+error.message,true);}
   }
