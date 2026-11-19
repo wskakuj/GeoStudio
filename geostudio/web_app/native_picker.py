@@ -138,14 +138,18 @@ class NativeMapPicker:
 
 
     def save_map(self) -> dict:
-        """Ordinary Save As with automatic positive-area ring normalization."""
+        """Default Save As: bake same-code overlays when any exist."""
+        return self._save_map(burn_cutouts=None)
+
+    def save_base_map(self) -> dict:
+        """Explicit compatibility fallback: MAP without baked cutouts."""
         return self._save_map(burn_cutouts=False)
 
     def save_baked_map(self) -> dict:
         """Stage 6B: export native holes plus a separate reversible companion."""
         return self._save_map(burn_cutouts=True)
 
-    def _save_map(self, *, burn_cutouts: bool) -> dict:
+    def _save_map(self, *, burn_cutouts: bool | None) -> dict:
         """Save an explicitly named new MAP through an actual Windows Save As dialog.
 
         Unlike a browser Blob download, WebView2 can display and reliably
@@ -156,6 +160,8 @@ class NativeMapPicker:
         status = self._workspace.editing_status()
         if not status.get("documentToken"):
             raise ValueError("Najpierw otwórz mapę GEO-MAP.")
+        if burn_cutouts is None:
+            burn_cutouts=bool(status.get("hasReversibleMasks"))
         if burn_cutouts:
             suggested_name,content,overlay_bytes=(
                 self._workspace.export_native_cutouts(status["documentToken"]))
