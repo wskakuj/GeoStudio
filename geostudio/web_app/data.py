@@ -709,6 +709,9 @@ class PreviewWorkspace:
                     raise ValueError("Kopiowanie dotyczy tylko poligonów.")
                 selected.append(obj)
                 code_counts[obj.code]+=1
+        if action=="delete" and sum(bool(o.points) for o in selected)>=sum(
+                bool(o.points) for o in self._doc.objects):
+            raise ValueError("Nie można usunąć wszystkich obiektów mapy.")
         if action=="copy":
             dx,dy=payload.get("dx"),payload.get("dy")
             if (type(dx) not in (int,float) or type(dy) not in (int,float) or
@@ -798,7 +801,7 @@ class PreviewWorkspace:
                 raise RuntimeError("Przed zatwierdzeniem wykonaj świeży podgląd.")
             action=plan["action"]
             selected=plan["selected"]
-            before=self._doc.to_bytes()
+            before=b"".join(self._doc.lines)
             created=[]
             with self._history.begin(
                 {"copy":"Kopiuj poligony","delete":"Usuń poligony",
@@ -818,7 +821,7 @@ class PreviewWorkspace:
                 # For append/copy, all original MAP records must survive.
                 if action!="delete":
                     if not b"".join(self._doc.lines).startswith(
-                            b"".join(GeoMap(before).lines)):
+                            before):
                         raise ValueError(
                             "Wykryto zmianę oryginalnego rekordu. Cofnięto operację.")
             self._reindex(self._doc,self._doc.filename)
