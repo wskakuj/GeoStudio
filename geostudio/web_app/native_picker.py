@@ -60,40 +60,55 @@ def save_last_map_directory(settings: Path, directory: Path) -> None:
 
 
 class NativeMapPicker:
-    """Minimal JS bridge: the only public member is open_map().
+    """Small JS API that never exposes pywebview/WinForms COM objects.
 
-    pywebview recursively inspects public attributes of its js_api object.
-    Exposing the native Window or PreviewWorkspace makes it traverse
-    WinForms/WebView2 COM properties, leading to AccessibilityObject.Bounds
-    recursion, UI thread violations and intermittent Windows freezes.
-    Dependencies must remain private and invisible to JS API discovery.
+    The file picker is hosted by a short-lived Tk root instead of
+    pywebview.Window.create_file_dialog. Tk owns its dialog independently
+    of WebView2/COM; this avoids intermittent failures and thread-affinity
+    problems in the old bridge. If Tk is missing, the UI shows a separate,
+    synchronous HTML file input fallback.
     """
 
-    __slots__ = ("_workspace", "_settings", "_window")
+    __slots__ = ("_workspace", "_settings")
 
     def __init__(self, workspace: PreviewWorkspace,
-                 *, settings: Path | None = None, window=None):
+                 *, settings: Path | None = None):
         self._workspace = workspace
         self._settings = settings if settings is not None else preference_file()
-        self._window = window
+
+    def _choose_path(self) -> str:
+        # Called on pywebview's JS API worker thread, *not* the WebView2
+        # GUI thread. Build/destroy Tk entirely on this worker thread.
+        import tkinter as tk
+        from tkinter import filedialog
+
+        root = tk.Tk()
+        try:
+            root.withdraw()
+            root.attributes("-topmost", True)
+            root.update()
+            directory = read_last_map_directory(self._settings)
+            return filedialog.askopenfilename(
+                parent=root,
+                initialdir=directory or str(Path.home()),
+                title="GeoStudio 2.0 — Wybierz mapę GEO-MAP",
+                filetypes=(("Mapy GEO-MAP", "*.MAP *.map"),
+                           ("Wszystkie pliki", "*.*")),
+            )
+        finally:
+            root.destroy()
 
     def open_map(self) -> dict:
-        if self._window is None:
-            raise RuntimeError("Natywne okno wyboru pliku jest niedostępne.")
-
-        import webview
-
-        enum = getattr(webview, "FileDialog", None)
-        open_dialog = enum.OPEN if enum is not None else webview.OPEN_DIALOG
-        files = self._window.create_file_dialog(
-            dialog_type=open_dialog,
-            directory=read_last_map_directory(self._settings),
-            allow_multiple=False,
-            file_types=("Mapy GEO-MAP (*.map;*.MAP)",),
-        )
-        if not files:
+        try:
+            filename = self._choose_path()
+        except (ImportError, RuntimeError, OSError) as exc:
+            raise RuntimeError(
+                "Nie udało się wyświetlić okna wyboru Windows. "
+                "Użyj przycisku Wybierz z dysku."
+            ) from exc
+        if not filename:
             return {"cancelled": True}
-        chosen = Path(files[0])
+        chosen = Path(filename)
         if chosen.suffix.casefold() != ".map" or not chosen.is_file():
             raise ValueError("Wybierz prawidłowy plik GEO-MAP .MAP.")
         if not 0 < chosen.stat().st_size <= MAX_MAP_BYTES:
@@ -102,7 +117,5 @@ class NativeMapPicker:
         try:
             save_last_map_directory(self._settings, chosen.parent)
         except OSError:
-            # Map should still open even if a locked-down user profile
-            # disallows saving GUI preferences.
             pass
         return {"cancelled": False, "metadata": meta}
