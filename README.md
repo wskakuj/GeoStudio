@@ -1,5 +1,11 @@
 # GeoStudio — projekt nowoczesnego edytora map geodezyjnych
 
+> **GeoStudio 2.0 — równoległy podgląd HTML:** powstaje nowa wersja
+> interfejsu z pywebview + FastAPI + HTML Canvas 2D. Uruchom ją osobno
+> przez `start_web_ui.bat`; nie zastępuje aplikacji PySide6.
+> Szczegóły, zakres i ograniczenia w [instrukcji GeoStudio 2.0](geostudio/web_app/README.md).
+> Wersja web w pierwszym etapie służy **wyłącznie do odczytu** plików MAP.
+
 **Wczesny prototyp v0.14.0 — wersja testowa, nie do dokumentacji urzędowej ani produkcyjnej.**
 
 GeoStudio ma docelowo umożliwiać edycję plików GEO-MAP `.MAP` z zachowaniem

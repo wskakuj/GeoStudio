@@ -1,0 +1,152 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="api-token" content="__GEOSTUDIO_LOCAL_TOKEN__">
+  <meta name="theme-color" content="#111a2b">
+  <title>GeoStudio 2.0 — Podgląd</title>
+  <link rel="stylesheet" href="/styles.css">
+  <script defer src="/map.js"></script>
+</head>
+<body>
+  <div class="app-shell">
+    <header class="topbar">
+      <div class="identity">
+        <div class="mark" aria-hidden="true"><span></span><span></span><span></span></div>
+        <div><strong>GeoStudio</strong><span class="brand-version">2.0 <em>PREVIEW</em></span></div>
+      </div>
+      <div class="header-center"><span class="top-kicker">OBSZAR ROBOCZY</span>
+        <span id="document-title">Nowy projekt</span>
+        <span id="dirty-marker" class="document-meta">Tylko podgląd</span>
+      </div>
+      <div class="header-actions">
+        <button id="btn-command" class="top-icon" title="Polecenia (Ctrl+K)" aria-label="Wyszukaj polecenie">⌕ <kbd>⌘ K</kbd></button>
+        <button id="btn-theme" class="top-icon" title="Przełącz jasny/ciemny wygląd">◐</button>
+        <button id="btn-open" class="button primary"><span class="button-icon">↗</span> Otwórz MAP</button>
+      </div>
+    </header>
+
+    <div class="toolbar">
+      <div class="tool-section">
+        <span class="section-label">PROJEKT</span>
+        <div class="tool-row">
+          <button class="tool-button" id="tool-open"><span class="tool-glyph">▱</span>Otwórz</button>
+          <button class="tool-button" id="tool-sidecar"><span class="tool-glyph">◈</span>Style JSON</button>
+        </div>
+      </div>
+      <span class="tool-divider"></span>
+      <div class="tool-section">
+        <span class="section-label">NAWIGACJA</span>
+        <div class="tool-row">
+          <button class="tool-button active" id="tool-select"><span class="tool-glyph">↖</span>Zaznacz <small>S</small></button>
+          <button class="tool-button" id="tool-pan"><span class="tool-glyph">✥</span>Przesuń <small>H</small></button>
+          <button class="tool-button" id="tool-fit"><span class="tool-glyph">⛶</span>Dopasuj</button>
+        </div>
+      </div>
+      <span class="tool-divider"></span>
+      <div class="tool-section">
+        <span class="section-label">WIDOK MAPY</span>
+        <div class="tool-row">
+          <button class="tool-button active" id="tool-labels"><span class="tool-glyph">Aa</span>Etykiety</button>
+          <button class="tool-button active" id="tool-grid"><span class="tool-glyph">▦</span>Siatka</button>
+        </div>
+      </div>
+      <div class="toolbar-fill"></div>
+      <div class="safe-state"><span class="state-dot"></span> BEZPIECZNY PODGLĄD · EDYCJA WYŁĄCZONA</div>
+    </div>
+
+    <div class="workspace">
+      <aside class="left-panel side-panel">
+        <div class="panel-head">
+          <div><div class="eyebrow">STRUKTURA DANYCH</div><h2>Warstwy mapy</h2></div>
+          <span id="layer-count" class="small-count">0</span>
+        </div>
+        <div class="panel-padding">
+          <label class="search-box"><span>⌕</span>
+            <input type="search" id="layer-search" placeholder="Filtruj warstwy…" autocomplete="off">
+            <kbd>/</kbd>
+          </label>
+        </div>
+        <div class="layer-section-header"><span>WIDOCZNOŚĆ</span><button id="layers-all" class="subtle-link">Pokaż wszystkie</button></div>
+        <div id="layers-list" class="layers-list">
+          <div class="panel-placeholder">Otwórz plik .MAP, aby zobaczyć warstwy i klasoużytki.</div>
+        </div>
+        <div class="layer-footer">
+          <div class="mini-stat"><span>Obiekty</span><strong id="count-objects">—</strong></div>
+          <div class="mini-stat"><span>Wierzchołki</span><strong id="count-vertices">—</strong></div>
+          <div class="mini-stat"><span>Widoczne w kadrze</span><strong id="count-visible">—</strong></div>
+        </div>
+      </aside>
+
+      <main class="canvas-shell" id="canvas-shell">
+        <canvas id="map-canvas" aria-label="Mapa GEO-MAP. Użyj kółka myszy, aby przybliżyć." tabindex="0"></canvas>
+        <div class="map-top-left">
+          <div class="map-chip"><span class="map-chip-dot"></span><span id="map-status">Brak wczytanej mapy</span></div>
+          <div id="checksum-badge" class="map-chip secondary" hidden></div>
+        </div>
+        <div class="floating-tools" aria-label="Narzędzia mapy">
+          <button id="float-select" class="floating active" title="Zaznacz (S)">↖</button>
+          <button id="float-pan" class="floating" title="Przesuń (H)">✥</button>
+          <span class="floating-line"></span>
+          <button id="float-plus" class="floating" title="Przybliż">+</button>
+          <button id="float-minus" class="floating" title="Oddal">−</button>
+          <button id="float-fit" class="floating" title="Dopasuj mapę">⛶</button>
+        </div>
+        <div class="map-scale-box" id="map-scale-box"><span class="north-rose">N <b>▲</b></span><span id="scale-label">Skala podglądu: —</span></div>
+        <div class="map-bottom-left"><span class="coordinate-dot"></span><span id="cursor-coords">X: — &nbsp; Y: —</span></div>
+        <div class="map-bottom-right" id="render-hint">Odczyt geometrii GEO-MAP</div>
+        <div id="empty-state" class="empty-state">
+          <div class="welcome-logo">◈</div>
+          <div class="eyebrow">NOWA GENERACJA EDYTORA</div>
+          <h1>Twoja mapa.<br><span>Nowa perspektywa.</span></h1>
+          <p>Wczytaj prawdziwy plik GEO-MAP i sprawdź nowoczesny widok warstw, etykiet oraz parametrów obiektów. Oryginał pozostaje nienaruszony.</p>
+          <button id="empty-open" class="button primary large">↗ &nbsp; Otwórz plik .MAP</button>
+          <div class="empty-sub">Możesz też przeciągnąć plik na okno</div>
+          <div class="hint-chips"><span>GEO-MAP v8</span><span>HTML5 Canvas</span><span>Python Core</span></div>
+        </div>
+        <div id="loading-overlay" class="loading-overlay" hidden>
+          <div class="spinner"></div><h3>Wczytywanie geometrii…</h3>
+          <p id="loading-detail">Przygotowywanie widoku mapy</p>
+        </div>
+      </main>
+
+      <aside class="right-panel side-panel">
+        <div class="panel-head">
+          <div><div class="eyebrow">AKTYWNY OBIEKT</div><h2>Inspektor</h2></div>
+          <span class="read-only-pill">ODCZYT</span>
+        </div>
+        <div id="inspector-empty" class="inspector-empty">
+          <div class="inspector-symbol">⌖</div>
+          <strong>Nie wybrano obiektu</strong>
+          <p>Kliknij poligon, linię lub punkt, aby zobaczyć kod, atrybuty i geometrię.</p>
+        </div>
+        <div id="inspector-data" hidden>
+          <div class="inspector-title">
+            <span id="inspector-code" class="code-pill">—</span>
+            <div><strong id="inspector-layer">—</strong><span id="inspector-uid">—</span></div>
+          </div>
+          <div class="inspector-section"><h3>Atrybuty opisowe</h3><div id="inspector-fields" class="inspector-fields"></div></div>
+          <div class="inspector-section"><h3>Geometria</h3><div id="inspector-geometry" class="inspector-fields"></div></div>
+        </div>
+        <div class="inspector-bottom"><div class="lock-symbol">⌁</div><span>W tej wersji wszystkie dane są chronione przed edycją.</span></div>
+      </aside>
+    </div>
+
+    <footer class="statusbar">
+      <span class="footer-active">●</span>
+      <span id="status-message">GeoStudio 2.0 gotowe — otwórz mapę GEO-MAP</span>
+      <div class="statusbar-right"><span id="selection-count">Zaznaczonych: 0</span><span>Układ: X / Y GEO-MAP</span><span>TESTOWE 2.0</span></div>
+    </footer>
+  </div>
+
+  <input id="file-map" type="file" accept=".map,.MAP" hidden>
+  <input id="file-sidecar" type="file" accept=".json" hidden>
+  <dialog id="command-dialog" class="command-dialog">
+    <div class="command-search"><span>⌕</span><input id="command-input" type="search" placeholder="Wpisz polecenie lub nazwę…" autocomplete="off"><kbd>ESC</kbd></div>
+    <div id="command-results" class="command-results"></div>
+    <div class="command-hint">↑ ↓ wybierz polecenie &nbsp; • &nbsp; Enter uruchom &nbsp; • &nbsp; Esc zamknij</div>
+  </dialog>
+  <div id="toast" role="status" class="toast" hidden></div>
+</body>
+</html>
