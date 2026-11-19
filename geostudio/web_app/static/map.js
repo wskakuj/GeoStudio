@@ -1135,7 +1135,9 @@
       const message=action==="repair"
         ?"Odwrócić kolejność punktów w "+report.repairs.length+
           " poligonach, aby w GEO-MAP otrzymać dodatnią powierzchnię?"
-        :"Scalić "+display(ids.length)+" poligonów w jeden?\n"+
+        :"Scalić "+display(ids.length)+" poligonów w jeden obiekt GEO-MAP?\n"+
+          "Po scaleniu części mogą być rozłączne. Liczba wysp: "+
+          report.components+", konturów: "+report.rings+".\n"+
           "Suma przed: "+report.beforeArea+" m²; po: "+
           report.afterArea+" m².\n"+
           "UWAGA: dane powierzchniowe A4/A6 trzeba sprawdzić ręcznie.";
