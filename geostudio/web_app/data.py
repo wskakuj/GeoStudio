@@ -24,6 +24,7 @@ from geostudio.geometry_index import GeometryIndex
 from geostudio.history import History
 from geostudio.topology_edit import linked_vertex_plan
 from geostudio.web_app.topology_safety import rings_overlap, rings_contact, ring_of, nearest_boundary_snap
+from geostudio.web_app.geometry_6a import polygon_of, visible_difference, shape_parts, split_simple, merge_simple
 from geostudio.interactions import find_snap, closest_point_on_edge, polygon_is_valid
 from geostudio.library_render import native_fill_color
 
@@ -34,6 +35,7 @@ MAX_SELECTED_FEATURES = 50000
 MAX_BULK_EDIT_OBJECTS = 5000
 HEX = re.compile(r"^#[0-9A-Fa-f]{6}$")
 STYLE_FORMAT = "geostudio-visual-v1"
+TOPOLOGY_STACK_KEY = "__geostudio_topology_stack_v1__"
 CODES = {
     "5216": "Działki",
     "5220": "Użytki",
@@ -192,6 +194,49 @@ class PreviewWorkspace:
             self._meta = metadata
         return dict(metadata)
 
+    def _overlay_uids(self) -> list[str]:
+        record=self._styles.get(TOPOLOGY_STACK_KEY,{})
+        return list(record.get("uids",[])) if isinstance(record,dict) else []
+
+    def _raise_to_top(self, uids) -> None:
+        """History-tracked precedence, without changing underlying source P."""
+        order=self._overlay_uids()
+        affected=set(uids)
+        order=[uid for uid in order if uid not in affected]
+        order.extend(uid for uid in uids if uid not in order)
+        # Retain only existing unique IDs; no stale deletions or ambiguity.
+        self._styles[TOPOLOGY_STACK_KEY]={"uids":order[-5000:]}
+
+    def export_topology_metadata(self, map_bytes: bytes) -> bytes | None:
+        """Companion overlay JSON; SHA bound to the exact saved MAP bytes."""
+        with self._lock:
+            uids=self._overlay_uids()
+            if not uids:
+                return None
+            return json.dumps({"format":"geostudio-topology-v1",
+                "sha256":sha256(map_bytes).hexdigest(),"uids":uids},
+                ensure_ascii=False,indent=2).encode("utf-8")
+
+    def import_topology_metadata(self, content: bytes, map_bytes: bytes) -> None:
+        """Load saved precedence only when companion checksum and UIDs match."""
+        if not content or len(content)>MAX_STYLES_BYTES:
+            raise ValueError("Za duży plik topologii.")
+        obj=json.loads(content)
+        if (not isinstance(obj,dict) or
+                set(obj)!={"format","sha256","uids"} or
+                obj["format"]!="geostudio-topology-v1" or
+                obj["sha256"]!=sha256(map_bytes).hexdigest() or
+                not isinstance(obj["uids"],list) or len(obj["uids"])>5000):
+            raise ValueError("Plik topologii nie pasuje do MAP.")
+        with self._lock:
+            if not self._doc:raise ValueError("Najpierw wczytaj MAP.")
+            counts=Counter(o.uid for o in self._doc.objects if o.uid)
+            if (len(set(obj["uids"]))!=len(obj["uids"]) or
+                    any(not isinstance(uid,str) or counts.get(uid)!=1
+                        for uid in obj["uids"])):
+                raise ValueError("Plik topologii zawiera nieprawidłowe identyfikatory.")
+            self._styles[TOPOLOGY_STACK_KEY]={"uids":obj["uids"]}
+
     def _editing_status(self) -> dict:
         history = self._history
         return {
@@ -202,6 +247,7 @@ class PreviewWorkspace:
             "redoLabel": history.next_redo_label if history else "",
             "revision": self._revision,
             "documentToken": self._document_token,
+            "hasReversibleMasks": bool(self._overlay_uids()),
         }
 
     def select_by_attributes(self, *, code: str = "", a1: str = "",
@@ -589,7 +635,7 @@ class PreviewWorkspace:
         conflicts, overlaps = (self._move_topology_conflicts(moving,dx,dy)
                                if dx or dy else ([],[]))
         topology_blocked = bool(conflicts) and not allow_detach
-        overlap_blocked = bool(overlaps)
+        overlap_blocked = False  # cutouts are non-destructive in GeoStudio 2.0
         payload = {"ids": sorted(ids), "dx": dx, "dy": dy,
                    "allowDetach": allow_detach, "snapDistance": snap_distance,
                    "documentToken": document_token,
@@ -608,6 +654,7 @@ class PreviewWorkspace:
                 "snapApplied": snap_applied,
                 "overlapConflicts": overlaps,
                 "overlapBlocked": overlap_blocked,
+                "reversibleCutout": bool(overlaps),
                 "samples": samples,
                 "topologyConflicts": conflicts,
                 "topologyBlocked": topology_blocked,
@@ -643,9 +690,6 @@ class PreviewWorkspace:
                     preview_key != report["previewKey"] or
                     preview_key != self._move_preview_key):
                 raise RuntimeError("Podgląd wygasł. Ponownie sprawdź przesunięcie.")
-            if report["overlapBlocked"]:
-                raise ValueError("Poligony tego samego kodu nachodzą na siebie. "
-                                 "Dopasuj je do wspólnej granicy.")
             if report["topologyBlocked"]:
                 raise ValueError(
                     "Zaznaczenie ma wspólną granicę z nieruchomym "
@@ -668,6 +712,8 @@ class PreviewWorkspace:
                 selection_before=tuple(plan["selectedUids"]),
             ):
                 self._doc.move_polygon_vertices(plan["changes"])
+                self._raise_to_top([o.uid for o in self._doc.objects
+                                    if o.uid in plan["selectedUids"]])
                 check = sha256()
                 for obj in self._doc.objects:
                     if obj.uid not in plan["selectedUids"]:
@@ -744,20 +790,8 @@ class PreviewWorkspace:
                 raise ValueError("Kopia musi mieć inne położenie niż oryginał.")
             if sum(len(obj.points) for obj in selected)>50000:
                 raise ValueError("Zbyt dużo węzłów do skopiowania.")
-            # Unlike MOVE, the original polygon remains. Every new polygon
-            # must not overlap ANY existing polygon with the same code.
-            for obj in selected:
-                candidate=ring_of(obj,dx,dy)
-                xs=[p[0] for p in candidate]
-                ys=[p[1] for p in candidate]
-                center=((min(xs)+max(xs))/2,(min(ys)+max(ys))/2)
-                radius=hypot(max(xs)-min(xs),max(ys)-min(ys))/2+.002
-                for other in self._index.nearby(*center,radius):
-                    if not other.is_closed or other.code!=obj.code:
-                        continue
-                    if rings_overlap(candidate,ring_of(other)):
-                        raise ValueError("Kopia nakłada się na poligon kodu "+
-                                         obj.code+". Zmień przesunięcie.")
+            # Overlapping copies are allowed: the foreground mask is derived
+            # from the original intact polygons. The copy gets its own :ID.
             coordinates=[{"uid":obj.uid,"code":obj.code} for obj in selected[:10]]
         elif action=="create":
             code=payload.get("code")
@@ -839,14 +873,20 @@ class PreviewWorkspace:
             ):
                 if action=="delete":
                     self._doc.delete_objects([o.uid for o in selected])
+                    old=self._overlay_uids()
+                    remaining=[uid for uid in old if uid not in
+                               {o.uid for o in selected}]
+                    self._styles[TOPOLOGY_STACK_KEY]={"uids":remaining}
                 elif action=="copy":
                     created=self._doc.duplicate_polygons(
                         [o.uid for o in selected],
                         round(payload["dx"],3),round(payload["dy"],3))
+                    self._raise_to_top(created)
                 else:
                     created=[self._doc.append_polygon(
                         plan["coords"],code=payload["code"],
                         fields=payload["fields"])]
+                    self._raise_to_top(created)
                 # For append/copy, all original MAP records must survive.
                 if action!="delete":
                     if not b"".join(self._doc.lines).startswith(
@@ -1206,7 +1246,7 @@ class PreviewWorkspace:
             if document_token != self._document_token:
                 raise RuntimeError("Nieaktualny dokument.")
             basename = _display_name(self._doc.filename)
-            return basename[:-4] + "_GeoStudio2_kopia.MAP", self._doc.to_bytes()
+            return basename[:-4] + "_GeoStudio2_kopia.MAP", self._doc.to_bytes_positive_areas()
 
     def metadata(self) -> dict:
         with self._lock:
