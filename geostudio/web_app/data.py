@@ -1147,7 +1147,8 @@ class PreviewWorkspace:
             if len(codes)!=1 or len(attrs)!=1:
                 raise ValueError("Scalaj tylko ten sam kod i zgodne wartości A1/A2.")
             geometry=merge_multipart([geometry_of(o) for o in selected])
-            rings=rings_from_shape(geometry)
+            rings=rings_from_shape(geometry,
+                prefer_anchor=(selected[0].points[0].x,selected[0].points[0].y))
             details={"beforeArea":round(sum(geometry_of(o).area
                                                for o in selected),3),
                      "afterArea":round(geometry.area,3),
@@ -1250,8 +1251,14 @@ class PreviewWorkspace:
                         report["repairs"])
                 elif action=="merge":
                     keeper=selected[0].uid
+                    anchor=selected[0].points[0]
                     self._doc.replace_polygon_components(
-                        keeper,rings_from_shape(plan["geometry"]))
+                        keeper,rings_from_shape(plan["geometry"],
+                          prefer_anchor=(anchor.x,anchor.y)))
+                    # GEO-MAP requires explicit L 1/2/3 placements for
+                    # showing A1/A2 labels. Keep source entries when possible.
+                    self._doc.ensure_native_label_records(
+                        keeper,[o.uid for o in selected[1:]])
                     self._doc.delete_objects(
                         [o.uid for o in selected[1:]])
                     self._styles[TOPOLOGY_STACK_KEY]={
