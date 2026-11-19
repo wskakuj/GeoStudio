@@ -309,6 +309,19 @@ class PreviewWorkspace:
                 raise ValueError("Plik topologii zawiera nieprawidłowe identyfikatory.")
             self._styles[TOPOLOGY_STACK_KEY]={"uids":obj["uids"]}
 
+    def import_topology_for_open_map(self, content: bytes) -> dict:
+        """Browser-selected reversible MAP companion, never an arbitrary path."""
+        with self._lock:
+            if self._doc is None or self._history is None:
+                raise ValueError("Najpierw wczytaj towarzyszący plik MAP.")
+            if self._history.is_dirty:
+                raise RuntimeError(
+                    "Nie można zaimportować topologii po rozpoczęciu edycji. "
+                    "Otwórz ponownie MAP, a potem jego JSON.")
+            map_bytes=self._doc.to_bytes()
+            self.import_topology_metadata(content,map_bytes)
+            return {**self.metadata(),"topologyImported":True}
+
     def export_positive_copy(self, document_token: str) -> tuple[str,bytes]:
         """Windows Save As: automatically normalize all simple exterior rings.
 
