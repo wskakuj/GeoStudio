@@ -170,6 +170,7 @@ def create_app(workspace: PreviewWorkspace | None = None) -> FastAPI:
             return state.preview_move_polygons(
                 payload.get("ids"), payload.get("dx"), payload.get("dy"),
                 allow_detach=payload.get("allowDetach", False),
+                snap_distance=payload.get("snapDistance", 0),
                 document_token=payload.get("documentToken"),
                 revision=payload.get("revision"),
             )
@@ -187,6 +188,7 @@ def create_app(workspace: PreviewWorkspace | None = None) -> FastAPI:
             return state.apply_move_polygons(
                 payload.get("ids"), payload.get("dx"), payload.get("dy"),
                 allow_detach=payload.get("allowDetach", False),
+                snap_distance=payload.get("snapDistance", 0),
                 preview_key=payload.get("previewKey"),
                 document_token=payload.get("documentToken"),
                 revision=payload.get("revision"),
