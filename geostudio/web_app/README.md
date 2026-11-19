@@ -338,8 +338,8 @@ podłączenia tych samych bibliotek i testów na tej samej wersji mapy.
 
 ## Celowo NIEZAIMPLEMENTOWANE w tym etapie
 
-- Usuwanie węzłów, rysowanie nowych poligonów, zapisywanie oryginału MAP,
-  import WMS, eksport wielkoformatowy, pełne renderowanie symboli
+- Nadpisywanie oryginału MAP, import WMS, eksport wielkoformatowy,
+  pełne renderowanie symboli
   .SYM/.LAY/.CDF, raster i georeferencja.
 - PixiJS/WebGL: Canvas 2D jest pierwszym rendererem do sprawdzenia
   geometrii, orientacji i kontroli na prawdziwych plikach. Rendering
@@ -355,8 +355,10 @@ przy przygotowywaniu dokumentacji geodezyjnej.
 ## Dlaczego bezpiecznie?
 
 Python wczytuje wybrane pliki do pamięci, nie przyjmuje ścieżek plików
-przez API i nie oferuje endpointu zapisu MAP. Oryginalne PySide6
-uruchamiasz nadal przez start_windows.bat.
+przez HTTP API i nie oferuje serwerowego endpointu zapisu MAP do dysku.
+W natywnym oknie pywebview użytkownik wybiera ścieżkę **Zapisz jako**;
+oryginalny plik wejściowy nie może zostać nadpisany.
+Oryginalne PySide6 uruchamiasz nadal przez start_windows.bat.
 
 ## Sposób testowania
 
@@ -366,3 +368,30 @@ uruchamiasz nadal przez start_windows.bat.
 Dla lokalnego testu bez pywebview:
 
     python -m geostudio.web_app --browser
+
+
+## Test 5A/5B — przesuwanie, nowe poligony i zapis Windows
+
+- **M**: przeciągnij jeden lub wiele zaznaczonych poligonów; wyświetli się
+  podgląd przed zatwierdzeniem. **Ctrl+Shift+M**: dokładne przesunięcie X/Y.
+  Wspólne granice ze statycznym poligonem tego samego kodu blokują ruch,
+  dopóki nie zaznaczysz świadomego rozłączenia. Nakładanie wnętrz dwóch
+  poligonów tego samego kodu pozostaje zablokowane niezależnie od opcji.
+- **Przyciąganie do granicy** (domyślnie zaznaczone): dla małych odchyleń
+  snapuje całą grupę do bliskiej krawędzi; nie wykonuje automatycznej
+  operacji unii ani rozpuszczenia poligonów. Wyłącz, aby podać dokładne X/Y.
+- **Ctrl+D**: skopiuj zaznaczone poligony. Każda kopia ma nowy :ID, zachowuje
+  pierwotne kod, styl, atrybuty i flagi P; wymaga przesunięcia bez nakładania.
+- **Ctrl+Delete**: usuń obiekty z zaznaczenia po potwierdzeniu.
+- **N**: rysuj nowy poligon kliknięciami. **Enter** lub dwuklik kończy obrys,
+  **Esc** anuluje. Wybierz kod i opcjonalne A1/A2, kliknij
+  **Sprawdź obrys**, potem **Utwórz poligon**.
+- **Pobierz kopię**: w aplikacji Windows otwiera natywne **Zapisz jako**,
+  z wyborem katalogu i końcową pełną ścieżką pliku. W samodzielnej
+  przeglądarce używa systemu pobierania przeglądarki (zazwyczaj
+  **Pobrane**, skrót Ctrl+J) i nie zapisuje automatycznie w katalogu MAP.
+- Jeśli pasek narzędzi nie mieści się w oknie, przewijaj poziomo po
+  sekcjach **Projekt / Nawigacja / Widok mapy / Edycja węzłów**.
+
+Operacje pozostają na osobnej gałęzi testowej. Zweryfikuj eksportowane
+pliki MAP w klasycznym programie przed wykorzystaniem do pracy.
