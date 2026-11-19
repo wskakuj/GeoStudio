@@ -517,6 +517,8 @@ class PreviewWorkspace:
         conflicts=[]
         overlaps=[]
         for obj in moving:
+            if len(obj.display_parts)>1:
+                continue  # compound rings are translated intact; P0 has no synthetic connector
             old=ring_of(obj)
             new=ring_of(obj,dx,dy)
             # Spatial-index broad phase: no all-to-all scan over an entire MAP.
@@ -603,6 +605,8 @@ class PreviewWorkspace:
             selected_uids={o.uid for o in moving}
             near_fixed={}
             for obj in moving:
+                if len(obj.display_parts)>1:
+                    continue  # magnetic preview for multipart is handled by the Canvas
                 r=ring_of(obj)
                 a,b=min(x for x,y in r),min(y for x,y in r)
                 c,d=max(x for x,y in r),max(y for x,y in r)
@@ -624,7 +628,8 @@ class PreviewWorkspace:
                 snap_applied={"distance":round(distance,3)}
         for obj in moving:
             shifted={}
-            for index,point in enumerate(obj.points[:-1]):
+            for index,point in enumerate(
+                    obj.points if len(obj.display_parts)>1 else obj.points[:-1]):
                 x,y=round(point.x+dx,3),round(point.y+dy,3)
                 if not (-1e9<x<1e9 and -1e9<y<1e9):
                     raise ValueError("Przesunięcie przekracza zakres współrzędnych.")
