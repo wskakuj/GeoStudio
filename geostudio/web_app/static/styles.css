@@ -329,3 +329,9 @@ button:disabled { opacity:.38; cursor:not-allowed; filter:none !important; }
   .toolbar .tool-section:nth-of-type(3),
   .toolbar .tool-divider:nth-of-type(2) { display:flex; }
 }
+
+/* Stage 6A: magnetic snapping is controllable even in narrower Windows sizes.
+   The whole ribbon scrolls horizontally; no geometry tool is silently hidden. */
+@media (max-width:1080px) {
+  .toolbar .geometry-options { display:flex; }
+}

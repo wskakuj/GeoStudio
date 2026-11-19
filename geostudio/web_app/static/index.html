@@ -14,7 +14,7 @@
     <header class="topbar">
       <div class="identity">
         <div class="mark" aria-hidden="true"><span></span><span></span><span></span></div>
-        <div><strong>GeoStudio</strong><span class="brand-version">2.0 <em>ETAP 5B · TOPOLOGIA I OBIEKTY — TEST</em></span></div>
+        <div><strong>GeoStudio</strong><span class="brand-version">2.0 <em>ETAP 6A · GEOMETRIA — TEST</em></span></div>
       </div>
       <div class="header-center"><span class="top-kicker">OBSZAR ROBOCZY</span>
         <span id="document-title">Nowy projekt</span>
@@ -52,9 +52,13 @@
           <button class="tool-button" id="tool-advanced-select" title="Zaznacz według kodu i atrybutów (Ctrl+H)"><span class="tool-glyph">⌕</span>Filtruj <small>Ctrl+H</small></button>
           <button class="tool-button" id="tool-bulk-edit" disabled title="Zmień A1/A2 wielu zaznaczonych obiektów"><span class="tool-glyph">✎</span>Zbiorowo <small>A1/A2</small></button>
           <button class="tool-button" id="tool-delete-node" disabled title="Zaznacz węzeł i usuń go (Delete)"><span class="tool-glyph">⊖</span>Usuń węzeł <small>Del</small></button>
-          <button class="tool-button" id="tool-copy" title="Kopiuj zaznaczone poligony (Ctrl+D)"><span class="tool-glyph">⧉</span>Kopiuj <small>Ctrl+D</small></button>
+          <button class="tool-button" id="tool-copy" title="Kopiuj zaznaczone poligony (Ctrl+D)"><span class="tool-glyph">⧉</span>Kopiuj obok <small>Ctrl+D</small></button>
           <button class="tool-button" id="tool-delete-objects" title="Usuń wybrane obiekty (Ctrl+Delete)"><span class="tool-glyph">×</span>Usuń obiekty</button>
           <button class="tool-button" id="tool-new-polygon" title="Narysuj nowy poligon (N)"><span class="tool-glyph">⬟</span>Nowy poligon <small>N</small></button>
+          <button class="tool-button" id="tool-merge" title="Scal wybrane poligony tego samego kodu (Ctrl+Shift+G)"><span class="tool-glyph">⧉</span>Scal</button>
+          <button class="tool-button" id="tool-split" title="Narysuj linię podziału jednego poligonu (Ctrl+Shift+X)"><span class="tool-glyph">⌁</span>Podziel</button>
+          <button class="tool-button" id="tool-winding" title="Napraw kierunek obrysu, aby pole było dodatnie"><span class="tool-glyph">⊕</span>Pole +</button>
+          <button class="tool-button" id="tool-line" title="Narysuj linię (L), edytuj istniejącą (Shift+L)"><span class="tool-glyph">╱</span>Linia</button>
           <button class="tool-button" id="tool-fit"><span class="tool-glyph">⛶</span>Dopasuj</button>
         </div>
       </div>
@@ -350,6 +354,60 @@
         <button id="create-back" type="button" class="button ghost">Wróć do rysowania</button>
         <button id="create-preview" type="button" class="button ghost">Sprawdź obrys</button>
         <button id="create-apply" type="submit" class="button primary" disabled>Utwórz poligon</button>
+      </div>
+    </form>
+  </dialog>
+  <dialog id="line-dialog" class="advanced-select-dialog bulk-dialog">
+    <form id="line-form" autocomplete="off">
+      <div class="select-head">
+        <div><div class="eyebrow">ETAP 6 · LINIE</div>
+          <h2 id="line-dialog-title">Nowa linia</h2>
+        </div>
+        <button id="line-close" type="button" class="select-close" aria-label="Zamknij">×</button>
+      </div>
+      <div class="select-content">
+        <p id="line-count" class="select-explain">Narysuj linię co najmniej 2 punktami.</p>
+        <div class="select-grid">
+          <div><label for="line-code">Kod nowej linii</label>
+            <select id="line-code">
+              <option value="6900">6900 — linia</option>
+              <option value="6000">6000 — oprawa/linia</option>
+              <option value="6301">6301 — linia</option>
+              <option value="2364">2364 — linia</option>
+            </select>
+          </div>
+          <div><label for="line-a1">A1 (opcjonalne)</label>
+            <input id="line-a1" type="text" maxlength="512">
+          </div>
+          <div><label for="line-a2">A2 (opcjonalne)</label>
+            <input id="line-a2" type="text" maxlength="512">
+          </div>
+        </div>
+        <p id="line-summary" class="select-preview" role="status">Sprawdź linię.</p>
+      </div>
+      <div class="select-actions">
+        <button id="line-back" type="button" class="button ghost">Popraw punkty</button>
+        <button id="line-preview" type="button" class="button ghost">Sprawdź linię</button>
+        <button id="line-apply" type="submit" class="button primary" disabled>Utwórz linię</button>
+      </div>
+    </form>
+  </dialog>
+  <dialog id="split-dialog" class="advanced-select-dialog bulk-dialog">
+    <form id="split-form">
+      <div class="select-head">
+        <div><div class="eyebrow">ETAP 6 · PODZIAŁ</div>
+          <h2>Podziel poligon linią</h2>
+        </div>
+        <button id="split-close" type="button" class="select-close" aria-label="Zamknij">×</button>
+      </div>
+      <div class="select-content">
+        <p class="select-explain">Rysuj linię przez wybrany poligon. Jej początek i koniec powinny wychodzić poza obrys. Podział jest jedną operacją Cofnij/Ponów.</p>
+        <p id="split-summary" class="select-preview" role="status">Sprawdź podział.</p>
+      </div>
+      <div class="select-actions">
+        <button id="split-back" type="button" class="button ghost">Popraw linię</button>
+        <button id="split-preview" type="button" class="button ghost">Sprawdź podział</button>
+        <button id="split-apply" type="submit" class="button primary" disabled>Podziel poligon</button>
       </div>
     </form>
   </dialog>

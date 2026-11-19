@@ -58,11 +58,40 @@ Aktualizacja: 19 listopada 2026. Dokument będziemy uzupełniać po każdym zwer
       A1/A2 i walidacja obrysu przed zapisem.
 - [ ] Testy API, walidacji, wycofania zmian, ochrony źródłowego MAP i CHK.
 
+## Etap 6A — geometria i odwracalne nakładanie (w tym PR, do testów)
+
+- [ ] **Odwracalne wycinanie w widoku**: przesuwany poligon zasłania i
+  geometrycznie wycina część niższego poligonu *tego samego kodu*, ale oba
+  surowe rekordy P pozostają nietknięte. Przesunięcie górnego w inne miejsce
+  od razu przywraca pełny kształt niższego.
+- [ ] Kolejność nakładania jest częścią pojedynczej transakcji Cofnij/Ponów.
+  Natywne „Zapisz jako” zapisuje obok MAP powiązany checksumem plik
+  \`.geostudio-topology.json\`; należy zachować oba pliki razem.
+- [ ] **OGRANICZENIE**: klasyczny GEO-MAP wczytuje MAP bez tej dodatkowej
+  informacji o wycinaniu. GEO-MAP widzi bazową, nieobciętą geometrię.
+  Produkcyjny „wypalony” eksport maskowanych obrysów wymaga odrębnego,
+  sprawdzonego zapisu geometrii z otworami (etap 6B).
+- [ ] Ctrl+D tworzy kopię obok zaznaczenia i aktywuje M do przesuwania.
+  Oddzielne „Kopiuj z dokładnym przesunięciem” pozostaje w Ctrl+K.
+- [ ] **M**: magnetyczne przyciąganie do węzłów i odcinków tylko tego
+  samego kodu podczas przeciągania, podgląd na mapie.
+- [ ] **Pole +**: normalizacja kierunku wybranych prostych zamkniętych
+  obrysów (jedno Cofnij/Ponów); nowe poligony są zawsze zapisywane z
+  orientacją dodatnią. Wieloczęściowe P0 nie są normalizowane automatycznie.
+- [ ] **Scal**: zgodny kod i A1/A2, geometryczny Polygon union, bez otworów;
+  zachowuje pierwszy identyfikator oraz jego pozostałe atrybuty.
+- [ ] **Podziel**: prosty zamknięty poligon cięty linią, nowe unikalne :ID,
+  zachowanie sumy powierzchni, Cofnij/Ponów.
+- [ ] **L**: nowa linia 6900/6000/6301/2364; **Shift+L**: narysowanie
+  nowego przebiegu zaznaczonej linii.
+- [ ] Podział i scalenie nie mogą bezpiecznie przeliczać ewidencyjnych
+  A4/A6, więc aplikacja wyświetla ostrzeżenie o ręcznej weryfikacji.
+
 ## Pozostałe duże obszary
 
 1. **Dopracowanie zaznaczania**: wybór według geometrii, wykluczanie nakładających się obiektów, testy bardzo dużych map.
 2. **Obiekty i topologia**: rysowanie/edycja linii, scalanie i cięcie poligonów, zaawansowane granice i dzielenie powierzchni.
-3. **Zaawansowane GIS**: podział i łączenie poligonów, edycja polilinii, pomiary, snapping i kontrola topologii.
+3. **Zaawansowane GIS 6B**: natywny zapis różnic z otworami, przywracanie w klasycznym GEO-MAP, podział poligonów z otworami, edycja łamanych przez przesuwanie pojedynczych węzłów, pomiary i kontrola metadanych.
 4. **Pełna kartografia**: biblioteki LAY / CDF / SYM, etykiety, wzory, symbole; możliwie wierny klasyczny renderer.
 5. **Wersja produkcyjna**: wydajność na wielkich mapach, zapis bezpośredni z kopią zapasową, odzyskiwanie awaryjne, instalator, testy rzeczywistych plików.
 

@@ -24,6 +24,7 @@ from geostudio.geometry_index import GeometryIndex
 from geostudio.history import History
 from geostudio.topology_edit import linked_vertex_plan
 from geostudio.web_app.topology_safety import rings_overlap, rings_contact, ring_of, nearest_boundary_snap
+from geostudio.web_app.geometry_6a import polygon_of, visible_difference, shape_parts, split_simple, merge_simple
 from geostudio.interactions import find_snap, closest_point_on_edge, polygon_is_valid
 from geostudio.library_render import native_fill_color
 
@@ -34,6 +35,7 @@ MAX_SELECTED_FEATURES = 50000
 MAX_BULK_EDIT_OBJECTS = 5000
 HEX = re.compile(r"^#[0-9A-Fa-f]{6}$")
 STYLE_FORMAT = "geostudio-visual-v1"
+TOPOLOGY_STACK_KEY = "__geostudio_topology_stack_v1__"
 CODES = {
     "5216": "Działki",
     "5220": "Użytki",
@@ -115,6 +117,7 @@ class PreviewWorkspace:
         self._bulk_preview_key = ""
         self._move_preview_key = ""
         self._objects_preview_key = ""
+        self._geometry_preview_key = ""
 
     def load_map(self, content: bytes, filename: str) -> dict:
         if not content or len(content) > MAX_MAP_BYTES:
@@ -192,6 +195,49 @@ class PreviewWorkspace:
             self._meta = metadata
         return dict(metadata)
 
+    def _overlay_uids(self) -> list[str]:
+        record=self._styles.get(TOPOLOGY_STACK_KEY,{})
+        return list(record.get("uids",[])) if isinstance(record,dict) else []
+
+    def _raise_to_top(self, uids) -> None:
+        """History-tracked precedence, without changing underlying source P."""
+        order=self._overlay_uids()
+        affected=set(uids)
+        order=[uid for uid in order if uid not in affected]
+        order.extend(uid for uid in uids if uid not in order)
+        # Retain only existing unique IDs; no stale deletions or ambiguity.
+        self._styles[TOPOLOGY_STACK_KEY]={"uids":order[-5000:]}
+
+    def export_topology_metadata(self, map_bytes: bytes) -> bytes | None:
+        """Companion overlay JSON; SHA bound to the exact saved MAP bytes."""
+        with self._lock:
+            uids=self._overlay_uids()
+            if not uids:
+                return None
+            return json.dumps({"format":"geostudio-topology-v1",
+                "sha256":sha256(map_bytes).hexdigest(),"uids":uids},
+                ensure_ascii=False,indent=2).encode("utf-8")
+
+    def import_topology_metadata(self, content: bytes, map_bytes: bytes) -> None:
+        """Load saved precedence only when companion checksum and UIDs match."""
+        if not content or len(content)>MAX_STYLES_BYTES:
+            raise ValueError("Za duży plik topologii.")
+        obj=json.loads(content)
+        if (not isinstance(obj,dict) or
+                set(obj)!={"format","sha256","uids"} or
+                obj["format"]!="geostudio-topology-v1" or
+                obj["sha256"]!=sha256(map_bytes).hexdigest() or
+                not isinstance(obj["uids"],list) or len(obj["uids"])>5000):
+            raise ValueError("Plik topologii nie pasuje do MAP.")
+        with self._lock:
+            if not self._doc:raise ValueError("Najpierw wczytaj MAP.")
+            counts=Counter(o.uid for o in self._doc.objects if o.uid)
+            if (len(set(obj["uids"]))!=len(obj["uids"]) or
+                    any(not isinstance(uid,str) or counts.get(uid)!=1
+                        for uid in obj["uids"])):
+                raise ValueError("Plik topologii zawiera nieprawidłowe identyfikatory.")
+            self._styles[TOPOLOGY_STACK_KEY]={"uids":obj["uids"]}
+
     def _editing_status(self) -> dict:
         history = self._history
         return {
@@ -202,6 +248,7 @@ class PreviewWorkspace:
             "redoLabel": history.next_redo_label if history else "",
             "revision": self._revision,
             "documentToken": self._document_token,
+            "hasReversibleMasks": bool(self._overlay_uids()),
         }
 
     def select_by_attributes(self, *, code: str = "", a1: str = "",
@@ -491,7 +538,8 @@ class PreviewWorkspace:
                             min(y for x,y in a)<=max(y for x,y in b)+padding and
                             max(y for x,y in a)>=min(y for x,y in b)-padding)
                 if (len(conflicts)<12 and nearby(old,fixed,.002)
-                        and rings_contact(old,fixed)):
+                        and rings_contact(old,fixed)
+                        and not rings_overlap(old,fixed)):
                     conflicts.append({"movingUid":obj.uid,
                                       "stationaryUid":neighbor.uid,
                                       "code":obj.code})
@@ -589,7 +637,7 @@ class PreviewWorkspace:
         conflicts, overlaps = (self._move_topology_conflicts(moving,dx,dy)
                                if dx or dy else ([],[]))
         topology_blocked = bool(conflicts) and not allow_detach
-        overlap_blocked = bool(overlaps)
+        overlap_blocked = False  # cutouts are non-destructive in GeoStudio 2.0
         payload = {"ids": sorted(ids), "dx": dx, "dy": dy,
                    "allowDetach": allow_detach, "snapDistance": snap_distance,
                    "documentToken": document_token,
@@ -608,6 +656,7 @@ class PreviewWorkspace:
                 "snapApplied": snap_applied,
                 "overlapConflicts": overlaps,
                 "overlapBlocked": overlap_blocked,
+                "reversibleCutout": bool(overlaps),
                 "samples": samples,
                 "topologyConflicts": conflicts,
                 "topologyBlocked": topology_blocked,
@@ -643,9 +692,6 @@ class PreviewWorkspace:
                     preview_key != report["previewKey"] or
                     preview_key != self._move_preview_key):
                 raise RuntimeError("Podgląd wygasł. Ponownie sprawdź przesunięcie.")
-            if report["overlapBlocked"]:
-                raise ValueError("Poligony tego samego kodu nachodzą na siebie. "
-                                 "Dopasuj je do wspólnej granicy.")
             if report["topologyBlocked"]:
                 raise ValueError(
                     "Zaznaczenie ma wspólną granicę z nieruchomym "
@@ -668,6 +714,8 @@ class PreviewWorkspace:
                 selection_before=tuple(plan["selectedUids"]),
             ):
                 self._doc.move_polygon_vertices(plan["changes"])
+                self._raise_to_top([o.uid for o in self._doc.objects
+                                    if o.uid in plan["selectedUids"]])
                 check = sha256()
                 for obj in self._doc.objects:
                     if obj.uid not in plan["selectedUids"]:
@@ -744,20 +792,8 @@ class PreviewWorkspace:
                 raise ValueError("Kopia musi mieć inne położenie niż oryginał.")
             if sum(len(obj.points) for obj in selected)>50000:
                 raise ValueError("Zbyt dużo węzłów do skopiowania.")
-            # Unlike MOVE, the original polygon remains. Every new polygon
-            # must not overlap ANY existing polygon with the same code.
-            for obj in selected:
-                candidate=ring_of(obj,dx,dy)
-                xs=[p[0] for p in candidate]
-                ys=[p[1] for p in candidate]
-                center=((min(xs)+max(xs))/2,(min(ys)+max(ys))/2)
-                radius=hypot(max(xs)-min(xs),max(ys)-min(ys))/2+.002
-                for other in self._index.nearby(*center,radius):
-                    if not other.is_closed or other.code!=obj.code:
-                        continue
-                    if rings_overlap(candidate,ring_of(other)):
-                        raise ValueError("Kopia nakłada się na poligon kodu "+
-                                         obj.code+". Zmień przesunięcie.")
+            # Overlapping copies are allowed: the foreground mask is derived
+            # from the original intact polygons. The copy gets its own :ID.
             coordinates=[{"uid":obj.uid,"code":obj.code} for obj in selected[:10]]
         elif action=="create":
             code=payload.get("code")
@@ -839,14 +875,20 @@ class PreviewWorkspace:
             ):
                 if action=="delete":
                     self._doc.delete_objects([o.uid for o in selected])
+                    old=self._overlay_uids()
+                    remaining=[uid for uid in old if uid not in
+                               {o.uid for o in selected}]
+                    self._styles[TOPOLOGY_STACK_KEY]={"uids":remaining}
                 elif action=="copy":
                     created=self._doc.duplicate_polygons(
                         [o.uid for o in selected],
                         round(payload["dx"],3),round(payload["dy"],3))
+                    self._raise_to_top(created)
                 else:
                     created=[self._doc.append_polygon(
                         plan["coords"],code=payload["code"],
                         fields=payload["fields"])]
+                    self._raise_to_top(created)
                 # For append/copy, all original MAP records must survive.
                 if action!="delete":
                     if not b"".join(self._doc.lines).startswith(
@@ -860,6 +902,196 @@ class PreviewWorkspace:
             self._bulk_preview_key=""
             return {**self._editing_status(),"changed":True,"action":action,
                     "affected":payload.get("ids",[]),
+                    "createdUids":created,
+                    "createdIds":[self._object_id[id(self._doc.by_id[uid])]
+                                  for uid in created]}
+
+    def _geometry_plan(self, operation: dict, *,
+                       document_token: str, revision: int) -> dict:
+        """Strict preflight for explicit native GEO-MAP geometry operations."""
+        if (self._doc is None or self._history is None):
+            raise ValueError("Najpierw otwórz mapę.")
+        if (document_token!=self._document_token or
+                type(revision) is not int or revision!=self._revision):
+            raise RuntimeError("Mapa została zmieniona. Sprawdź ponownie.")
+        if not isinstance(operation,dict):
+            raise ValueError("Nieprawidłowe parametry geometrii.")
+        action=operation.get("action")
+        fields={
+            "repair":{"action","ids"},
+            "merge":{"action","ids"},
+            "split":{"action","ids","points"},
+            "create_line":{"action","code","points","fields"},
+            "edit_line":{"action","ids","points"},
+        }
+        if action not in fields or set(operation)-fields.get(action,set()):
+            raise ValueError("Nieznane lub nieobsługiwane polecenie geometrii.")
+        selected=[]
+        if action!="create_line":
+            ids=operation.get("ids")
+            if (not isinstance(ids,list) or not ids or
+                    len(ids)>100 or len(ids)!=len(set(str(x) for x in ids))):
+                raise ValueError("Wymagane 1–100 różnych obiektów.")
+            if action in {"split","edit_line"} and len(ids)!=1:
+                raise ValueError("Ta operacja wymaga dokładnie jednego obiektu.")
+            if action=="merge" and len(ids)<2:
+                raise ValueError("Scalenie wymaga minimum dwóch obiektów.")
+            for fid in ids:
+                if not isinstance(fid,str) or fid not in self._lookup:
+                    raise LookupError("Nieznany identyfikator obiektu.")
+                obj=self._lookup[fid].obj
+                if (not obj.uid or self._uid_counts.get(obj.uid)!=1 or
+                        self._doc.by_id.get(obj.uid) is not obj):
+                    raise ValueError("Obiekt ma niejednoznaczne :ID.")
+                selected.append(obj)
+        geometry=None
+        coordinates=[]
+        details={}
+        if action in {"repair","merge","split"}:
+            for obj in selected:
+                if not obj.is_closed or any(p.point_type!=1 for p in obj.points):
+                    raise ValueError("Wybierz proste, zamknięte poligony (bez P 0).")
+        if action=="repair":
+            repairs=[obj.uid for obj in selected if self._doc.signed_area(
+                [(p.x,p.y) for p in obj.points[:-1]])<0]
+            details={"repairs":repairs}
+        elif action=="merge":
+            codes={obj.code for obj in selected}
+            attrs={(obj.fields.get("A1",""),obj.fields.get("A2",""))
+                   for obj in selected}
+            if len(codes)!=1 or len(attrs)!=1:
+                raise ValueError("Scalaj tylko ten sam kod i zgodne wartości A1/A2.")
+            geometry=merge_simple([polygon_of(o) for o in selected])
+            details={"beforeArea":round(sum(polygon_of(o).area
+                                               for o in selected),3),
+                     "afterArea":round(abs(self._doc.signed_area(geometry)),3),
+                     "metadataWarning":True}
+        elif action=="split":
+            points=operation.get("points")
+            if not isinstance(points,list) or not 2<=len(points)<=500:
+                raise ValueError("Narysuj linię podziału z 2–500 punktów.")
+            for point in points:
+                if (not isinstance(point,list) or len(point)!=2 or
+                        any(type(v) not in (int,float) or
+                            not isfinite(v) or abs(v)>1e9 for v in point)):
+                    raise ValueError("Nieprawidłowe punkty linii podziału.")
+                coordinates.append(tuple(round(v,3) for v in point))
+            geometry=split_simple(polygon_of(selected[0]),coordinates)
+            details={"parts":len(geometry),
+                     "beforeArea":round(polygon_of(selected[0]).area,3),
+                     "afterArea":round(sum(abs(self._doc.signed_area(part))
+                                           for part in geometry),3),
+                     "metadataWarning":True}
+        if action in {"create_line","edit_line"}:
+            points=operation.get("points")
+            if not isinstance(points,list) or not 2<=len(points)<=500:
+                raise ValueError("Linia wymaga 2–500 punktów.")
+            for point in points:
+                if (not isinstance(point,list) or len(point)!=2 or
+                        any(type(v) not in (int,float) or
+                            not isfinite(v) or abs(v)>1e9 for v in point)):
+                    raise ValueError("Nieprawidłowy punkt linii.")
+                coordinates.append(tuple(round(v,3) for v in point))
+            from shapely.geometry import LineString
+            polyline=LineString(coordinates)
+            if not polyline.is_simple or polyline.length<=0.001:
+                raise ValueError("Linia jest zbyt krótka lub przecina samą siebie.")
+            if action=="edit_line":
+                if selected[0].is_closed or selected[0].code not in {
+                        "6900","6000","6301","2364","4100"}:
+                    raise ValueError("Wybrany obiekt nie jest obsługiwaną linią.")
+            else:
+                code=operation.get("code")
+                if code not in {"6900","6000","6301","2364"}:
+                    raise ValueError("Wybierz kod linii 6900, 6000, 6301 lub 2364.")
+                attrs=operation.get("fields")
+                if not isinstance(attrs,dict) or set(attrs)-{"A1","A2"}:
+                    raise ValueError("Linia obsługuje A1/A2.")
+                for value in attrs.values():
+                    if (not isinstance(value,str) or any(c in value for c in "\r\n]")):
+                        raise ValueError("Niedozwolone znaki w atrybucie.")
+                    try:
+                        if len(value.encode("cp1250"))>512:
+                            raise ValueError("Atrybut jest zbyt długi.")
+                    except UnicodeEncodeError as e:
+                        raise ValueError("Użyj polskich znaków CP1250.") from e
+        allowed=(bool(details.get("repairs")) if action=="repair" else True)
+        payload={"operation":operation,"documentToken":document_token,
+                 "revision":revision}
+        key=sha256(json.dumps(payload,sort_keys=True,
+                             ensure_ascii=False,separators=(",",":")).encode()).hexdigest()
+        return {"action":action,"selected":selected,"coordinates":coordinates,
+                "geometry":geometry,
+                "report":{"action":action,"canApply":allowed,
+                          "previewKey":key,"selected":len(selected),
+                          "codes":dict(Counter(o.code for o in selected)),
+                          **details,**self._editing_status()}}
+
+    def preview_geometry_operation(self, operation: dict, *,
+                                   document_token: str,revision: int) -> dict:
+        with self._lock:
+            plan=self._geometry_plan(operation,
+                                    document_token=document_token,revision=revision)
+            self._geometry_preview_key=plan["report"]["previewKey"]
+            return plan["report"]
+
+    def apply_geometry_operation(self, operation: dict, *, preview_key: str,
+                                 document_token: str, revision: int) -> dict:
+        with self._lock:
+            plan=self._geometry_plan(operation,
+                                    document_token=document_token,revision=revision)
+            report=plan["report"]
+            if (not report["canApply"] or not isinstance(preview_key,str) or
+                    preview_key!=report["previewKey"] or
+                    preview_key!=getattr(self,"_geometry_preview_key","")):
+                raise RuntimeError("Podgląd jest nieaktualny lub nie ma zmian.")
+            action=plan["action"]
+            selected=plan["selected"]
+            created=[]
+            affected={obj.uid for obj in selected}
+            with self._history.begin({
+                "repair":"Kierunek obrysu i dodatnie pole",
+                "merge":"Scalenie poligonów",
+                "split":"Podział poligonu",
+                "create_line":"Nowa linia",
+                "edit_line":"Zmiana linii",
+            }[action],selection_before=tuple(affected)):
+                if action=="repair":
+                    self._doc.normalize_polygon_winding(
+                        report["repairs"])
+                elif action=="merge":
+                    keeper=selected[0].uid
+                    self._doc.replace_simple_geometry(
+                        keeper,plan["geometry"])
+                    self._doc.delete_objects(
+                        [o.uid for o in selected[1:]])
+                    self._styles[TOPOLOGY_STACK_KEY]={
+                        "uids":[uid for uid in self._overlay_uids()
+                                if uid not in affected or uid==keeper]}
+                elif action=="split":
+                    original=selected[0].uid
+                    pieces=plan["geometry"]
+                    if len(pieces)>1:
+                        for piece in pieces[1:]:
+                            clone=self._doc.duplicate_polygons(
+                                [original],0,0)[0]
+                            self._doc.replace_simple_geometry(clone,piece)
+                            created.append(clone)
+                        self._doc.replace_simple_geometry(original,pieces[0])
+                elif action=="create_line":
+                    created=[self._doc.append_polyline(
+                        plan["coordinates"],code=operation["code"],
+                        fields=operation["fields"])]
+                else:
+                    self._doc.replace_simple_geometry(
+                        selected[0].uid,plan["coordinates"],closed=False)
+            self._reindex(self._doc,self._doc.filename)
+            self._revision+=1
+            self._geometry_preview_key=""
+            self._move_preview_key=""
+            self._objects_preview_key=""
+            return {**self._editing_status(),"changed":True,
+                    "action":action,"affected":operation.get("ids",[]),
                     "createdUids":created,
                     "createdIds":[self._object_id[id(self._doc.by_id[uid])]
                                   for uid in created]}
@@ -1354,18 +1586,50 @@ class PreviewWorkspace:
             })
         return result
 
-    def _feature(self, entry: _Entry) -> dict:
-        obj = entry.obj
-        parts = [
-            [[p.y, -p.x] for p in segment] for segment in obj.display_parts
-            if segment
-        ]
-        return {
-            "id": entry.fid, "code": obj.code, "layer": entry.layer,
-            "grade": entry.grade, "bbox": entry.bbox, "closed": obj.is_closed,
-            "geometry": parts, "style": self._style(entry),
-            "labels": self._labels(entry),
-        }
+    def _feature(self, entry: _Entry, overlay_objects=()) -> dict:
+        obj=entry.obj
+        parts=[[[p.y,-p.x] for p in segment]
+               for segment in obj.display_parts if segment]
+        visible_area=obj.area_m2
+        mask_count=0
+        if obj.is_closed and overlay_objects:
+            order=self._overlay_uids()
+            at=order.index(obj.uid) if obj.uid in order else -1
+            upper_ids=set(order[at+1:])
+            # Same code only. Preserve unrelated codes even when geometries
+            # intersect; overlays never modify the actual MAP records.
+            upper=[other for other in overlay_objects
+                   if other.uid in upper_ids and other.uid!=obj.uid
+                   and other.code==obj.code]
+            if upper:
+                ax0=min(p.x for p in obj.points)
+                ay0=min(p.y for p in obj.points)
+                ax1=max(p.x for p in obj.points)
+                ay1=max(p.y for p in obj.points)
+                upper=[other for other in upper
+                       if min(p.x for p in other.points)<ax1
+                       and max(p.x for p in other.points)>ax0
+                       and min(p.y for p in other.points)<ay1
+                       and max(p.y for p in other.points)>ay0]
+                if upper:
+                    try:
+                        base=polygon_of(obj)
+                        shapes=[polygon_of(other) for other in upper]
+                        result=visible_difference(base,shapes)
+                        parts=shape_parts(result)
+                        visible_area=round(result.area,3)
+                        mask_count=len(shapes)
+                    except ValueError:
+                        # Multi-contour GEO-MAP geometry needs a native parser.
+                        # Preserve the original rather than risk data loss.
+                        pass
+        return {"id":entry.fid,"code":obj.code,"layer":entry.layer,
+                "grade":entry.grade,"bbox":entry.bbox,"closed":obj.is_closed,
+                "geometry":parts,"style":self._style(entry),
+                "labels":self._labels(entry) if parts else [],
+                "baseAreaM2":obj.area_m2,
+                "visibleAreaM2":visible_area,
+                "reversibleCutout":mask_count>0}
 
     def viewport(self, bounds: tuple[float, float, float, float],
                  limit: int = MAX_RENDER_FEATURES) -> dict:
@@ -1392,9 +1656,14 @@ class PreviewWorkspace:
             visible = [entry for entry in self._entries
                        if id(entry.obj) in ids and _intersects(entry.bbox, clipped)]
             total = len(visible)
+            stack=self._overlay_uids()
+            overlay=[self._doc.by_id[uid] for uid in stack
+                     if uid in self._doc.by_id
+                     and self._uid_counts.get(uid)==1
+                     and self._doc.by_id[uid].is_closed]
             return {
-                "features": [self._feature(entry) for entry in visible[:limit]],
-                "limited": total > limit, "total": total,
+                "features":[self._feature(entry,overlay) for entry in visible[:limit]],
+                "limited":total>limit,"total":total,
             }
 
     def details(self, fid: str) -> dict:

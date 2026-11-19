@@ -233,6 +233,37 @@ def create_app(workspace: PreviewWorkspace | None = None) -> FastAPI:
         except (ValueError, KeyError, TypeError) as exc:
             raise HTTPException(400, str(exc)) from exc
 
+    @app.post("/api/geometry/preview")
+    async def geometry_preview(request: Request):
+        payload=await edit_payload(request,256*1024)
+        try:
+            return state.preview_geometry_operation(
+                payload.get("operation"),
+                document_token=payload.get("documentToken"),
+                revision=payload.get("revision"))
+        except LookupError as exc:
+            raise HTTPException(404,str(exc)) from exc
+        except RuntimeError as exc:
+            raise HTTPException(409,str(exc)) from exc
+        except (ValueError,TypeError,KeyError) as exc:
+            raise HTTPException(400,str(exc)) from exc
+
+    @app.post("/api/geometry/apply")
+    async def geometry_apply(request: Request):
+        payload=await edit_payload(request,256*1024)
+        try:
+            return state.apply_geometry_operation(
+                payload.get("operation"),
+                preview_key=payload.get("previewKey"),
+                document_token=payload.get("documentToken"),
+                revision=payload.get("revision"))
+        except LookupError as exc:
+            raise HTTPException(404,str(exc)) from exc
+        except RuntimeError as exc:
+            raise HTTPException(409,str(exc)) from exc
+        except (ValueError,TypeError,KeyError) as exc:
+            raise HTTPException(400,str(exc)) from exc
+
     @app.patch("/api/object/{fid}/fields")
     async def update_object_fields(fid: str, request: Request):
         payload = await edit_payload(request)

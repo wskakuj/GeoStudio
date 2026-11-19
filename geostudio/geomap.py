@@ -456,12 +456,86 @@ class GeoMap:
                 records.append(text+eol)
             if not found_id or point_count != len(obj.points):
                 raise ValueError("Malformed source polygon: copying refused")
+            # A newly copied polygon must also have positive winding in native
+            # GEO-MAP, without touching the source object's original records.
+            old_coords=[(p.x,p.y) for p in obj.points[:-1]]
+            if (all(p.point_type==1 for p in obj.points)
+                    and self.signed_area(old_coords)<0):
+                positions=[i for i,v in enumerate(records)
+                           if POINT_RE.match(v.rstrip(b'\r\n'))]
+                if len(positions)==len(obj.points):
+                    old=[records[i] for i in positions]
+                    new=[old[0],*reversed(old[1:-1]),old[-1]]
+                    for i,v in zip(positions,new):
+                        records[i]=v
             raw_records.extend(records)
         if self.lines and not self.lines[-1].endswith((b'\r',b'\n')):
             self.lines[-1]+=b'\r\n'
         self.lines.extend(raw_records)
         self._parse()
         return new_uids
+
+    def normalize_polygon_winding(self, uids: list[str]) -> int:
+        """Repair only selected simple exterior rings with negative orientation.
+
+        Retain the first/last P record, reverse inner full P records so each
+        coordinate keeps its native label, and preserve every unknown field.
+        """
+        pending={}
+        for uid in uids:
+            obj=self.by_id[uid]
+            if not obj.is_closed or any(p.point_type!=1 for p in obj.points):
+                raise ValueError("Orientację można poprawić tylko w prostym poligonie.")
+            coords=[(p.x,p.y) for p in obj.points[:-1]]
+            if self.signed_area(coords)>=0:
+                continue
+            indices=[i for i in range(obj.start+1,obj.end)
+                     if POINT_RE.match(self.lines[i].rstrip(b'\r\n'))]
+            if len(indices)!=len(obj.points):
+                raise ValueError("Niezgodna liczba rekordów P.")
+            original=[self.lines[i] for i in indices]
+            new=[original[0],*reversed(original[1:-1]),original[-1]]
+            for index,record in zip(indices,new):
+                pending[index]=record
+        for index,line in pending.items():
+            self.lines[index]=line
+        if pending:self._parse()
+        return len(pending)
+
+    def replace_simple_geometry(self, uid: str, points: list[tuple[float,float]],
+                                *, closed: bool=True) -> None:
+        """Replace only the P-record span, preserving original style and fields.
+
+        Refuse complex/multiring native records. No topology/area attributes are
+        recalculated: caller must expose this limitation during split/merge.
+        """
+        from .interactions import polygon_is_valid
+        if uid not in self.by_id:
+            raise LookupError(uid)
+        obj=self.by_id[uid]
+        if not obj.points or any(p.point_type!=1 for p in obj.points):
+            raise ValueError("Nie można zastąpić wieloczęściowej geometrii.")
+        clean=[(round(x,3),round(y,3)) for x,y in points]
+        if (not clean or any(not (-1e9<x<1e9 and -1e9<y<1e9)
+                              for x,y in clean)):
+            raise ValueError("Współrzędne poza zakresem.")
+        if closed:
+            if clean[0]==clean[-1]:clean=clean[:-1]
+            if not polygon_is_valid(clean):
+                raise ValueError("Niepoprawny nowy obrys.")
+            if self.signed_area(clean)<0:
+                clean=[clean[0]]+list(reversed(clean[1:]))
+            clean.append(clean[0])
+        elif len(clean)<2 or len(set(clean))<2:
+            raise ValueError("Linia wymaga co najmniej dwóch punktów.")
+        positions=[i for i in range(obj.start+1,obj.end)
+                   if POINT_RE.match(self.lines[i].rstrip(b'\r\n'))]
+        if not positions or positions[-1]-positions[0]+1 != len(positions):
+            raise ValueError("Rekordy P są przeplatane innymi danymi.")
+        eol=b'\r\n' if self.lines[positions[0]].endswith(b'\r\n') else b'\n'
+        written=[(f'P 1   {x:.3f}   {y:.3f}'.encode()+eol) for x,y in clean]
+        self.lines[positions[0]:positions[-1]+1]=written
+        self._parse()
 
     def delete_objects(self, uids: list[str] | set[str]) -> int:
         """Delete entire object records in one pass without touching adjacent objects.
@@ -491,6 +565,46 @@ class GeoMap:
     def delete_object(self, uid: str) -> None:
         self.delete_objects([uid])
 
+    @staticmethod
+    def signed_area(points: list[tuple[float,float]]) -> float:
+        """Stable signed planar area; native GEO-MAP expects positive exterior."""
+        if len(points)<3:
+            return 0.
+        x0,y0=points[0]
+        return sum(((x-x0)*(yn-y0)-(xn-x0)*(y-y0))
+                   for (x,y),(xn,yn) in zip(points,points[1:]+points[:1]))/2
+
+    def to_bytes_positive_areas(self) -> bytes:
+        """Export new MAP with positive-oriented SIMPLE exterior rings.
+
+        Preserve all non-P records, CP1250 data, and every polyline verbatim.
+        Do not rewrite multi-ring P0 objects: their winding can mark holes.
+        Also does not mutate the in-memory editable source or history.
+        """
+        pending={}
+        for obj in self.objects:
+            if (not obj.is_closed or len(obj.points)<4 or
+                    any(p.point_type!=1 for p in obj.points)):
+                continue
+            coords=[(p.x,p.y) for p in obj.points[:-1]]
+            if self.signed_area(coords)>=0:
+                continue
+            indices=[i for i in range(obj.start+1,obj.end)
+                     if POINT_RE.match(self.lines[i].rstrip(b'\r\n'))]
+            if len(indices)!=len(obj.points):
+                raise ValueError("Nie można bezpiecznie zmienić kolejności punktów.")
+            records=[self.lines[i] for i in indices]
+            flipped=[records[0],*reversed(records[1:-1]),records[-1]]
+            for index,record in zip(indices,flipped):
+                pending[index]=record
+        if not pending:
+            return self.to_bytes()
+        clone=GeoMap(b''.join(self.lines),filename=self.filename)
+        for index,record in pending.items():
+            clone.lines[index]=record
+        clone._parse()
+        return clone.to_bytes()
+
     def append_polygon(self, points: list[tuple[float,float]], code='5216',
                        label='', fields: dict[str, str] | None = None) -> str:
         if len(points) < 3:
@@ -503,6 +617,8 @@ class GeoMap:
             raise ValueError('Invalid coordinates')
         if points[0] != points[-1]:
             points = points + [points[0]]
+        if self.signed_area(points[:-1])<0:
+            points = [points[0], *reversed(points[1:-1]), points[0]]
         attrs = dict(fields or {})
         if label and 'A2' not in attrs:
             attrs['A2'] = label

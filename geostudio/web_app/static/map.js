@@ -20,6 +20,7 @@
     edit: null, editBusy: false, bulkPreview: null, movePreview: null,
     moveIds: [], moveGhost: null, objectPreview:null,
     drawPoints:[], drawHover:null, copyIds:[],
+    geometryPreview:null,cutIds:[],lineEditId:null,
     snapEnabled: true, sharedNodes: false, vertexDrag: null,
     hoverInsert: null, selectedVertex: null
   };
@@ -29,7 +30,13 @@
     {name:"Edytuj zbiorowo pola A1/A2", hint:"Ctrl+Shift+E", run:openBulkEditor},
     {name:"Dokładnie przesuń poligony X/Y", hint:"Ctrl+Shift+M", run:()=>openMoveEditor()},
     {name:"Przeciągaj wybrane poligony", hint:"M", run:()=>setTool("move")},
-    {name:"Kopiuj wybrane poligony", hint:"Ctrl+D", run:openCopyEditor},
+    {name:"Kopiuj obok i przesuń myszą", hint:"Ctrl+D", run:quickDuplicate},
+    {name:"Kopiuj z dokładnym przesunięciem", hint:"X/Y", run:openCopyEditor},
+    {name:"Scal zaznaczone poligony", hint:"Ctrl+Shift+G", run:mergePolygons},
+    {name:"Podziel poligon linią", hint:"Ctrl+Shift+X", run:startSplit},
+    {name:"Napraw kierunek obrysu (dodatnia powierzchnia)", hint:"Pole +", run:repairWinding},
+    {name:"Rysuj nową linię", hint:"L", run:()=>setTool("line")},
+    {name:"Edytuj wybraną linię", hint:"Shift+L", run:startEditLine},
     {name:"Usuń wybrane obiekty", hint:"Ctrl+Delete", run:deleteObjects},
     {name:"Rysuj nowy poligon", hint:"N", run:()=>setTool("draw")},
     {name:"Wczytaj plik stylów GeoStudio", hint:"JSON", run:()=> $("file-sidecar").click()},
@@ -203,7 +210,9 @@
         if(saved&&!saved.cancelled){
           inform("Zapisano kopię MAP: "+saved.path+
                  " ("+display(saved.bytes)+" bajtów).");
-          window.alert("Kopia GEO-MAP została zapisana w:\n"+saved.path);
+          window.alert("Kopia GEO-MAP została zapisana w:\n"+saved.path+
+            (saved.topologyPath?"\n\nPlik odwracalnej topologii:\n"+
+            saved.topologyPath+"\nZachowaj oba pliki razem.":""));
         }
         return;
       }
@@ -255,6 +264,7 @@
     populateSelectCodes();
     state.vertexDrag=null;state.moveGhost=null;state.movePreview=null;
     state.moveIds=[];state.copyIds=[];state.drawPoints=[];
+    state.cutIds=[];state.lineEditId=null;state.geometryPreview=null;
     state.drawHover=null;state.objectPreview=null;setTool("select");
     state.features = []; state.inspectorCache.clear();
     // Match the old user's map view: survey markers are opt-in.
@@ -322,7 +332,9 @@
         try {
           const answer=await window.pywebview.api.open_map();
           if(answer&&!answer.cancelled&&answer.metadata)
-            finishOpeningMap(answer.metadata);
+            {finishOpeningMap(answer.metadata);
+             if(answer.metadata.topologyWarning)
+               inform(answer.metadata.topologyWarning,true);}
         }catch(error){
           const message=error?.message||String(error);
           inform("Nie udało się otworzyć okna z ostatniego folderu: "+
@@ -689,18 +701,16 @@
         "Przesunięcie: X "+report.delta.x.toFixed(3)+" m; "+
           "Y "+report.delta.y.toFixed(3)+" m\n"+
         "Kody: "+(codes||"brak")+"\n"+
-        "Nakładanie na poligony tego samego kodu: "+
+        "Odwracalne wycinanie na poligonach tego samego kodu: "+
           (overlaps.length?overlaps.map(x=>x.code+" "+x.stationaryUid).join(", "):"brak")+"\n"+
         (report.snapApplied?"Przyciągnięto do krawędzi, korekta "+
            report.snapApplied.distance.toFixed(3)+" m\n":"")+
         "Styki z nieruchomymi poligonami tego samego kodu: "+
           (neighbors.length?examples:"nie wykryto")+"\n"+
-        (report.overlapBlocked
-          ?"Zablokowano: poligony nachodzą na siebie. Przybliż i dopasuj do krawędzi."
-          :report.topologyBlocked
+        (report.topologyBlocked
           ?"Zablokowano: dodaj sąsiadów do zaznaczenia albo świadomie zaznacz rozłączenie granicy."
           :report.canApply
-            ?"Sprawdź przykłady poniżej i zatwierdź. Inne obiekty nie zostaną zmienione."
+            ?"Potwierdź odwracalne wycięcie w podglądzie. Źródłowe punkty pozostają zachowane."
             :"Brak przesunięcia (0 m).");
       showMoveSamples(report);
       if(report.canApply){
@@ -741,7 +751,7 @@
       if(result.changed){
         await refreshEditedDocument(state.active);
         inform("Przesunięto "+display(result.movedObjects)+
-          " poligonów. Cofnij Ctrl+Z; pobierz kopię MAP.");
+          " poligonów. Wycięcia tego samego kodu są odwracalne w GeoStudio 2.0.");
       }
     }catch(error){
       invalidateMovePreview();
@@ -789,6 +799,51 @@
     state.objectPreview=null;
     $(which+"-apply").disabled=true;
     $(which+"-summary").textContent="Sprawdź operację przed zatwierdzeniem.";
+  }
+  async function quickDuplicate() {
+    if(state.editBusy||!state.meta)return;
+    const ids=selectedObjectIds();
+    if(!ids.length||ids.length>500){
+      inform("Wybierz 1–500 poligonów do skopiowania.",true);return;
+    }
+    const features=ids.map(id=>state.features.find(feature=>feature.id===id));
+    if(features.some(x=>!x||!x.closed)){
+      inform("Przybliż mapę tak, aby wszystkie zaznaczone poligony były widoczne. "+
+             "Albo użyj dokładnego kopiowania przez Ctrl+K.",true);
+      return;
+    }
+    const minY=Math.min(...features.map(f=>f.bbox[0]));
+    const maxY=Math.max(...features.map(f=>f.bbox[2]));
+    const gap=Math.max(0.15,Math.min(2,14/state.scale));
+    const dy=Math.round((maxY-minY+gap)*1000)/1000;
+    if(!Number.isFinite(dy)||dy>100000){
+      inform("Kopia jest za szeroka, użyj dokładnego kopiowania.",true);return;
+    }
+    const request={...editRequestBody(),
+      operation:{action:"copy",ids,dx:0,dy}};
+    state.editBusy=true;updateEditState(state.edit);
+    try{
+      const report=await api("/api/objects/preview",{
+        method:"POST",headers:{"Content-Type":"application/json"},
+        body:JSON.stringify(request)
+      });
+      const result=await api("/api/objects/apply",{
+        method:"POST",headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({...request,previewKey:report.previewKey})
+      });
+      updateEditState(result);
+      const created=result.createdIds||[];
+      state.pinned=new Set(created);
+      state.active=created[0]||null;
+      state.editBusy=false;updateEditState(state.edit);
+      setTool("move");
+      await refreshEditedDocument(state.active);
+      updateSelectionCount();
+      inform("Skopiowano "+display(created.length)+
+        " poligonów obok oryginału. Tryb M aktywny — przeciągnij je myszą.");
+    }catch(error){
+      inform("Nie udało się skopiować: "+error.message,true);
+    }finally{state.editBusy=false;updateEditState(state.edit);}
   }
   function openCopyEditor() {
     if(state.editBusy||!state.meta)return;
@@ -925,8 +980,186 @@
     $("create-dialog").showModal();
     $("create-code").focus();
   }
+  function finishGeometryDrawing() {
+    if(state.tool==="draw"){finishDrawPolygon();return;}
+    if(state.tool==="cut"){
+      if(state.drawPoints.length<2){
+        inform("Podział wymaga linii przecinającej poligon.",true);return;
+      }
+      $("split-summary").textContent="Przed podziałem sprawdź linię.";
+      state.geometryPreview=null;$("split-apply").disabled=true;
+      $("split-dialog").showModal();return;
+    }
+    if(["line","line-edit"].includes(state.tool)){
+      if(state.drawPoints.length<2){
+        inform("Linia wymaga przynajmniej dwóch punktów.",true);return;
+      }
+      const editing=state.tool==="line-edit";
+      $("line-dialog-title").textContent=editing?"Edytuj istniejącą linię":"Nowa linia";
+      $("line-code").disabled=editing;
+      $("line-a1").disabled=editing;
+      $("line-a2").disabled=editing;
+      $("line-count").textContent=state.drawPoints.length+" węzłów P — "+
+        (editing?"zmiana istniejącego obrysu":"nowy obiekt GEO-MAP");
+      $("line-apply").textContent=editing?"Zapisz linię":"Utwórz linię";
+      $("line-summary").textContent="Sprawdź linię przed zatwierdzeniem.";
+      state.geometryPreview=null;$("line-apply").disabled=true;
+      $("line-dialog").showModal();
+    }
+  }
+  function startSplit() {
+    const ids=selectedObjectIds();
+    if(ids.length!==1){
+      inform("Najpierw zaznacz dokładnie jeden poligon do podziału.",true);
+      return;
+    }
+    state.cutIds=ids.slice();
+    setTool("cut");
+    inform("Narysuj linię przez wybrany poligon. Zacznij i zakończ poza jego obrysem. Enter kończy.");
+  }
+  function startEditLine() {
+    const ids=selectedObjectIds();
+    if(ids.length!==1){
+      inform("Zaznacz dokładnie jedną linię, potem Shift+L.",true);return;
+    }
+    const feature=state.features.find(f=>f.id===ids[0]);
+    if(!feature||feature.closed){
+      inform("Zaznacz istniejącą linię 6900/6000/6301/2364, nie poligon.",true);
+      return;
+    }
+    state.lineEditId=ids[0];
+    setTool("line-edit");
+    inform("Narysuj nowy przebieg wybranej linii. Enter — sprawdź i zapisz.");
+  }
+  function operationForGeometry(which) {
+    if(which==="split")return {
+      action:"split",ids:state.cutIds.slice(),
+      points:state.drawPoints.map(p=>p.slice())
+    };
+    if(which==="line"){
+      const points=state.drawPoints.map(p=>p.slice());
+      if(state.tool==="line-edit")return {
+        action:"edit_line",ids:[state.lineEditId],points
+      };
+      return {
+        action:"create_line",code:$("line-code").value,points,
+        fields:Object.fromEntries(["a1","a2"].filter(k=>$("line-"+k).value)
+          .map(k=>[k.toUpperCase(),$("line-"+k).value]))
+      };
+    }
+    throw Error("Nieznane polecenie geometrii.");
+  }
+  async function previewGeometryForm(which) {
+    state.geometryPreview=null;
+    $(which+"-apply").disabled=true;
+    const request={...editRequestBody(),
+      operation:operationForGeometry(which)};
+    $(which+"-preview").disabled=true;
+    $(which+"-summary").textContent="Sprawdzanie topologii i powierzchni…";
+    try{
+      const report=await api("/api/geometry/preview",{
+        method:"POST",headers:{"Content-Type":"application/json"},
+        body:JSON.stringify(request)});
+      const notes=report.metadataWarning
+        ?"\nUWAGA: stare dane powierzchniowe w A4/A6 wymagają sprawdzenia!"
+        :"";
+      $(which+"-summary").textContent=
+        (report.parts?"Liczba części: "+report.parts+"\n":"")+
+        (report.beforeArea!==undefined?"Powierzchnia przed: "+
+          report.beforeArea+" m², po: "+report.afterArea+" m²\n":"")+
+        "Można cofnąć jednym Ctrl+Z."+notes;
+      state.geometryPreview={which,report,request};
+      $(which+"-apply").disabled=!report.canApply;
+    }catch(err){
+      $(which+"-summary").textContent="Nie można zastosować: "+err.message;
+      inform(err.message,true);
+    }finally{$(which+"-preview").disabled=false;}
+  }
+  async function applyGeometryForm(which,ev) {
+    ev.preventDefault();
+    const current=state.geometryPreview;
+    if(!current||current.which!==which||state.editBusy)return;
+    const request={...editRequestBody(),
+      operation:operationForGeometry(which)};
+    if(JSON.stringify(current.request)!==JSON.stringify(request)){
+      state.geometryPreview=null;$(which+"-apply").disabled=true;
+      inform("Obrys został zmieniony. Sprawdź ponownie.",true);return;
+    }
+    if(current.report.metadataWarning&&!window.confirm(
+      "Scalenie/podział wymaga ręcznego sprawdzenia danych powierzchniowych "+
+      "A4/A6 w GEO-MAP. Czy kontynuować?"))return;
+    state.editBusy=true;updateEditState(state.edit);
+    try{
+      const res=await api("/api/geometry/apply",{
+        method:"POST",headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({...request,previewKey:current.report.previewKey})
+      });
+      updateEditState(res);
+      $(which+"-dialog").close();
+      state.geometryPreview=null;
+      state.drawPoints=[];state.drawHover=null;
+      state.lineEditId=null;state.cutIds=[];
+      state.pinned=new Set(res.createdIds||[]);
+      state.active=res.createdIds?.[0]||null;
+      state.editBusy=false;updateEditState(state.edit);
+      setTool("select");
+      await refreshEditedDocument(state.active);
+      updateSelectionCount();
+      inform("Geometria zapisana w kopii roboczej. Ctrl+Z cofa.");
+    }catch(error){
+      state.geometryPreview=null;
+      $(which+"-apply").disabled=true;
+      $(which+"-summary").textContent=error.message;
+      inform("Nie zapisano geometrii: "+error.message,true);
+    }finally{state.editBusy=false;updateEditState(state.edit);}
+  }
+  async function simpleGeometryAction(action) {
+    if(state.editBusy||!state.meta)return;
+    const ids=selectedObjectIds();
+    if(action==="merge"&&(ids.length<2||ids.length>100)){
+      inform("Zaznacz od 2 do 100 poligonów tego samego kodu.",true);return;
+    }
+    if(action==="repair"&&(!ids.length||ids.length>100)){
+      inform("Zaznacz 1–100 poligonów do poprawy kierunku.",true);return;
+    }
+    const request={...editRequestBody(),operation:{action,ids}};
+    state.editBusy=true;updateEditState(state.edit);
+    try{
+      const report=await api("/api/geometry/preview",{
+        method:"POST",headers:{"Content-Type":"application/json"},
+        body:JSON.stringify(request)});
+      if(!report.canApply){
+        inform("Wybrane obrysy już mają prawidłowy kierunek i dodatnią powierzchnię.");
+        return;
+      }
+      const message=action==="repair"
+        ?"Odwrócić kolejność punktów w "+report.repairs.length+
+          " poligonach, aby w GEO-MAP otrzymać dodatnią powierzchnię?"
+        :"Scalić "+display(ids.length)+" poligonów w jeden?\n"+
+          "Suma przed: "+report.beforeArea+" m²; po: "+
+          report.afterArea+" m².\n"+
+          "UWAGA: dane powierzchniowe A4/A6 trzeba sprawdzić ręcznie.";
+      if(!window.confirm(message))return;
+      const result=await api("/api/geometry/apply",{
+        method:"POST",headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({...request,previewKey:report.previewKey})
+      });
+      updateEditState(result);
+      state.pinned.clear();state.active=null;
+      await refreshEditedDocument(null);
+      updateSelectionCount();
+      inform(action==="repair"
+        ?"Naprawiono kierunek obrysu. GEO-MAP pokaże dodatnią powierzchnię po eksporcie."
+        :"Scalono poligony. Sprawdź A4/A6. Ctrl+Z cofa.");
+    }catch(error){
+      inform("Operacja nieudana: "+error.message,true);
+    }finally{state.editBusy=false;updateEditState(state.edit);}
+  }
+  function mergePolygons(){return simpleGeometryAction("merge");}
+  function repairWinding(){return simpleGeometryAction("repair");}
   function drawDraftPolygon() {
-    if(state.tool!=="draw"||!state.drawPoints.length)return;
+    if(!["draw","cut","line","line-edit"].includes(state.tool)||
+       !state.drawPoints.length)return;
     const points=state.drawPoints.map(p=>[p[1],-p[0]]);
     if(state.drawHover)points.push([state.drawHover.y,-state.drawHover.x]);
     ctx.save();
@@ -940,6 +1173,72 @@
       ctx.fillStyle="#f49f41";ctx.fill();
       ctx.strokeStyle="#ffffff";ctx.stroke();
     }
+    ctx.restore();
+  }
+  function magneticMove(ids,rawDx,rawDy) {
+    // Only snap to other polygons with the SAME native object code. Foreign
+    // layers are never targets and are never moved.
+    if(!$("opt-snap")?.checked||ids.length>100)return null;
+    const group=new Set(ids);
+    const moving=state.features.filter(f=>group.has(f.id)&&f.closed);
+    const codes=new Set(moving.map(f=>f.code));
+    const fixed=state.features.filter(f=>!group.has(f.id)&&
+      f.closed&&codes.has(f.code));
+    if(!moving.length||!fixed.length)return null;
+    const threshold=12/Math.max(.000001,state.scale);
+    let best=null,movingCount=0,edgeCount=0;
+    for(const obj of moving){
+      for(const part of obj.geometry){
+        for(const vertex of part){
+          if(++movingCount>900)return best;
+          const origin=[vertex[0]+rawDy,vertex[1]-rawDx];
+          for(const target of fixed){
+            if(obj.code!==target.code)continue;
+            if(origin[0]<target.bbox[0]-threshold||
+               origin[0]>target.bbox[2]+threshold||
+               origin[1]<target.bbox[1]-threshold||
+               origin[1]>target.bbox[3]+threshold)continue;
+            for(const track of target.geometry){
+              for(let i=0;i<track.length;i++){
+                if(++edgeCount>35000)return best;
+                const a=track[i],b=track[(i+1)%track.length];
+                const u=b[0]-a[0],v=b[1]-a[1];
+                const div=u*u+v*v;
+                const t=div?Math.max(0,Math.min(1,(
+                  (origin[0]-a[0])*u+(origin[1]-a[1])*v)/div)):0;
+                for(const [candidate,kind,rank] of [
+                  [a,"węzeł",0],[div?[a[0]+u*t,a[1]+v*t]:a,"krawędź",1]]){
+                  const dist=Math.hypot(candidate[0]-origin[0],
+                                        candidate[1]-origin[1]);
+                  if(dist>threshold)continue;
+                  // Prefer a matching vertex over an edge at comparable distance.
+                  const score=dist+rank*Math.min(threshold*.18,.025);
+                  if(best===null||score<best.score){
+                    best={dx:Math.round((rawDx+origin[1]-candidate[1])*1000)/1000,
+                          dy:Math.round((rawDy+candidate[0]-origin[0])*1000)/1000,
+                          point:candidate,kind,score,dist};
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+    return best;
+  }
+  function drawMoveMagnet() {
+    const snap=state.moveGhost?.snap;
+    if(!snap)return;
+    const p=worldToScreen(snap.point[0],snap.point[1]);
+    ctx.save();
+    ctx.lineWidth=2;ctx.strokeStyle="#dc8500";
+    ctx.beginPath();ctx.arc(p.x,p.y,8,0,2*Math.PI);ctx.stroke();
+    ctx.beginPath();ctx.moveTo(p.x-12,p.y);ctx.lineTo(p.x+12,p.y);
+    ctx.moveTo(p.x,p.y-12);ctx.lineTo(p.x,p.y+12);ctx.stroke();
+    ctx.font="600 11px Segoe UI";
+    ctx.fillStyle="#c66b00";
+    ctx.fillText("MAGNES: "+snap.kind,p.x+15,p.y-12);
     ctx.restore();
   }
   function resizeCanvas() {
@@ -1012,12 +1311,15 @@
     shell.classList.toggle("nodes-editing",tool==="nodes");
     shell.classList.toggle("moving-objects",tool==="move");
     shell.classList.toggle("drawing-objects",tool==="draw");
-    if(tool!=="draw"){state.drawPoints=[];state.drawHover=null;}
+    if(!["draw","cut","line","line-edit"].includes(tool)){
+      state.drawPoints=[];state.drawHover=null;
+    }
     $("geometry-help").hidden=tool!=="nodes"||!state.meta;
     updateGeometryHelp();
     for(const [name,id] of [
       ["select","tool-select"],["pan","tool-pan"],["nodes","tool-nodes"],
       ["move","tool-move"],["draw","tool-new-polygon"],
+      ["cut","tool-split"],["line","tool-line"],["line-edit","tool-line"],
       ["select","float-select"],["pan","float-pan"],["nodes","float-nodes"],
       ["move","float-move"]
     ])$(id).classList.toggle("active",name===tool);
@@ -1025,7 +1327,8 @@
       inform("Tryb P: wybierz zamknięty poligon i przeciągnij jego węzeł.");
     else if(tool==="nodes")
       inform("Tryb P: przeciągnij jeden z węzłów. Ctrl+Z cofa zmianę.");
-    else if(tool==="draw")inform("Rysuj: klikaj wierzchołki, Enter lub dwuklik kończy obrys, Esc anuluje.");
+    else if(["draw","cut","line","line-edit"].includes(tool))
+      inform("Klikaj punkty; Enter lub dwuklik kończy rysowanie, Esc anuluje.");
     else if(tool==="move")inform("Tryb M: przeciągnij wybrany poligon lub całą grupę, potem potwierdź podgląd.");
     else inform(tool==="select"
       ?"Tryb zaznaczania obiektów (S).":"Tryb przesuwania mapy (H).");
@@ -1563,7 +1866,7 @@
     features.sort((a,b)=>(priorities[a.code]??3)-(priorities[b.code]??3));
     for(const feature of features) renderFill(feature);
     for(const feature of features) renderStroke(feature);
-    renderHighlights(features);drawMoveGhost(features);
+    renderHighlights(features);drawMoveGhost(features);drawMoveMagnet();
     renderLabels(features);drawDraftPolygon();drawVertexTool();
     $("scale-label").textContent="Podgląd: "+state.scale.toFixed(state.scale<1?3:1)+" px / jedn.";
     $("count-visible").textContent=display(features.length);
@@ -1784,7 +2087,8 @@
     canvas.setPointerCapture(ev.pointerId);
     const p=eventCoords(ev);
     state.hoverInsert=null;
-    if(state.tool==="draw"&&ev.button===0&&!state.editBusy&&state.meta){
+    if(["draw","cut","line","line-edit"].includes(state.tool)&&
+       ev.button===0&&!state.editBusy&&state.meta){
       state.drag={pointer:ev.pointerId,start:p,last:p,moved:false,draw:true};
       return;
     }
@@ -1822,7 +2126,7 @@
     const p=eventCoords(ev),world=screenToWorld(p.x,p.y);
     $("cursor-coords").textContent="X: "+(-world.y).toFixed(3)+
                                    "   Y: "+world.x.toFixed(3);
-    if(state.tool==="draw"&&!state.editBusy){
+    if(["draw","cut","line","line-edit"].includes(state.tool)&&!state.editBusy){
       state.drawHover={x:-world.y,y:world.x};requestDraw();
     }
     if(!state.drag&&state.tool==="nodes"&&!state.editBusy){
@@ -1833,8 +2137,12 @@
     const d=state.drag;
     if(Math.hypot(p.x-d.start.x,p.y-d.start.y)>4)d.moved=true;
     if(d.moveIds&&state.moveGhost){
-      state.moveGhost.dx=Math.round((d.start.y-p.y)/state.scale*1000)/1000;
-      state.moveGhost.dy=Math.round((p.x-d.start.x)/state.scale*1000)/1000;
+      let dx=Math.round((d.start.y-p.y)/state.scale*1000)/1000;
+      let dy=Math.round((p.x-d.start.x)/state.scale*1000)/1000;
+      const snap=magneticMove(d.moveIds,dx,dy);
+      if(snap){dx=snap.dx;dy=snap.dy;}
+      state.moveGhost.dx=dx;state.moveGhost.dy=dy;
+      state.moveGhost.snap=snap;
       requestDraw();
     }else if(d.node&&state.vertexDrag){
       if(d.moved){
@@ -1866,7 +2174,7 @@
           else inform("Osiągnięto limit 500 węzłów.",true);
         }
         requestDraw();
-        inform("Rysowanie poligonu: "+state.drawPoints.length+
+        inform("Rysowanie: "+state.drawPoints.length+
           " punktów. Enter/dwuklik — zakończ; Esc — anuluj.");
       }
       return;
@@ -1874,8 +2182,16 @@
     if(d.moveIds){
       const ghost=state.moveGhost;
       state.moveGhost=null;requestDraw();
-      if(d.moved&&ghost&&(ghost.dx||ghost.dy))
-        openMoveEditor(d.moveIds,ghost.dx,ghost.dy,true);
+      if(d.moved&&ghost&&(ghost.dx||ghost.dy)){
+        // Make exactly ONE request, AFTER the snap checkbox has its final
+        // value. Parallel previews would race and invalidate the approval key.
+        openMoveEditor(d.moveIds,ghost.dx,ghost.dy,false);
+        if(ghost.snap){
+          $("move-snap").checked=false;
+          inform("Magnes: "+ghost.snap.kind+" tego samego kodu.");
+        }
+        previewMoveChanges();
+      }
       return;
     }
     if(d.node){
@@ -1915,8 +2231,8 @@
     }else selectFeature(fid);
   });
   canvas.addEventListener("dblclick",ev=>{
-    if(state.tool==="draw"&&state.meta){
-      ev.preventDefault();ev.stopPropagation();finishDrawPolygon();return;
+    if(["draw","cut","line","line-edit"].includes(state.tool)&&state.meta){
+      ev.preventDefault();ev.stopPropagation();finishGeometryDrawing();return;
     }
     if(state.tool!=="nodes"||!state.meta)return;
     ev.preventDefault();ev.stopPropagation();
@@ -1984,17 +2300,24 @@
     if((ev.ctrlKey||ev.metaKey)&&ev.shiftKey&&ev.key.toLowerCase()==="m"){
       ev.preventDefault();openMoveEditor();return;
     }
-    if($("copy-dialog").open||$("create-dialog").open||$("move-dialog").open||
+    if($("line-dialog").open||$("split-dialog").open||
+       $("copy-dialog").open||$("create-dialog").open||$("move-dialog").open||
        $("bulk-dialog").open||$("select-dialog").open)return;
     if(typing)return;
+    if((ev.ctrlKey||ev.metaKey)&&ev.shiftKey&&ev.key.toLowerCase()==="g"){
+      ev.preventDefault();mergePolygons();return;
+    }
+    if((ev.ctrlKey||ev.metaKey)&&ev.shiftKey&&ev.key.toLowerCase()==="x"){
+      ev.preventDefault();startSplit();return;
+    }
     if((ev.ctrlKey||ev.metaKey)&&ev.key==="Delete"){
       ev.preventDefault();deleteObjects();return;
     }
     if((ev.ctrlKey||ev.metaKey)&&ev.key.toLowerCase()==="d"){
-      ev.preventDefault();openCopyEditor();return;
+      ev.preventDefault();quickDuplicate();return;
     }
-    if(state.tool==="draw"&&ev.key==="Enter"){
-      ev.preventDefault();finishDrawPolygon();return;
+    if(["draw","cut","line","line-edit"].includes(state.tool)&&ev.key==="Enter"){
+      ev.preventDefault();finishGeometryDrawing();return;
     }
     if(state.tool==="nodes"&&state.detail&&!ev.ctrlKey&&!ev.metaKey&&!ev.altKey&&
        (ev.key==="Delete"||ev.key==="Backspace")){
@@ -2021,7 +2344,7 @@
     }
     if(ev.key==="Escape"){
       if(dialog.open)dialog.close();
-      else if(state.tool==="nodes"||state.tool==="move"||state.tool==="draw"){
+      else if(["nodes","move","draw","cut","line","line-edit"].includes(state.tool)){
         state.vertexDrag=null;setTool("select");
       }else selectFeature(null);
       return;
@@ -2029,6 +2352,9 @@
     if(ev.key.toLowerCase()==="s")setTool("select");
     if(ev.key.toLowerCase()==="m")setTool("move");
     if(ev.key.toLowerCase()==="n")setTool("draw");
+    if(ev.key.toLowerCase()==="l"){
+      if(ev.shiftKey)startEditLine();else setTool("line");
+    }
     if(ev.key.toLowerCase()==="h")setTool("pan");
     if(ev.key.toLowerCase()==="b")pinActive();
     if(ev.key==="0")fitToMap();
@@ -2051,7 +2377,22 @@
   link("tool-bulk-edit",openBulkEditor);
   link("tool-move",()=>setTool("move"));
   link("tool-new-polygon",()=>setTool("draw"));
-  link("tool-copy",openCopyEditor);
+  link("tool-merge",mergePolygons);
+  link("tool-split",startSplit);
+  link("tool-winding",repairWinding);
+  link("tool-line",()=>setTool("line"));
+  link("line-close",()=>$("line-dialog").close());
+  link("line-back",()=>$("line-dialog").close());
+  link("line-preview",()=>previewGeometryForm("line"));
+  $("line-form").addEventListener("submit",ev=>applyGeometryForm("line",ev));
+  for(const key of ["line-code","line-a1","line-a2"])
+    $(key).addEventListener("input",()=>{state.geometryPreview=null;
+      $("line-apply").disabled=true;});
+  link("split-close",()=>$("split-dialog").close());
+  link("split-back",()=>$("split-dialog").close());
+  link("split-preview",()=>previewGeometryForm("split"));
+  $("split-form").addEventListener("submit",ev=>applyGeometryForm("split",ev));
+  link("tool-copy",quickDuplicate);
   link("tool-delete-objects",deleteObjects);
   link("copy-close",()=>$("copy-dialog").close());
   link("create-close",()=>$("create-dialog").close());

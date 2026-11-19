@@ -395,3 +395,46 @@ Dla lokalnego testu bez pywebview:
 
 Operacje pozostają na osobnej gałęzi testowej. Zweryfikuj eksportowane
 pliki MAP w klasycznym programie przed wykorzystaniem do pracy.
+
+
+## Etap 6A — odwracalne wycinanie i geometria (test)
+
+1. **Przesuwanie (M)**: gdy nałożysz poligon na drugi poligon tego samego
+   kodu, GeoStudio 2.0 obliczy obrys widocznej części tego drugiego jako
+   różnicę geometryczną. Jego oryginalne wierzchołki pozostają zachowane.
+   Kiedy odsuniesz górny poligon, dolny odzyskuje obrys. Ctrl+Z/Y obejmuje
+   zarówno ruch, jak i kolejność nakładania. Początkowa wspólna granica
+   niezaznaczonego sąsiada nadal domyślnie chroniona przed rozłączeniem.
+2. **Magnetyczne przyciąganie**: pomarańczowy znacznik węzła/krawędzi.
+   Przyciąganie działa tylko do NIEZAZNACZONYCH poligonów TEGO SAMEGO KODU.
+   Wyłączyć można „Przyciąganie” w narzędziach geometrii.
+3. **Ctrl+D**: zaznacz poligon, naciśnij skrót; kopia pojawi się obok,
+   będzie zaznaczona i od razu aktywuje się M. Następnie przeciągnij kopię
+   myszą. Ctrl+K -> „Kopiuj z dokładnym przesunięciem” pozostaje dostępne.
+4. **Pole +**: zaznacz poligon (np. 5310/A1=xd/A2=So03) i kliknij
+   narzędzie. Zapisana kopia MAP będzie miała w tym obiekcie dodatni
+   zwrot obrysu, a powierzchnia w klasycznym GEO-MAP powinna być dodatnia.
+   Nowe poligony mają orientację dodatnią już przy tworzeniu.
+5. **Scal** (Ctrl+Shift+G): zaznacz co najmniej dwa przylegające
+   poligony tego samego kodu, z jednakowymi A1/A2. Scalanie działa tylko
+   wtedy, gdy wynik jest jednym prostym poligonem bez otworu.
+6. **Podziel** (Ctrl+Shift+X): wybierz jeden poligon, klikaj linię cięcia
+   zaczynając i kończąc poza jego obrysem, Enter/dwuklik, podgląd,
+   zatwierdzenie. Podział tworzy nowe ID.
+7. **L**: narysuj linię, Enter/dwuklik otwiera formularz kodu i A1/A2.
+   **Shift+L** po zaznaczeniu linii pozwala narysować jej nowy przebieg.
+
+**UWAGA O EKSPORCIE:** odwracalny widok wycięć jest funkcją GeoStudio 2.0,
+nie natywną zmianą geometrii w MAP. Natywne Windows **Zapisz jako**
+tworzy plik MAP zawierający bazowe wierzchołki oraz dodatkowy plik
+\`.geostudio-topology.json\` (zapisany z taką samą nazwą bazową).
+**Zachowaj i otwieraj oba pliki razem**. Sam plik MAP otwarty w
+klasycznym GEO-MAP w tym etapie pokaże poligony bazowe, bez odwracalnej
+maski. Klasyczna zgodność trwale wyciętej geometrii to przyszły etap 6B.
+Nie stosuj masek z 6A jako dokumentacji ewidencyjnej bez walidacji.
+
+Przy scalaniu i podziale zachowywane są atrybuty pierwszego obiektu,
+ale wartości powierzchni ewidencyjnych w polach A4/A6 nie są automatycznie
+aktualizowane — należy je sprawdzić ręcznie w klasycznym programie.
+To samo dotyczy specyficznych kodów i stylów używających nietypowych
+wieloczęściowych rekordów P0, których nie zmieniamy w tym etapie.
