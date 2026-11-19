@@ -29,7 +29,8 @@
     {name:"Edytuj zbiorowo pola A1/A2", hint:"Ctrl+Shift+E", run:openBulkEditor},
     {name:"Dokładnie przesuń poligony X/Y", hint:"Ctrl+Shift+M", run:()=>openMoveEditor()},
     {name:"Przeciągaj wybrane poligony", hint:"M", run:()=>setTool("move")},
-    {name:"Kopiuj wybrane poligony", hint:"Ctrl+D", run:openCopyEditor},
+    {name:"Kopiuj obok i przesuń myszą", hint:"Ctrl+D", run:quickDuplicate},
+    {name:"Kopiuj z dokładnym przesunięciem", hint:"X/Y", run:openCopyEditor},
     {name:"Usuń wybrane obiekty", hint:"Ctrl+Delete", run:deleteObjects},
     {name:"Rysuj nowy poligon", hint:"N", run:()=>setTool("draw")},
     {name:"Wczytaj plik stylów GeoStudio", hint:"JSON", run:()=> $("file-sidecar").click()},
@@ -203,7 +204,9 @@
         if(saved&&!saved.cancelled){
           inform("Zapisano kopię MAP: "+saved.path+
                  " ("+display(saved.bytes)+" bajtów).");
-          window.alert("Kopia GEO-MAP została zapisana w:\n"+saved.path);
+          window.alert("Kopia GEO-MAP została zapisana w:\n"+saved.path+
+            (saved.topologyPath?"\n\nPlik odwracalnej topologii:\n"+
+            saved.topologyPath+"\nZachowaj oba pliki razem.":""));
         }
         return;
       }
@@ -322,7 +325,9 @@
         try {
           const answer=await window.pywebview.api.open_map();
           if(answer&&!answer.cancelled&&answer.metadata)
-            finishOpeningMap(answer.metadata);
+            {finishOpeningMap(answer.metadata);
+             if(answer.metadata.topologyWarning)
+               inform(answer.metadata.topologyWarning,true);}
         }catch(error){
           const message=error?.message||String(error);
           inform("Nie udało się otworzyć okna z ostatniego folderu: "+
@@ -689,18 +694,16 @@
         "Przesunięcie: X "+report.delta.x.toFixed(3)+" m; "+
           "Y "+report.delta.y.toFixed(3)+" m\n"+
         "Kody: "+(codes||"brak")+"\n"+
-        "Nakładanie na poligony tego samego kodu: "+
+        "Odwracalne wycinanie na poligonach tego samego kodu: "+
           (overlaps.length?overlaps.map(x=>x.code+" "+x.stationaryUid).join(", "):"brak")+"\n"+
         (report.snapApplied?"Przyciągnięto do krawędzi, korekta "+
            report.snapApplied.distance.toFixed(3)+" m\n":"")+
         "Styki z nieruchomymi poligonami tego samego kodu: "+
           (neighbors.length?examples:"nie wykryto")+"\n"+
-        (report.overlapBlocked
-          ?"Zablokowano: poligony nachodzą na siebie. Przybliż i dopasuj do krawędzi."
-          :report.topologyBlocked
+        (report.topologyBlocked
           ?"Zablokowano: dodaj sąsiadów do zaznaczenia albo świadomie zaznacz rozłączenie granicy."
           :report.canApply
-            ?"Sprawdź przykłady poniżej i zatwierdź. Inne obiekty nie zostaną zmienione."
+            ?"Potwierdź odwracalne wycięcie w podglądzie. Źródłowe punkty pozostają zachowane."
             :"Brak przesunięcia (0 m).");
       showMoveSamples(report);
       if(report.canApply){
@@ -741,7 +744,7 @@
       if(result.changed){
         await refreshEditedDocument(state.active);
         inform("Przesunięto "+display(result.movedObjects)+
-          " poligonów. Cofnij Ctrl+Z; pobierz kopię MAP.");
+          " poligonów. Wycięcia tego samego kodu są odwracalne w GeoStudio 2.0.");
       }
     }catch(error){
       invalidateMovePreview();
@@ -789,6 +792,51 @@
     state.objectPreview=null;
     $(which+"-apply").disabled=true;
     $(which+"-summary").textContent="Sprawdź operację przed zatwierdzeniem.";
+  }
+  async function quickDuplicate() {
+    if(state.editBusy||!state.meta)return;
+    const ids=selectedObjectIds();
+    if(!ids.length||ids.length>500){
+      inform("Wybierz 1–500 poligonów do skopiowania.",true);return;
+    }
+    const features=ids.map(id=>state.features.find(feature=>feature.id===id));
+    if(features.some(x=>!x||!x.closed)){
+      inform("Przybliż mapę tak, aby wszystkie zaznaczone poligony były widoczne. "+
+             "Albo użyj dokładnego kopiowania przez Ctrl+K.",true);
+      return;
+    }
+    const minY=Math.min(...features.map(f=>f.bbox[0]));
+    const maxY=Math.max(...features.map(f=>f.bbox[2]));
+    const gap=Math.max(0.15,Math.min(2,14/state.scale));
+    const dy=Math.round((maxY-minY+gap)*1000)/1000;
+    if(!Number.isFinite(dy)||dy>100000){
+      inform("Kopia jest za szeroka, użyj dokładnego kopiowania.",true);return;
+    }
+    const request={...editRequestBody(),
+      operation:{action:"copy",ids,dx:0,dy}};
+    state.editBusy=true;updateEditState(state.edit);
+    try{
+      const report=await api("/api/objects/preview",{
+        method:"POST",headers:{"Content-Type":"application/json"},
+        body:JSON.stringify(request)
+      });
+      const result=await api("/api/objects/apply",{
+        method:"POST",headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({...request,previewKey:report.previewKey})
+      });
+      updateEditState(result);
+      const created=result.createdIds||[];
+      state.pinned=new Set(created);
+      state.active=created[0]||null;
+      state.editBusy=false;updateEditState(state.edit);
+      setTool("move");
+      await refreshEditedDocument(state.active);
+      updateSelectionCount();
+      inform("Skopiowano "+display(created.length)+
+        " poligonów obok oryginału. Tryb M aktywny — przeciągnij je myszą.");
+    }catch(error){
+      inform("Nie udało się skopiować: "+error.message,true);
+    }finally{state.editBusy=false;updateEditState(state.edit);}
   }
   function openCopyEditor() {
     if(state.editBusy||!state.meta)return;
@@ -1991,7 +2039,7 @@
       ev.preventDefault();deleteObjects();return;
     }
     if((ev.ctrlKey||ev.metaKey)&&ev.key.toLowerCase()==="d"){
-      ev.preventDefault();openCopyEditor();return;
+      ev.preventDefault();quickDuplicate();return;
     }
     if(state.tool==="draw"&&ev.key==="Enter"){
       ev.preventDefault();finishDrawPolygon();return;
@@ -2051,7 +2099,7 @@
   link("tool-bulk-edit",openBulkEditor);
   link("tool-move",()=>setTool("move"));
   link("tool-new-polygon",()=>setTool("draw"));
-  link("tool-copy",openCopyEditor);
+  link("tool-copy",quickDuplicate);
   link("tool-delete-objects",deleteObjects);
   link("copy-close",()=>$("copy-dialog").close());
   link("create-close",()=>$("create-dialog").close());
