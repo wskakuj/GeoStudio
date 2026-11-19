@@ -23,6 +23,30 @@ Gdy pywebview/WebView2 nie wyświetla prawidłowo okna, użyj:
 To uruchomi tę samą lokalną aplikację w domyślnej przeglądarce.
 Wymaga Python 3.11+, lokalnego Edge WebView2 dla natywnego okna.
 
+## Wspólny bok dwóch poligonów tego samego kodu (łączenie T)
+
+W trybie **P / Wspólne węzły** program łączy nie tylko
+dwa identyczne węzły `5310 + 5310`. Jeśli węzeł pierwszego
+`5310` leży na **boku** drugiego `5310` (a drugi nie ma tam
+jeszcze rekordu P), wstawia na tym boku brakujący rekord P i
+przesuwa go razem z pierwszym poligonem. Dodanie węzła oraz
+przesunięcie obu poligonów to **jedna operacja** historii.
+
+Tryb wspólnych węzłów ogranicza także **przyciąganie** do
+tego samego kodu. Nie przyciąga do `5220` i `5230` nawet
+gdy te obiekty nakładają się na edytowany `5310`.
+Nie przyciąga też węzła do **starej krawędzi sąsiada 5310**,
+który ma zostać przesunięty wraz z nim.
+
+W P wybór kolejnych obiektów pozostaje ograniczony do kodu
+aktualnie zaznaczonego poligonu; żeby wybrać inny kod,
+wróć do narzędzia **S — Zaznacz**.
+
+**Wyjątek:** zmiany są realizowane tylko dla jednoznacznie
+sąsiadujących segmentów w granicach dokładności pliku MAP
+(około 1,5 mm). Niejednoznaczne, wielokrotne przecięcia
+boków są odrzucane, a nie automatycznie poprawiane.
+
 ## Bezpieczeństwo: wspólne węzły i różne kody
 
 **Wspólne węzły** nigdy nie powinny zmieniać obiektów o innym kodzie.
