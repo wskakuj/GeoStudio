@@ -196,3 +196,69 @@ def test_stage_6b_browser_and_native_picker_hooks_present():
     native=(root/"native_picker.py").read_text(encoding="utf8")
     assert 'id="tool-export-baked"' in html
     assert "save_baked_map" in js and "def save_baked_map(" in native
+
+
+def test_native_baked_save_reopens_with_reversible_original(tmp_path,monkeypatch):
+    import sys
+    from types import SimpleNamespace
+    from geostudio.web_app.native_picker import NativeMapPicker
+    fields={"A1":"b","A2":"dom"}
+    raw=(MapBuilder()
+        .object("5310","BASE",fields,[(0,0),(0,20),(20,20),(20,0)])
+        .object("5310","TOP",fields,[(5,5),(5,10),(10,10),(10,5)])
+        .build())
+    ws=workspace(raw)
+    move(ws,["f1"],1,0)
+    destination=tmp_path/"WIEŚ_GeoStudio2_wyciecia.MAP"
+    class Root:
+        def withdraw(self):pass
+        def attributes(self,*a):pass
+        def update(self):pass
+        def destroy(self):pass
+    fake=SimpleNamespace(Tk=Root,
+        filedialog=SimpleNamespace(asksaveasfilename=lambda **k:str(destination)))
+    monkeypatch.setitem(sys.modules,"tkinter",fake)
+    picker=NativeMapPicker(ws,settings=tmp_path/"settings.json")
+    saved=picker.save_baked_map()
+    assert saved["nativeCutouts"] is True
+    assert destination.is_file()
+    companion=destination.with_suffix(".geostudio-topology.json")
+    assert companion.is_file()
+    assert GeoMap(destination.read_bytes()).checksum_valid
+    assert len(geometry_of(GeoMap(destination.read_bytes()).by_id["BASE"]).interiors)==1
+    reopened=PreviewWorkspace()
+    loader=NativeMapPicker(reopened,settings=tmp_path/"settings2.json")
+    monkeypatch.setattr(NativeMapPicker,"_choose_path",lambda self:str(destination))
+    meta=loader.open_map()
+    assert meta["metadata"]["topologyImported"]
+    assert geometry_of(reopened._doc.by_id["BASE"]).area==pytest.approx(400)
+    assert next(f for f in reopened.viewport((-1,-1,30,30))["features"]
+                if f["id"]=="f0")["visibleAreaM2"]==pytest.approx(375)
+
+
+def test_native_baked_save_cleans_companion_if_map_commit_fails(tmp_path,monkeypatch):
+    import sys
+    from types import SimpleNamespace
+    import geostudio.web_app.native_picker as picker_module
+    from geostudio.web_app.native_picker import NativeMapPicker
+    ws=workspace(source(None,[(20,0),(20,10),(30,10),(30,0)]))
+    destination=tmp_path/"out.MAP"
+    class Root:
+        def withdraw(self):pass
+        def attributes(self,*a):pass
+        def update(self):pass
+        def destroy(self):pass
+    monkeypatch.setitem(sys.modules,"tkinter",SimpleNamespace(
+        Tk=Root, filedialog=SimpleNamespace(
+            asksaveasfilename=lambda **kwargs:str(destination))))
+    real_replace=picker_module.os.replace
+    def deny_map_commit(src,dst):
+        if str(dst)==str(destination):
+            raise OSError("Simulated MAP commit error")
+        return real_replace(src,dst)
+    monkeypatch.setattr(picker_module.os,"replace",deny_map_commit)
+    picker=NativeMapPicker(ws,settings=tmp_path/"settings.json")
+    with pytest.raises(OSError,match="Simulated"):
+        picker.save_baked_map()
+    assert not destination.exists()
+    assert not destination.with_suffix(".geostudio-topology.json").exists()
