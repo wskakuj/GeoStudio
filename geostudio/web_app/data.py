@@ -1630,6 +1630,13 @@ class PreviewWorkspace:
                 "object": self.details(fid),
             }
 
+    def mark_recovered_unsaved(self) -> None:
+        """Recovered session has not been saved as a new MAP by the user."""
+        with self._lock:
+            if self._history is None or self._doc is None:
+                raise ValueError("Brak dokumentu do oznaczenia po odzyskaniu.")
+            self._history.mark_recovered_unsaved()
+
     def step_history(self, direction: str, *, document_token: str,
                      revision: int) -> dict:
         with self._lock:
