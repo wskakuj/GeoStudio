@@ -794,7 +794,10 @@ class PreviewWorkspace:
             fixed=list(near_fixed.values())
             # Large batch moves still work: only interactive small selections
             # request magnetic edge snapping, never all-to-all 100k vertices.
-            if sum(len(obj.points) for obj in moving)>3000:
+            if (sum(len(obj.points) for obj in moving)>3000 or
+                    any(len(obj.display_parts)>1 for obj in moving)):
+                # The legacy ring-based snap assumes one contiguous contour.
+                # Canvas magnetic nodes work per displayed part instead.
                 fixed=[]
             nx,ny,distance=nearest_boundary_snap(
                 moving, fixed, dx, dy, snap_distance)
