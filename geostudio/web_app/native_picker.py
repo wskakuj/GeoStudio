@@ -138,6 +138,14 @@ class NativeMapPicker:
 
 
     def save_map(self) -> dict:
+        """Ordinary Save As with automatic positive-area ring normalization."""
+        return self._save_map(burn_cutouts=False)
+
+    def save_baked_map(self) -> dict:
+        """Stage 6B: export native holes plus a separate reversible companion."""
+        return self._save_map(burn_cutouts=True)
+
+    def _save_map(self, *, burn_cutouts: bool) -> dict:
         """Save an explicitly named new MAP through an actual Windows Save As dialog.
 
         Unlike a browser Blob download, WebView2 can display and reliably
@@ -148,7 +156,13 @@ class NativeMapPicker:
         status = self._workspace.editing_status()
         if not status.get("documentToken"):
             raise ValueError("Najpierw otwórz mapę GEO-MAP.")
-        suggested_name, content = self._workspace.export_copy(status["documentToken"])
+        if burn_cutouts:
+            suggested_name,content,overlay_bytes=(
+                self._workspace.export_native_cutouts(status["documentToken"]))
+        else:
+            suggested_name,content=self._workspace.export_positive_copy(
+                status["documentToken"])
+            overlay_bytes=self._workspace.export_topology_metadata(content)
         root = tk.Tk()
         try:
             root.withdraw()
@@ -178,6 +192,10 @@ class NativeMapPicker:
             raise ValueError("Nie wolno nadpisać otwartego pliku źródłowego.")
         if chosen.name.casefold() == self._workspace.metadata()["name"].casefold():
             raise ValueError("Podaj inną nazwę niż mapa źródłowa.")
+        if burn_cutouts and chosen.exists():
+            raise ValueError(
+                "Eksport natywnych wycięć wymaga nowej nazwy pliku. "
+                "Nie nadpisuj istniejącej pary MAP/JSON.")
         # os.replace is atomic on the same volume. Never truncate a valid
         # target file in place if writing fails halfway.
         fd, tmp = tempfile.mkstemp(prefix=".geostudio2-",suffix=".tmp",
@@ -193,11 +211,9 @@ class NativeMapPicker:
                 os.unlink(tmp)
             except FileNotFoundError:
                 pass
-        overlay_bytes=self._workspace.export_topology_metadata(content)
         if overlay_bytes:
-            # Companion is checksum-bound to this exact MAP. GEO-MAP itself
-            # receives an ordinary, uncut polygon dataset; the overlay remains
-            # reversible specifically inside GeoStudio 2.0.
+            # Companion is checksum-bound to this exact MAP. For 6B it also
+            # backs up source P contours and allows safe in-memory restoration.
             companion=chosen.with_suffix(".geostudio-topology.json")
             fd2,tmp2=tempfile.mkstemp(prefix=".geostudio-topology-",
                                      suffix=".tmp",dir=str(chosen.parent))
@@ -217,6 +233,6 @@ class NativeMapPicker:
         except OSError:
             pass
         return {"cancelled": False, "path": str(chosen),
-                "bytes": len(content),
+                "bytes": len(content), "nativeCutouts": burn_cutouts,
                 "topologyPath": str(chosen.with_suffix(".geostudio-topology.json"))
                  if overlay_bytes else None}
