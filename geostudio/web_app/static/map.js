@@ -81,7 +81,10 @@
       state.meta = meta;
       state.active = null; state.detail = null; state.pinned.clear();
       state.features = []; state.inspectorCache.clear();
-      state.visibleLayers = new Set(meta.layers.map(layer=>layer.name));
+      // Match the old user's map view: survey markers are opt-in.
+      // Their heavy symbol density otherwise hides the parcel boundaries.
+      state.visibleLayers = new Set(
+        meta.layers.map(layer=>layer.name).filter(name=>name!=="Graniczniki"));
       state.hiddenGrades = new Set(); state.firstLoad = false;
       $("empty-state").hidden = true;
       htmlText($("document-title"), meta.name);
@@ -220,21 +223,29 @@
           part[0][1]===part[part.length-1][1]) ctx.closePath();
     }
   }
-  function renderFeature(feature) {
+  function renderFill(feature) {
     const style=feature.style;
+    if(!feature.closed||!style.hasFill||style.opacity<=0)return;
     addPath(feature.geometry);
-    if(feature.closed && feature.code!=="7900" && feature.code!=="6000"){
-      ctx.globalAlpha=Math.max(0,Math.min(.9,style.opacity));
-      ctx.fillStyle=style.fill;
-      ctx.fill("evenodd");ctx.globalAlpha=1;
-    }
-    ctx.strokeStyle=style.stroke;
-    ctx.lineWidth=Math.max(.65,Math.min(6,style.strokeWidth));
-    ctx.lineCap="round";ctx.lineJoin="round";ctx.stroke();
-    if(feature.geometry.length===1 && feature.geometry[0].length===1){
+    ctx.fillStyle=style.fill;
+    ctx.globalAlpha=Math.min(1,Math.max(0,style.opacity));
+    ctx.fill("evenodd");
+    ctx.globalAlpha=1;
+  }
+  function renderStroke(feature) {
+    const style=feature.style;
+    if(!style.drawStroke)return; // GEO-MAP text anchors aren't printed lines.
+    if(feature.geometry.length===1 && feature.geometry[0].length===1) {
       const p=worldToScreen(...feature.geometry[0][0]);
-      ctx.fillStyle=style.stroke;ctx.beginPath();ctx.arc(p.x,p.y,3.1,0,Math.PI*2);ctx.fill();
+      const radius=Math.max(.6,Math.min(2,style.pointSize||1));
+      ctx.fillStyle=style.stroke;ctx.beginPath();
+      ctx.arc(p.x,p.y,radius,0,Math.PI*2);ctx.fill();
+      return;
     }
+    addPath(feature.geometry);
+    ctx.strokeStyle=style.stroke;
+    ctx.lineWidth=Math.max(.5,Math.min(12,style.strokeWidth));
+    ctx.lineCap="round";ctx.lineJoin="round";ctx.stroke();
   }
   function renderHighlights(features) {
     const selected=new Set(state.pinned);
@@ -253,28 +264,61 @@
     if(!state.labels) return;
     let painted=0;
     const collisions=[];
-    for(const feature of features){
-      if(!feature.labels?.length) continue;
+    // Source annotations have their own text height stored in GEO-MAP.
+    // Parcel numbers are suppressed at map overview scale, but appear
+    // when zoomed enough to read them. Building labels remain prioritized.
+    const ordered=[...features].sort((a,b)=>{
+      const priority=f=>f.code==="5310"?0:
+        ["7900","6000","6301","6900"].includes(f.code)?1:
+        f.code==="5216"?2:3;
+      return priority(a)-priority(b);
+    });
+    for(const feature of ordered) {
+      if(!feature.labels?.length)continue;
       const box=feature.bbox;
-      const w=(box[2]-box[0])*state.scale,h=(box[3]-box[1])*state.scale;
-      if(feature.code!=="7900"&&Math.max(w,h)<11) continue;
+      const w=(box[2]-box[0])*state.scale;
+      const h=(box[3]-box[1])*state.scale;
+      const special=["7900","6900","6000","6301"].includes(feature.code);
+      const building=feature.code==="5310";
+      if(!special&&!building&&(Math.max(w,h)<34||Math.min(w,h)<9))continue;
+      if(building&&Math.max(w,h)<9)continue;
       for(const label of feature.labels){
-        if(painted>=750) return;
+        if(painted>=1100)return;
         const p=worldToScreen(label.x,label.y);
-        const row=String(label.text).split("\n")[0].slice(0,80);
-        if(!row.trim())continue;
-        const size=Math.max(10,Math.min(22,label.size||12));
-        ctx.font="600 "+size+"px Segoe UI, sans-serif";
-        const width=ctx.measureText(row).width;
-        const px=p.x-width/2, py=p.y+(label.offset||0);
-        const rect=[px-3,py-size-2,px+width+3,py+5];
-        if(rect[2]<0||rect[0]>state.width||rect[3]<0||rect[1]>state.height)continue;
-        if(collisions.some(r=>r[0]<rect[2]&&r[2]>rect[0]&&r[1]<rect[3]&&r[3]>rect[1]))continue;
+        const lines=String(label.text).split("\n").slice(0,6);
+        const nativeSize=label.worldTextHeight;
+        const size=nativeSize!==null&&nativeSize!==undefined
+          ? Math.max(4,Math.min(50,nativeSize*state.scale))
+          : Math.max(9,Math.min(36,label.size||12));
+        const weight=label.bold?"700":"400";
+        const family=String(label.fontFamily||"Segoe UI").replace(/["'\\]/g,"");
+        ctx.font=weight+" "+size+"px '"+family+"', sans-serif";
+        const widths=lines.map(line=>ctx.measureText(line.slice(0,100)).width);
+        const maxWidth=Math.max(...widths,0);
+        const lineHeight=size*1.13;
+        const left=p.x-maxWidth/2;
+        const baseline=p.y+(label.offset||0);
+        const rect=[left-2,baseline-size-2,left+maxWidth+2,
+                    baseline+(lines.length-1)*lineHeight+4];
+        if(rect[2]<0||rect[0]>state.width||
+           rect[3]<0||rect[1]>state.height)continue;
+        // Avoid pretending that a dense cadastral overview should show
+        // thousands of overlapping labels; classic Qt scales these.
+        if(collisions.some(r=>r[0]<rect[2]&&r[2]>rect[0]&&
+                              r[1]<rect[3]&&r[3]>rect[1]))continue;
         collisions.push(rect);
         ctx.textBaseline="alphabetic";
-        ctx.strokeStyle=document.body.classList.contains("dark-map")?"#1b2c3d":"#f6f9fa";
-        ctx.lineWidth=3.4;ctx.strokeText(row,px,py);
-        ctx.fillStyle=label.color||"#274259";ctx.fillText(row,px,py);
+        for(let j=0;j<lines.length;j++){
+          const line=lines[j].slice(0,100);
+          const px=p.x-widths[j]/2;
+          const py=baseline+j*lineHeight;
+          ctx.strokeStyle=document.body.classList.contains("dark-map")
+            ?"#1b2c3d":"#f8fafc";
+          ctx.lineWidth=Math.min(2.2,Math.max(.8,size*.14));
+          ctx.strokeText(line,px,py);
+          ctx.fillStyle=label.color||"#4A5056";
+          ctx.fillText(line,px,py);
+        }
         painted++;
       }
     }
@@ -290,10 +334,13 @@
     if(!state.meta) return;
     const box=boundsFromViewport(.05);
     const features=state.features.filter(f=>isVisible(f)&&isInView(f.bbox,box));
-    // Parcel beneath land uses; buildings and survey markers above.
+    // Match the classic QGraphicsScene: paint fills below ALL outlines.
+    // Painting fill+stroke for each object separately erased earlier
+    // parcel borders beneath later overlapping polygons.
     const priorities={"5216":0,"5220":1,"5230":2,"5310":3,"1246":4};
     features.sort((a,b)=>(priorities[a.code]??3)-(priorities[b.code]??3));
-    for(const feature of features) renderFeature(feature);
+    for(const feature of features) renderFill(feature);
+    for(const feature of features) renderStroke(feature);
     renderHighlights(features);renderLabels(features);
     $("scale-label").textContent="Podgląd: "+state.scale.toFixed(state.scale<1?3:1)+" px / jedn.";
     $("count-visible").textContent=display(features.length);
@@ -623,7 +670,8 @@
   api("/api/map").then(meta=>{
     if(meta.loaded){
       state.meta=meta;
-      state.visibleLayers=new Set(meta.layers.map(layer=>layer.name));
+      state.visibleLayers=new Set(
+        meta.layers.map(layer=>layer.name).filter(name=>name!=="Graniczniki"));
       state.firstLoad=false;
       $("empty-state").hidden=true;
       $("document-title").textContent=meta.name;
