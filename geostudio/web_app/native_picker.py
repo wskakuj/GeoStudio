@@ -137,6 +137,45 @@ class NativeMapPicker:
         return {"cancelled": False, "metadata": meta}
 
 
+    def open_libraries(self) -> dict:
+        """Choose LAY/CDF/SYM with a real Windows dialog, never via JS paths."""
+        import tkinter as tk
+        from tkinter import filedialog
+        root=tk.Tk()
+        try:
+            root.withdraw()
+            root.attributes("-topmost",True)
+            root.update()
+            directory=(self._source_path.parent if self._source_path
+                       else Path(read_last_map_directory(self._settings) or
+                                 str(Path.home())))
+            paths=filedialog.askopenfilenames(
+                parent=root,initialdir=str(directory),
+                title="GeoStudio 2.0 — biblioteki kartograficzne LAY/CDF/SYM",
+                filetypes=(("Biblioteki GEO-MAP","*.LAY *.CDF *.SYM"),
+                           ("Wszystkie pliki","*.*")))
+        finally:
+            root.destroy()
+        if not paths:
+            return {"cancelled":True}
+        if len(paths)>3:
+            raise ValueError("Wybierz najwyżej trzy biblioteki (LAY, CDF, SYM).")
+        data=[]
+        kinds=set()
+        for filename in paths:
+            path=Path(filename)
+            kind=path.suffix.upper()
+            if kind not in {".LAY",".CDF",".SYM"} or kind in kinds:
+                raise ValueError("Wybierz maksymalnie po jednym LAY, CDF i SYM.")
+            if not path.is_file() or not 0<path.stat().st_size<=8*1024*1024:
+                raise ValueError("Niepoprawna biblioteka lub rozmiar ponad 8 MB.")
+            data.append((path.name,path.read_bytes()))
+            kinds.add(kind)
+        reports=[self._workspace.set_cartographic_library(name,content)
+                 for name,content in data]
+        return {"cancelled":False,"libraries":reports,
+                "status":self._workspace.cartography_status()}
+
     def save_map(self) -> dict:
         """Default Save As: bake same-code overlays when any exist."""
         return self._save_map(burn_cutouts=None)
