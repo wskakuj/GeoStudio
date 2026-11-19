@@ -19,6 +19,7 @@ import re
 from geostudio.geomap import GeoMap
 from geostudio.forest_classes import forest_class_value
 from geostudio.geometry_index import GeometryIndex
+from geostudio.library_render import native_fill_color
 
 MAX_MAP_BYTES = 80 * 1024 * 1024
 MAX_STYLES_BYTES = 2 * 1024 * 1024
@@ -178,23 +179,62 @@ class PreviewWorkspace:
         return {"loaded": True, "styleCount": len(styles), "labelPositions": len(labels)}
 
     def _style(self, entry: _Entry) -> dict:
+        """Approximate the classic scene_builder styling WITHOUT inventing fills.
+
+        A missing style is NOT an instruction to fill the polygon.
+        GEO-MAP's own COLORREF controls line color; third style token can
+        explicitly specify a native fill. 5230 forest and 5200 compass
+        triangles are the documented fallback exceptions.
+        """
         obj = entry.obj
         code_style = self._styles.get("code:" + obj.code, {})
         item_style = self._styles.get(obj.uid, {}) if obj.uid else {}
-        default = DEFAULT_COLORS.get(obj.code)
-        if default is None:
-            # Native COLORREF is preserved (r, g, b) by the GEO-MAP parser.
-            default = "#" + "".join(f"{v:02X}" for v in obj.colorref)
-        force = code_style.get("force_fill") is True and "fill" in code_style
-        source = code_style if force else (item_style if "fill" in item_style else code_style)
-        fill = _color(source.get("fill"), default)
-        opacity = _opacity(source.get("opacity", code_style.get("opacity", 26)), 26)
+        border = "#" + "".join(f"{c:02X}" for c in obj.colorref)
+        native = native_fill_color(obj.style)
+        land_use = obj.fields.get("A1", "").strip().casefold()
+        force = (code_style.get("force_fill") is True
+                 and "fill" in code_style)
+        fill_color = None
+        opacity = 0
+
+        if obj.code == "5230" and land_use in {"dr", "droga"}:
+            # Road class is never a filled land-use area, even with a code
+            # styling override (same rule as the original PySide6 window).
+            pass
+        elif force:
+            fill_color = _color(code_style["fill"], border)
+            opacity = _opacity(code_style.get("opacity", 100), 100)
+        elif "fill" in item_style:
+            fill_color = _color(item_style["fill"], border)
+            opacity = _opacity(item_style.get("opacity", 100), 100)
+        elif "fill" in code_style:
+            fill_color = _color(code_style["fill"], border)
+            opacity = _opacity(code_style.get("opacity", 100), 100)
+        elif obj.code == "5230" and land_use.startswith("ls"):
+            fill_color = "#3D9A62"
+            opacity = _opacity(code_style.get("opacity", 40), 40)
+        elif native:
+            fill_color = "#" + "".join(f"{c:02X}" for c in native)
+            opacity = _opacity(code_style.get("opacity", 100), 100)
+        elif obj.code == "5200" and len(obj.points) == 4 and obj.fields.get("FA") == "0":
+            # Black quarters of the native north arrow; not its border
+            # boxes / sample swatches on a sheet.
+            fill_color = "#111111"
+            opacity = 100
+
+        stroke = _color(code_style.get("stroke"), border)
+        width = min(12, max(.5, float(code_style.get("stroke_width", 1.0)))) \
+            if _valid_number(code_style.get("stroke_width", 1.0)) else 1.0
+        no_baseline = (obj.code in {"6900", "7900", "6000", "6301"}
+                       and bool(obj.fields.get("TX")))
         return {
-            "fill": fill,
+            "fill": fill_color or border,
             "opacity": opacity / 100,
-            "stroke": _color(code_style.get("stroke"), default),
-            "strokeWidth": min(10, max(0.7, float(code_style.get("stroke_width", 1.1))))
-            if _valid_number(code_style.get("stroke_width", 1.1)) else 1.1,
+            "hasFill": fill_color is not None,
+            "stroke": stroke,
+            "strokeWidth": width,
+            "drawStroke": not no_baseline,
+            "pointSize": 1.0,
         }
 
     def _labels(self, entry: _Entry) -> list[dict]:
@@ -214,6 +254,7 @@ class PreviewWorkspace:
         else:
             fields = []
         pos = self._label_positions.get(obj.uid, {}) if obj.uid else {}
+        center = _label_anchor(obj)
         result = []
         for i, field in enumerate(fields):
             value = obj.fields.get(field, "").replace("||", "\n").strip()
@@ -223,16 +264,32 @@ class PreviewWorkspace:
             location = pos.get(field) if isinstance(pos, dict) else None
             if (isinstance(location, (list, tuple)) and len(location) == 2
                 and all(_valid_number(c) for c in location)):
-                east, south = float(location[1]), -float(location[0])
+                northing, easting = float(location[0]), float(location[1])
+                east, south = easting, -northing
             else:
-                east = (entry.bbox[0] + entry.bbox[2]) / 2
-                south = (entry.bbox[1] + entry.bbox[3]) / 2
+                east, south = center[1], -center[0]
+            is_building = obj.code == "5310"
+            is_sheet = obj.code in {"7900", "6900", "6000", "6301"}
+            is_forest = obj.code in {"5220", "5230"}
+            palette = ("#CC202C" if is_building else
+                       "#111111" if is_sheet else
+                       "#35753A" if is_forest else
+                       "#4A5056" if obj.code == "5216" else "#58686F")
+            base_size = (16 if is_building else 24 if is_sheet else
+                         11 if is_forest else 12)
+            # The old Qt engine draws separate A1 / A2 lines for buildings;
+            # keep manual A2 "|" line breaks from the actual MAP.
+            formatted = value.replace("|", "\n") if is_building and field == "A2" else value
             result.append({
-                "field": field, "text": value[:160],
+                "field": field, "text": formatted[:220],
                 "x": east, "y": south,
-                "offset": (i - (len(fields) - 1) / 2) * 16,
-                "color": _color(style.get("color"), "#263B4B"),
-                "size": max(8, min(36, _int(style.get("size"), 12))),
+                "offset": (i - (len(fields) - 1) / 2) * base_size * .80,
+                "color": _color(style.get("color"), palette),
+                "size": max(8, min(36, _int(style.get("size"), base_size))),
+                "fontFamily": str(style.get(
+                    "font", "Times New Roman" if is_sheet and obj.code in {"7900","6900"}
+                    else "Segoe UI"))[:80],
+                "bold": bool(style.get("bold", is_building or obj.code in {"7900","6900"})),
             })
         return result
 
@@ -297,6 +354,30 @@ class PreviewWorkspace:
                 "closed": obj.is_closed,
                 "geometryTruncated": len(obj.points) > 500,
             }
+
+
+def _label_anchor(obj):
+    """Match PySide6's centroid rather than an arbitrary bounding-box centre."""
+    points = obj.points[:-1] if obj.is_closed else obj.points
+    if not points:
+        return (0.0, 0.0)
+    if not obj.is_closed or len(points) < 3:
+        return (sum(p.x for p in points) / len(points),
+                sum(p.y for p in points) / len(points))
+    x0, y0 = points[0].x, points[0].y
+    area2 = cx = cy = 0.0
+    for index, point in enumerate(points):
+        next_point = points[(index + 1) % len(points)]
+        ax, ay = point.x - x0, point.y - y0
+        bx, by = next_point.x - x0, next_point.y - y0
+        cross = ax * by - bx * ay
+        area2 += cross
+        cx += (ax + bx) * cross
+        cy += (ay + by) * cross
+    if abs(area2) < 1e-10:
+        return (sum(p.x for p in points) / len(points),
+                sum(p.y for p in points) / len(points))
+    return (x0 + cx / (3 * area2), y0 + cy / (3 * area2))
 
 
 def _valid_number(value):
