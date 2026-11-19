@@ -23,6 +23,30 @@ Gdy pywebview/WebView2 nie wyświetla prawidłowo okna, użyj:
 To uruchomi tę samą lokalną aplikację w domyślnej przeglądarce.
 Wymaga Python 3.11+, lokalnego Edge WebView2 dla natywnego okna.
 
+## Bezpieczeństwo: wspólne węzły i różne kody
+
+**Wspólne węzły** nigdy nie powinny zmieniać obiektów o innym kodzie.
+Jeśli wybrany jest kod `5310`, przesunięcie wspólnego punktu może
+zmienić inne `5310`, ale nie `5220` ani `5230`.
+
+**Przyciąganie** działa niezależnie: węzeł `5310` może zostać
+*przyciągnięty do nieruchomego* punktu lub linii `5220`.
+To nie oznacza przesunięcia `5220`. Podczas przeciągania zobaczysz
+etykietę z kodem obiektu przyciągania; po zakończeniu komunikat
+wyświetli kod rzeczywiście zmodyfikowanych obiektów.
+
+Wczytywane pliki GEO-MAP mogą zawierać duplikaty wartości `:ID`.
+Pierwotny indeks `GeoMap.by_id` wskazuje w takim przypadku ostatni
+rekord o danym ID, także gdy jest innego kodu. W edycji webowej
+blokujemy teraz takie niejednoznaczne ID zamiast ryzykować zmianę
+niewłaściwego poligonu. Dodatkowo przed edycją i po edycji sprawdzamy
+zawartość wszystkich rekordów obiektów o innych kodach. Gdyby
+jakikolwiek taki rekord się zmienił, cała transakcja jest wycofywana.
+
+Jeżeli edytor wyświetli **Niejednoznaczny identyfikator :ID**,
+nie wymuszaj zapisu: należy zbadać źródłową mapę, aby bezpiecznie
+ustalić, które obiekty mają powtórzone identyfikatory.
+
 ## Etap 3B — edycja węzłów poligonów
 
 1. Otwórz prawdziwy MAP i kliknij zamknięty poligon.
