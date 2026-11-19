@@ -17,6 +17,7 @@ from threading import RLock
 from secrets import token_hex
 import json
 import re
+import base64
 
 from geostudio.geomap import GeoMap
 from geostudio.forest_classes import forest_class_value
@@ -238,6 +239,120 @@ class PreviewWorkspace:
                         for uid in obj["uids"])):
                 raise ValueError("Plik topologii zawiera nieprawidłowe identyfikatory.")
             self._styles[TOPOLOGY_STACK_KEY]={"uids":obj["uids"]}
+
+    def export_positive_copy(self, document_token: str) -> tuple[str,bytes]:
+        """Windows Save As: automatically normalize all simple exterior rings.
+
+        The original source map and undo stack stay untouched.
+        """
+        with self._lock:
+            if self._doc is None:
+                raise ValueError("Najpierw otwórz mapę.")
+            if document_token!=self._document_token:
+                raise RuntimeError("Nieaktualny dokument.")
+            name=_display_name(self._doc.filename)
+            return name[:-4]+"_GeoStudio2_kopia.MAP", self._doc.to_bytes_positive_areas()
+
+    @staticmethod
+    def _raw_p_records(doc, obj):
+        """Return a contiguous native P span without stripping source metadata."""
+        from geostudio.geomap import POINT_RE
+        indices=[i for i in range(obj.start+1,obj.end)
+                 if POINT_RE.match(doc.lines[i].rstrip(b'\r\n'))]
+        if not indices or len(indices)!=len(obj.points) or (
+                indices[-1]-indices[0]+1)!=len(indices):
+            raise ValueError("Przeplatane rekordy P. Nie można bezpiecznie wyeksportować wycięć.")
+        return doc.lines[indices[0]:indices[-1]+1]
+
+    def export_native_cutouts(self, document_token: str) -> tuple[str,bytes,bytes]:
+        """Stage 6B: native P0 contours with reversible, checksum-bound backup.
+
+        Foreground objects remain unchanged; lower same-code polygons receive
+        true boolean cutouts in a disposable MAP copy. Full occlusion is
+        explicitly blocked rather than destroying an object's identity.
+        """
+        with self._lock:
+            if self._doc is None:
+                raise ValueError("Najpierw otwórz mapę.")
+            if document_token!=self._document_token:
+                raise RuntimeError("Nieaktualny dokument.")
+            base_bytes=self._doc.to_bytes_positive_areas()
+            base=GeoMap(base_bytes,filename=self._doc.filename)
+            counts=Counter(o.uid for o in base.objects if o.uid)
+            ordered=[uid for uid in self._overlay_uids()
+                     if uid in base.by_id and counts[uid]==1]
+            order_position={uid:i for i,uid in enumerate(ordered)}
+            baked=GeoMap(base_bytes,filename=self._doc.filename)
+            original_p={}
+            expectations={}
+            total_change=0
+            # Establish geometric ground truth from the base BEFORE mutations.
+            for obj in base.objects:
+                if not obj.is_closed or not obj.uid:
+                    continue
+                pos=order_position.get(obj.uid,-1)
+                foreground=[]
+                for uid in ordered[pos+1:]:
+                    upper=base.by_id[uid]
+                    if upper.uid==obj.uid or upper.code!=obj.code or not upper.is_closed:
+                        continue
+                    if (max(p.x for p in upper.points)<min(p.x for p in obj.points) or
+                        min(p.x for p in upper.points)>max(p.x for p in obj.points) or
+                        max(p.y for p in upper.points)<min(p.y for p in obj.points) or
+                        min(p.y for p in upper.points)>max(p.y for p in obj.points)):
+                        continue
+                    foreground.append(upper)
+                if not foreground:
+                    continue
+                base_shape=geometry_of(obj)
+                visible=visible_difference(base_shape,
+                                          [geometry_of(other) for other in foreground])
+                if base_shape.area-visible.area<.000001:
+                    continue
+                if counts[obj.uid]!=1:
+                    raise ValueError("Wycinany obiekt nie ma unikatowego :ID.")
+                if visible.is_empty or visible.area<.000001:
+                    raise ValueError(
+                        "Poligon jest całkowicie przykryty przez inny. "
+                        "Bezpieczny eksport wstrzymano, aby zachować jego :ID.")
+                rings=rings_from_shape(visible)
+                original_p[obj.uid]=[
+                    base64.b64encode(line).decode("ascii")
+                    for line in self._raw_p_records(base,obj)]
+                expectations[obj.uid]=visible
+                total_change+=sum(len(ring) for ring in rings)
+                if len(original_p)>500 or total_change>50000:
+                    raise ValueError("Zbyt wiele wycięć do eksportu.")
+                baked.replace_polygon_components(obj.uid,rings)
+            baked_bytes=baked.to_bytes()
+            reparsed=GeoMap(baked_bytes)
+            if not reparsed.checksum_valid or reparsed.declared_lines!=len(reparsed.lines):
+                raise ValueError("Niepoprawna suma kontrolna wynikowego MAP.")
+            for uid,expected in expectations.items():
+                observed=geometry_of(reparsed.by_id[uid])
+                if expected.symmetric_difference(observed).area>max(
+                        .002,expected.area*1e-5):
+                    raise ValueError("Wycięcie zmieniło geometrię przy zapisie MAP.")
+            for obj in base.objects:
+                if obj.uid not in expectations and obj.uid and counts[obj.uid]==1:
+                    old=base.by_id[obj.uid]
+                    new=reparsed.by_id.get(obj.uid)
+                    if (new is None or base.lines[old.start:old.end]!=
+                            reparsed.lines[new.start:new.end]):
+                        raise ValueError("Nieoczekiwana zmiana innego obiektu MAP.")
+            metadata={
+                "format":"geostudio-topology-v2",
+                "sha256":sha256(baked_bytes).hexdigest(),
+                "baseSha256":sha256(base_bytes).hexdigest(),
+                "uids":ordered,
+                "originalP":original_p,
+            }
+            companion=json.dumps(metadata,ensure_ascii=False,
+                                 separators=(",",":")).encode("utf-8")
+            if len(companion)>MAX_STYLES_BYTES:
+                raise ValueError("Przekroczono limit 2 MB pliku odwracalności.")
+            name=_display_name(self._doc.filename)
+            return name[:-4]+"_GeoStudio2_wyciecia.MAP",baked_bytes,companion
 
     def _editing_status(self) -> dict:
         history = self._history
