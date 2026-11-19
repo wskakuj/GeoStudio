@@ -52,7 +52,8 @@ from .feature_dialogs import (
 )
 from .visual_styles import (parse_fill_code, fill_code, load_styles,
     load_label_positions, write_styles, sidecar_path)
-from .ui_theme import theme_stylesheet, ui_icon
+from .ui_theme import (STYLE_CLASSIC, STYLE_MODERN, STYLE_TITLES, STYLES,
+                       stylesheet, theme_stylesheet, ui_icon)
 from .workspace_shell import MapWorkspace
 from .gis_ribbon import GISRibbon
 from .command_palette import CommandPalette
@@ -106,6 +107,11 @@ class GeoStudioWindow(QMainWindow):
         self.theme_mode = str(self.settings.value('ui/theme', 'light')).lower()
         if self.theme_mode not in ('light', 'dark'):
             self.theme_mode = 'light'
+        # Classic is the default so an existing installation looks unchanged
+        # until the user asks for the modern style.
+        self.style_mode = str(self.settings.value('ui/style', STYLE_CLASSIC)).lower()
+        if self.style_mode not in STYLES:
+            self.style_mode = STYLE_CLASSIC
         self._ui_icon_actions = []
         self._command_palette = None
         self._map_sessions = []
@@ -213,7 +219,7 @@ class GeoStudioWindow(QMainWindow):
         self.status=QStatusBar();self.setStatusBar(self.status)
         self._setup_scale_widget()
         self.status.showMessage('Witaj w GeoStudio. Kliknij Otwórz MAP, aby rozpocząć; S/H/N/P/L zmienia narzędzie. E otwiera parametry obiektu.')
-        self.setStyleSheet(theme_stylesheet(self.theme_mode))
+        self.setStyleSheet(stylesheet(self.theme_mode, self.style_mode))
         self._refresh_toolbar_icons()
 
     def _install_workspace_shell(self):
@@ -360,6 +366,7 @@ class GeoStudioWindow(QMainWindow):
         )
         theme = ribbon.group('Widok', 'Interfejs')
         theme.menu('Motyw', self.theme_menu, 'more')
+        theme.menu('Styl', self.style_menu, 'properties')
         theme.menu('Panele', self.panels_menu, 'properties')
 
         # Export tab intentionally separates saving native MAP from DXF and images.
@@ -481,10 +488,26 @@ class GeoStudioWindow(QMainWindow):
             raise ValueError('Unknown interface theme')
         self.theme_mode = theme
         self.settings.setValue('ui/theme', theme)
-        self.setStyleSheet(theme_stylesheet(theme))
+        self.setStyleSheet(stylesheet(theme, self.style_mode))
         self._refresh_toolbar_icons()
         for key, action in getattr(self, 'theme_actions', {}).items():
             action.setChecked(key == theme)
+
+    def set_style(self, style):
+        """Switch between the classic and the modern interface style.
+
+        Only the widget stylesheet changes: the map scene, its colours and
+        every export stay exactly as they are.
+        """
+        if style not in STYLES:
+            raise ValueError('Unknown interface style')
+        self.style_mode = style
+        self.settings.setValue('ui/style', style)
+        self.setStyleSheet(stylesheet(self.theme_mode, style))
+        for key, action in getattr(self, 'style_actions', {}).items():
+            action.setChecked(key == style)
+        self.status.showMessage(
+            f'Styl interfejsu: {STYLE_TITLES[style]}. Mapa i eksport bez zmian.')
 
     def _set_mode_badge(self, text):
         if hasattr(self, 'mode_badge'):
@@ -636,6 +659,18 @@ class GeoStudioWindow(QMainWindow):
             action.triggered.connect(lambda _checked=False, selected=mode: self.set_theme(selected))
             theme_group.addAction(action)
             self.theme_actions[mode] = action
+        styles = vm.addMenu('Styl interfejsu')
+        self.style_menu = styles
+        self.style_actions = {}
+        style_group = QActionGroup(self)
+        style_group.setExclusive(True)
+        for key in STYLES:
+            action = styles.addAction(STYLE_TITLES[key])
+            action.setCheckable(True)
+            action.setChecked(self.style_mode == key)
+            action.triggered.connect(lambda _checked=False, selected=key: self.set_style(selected))
+            style_group.addAction(action)
+            self.style_actions[key] = action
         workspace_menu = vm.addMenu('Układ stanowiska')
         self.workspace_menu = workspace_menu
         self.workspace_actions = {}

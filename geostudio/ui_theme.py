@@ -49,9 +49,147 @@ PALETTES = {
 }
 
 
-def theme_stylesheet(theme: str) -> str:
-    """Return a Windows-friendly Qt stylesheet for the specified mode."""
-    c = PALETTES[theme if theme in PALETTES else "light"]
+STYLE_CLASSIC = "classic"
+STYLE_MODERN = "modern"
+STYLES = (STYLE_CLASSIC, STYLE_MODERN)
+STYLE_TITLES = {STYLE_CLASSIC: "Klasyczny", STYLE_MODERN: "Nowoczesny"}
+
+# Palette of the modern style, taken from the prototype the project owner
+# supplied. Keys mirror PALETTES so the same QSS selectors keep working; the
+# extra keys (elevated, accent_alt, warning, danger, overlay) are used by the
+# overlay below.
+MODERN_PALETTES = {
+    "dark": {
+        "window": "#0F141A",
+        "surface": "#161D26",
+        "toolbar": "#1C2531",
+        "elevated": "#222D3C",
+        "text": "#F1F5F9",
+        "muted": "#94A3B8",
+        "dim": "#7C8DA3",
+        "border": "rgba(148, 163, 184, 0.16)",
+        "border_strong": "rgba(148, 163, 184, 0.30)",
+        "hover": "rgba(148, 163, 184, 0.10)",
+        "accent": "#10B981",
+        "accent_hover": "#34D399",
+        "accent_soft": "rgba(16, 185, 129, 0.14)",
+        "accent_alt": "#38BDF8",
+        "accent_alt_soft": "rgba(56, 189, 248, 0.15)",
+        "selection": "rgba(56, 189, 248, 0.20)",
+        "selection_text": "#E8F6FF",
+        "input": "#0B1015",
+        "alt": "#131A23",
+        "scroll": "#2B3947",
+        "disabled": "#5A6A7D",
+        "warning": "#F59E0B",
+        "danger": "#FB7185",
+    },
+    "light": {
+        "window": "#F8FAFC",
+        "surface": "#FFFFFF",
+        "toolbar": "#F1F5F9",
+        "elevated": "#E2E8F0",
+        "text": "#0F172A",
+        "muted": "#475569",
+        "dim": "#64748B",
+        "border": "#E2E8F0",
+        "border_strong": "#CBD5E1",
+        "hover": "rgba(15, 23, 42, 0.05)",
+        "accent": "#059669",
+        "accent_hover": "#047857",
+        "accent_soft": "rgba(5, 150, 105, 0.11)",
+        "accent_alt": "#0284C7",
+        "accent_alt_soft": "rgba(2, 132, 199, 0.12)",
+        "selection": "rgba(2, 132, 199, 0.16)",
+        "selection_text": "#0B2A45",
+        "input": "#F1F5F9",
+        "alt": "#F8FAFC",
+        "scroll": "#CBD5E1",
+        "disabled": "#94A3B8",
+        "warning": "#D97706",
+        "danger": "#E11D48",
+    },
+}
+
+# Overlay applied on top of the classic selectors. Only properties Qt can
+# actually render are used: no shadows, no transitions, no letter-spacing.
+_MODERN_QSS = """
+/* --- modern style overlay: compact chrome, pill controls, cards --- */
+QWidget { font-family: 'Segoe UI'; font-size: 9.5pt; }
+QMainWindow, QDialog { background-color: @window@; }
+QMenuBar { background: @surface@; border-bottom: 1px solid @border@; padding: 3px 8px; }
+QMenuBar::item { padding: 5px 10px; border-radius: 6px; }
+QMenu { background: @elevated@; border: 1px solid @border_strong@; border-radius: 8px; padding: 6px; }
+QMenu::item { padding: 6px 26px 6px 12px; border-radius: 6px; }
+QMenu::separator { background: @border@; margin: 5px 10px; }
+
+QToolBar { background: @surface@; border: none; spacing: 4px; padding: 4px 8px; }
+QToolBar#GeoStudioToolsToolbar { border-top: 1px solid @border@; }
+QToolBar::separator { background: @border@; width: 1px; height: 18px; margin: 2px 6px; }
+QToolButton { border: 1px solid transparent; border-radius: 7px; padding: 6px 9px; font-weight: 600; }
+QToolButton:hover { background: @hover@; border-color: @border@; }
+QToolButton:pressed, QToolButton:checked { background: @accent_soft@; border-color: @accent@; color: @accent@; }
+
+QDockWidget { border: 1px solid @border@; }
+QDockWidget::title { background: @surface@; padding: 8px 11px; border-bottom: 1px solid @border@; font-size: 9pt; font-weight: 700; }
+
+QTreeWidget, QTreeView, QListWidget { background: @surface@; border: 1px solid @border@; border-radius: 8px; padding: 2px; }
+QTreeView::item { min-height: 26px; padding: 4px 6px; border-radius: 5px; }
+QHeaderView::section { background: @toolbar@; border: 0; border-bottom: 1px solid @border@; padding: 6px; color: @dim@; font-size: 8.5pt; }
+
+QLineEdit, QSpinBox, QComboBox, QPlainTextEdit, QTextEdit { background: @input@; border: 1px solid @border@; border-radius: 7px; padding: 6px 8px; }
+QLineEdit:focus, QSpinBox:focus, QComboBox:focus, QPlainTextEdit:focus, QTextEdit:focus { border: 1px solid @accent@; }
+QComboBox QAbstractItemView { background: @elevated@; border: 1px solid @border_strong@; border-radius: 6px; }
+
+QPushButton { background: @toolbar@; border: 1px solid @border@; border-radius: 7px; padding: 6px 10px; font-weight: 600; }
+QPushButton:hover { background: @hover@; border-color: @accent@; }
+QPushButton:pressed { background: @accent_soft@; }
+QPushButton#GeoStudioPrimaryButton { background: @accent@; color: #04120C; border-color: @accent@; font-weight: 700; }
+QPushButton#GeoStudioPrimaryButton:hover { background: @accent_hover@; }
+
+QStatusBar { background: @surface@; border-top: 1px solid @border@; min-height: 26px; }
+QStatusBar QLabel { color: @dim@; padding: 2px 8px; }
+QLabel#GeoStudioModeBadge, QLabel#GeoStudioSelectionBadge { background: @accent_soft@; color: @accent@; border-radius: 999px; padding: 4px 10px; font-weight: 700; }
+QLabel#GeoStudioBrand { font-size: 13pt; font-weight: 750; }
+QLabel#GeoStudioBrandAccent { color: @accent@; font-size: 8pt; font-weight: 700; }
+QLabel#GeoStudioToolbarCaption, QLabel#GeoStudioSectionHeading { color: @dim@; font-size: 8pt; font-weight: 700; padding: 4px 5px; }
+QLabel#GeoStudioPanelHint { color: @dim@; font-size: 8.5pt; }
+QLabel#GeoStudioCompilationScale { color: @accent@; font-weight: 700; }
+
+QScrollBar:vertical { background: transparent; width: 9px; }
+QScrollBar:horizontal { background: transparent; height: 9px; }
+QScrollBar::handle { background: @scroll@; border-radius: 4px; min-height: 24px; min-width: 24px; margin: 1px; }
+QScrollBar::handle:hover { background: @muted@; }
+
+QTabBar::tab { padding: 8px 13px; font-size: 9pt; border-bottom: 2px solid transparent; color: @dim@; }
+QTabBar::tab:selected { color: @accent@; border-bottom: 2px solid @accent@; }
+QTabWidget::pane { border: 1px solid @border@; border-radius: 8px; top: -1px; }
+
+QFrame#GeoStudioMapTabsFrame { background: @surface@; border-bottom: 1px solid @border@; }
+QTabBar#GeoStudioMapDocumentTabs::tab {
+    background: transparent; border: 1px solid transparent; border-bottom: 2px solid transparent;
+    border-top-left-radius: 7px; border-top-right-radius: 7px;
+    padding: 6px 16px 6px 11px; margin-right: 2px; min-width: 96px; max-width: 230px;
+    font-size: 8.5pt; color: @dim@;
+}
+QTabBar#GeoStudioMapDocumentTabs::tab:selected {
+    background: @toolbar@; border-color: @border@; border-bottom: 2px solid @accent@; color: @text@; font-weight: 700;
+}
+QToolButton#GeoStudioNewMapTabButton { min-width: 26px; min-height: 24px; font-size: 14pt; border-radius: 6px; }
+QGraphicsView#GeoStudioCanvas { border: 1px solid @border@; border-radius: 8px; }
+
+QDialog#GeoStudioCommandPalette { background: @surface@; border: 1px solid @border_strong@; border-radius: 10px; }
+QLineEdit#GeoStudioPaletteQuery { min-height: 32px; padding: 6px 10px; font-size: 10.5pt; border: 1px solid @accent@; border-radius: 7px; }
+QListWidget#GeoStudioPaletteResults::item { min-height: 28px; padding: 5px 8px; border-radius: 5px; }
+"""
+
+
+def _build_stylesheet(c: dict) -> str:
+    """Build the full QSS for one palette.
+
+    Kept separate from the palette lookup so a second visual style can reuse
+    exactly the same selectors and differ only by colours and an overlay.
+    """
     # Use token replacement instead of brace interpolation: QSS uses braces
     # extensively, and this makes the whole design palette easy to tune.
     css = """
@@ -440,6 +578,31 @@ QToolButton#GeoStudioNewMapTabButton:hover {
     for key, value in c.items():
         css = css.replace(f"@{key}@", value)
     return css
+
+
+def theme_stylesheet(theme: str) -> str:
+    """Classic GeoStudio style (unchanged output)."""
+    return _build_stylesheet(PALETTES[theme if theme in PALETTES else "light"])
+
+
+def modern_stylesheet(theme: str) -> str:
+    """Modern style: same selectors, new palette plus a compact overlay."""
+    key = theme if theme in MODERN_PALETTES else "light"
+    return _build_stylesheet(MODERN_PALETTES[key]) + _render_modern(_MODERN_QSS, MODERN_PALETTES[key])
+
+
+def _render_modern(template: str, c: dict) -> str:
+    css = template
+    for token, value in c.items():
+        css = css.replace(f"@{token}@", value)
+    return css
+
+
+def stylesheet(theme: str, style: str = STYLE_CLASSIC) -> str:
+    """Single entry point used by the window."""
+    if style == STYLE_MODERN:
+        return modern_stylesheet(theme)
+    return theme_stylesheet(theme)
 
 
 def ui_icon(glyph: str, theme: str = "light") -> QIcon:
