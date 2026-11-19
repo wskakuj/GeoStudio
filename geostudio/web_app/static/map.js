@@ -46,6 +46,7 @@
     {name:"Cofnij ostatnią zmianę", hint:"Ctrl+Z", run:()=>historyStep("undo")},
     {name:"Ponów zmianę", hint:"Ctrl+Y", run:()=>historyStep("redo")},
     {name:"Pobierz osobną kopię MAP", hint:"Ctrl+Shift+S", run:downloadMapCopy},
+    {name:"Awaryjna kopia MAP bez wycięć", hint:"Baza", run:downloadBaseMapCopy},
     {name:"Zapisz natywne wycięcia MAP i kopię konturów", hint:"6B", run:downloadNativeCutouts},
     {name:"Zaznaczanie obiektów", hint:"S", run:()=>setTool("select")},
     {name:"Edytuj węzły zaznaczonego poligonu", hint:"P", run:()=>setTool("nodes")},
@@ -231,6 +232,43 @@
       }
     }catch(error){inform("Eksport 6B przerwany: "+error.message,true);}
   }
+  async function downloadBaseMapCopy() {
+    if(!state.meta||!state.edit||state.editBusy)return;
+    if(!window.confirm("Zapiszesz MAP z oryginalnymi obrysami bez wycięć. "+
+      "Pozostałe zmiany geometrii i atrybutów pozostaną. "+
+      "Używaj tej opcji tylko do awaryjnej kopii bazowej."))return;
+    try{
+      if(window.pywebview?.api?.save_base_map){
+        const saved=await window.pywebview.api.save_base_map();
+        if(saved&&!saved.cancelled){
+          inform("Zapisano kopię MAP bez wycięć: "+saved.path);
+          window.alert("Bazowa kopia MAP zapisana w:\n"+saved.path+
+            (saved.topologyPath?"\nTopologia: "+saved.topologyPath:""));
+        }
+        return;
+      }
+      const params=new URLSearchParams({
+        documentToken:state.edit.documentToken,normalizePositive:"true"});
+      const response=await fetch("/api/export/map?"+params.toString(),{
+        headers:{"X-GeoStudio-Token":token},cache:"no-store"});
+      if(!response.ok){
+        const err=await response.json().catch(()=>({}));
+        throw Error(err.detail||"Nie można zapisać MAP.");
+      }
+      const original=state.meta.name.replace(/\\/g,"/").split("/").pop();
+      const filename=original.replace(/\.map$/i,"")+
+        "_GeoStudio2_kopia_bez_wyciec.MAP";
+      const url=URL.createObjectURL(await response.blob());
+      const a=document.createElement("a");
+      a.href=url;a.download=filename;document.body.append(a);
+      a.click();a.remove();
+      setTimeout(()=>URL.revokeObjectURL(url),60000);
+      inform("Pobrano bazowy MAP bez wycięć: "+filename);
+    }catch(error){
+      inform("Błąd zapisu bazowego MAP: "+error.message,true);
+    }
+  }
+
   async function downloadMapCopy() {
     if(!state.meta||!state.edit||state.editBusy)return;
     try {
