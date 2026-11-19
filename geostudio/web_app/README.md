@@ -39,6 +39,29 @@ Wymaga Python 3.11+, lokalnego Edge WebView2 dla natywnego okna.
   **127.0.0.1**, z lokalnym tokenem żądania.
 - Żadna z tych operacji **nie zapisuje ani nie zmienia** pliku .MAP.
 
+## Jak porównać nową i starą mapę?
+
+1. W starym GeoStudio wykonaj **Zapisz jako**, jeśli pasek tytułowy
+   pokazuje gwiazdkę `*` (niezapisane zmiany). Porównuj dokładnie
+   ten sam zapisany `.MAP` w obu aplikacjach.
+2. Jeżeli korzystasz z indywidualnych kolorów i etykiet, w nowej wersji
+   wczytaj osobno **Style JSON** (`*.geostudio.json` tej samej mapy).
+3. Graniczniki domyślnie są wyłączone, ale można je włączyć z panelu warstw.
+4. Kolory granic pochodzą z oryginalnego GEO-MAP COLORREF. Wypełnienie
+   pojawia się tylko wtedy, gdy wynika z natywnego stylu MAP, reguły
+   leśnej albo jawnej zmiany w pliku stylów; nie wymuszamy już niebieskiego
+   wypełnienia wszystkich działek.
+5. Wypełnienia są rysowane pod wszystkimi granicami, a etykiety
+   odpowiednio do skali (napisy tytułowe z wysokości A1 w jednostkach mapy).
+   Klikanie i powiększanie nie edytują źródłowego MAP.
+
+**Ograniczenia zgodności:** Stare GeoStudio może korzystać z osobnych
+bibliotek `.LAY`, `.CDF`, `.SYM`, przechowywanych poza plikiem MAP.
+Ten prototyp jeszcze ich nie importuje, więc nazwy warstw, hatchowanie,
+znaki geodezyjne oraz niektóre grubości i symbole mogą wciąż różnić się
+od klasycznego renderer Qt. Dokładna zgodność kartograficzna wymaga
+podłączenia tych samych bibliotek i testów na tej samej wersji mapy.
+
 ## Celowo NIEZAIMPLEMENTOWANE w tym etapie
 
 - Edycja węzłów, topologia, rysowanie poligonów, zapisywanie MAP,
