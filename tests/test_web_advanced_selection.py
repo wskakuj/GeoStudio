@@ -195,7 +195,7 @@ def test_native_picker_failure_gives_clickable_fallback(tmp_path, monkeypatch):
         raise RuntimeError("No native picker")
     monkeypatch.setattr(NativeMapPicker, "_choose_path", fail)
     picker = NativeMapPicker(PreviewWorkspace(), settings=tmp_path / "prefs.json")
-    with pytest.raises(RuntimeError, match="Wybierz z dysku"):
+    with pytest.raises(RuntimeError, match="Z dysku"):
         picker.open_map()
 
 def test_web_buttons_and_browser_fallback_exist():
