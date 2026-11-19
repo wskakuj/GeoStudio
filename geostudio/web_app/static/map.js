@@ -12,7 +12,7 @@
   const state = {
     meta: null, features: [], visibleLayers: new Set(), hiddenGrades: new Set(),
     center: {x: 0, y: 0}, scale: 1, tool: "select",
-    labels: true, grid: true, active: null, detail: null, pinned: new Set(),
+    labels: true, grid: false, active: null, detail: null, pinned: new Set(),
     width: 1, height: 1, pixelRatio: 1, isDragging: false, drag: null,
     lastPick: null, scheduled: false, refreshTimer: null, queryCounter: 0,
     queryAbort: null, selectionRequest: 0, limited: false,
@@ -328,7 +328,7 @@
     const isDark=document.body.classList.contains("dark-map");
     ctx.setTransform(state.pixelRatio,0,0,state.pixelRatio,0,0);
     ctx.clearRect(0,0,state.width,state.height);
-    ctx.fillStyle=isDark?"#17283b":"#edf3f6";
+    ctx.fillStyle=isDark?"#17283b":"#FAFCFD";
     ctx.fillRect(0,0,state.width,state.height);
     drawGrid();
     if(!state.meta) return;
