@@ -44,6 +44,7 @@
         <div class="tool-row">
           <button class="tool-button active" id="tool-select"><span class="tool-glyph">↖</span>Zaznacz <small>S</small></button>
           <button class="tool-button" id="tool-pan"><span class="tool-glyph">✥</span>Przesuń <small>H</small></button>
+          <button class="tool-button" id="tool-nodes" title="Edycja węzłów poligonu (P)"><span class="tool-glyph">⬡</span>Węzły <small>P</small></button>
           <button class="tool-button" id="tool-fit"><span class="tool-glyph">⛶</span>Dopasuj</button>
         </div>
       </div>
@@ -53,6 +54,14 @@
         <div class="tool-row">
           <button class="tool-button active" id="tool-labels"><span class="tool-glyph">Aa</span>Etykiety</button>
           <button class="tool-button" id="tool-grid"><span class="tool-glyph">▦</span>Siatka</button>
+        </div>
+      </div>
+      <span class="tool-divider"></span>
+      <div class="tool-section geometry-options">
+        <span class="section-label">EDYCJA WĘZŁÓW</span>
+        <div class="tool-row">
+          <label class="toolbar-checkbox" title="Przyciągaj do wszystkich linii i graniczników mapy"><input type="checkbox" id="opt-snap" checked> Przyciąganie</label>
+          <label class="toolbar-checkbox" title="Przemieszczaj wspólne węzły WYŁĄCZNIE obiektów o tym samym kodzie"><input type="checkbox" id="opt-shared"> Wspólne węzły (ten sam kod)</label>
         </div>
       </div>
       <div class="toolbar-fill"></div>
@@ -91,6 +100,7 @@
         <div class="floating-tools" aria-label="Narzędzia mapy">
           <button id="float-select" class="floating active" title="Zaznacz (S)">↖</button>
           <button id="float-pan" class="floating" title="Przesuń (H)">✥</button>
+          <button id="float-nodes" class="floating" title="Edycja węzłów (P)">⬡</button>
           <span class="floating-line"></span>
           <button id="float-plus" class="floating" title="Przybliż">+</button>
           <button id="float-minus" class="floating" title="Oddal">−</button>
@@ -99,6 +109,7 @@
         <div class="map-scale-box" id="map-scale-box"><span class="north-rose">N <b>▲</b></span><span id="scale-label">Skala podglądu: —</span></div>
         <div class="map-bottom-left"><span class="coordinate-dot"></span><span id="cursor-coords">X: — &nbsp; Y: —</span></div>
         <div class="map-bottom-right" id="render-hint">Odczyt geometrii GEO-MAP</div>
+        <div class="geometry-help" id="geometry-help" hidden>Tryb P: wybierz poligon i przeciągnij jego węzeł. Esc — zaznaczanie.</div>
         <div id="empty-state" class="empty-state">
           <div class="welcome-logo">◈</div>
           <div class="eyebrow">NOWA GENERACJA EDYTORA</div>
