@@ -1487,11 +1487,58 @@
           part[0][1]===part[part.length-1][1]) ctx.closePath();
     }
   }
+  const hatchCache=new Map();
+  function hatchPattern(style) {
+    if(!style.hatch)return style.fill;
+    const key=style.fill+"|"+style.hatch;
+    if(hatchCache.has(key))return hatchCache.get(key);
+    const size=12;
+    const tile=document.createElement("canvas");
+    tile.width=tile.height=size;
+    const g=tile.getContext("2d");
+    g.clearRect(0,0,size,size);
+    g.strokeStyle=style.fill;
+    g.fillStyle=style.fill;
+    g.lineWidth=1;
+    const segment=(x1,y1,x2,y2)=>{
+      g.beginPath();g.moveTo(x1,y1);g.lineTo(x2,y2);g.stroke();
+    };
+    switch(style.hatch){
+      case 1:
+        for(const x of [1,5,9])for(const y of [1,5,9])
+          g.fillRect(x,y,2,2);
+        break;
+      case 2:
+        for(const x of [1,4,7,10])for(const y of [1,4,7,10])
+          g.fillRect(x,y,2,2);
+        break;
+      case 3: segment(0,6,12,6); break;
+      case 4: segment(6,0,6,12); break;
+      case 5: segment(0,6,12,6);segment(6,0,6,12); break;
+      case 6:
+        for(const d of [-12,0,12])segment(d,0,d+12,12);
+        break;
+      case 7:
+        for(const d of [0,12,24])segment(d,0,d-12,12);
+        break;
+      case 8:
+        for(const d of [-12,0,12])segment(d,0,d+12,12);
+        for(const d of [0,12,24])segment(d,0,d-12,12);
+        break;
+      default:
+        return style.fill;
+    }
+    const pattern=ctx.createPattern(tile,"repeat")||style.fill;
+    if(hatchCache.size>128)hatchCache.clear();
+    hatchCache.set(key,pattern);
+    return pattern;
+  }
+
   function renderFill(feature) {
     const style=feature.style;
     if(!feature.closed||!style.hasFill||style.opacity<=0)return;
     addPath(feature.geometry);
-    ctx.fillStyle=style.fill;
+    ctx.fillStyle=hatchPattern(style);
     ctx.globalAlpha=Math.min(1,Math.max(0,style.opacity));
     ctx.fill("evenodd");
     ctx.globalAlpha=1;
@@ -1501,15 +1548,37 @@
     if(!style.drawStroke)return; // GEO-MAP text anchors aren't printed lines.
     if(feature.geometry.length===1 && feature.geometry[0].length===1) {
       const p=worldToScreen(...feature.geometry[0][0]);
-      const radius=Math.max(.6,Math.min(2,style.pointSize||1));
-      ctx.fillStyle=style.stroke;ctx.beginPath();
-      ctx.arc(p.x,p.y,radius,0,Math.PI*2);ctx.fill();
+      const segments=style.symbolSegments||[];
+      const circles=style.symbolCircles||[];
+      ctx.save();
+      ctx.strokeStyle=style.stroke;
+      ctx.lineWidth=Math.max(.8,Math.min(3,style.strokeWidth||1));
+      if(segments.length||circles.length){
+        ctx.beginPath();
+        for(const [x1,y1,x2,y2] of segments.slice(0,64)){
+          ctx.moveTo(p.x+x1*5,p.y-y1*5);
+          ctx.lineTo(p.x+x2*5,p.y-y2*5);
+        }
+        for(const [x,y,radius] of circles.slice(0,32)){
+          ctx.moveTo(p.x+x*5+radius*5,p.y-y*5);
+          ctx.arc(p.x+x*5,p.y-y*5,radius*5,0,2*Math.PI);
+        }
+        ctx.stroke();
+      }else{
+        ctx.fillStyle=style.stroke;ctx.beginPath();
+        ctx.arc(p.x,p.y,Math.max(.6,Math.min(2,style.pointSize||1)),
+                0,Math.PI*2);
+        ctx.fill();
+      }
+      ctx.restore();
       return;
     }
     addPath(feature.geometry);
     ctx.strokeStyle=style.stroke;
     ctx.lineWidth=Math.max(.5,Math.min(12,style.strokeWidth));
-    ctx.lineCap="round";ctx.lineJoin="round";ctx.stroke();
+    ctx.lineCap="round";ctx.lineJoin="round";
+    ctx.setLineDash(Array.isArray(style.dash)?style.dash:[]);
+    ctx.stroke();ctx.setLineDash([]);
   }
   function renderHighlights(features) {
     const selected=new Set(state.pinned);
