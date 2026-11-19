@@ -463,6 +463,68 @@ class GeoMap:
         self._parse()
         return new_uids
 
+    def normalize_polygon_winding(self, uids: list[str]) -> int:
+        """Repair only selected simple exterior rings with negative orientation.
+
+        Retain the first/last P record, reverse inner full P records so each
+        coordinate keeps its native label, and preserve every unknown field.
+        """
+        pending={}
+        for uid in uids:
+            obj=self.by_id[uid]
+            if not obj.is_closed or any(p.point_type!=1 for p in obj.points):
+                raise ValueError("Orientację można poprawić tylko w prostym poligonie.")
+            coords=[(p.x,p.y) for p in obj.points[:-1]]
+            if self.signed_area(coords)>=0:
+                continue
+            indices=[i for i in range(obj.start+1,obj.end)
+                     if POINT_RE.match(self.lines[i].rstrip(b'\r\n'))]
+            if len(indices)!=len(obj.points):
+                raise ValueError("Niezgodna liczba rekordów P.")
+            original=[self.lines[i] for i in indices]
+            new=[original[0],*reversed(original[1:-1]),original[-1]]
+            for index,record in zip(indices,new):
+                pending[index]=record
+        for index,line in pending.items():
+            self.lines[index]=line
+        if pending:self._parse()
+        return len(pending)
+
+    def replace_simple_geometry(self, uid: str, points: list[tuple[float,float]],
+                                *, closed: bool=True) -> None:
+        """Replace only the P-record span, preserving original style and fields.
+
+        Refuse complex/multiring native records. No topology/area attributes are
+        recalculated: caller must expose this limitation during split/merge.
+        """
+        from .interactions import polygon_is_valid
+        if uid not in self.by_id:
+            raise LookupError(uid)
+        obj=self.by_id[uid]
+        if not obj.points or any(p.point_type!=1 for p in obj.points):
+            raise ValueError("Nie można zastąpić wieloczęściowej geometrii.")
+        clean=[(round(x,3),round(y,3)) for x,y in points]
+        if (not clean or any(not (-1e9<x<1e9 and -1e9<y<1e9)
+                              for x,y in clean)):
+            raise ValueError("Współrzędne poza zakresem.")
+        if closed:
+            if clean[0]==clean[-1]:clean=clean[:-1]
+            if not polygon_is_valid(clean):
+                raise ValueError("Niepoprawny nowy obrys.")
+            if self.signed_area(clean)<0:
+                clean=[clean[0]]+list(reversed(clean[1:]))
+            clean.append(clean[0])
+        elif len(clean)<2 or len(set(clean))<2:
+            raise ValueError("Linia wymaga co najmniej dwóch punktów.")
+        positions=[i for i in range(obj.start+1,obj.end)
+                   if POINT_RE.match(self.lines[i].rstrip(b'\r\n'))]
+        if not positions or positions[-1]-positions[0]+1 != len(positions):
+            raise ValueError("Rekordy P są przeplatane innymi danymi.")
+        eol=b'\r\n' if self.lines[positions[0]].endswith(b'\r\n') else b'\n'
+        written=[(f'P 1   {x:.3f}   {y:.3f}'.encode()+eol) for x,y in clean]
+        self.lines[positions[0]:positions[-1]+1]=written
+        self._parse()
+
     def delete_objects(self, uids: list[str] | set[str]) -> int:
         """Delete entire object records in one pass without touching adjacent objects.
 
