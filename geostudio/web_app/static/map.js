@@ -1574,6 +1574,21 @@
     canvas.setPointerCapture(ev.pointerId);
     const p=eventCoords(ev);
     state.hoverInsert=null;
+    if(state.tool==="move"&&ev.button===0&&!state.editBusy){
+      const world=screenToWorld(p.x,p.y);
+      const hits=pick(world),selected=selectedObjectIds();
+      const fid=hits.find(id=>selected.includes(id))||hits[0];
+      const feature=state.features.find(item=>item.id===fid);
+      if(!feature||!feature.closed){
+        inform("Kliknij zamknięty poligon, aby go przesunąć.",true);
+        return;
+      }
+      const ids=selected.includes(fid)?selected:[fid];
+      if(!selected.includes(fid)){state.pinned.clear();selectFeature(fid);}
+      state.moveGhost={ids,dx:0,dy:0};
+      state.drag={pointer:ev.pointerId,start:p,last:p,moved:false,moveIds:ids};
+      requestDraw();return;
+    }
     if(state.tool==="nodes"&&ev.button===0&&!state.editBusy){
       const index=closestEditableVertex(p);
       if(index>=0){
@@ -1600,7 +1615,11 @@
     if(!state.drag||state.drag.pointer!==ev.pointerId)return;
     const d=state.drag;
     if(Math.hypot(p.x-d.start.x,p.y-d.start.y)>4)d.moved=true;
-    if(d.node&&state.vertexDrag){
+    if(d.moveIds&&state.moveGhost){
+      state.moveGhost.dx=Math.round((d.start.y-p.y)/state.scale*1000)/1000;
+      state.moveGhost.dy=Math.round((p.x-d.start.x)/state.scale*1000)/1000;
+      requestDraw();
+    }else if(d.node&&state.vertexDrag){
       if(d.moved){
         const snap=previewSnap(world);
         state.vertexDrag.preview=snap.point;
@@ -1619,6 +1638,13 @@
   canvas.addEventListener("pointerup", ev=>{
     const d=state.drag;state.drag=null;shell.classList.remove("dragging");
     if(!d||ev.pointerId!==d.pointer)return;
+    if(d.moveIds){
+      const ghost=state.moveGhost;
+      state.moveGhost=null;requestDraw();
+      if(d.moved&&ghost&&(ghost.dx||ghost.dy))
+        openMoveEditor(d.moveIds,ghost.dx,ghost.dy,true);
+      return;
+    }
     if(d.node){
       const moving=state.vertexDrag;
       state.vertexDrag=null;requestDraw();
@@ -1670,7 +1696,7 @@
   canvas.addEventListener("pointerleave",()=>{
     if(state.hoverInsert){state.hoverInsert=null;requestDraw();}
   });
-  canvas.addEventListener("pointercancel",()=>{state.drag=null;state.vertexDrag=null;shell.classList.remove("dragging");requestDraw();});
+  canvas.addEventListener("pointercancel",()=>{state.drag=null;state.vertexDrag=null;state.moveGhost=null;shell.classList.remove("dragging");requestDraw();});
   canvas.addEventListener("wheel",ev=>{
     if(!state.meta)return;
     ev.preventDefault();
