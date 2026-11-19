@@ -309,3 +309,23 @@ button:disabled { opacity:.38; cursor:not-allowed; filter:none !important; }
 .bulk-samples td { color:#e2ecf2; }
 .bulk-dialog #bulk-summary, .bulk-dialog #move-summary { white-space:pre-line; }
 .toolbar #tool-bulk-edit small { color:inherit; }
+
+/* Narrow desktop / WebView2 window: every editing section remains available. */
+.toolbar {
+  overflow-x:auto;
+  overflow-y:hidden;
+  scrollbar-width:thin;
+  scrollbar-color:#57b7b0 #182536;
+  scroll-behavior:smooth;
+  flex-shrink:0;
+}
+.toolbar .tool-section { flex:0 0 auto; }
+.toolbar .tool-divider { flex:0 0 1px; }
+.toolbar .toolbar-fill { min-width:12px; }
+@media (max-width:970px) {
+  .toolbar .tool-section:last-of-type { display:flex; }
+}
+@media (max-width:680px) {
+  .toolbar .tool-section:nth-of-type(3),
+  .toolbar .tool-divider:nth-of-type(2) { display:flex; }
+}
