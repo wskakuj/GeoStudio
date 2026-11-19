@@ -277,3 +277,34 @@ button:disabled { opacity:.38; cursor:not-allowed; filter:none !important; }
   .select-content { padding:15px 17px; }
   .select-actions { padding:12px 17px 18px; flex-wrap:wrap; }
 }
+
+/* GeoStudio 2.0 — safe, readable batch editor */
+.bulk-dialog .bulk-checkbox-line {
+  display:flex; align-items:center; gap:11px; min-height:43px;
+  background:#1a3444; border:1px solid #365769;
+  border-radius:8px; padding:9px 11px;
+  cursor:pointer;
+}
+.bulk-checkbox-line input[type="checkbox"] {
+  flex:none; width:18px; height:18px; accent-color:#2fc3ab;
+}
+.bulk-checkbox-line span { display:flex; flex-direction:column; gap:4px; }
+.bulk-checkbox-line strong { color:#e3f2ef; font-size:12px; }
+.bulk-checkbox-line small { color:#a9c1cd; font-size:10px; font-weight:400; }
+.bulk-dialog input[type="text"]:disabled {
+  opacity:.42; cursor:not-allowed;
+}
+.bulk-samples {
+  border:1px solid #3a5264; border-radius:9px; overflow:auto;
+  max-height:200px; font-size:11px; line-height:1.5;
+}
+.bulk-samples table { width:100%; border-collapse:collapse; }
+.bulk-samples th,.bulk-samples td {
+  border-bottom:1px solid #294153;
+  padding:7px 9px; text-align:left; vertical-align:top;
+  overflow-wrap:anywhere;
+}
+.bulk-samples th { color:#7ed0c6; font-weight:680; }
+.bulk-samples td { color:#e2ecf2; }
+.bulk-dialog #bulk-summary { white-space:pre-line; }
+.toolbar #tool-bulk-edit small { color:inherit; }
