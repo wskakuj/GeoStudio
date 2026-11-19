@@ -36,14 +36,6 @@ CODES = {
     "6000": "Oprawa / linie",
     "7900": "Oprawa / tekst",
 }
-DEFAULT_COLORS = {
-    "5216": "#7F9BC8",
-    "5220": "#87AD9F",
-    "5230": "#5C9F8B",
-    "5310": "#C48F73",
-    "1246": "#D6A45F",
-    "6900": "#64748B",
-}
 LABEL_FIELDS = ("A1", "A2", "A3", "A4", "A5", "A6", "TX", "MP", "KR")
 
 
