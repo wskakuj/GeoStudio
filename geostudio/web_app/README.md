@@ -533,8 +533,9 @@ Przy nakładaniu poligonów tego samego kodu i zapisaniu:
   automatycznie zapisuje wynikowe obrysy z otworami do pliku
   \`.MAP\` i obok \`.geostudio-topology.json\` v2;
 - W **przeglądarce** przy obecnych maskach jeden plik ZIP
-  zawiera oba pliki MAP oraz JSON — rozpakuj je do tego samego
-  folderu, aby GeoStudio mogło odtworzyć oryginalne kontury.
+  zawiera oba pliki MAP oraz JSON. Rozpakuj obydwa do jednego folderu,
+  otwórz MAP, a następnie kliknij **„Odtwórz kontury”** i wskaż
+  `.geostudio-topology.json`. To przywraca pełne obrysy do dalszej edycji.
 - Bez masek powstaje zwykły MAP z dodatnio zorientowanymi
   prostymi obrysami; bez konieczności użycia „Pole +”.
 - Zachowano zaawansowane **„Zapisz wycięcia 6B”** (ręczne
