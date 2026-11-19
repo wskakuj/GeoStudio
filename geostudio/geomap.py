@@ -376,7 +376,7 @@ class GeoMap:
                 if intersects(ax, bx, c, d):
                     raise ValueError("Usunięcie węzła przecięłoby inną krawędź.")
 
-            matches = [(line_no, POINT_RE.match(raw.rstrip(b"\\r\\n")))
+            matches = [(line_no, POINT_RE.match(raw.rstrip(b"\r\n")))
                        for line_no, raw in enumerate(
                            self.lines[obj.start + 1:obj.end], obj.start + 1)]
             matches = [(line_no, match) for line_no, match in matches if match]
@@ -389,8 +389,8 @@ class GeoMap:
                 # without rewriting this closure would leave an open ring.
                 close_line_no, close_match = matches[-1]
                 original_close = self.lines[close_line_no]
-                eol = (b"\\r\\n" if original_close.endswith(b"\\r\\n")
-                       else b"\\n" if original_close.endswith(b"\\n") else b"")
+                eol = (b"\r\n" if original_close.endswith(b"\r\n")
+                       else b"\n" if original_close.endswith(b"\n") else b"")
                 x, y = remaining[0]
                 pending_rewrites[close_line_no] = (
                     original_close[:close_match.start(2)]
