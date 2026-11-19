@@ -748,7 +748,11 @@ class PreviewWorkspace:
             # must not overlap ANY existing polygon with the same code.
             for obj in selected:
                 candidate=ring_of(obj,dx,dy)
-                for other in self._doc.objects:
+                xs=[p[0] for p in candidate]
+                ys=[p[1] for p in candidate]
+                center=((min(xs)+max(xs))/2,(min(ys)+max(ys))/2)
+                radius=hypot(max(xs)-min(xs),max(ys)-min(ys))/2+.002
+                for other in self._index.nearby(*center,radius):
                     if not other.is_closed or other.code!=obj.code:
                         continue
                     if rings_overlap(candidate,ring_of(other)):
@@ -783,7 +787,11 @@ class PreviewWorkspace:
                         raise ValueError("Atrybut przekracza 512 bajtów.")
                 except UnicodeEncodeError as exc:
                     raise ValueError("Atrybut musi mieć kodowanie CP1250.") from exc
-            for other in self._doc.objects:
+            xs=[p[0] for p in coordinates]
+            ys=[p[1] for p in coordinates]
+            center=((min(xs)+max(xs))/2,(min(ys)+max(ys))/2)
+            radius=hypot(max(xs)-min(xs),max(ys)-min(ys))/2+.002
+            for other in self._index.nearby(*center,radius):
                 if other.is_closed and other.code==code and rings_overlap(
                         coordinates,ring_of(other)):
                     raise ValueError(
