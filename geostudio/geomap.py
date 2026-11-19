@@ -45,7 +45,11 @@ class GeoObject:
 
     @property
     def is_closed(self) -> bool:
-        return len(self.points) >= 4 and abs(self.points[0].x-self.points[-1].x)<1e-7 and abs(self.points[0].y-self.points[-1].y)<1e-7
+        parts=self.display_parts
+        return bool(parts) and all(
+            len(part)>=4 and abs(part[0].x-part[-1].x)<1e-7 and
+            abs(part[0].y-part[-1].y)<1e-7
+            for part in parts)
 
     @property
     def display_parts(self) -> list[list[GeoPoint]]:
@@ -70,11 +74,14 @@ class GeoObject:
     def area_m2(self) -> float | None:
         if not self.is_closed:
             return None
-        pts = self.points
-        # Translate to local origin to reduce catastrophic cancellation.
-        x0, y0 = pts[0].x, pts[0].y
-        total = sum((a.x-x0)*(b.y-y0)-(b.x-x0)*(a.y-y0) for a,b in zip(pts,pts[1:]))
-        return abs(total)/2
+        # For separate P0 contours, exterior rings have positive winding and
+        # holes negative. A single legacy ring has either sign.
+        total=0.
+        for pts in self.display_parts:
+            x0,y0=pts[0].x,pts[0].y
+            total+=sum((a.x-x0)*(b.y-y0)-(b.x-x0)*(a.y-y0)
+                       for a,b in zip(pts,pts[1:]))/2
+        return abs(total)
 
     @property
     def colorref(self) -> tuple[int,int,int]:
@@ -537,6 +544,47 @@ class GeoMap:
         self.lines[positions[0]:positions[-1]+1]=written
         self._parse()
 
+    def replace_polygon_components(self, uid: str,
+                                   rings: list[list[tuple[float,float]]]) -> None:
+        """Write a true P0-separated multipart GEO-MAP object in one replace.
+
+        Individual rings must be closed and pre-verified on the 1 mm grid.
+        Their order and winding are preserved (CCW shells, CW holes).
+        The object's code, attributes, :ID and unknown records stay intact.
+        """
+        if uid not in self.by_id:
+            raise LookupError(uid)
+        obj=self.by_id[uid]
+        if not obj.is_closed:
+            raise ValueError("Obiekt nie jest zamkniętym poligonem.")
+        if not isinstance(rings,list) or not 1<=len(rings)<=256:
+            raise ValueError("Oczekiwano 1–256 osobnych zamkniętych konturów.")
+        from math import isfinite
+        for ring in rings:
+            if (not isinstance(ring,list) or not 4<=len(ring)<=50000
+                    or ring[0]!=ring[-1]):
+                raise ValueError("Kontur musi być zamknięty i mieć minimum 3 punkty.")
+            if any(not all(isfinite(v) and -1e9<v<1e9 for v in xy)
+                   for xy in ring):
+                raise ValueError("Współrzędna w konturze poza zakresem.")
+        if sum(map(len,rings))>50000:
+            raise ValueError("Przekroczono limit 50 000 węzłów.")
+        indices=[i for i in range(obj.start+1,obj.end)
+                 if POINT_RE.match(self.lines[i].rstrip(b'\r\n'))]
+        if (not indices or indices[-1]-indices[0]+1!=len(indices) or
+                len(indices)!=len(obj.points)):
+            raise ValueError("Rekordy P są przeplatane metadanymi lub uszkodzone.")
+        eol=b'\r\n' if self.lines[indices[0]].endswith(b'\r\n') else b'\n'
+        lines=[]
+        for index,ring in enumerate(rings):
+            for offset,(x,y) in enumerate(ring):
+                # GEO-MAP P 0 ends a component, never draws a bridge to
+                # the next contour. Keep the last contour's closure P 1.
+                flag=0 if offset==len(ring)-1 and index<len(rings)-1 else 1
+                lines.append(f'P {flag}   {x:.3f}   {y:.3f}'.encode()+eol)
+        self.lines[indices[0]:indices[-1]+1]=lines
+        self._parse()
+
     def delete_objects(self, uids: list[str] | set[str]) -> int:
         """Delete entire object records in one pass without touching adjacent objects.
 
@@ -574,7 +622,7 @@ class GeoMap:
         return sum(((x-x0)*(yn-y0)-(xn-x0)*(y-y0))
                    for (x,y),(xn,yn) in zip(points,points[1:]+points[:1]))/2
 
-    def to_bytes_positive_areas(self) -> bytes:
+    def to_bytes_positive_areas(self, uids: set[str] | None = None) -> bytes:
         """Export new MAP with positive-oriented SIMPLE exterior rings.
 
         Preserve all non-P records, CP1250 data, and every polyline verbatim.
@@ -583,6 +631,8 @@ class GeoMap:
         """
         pending={}
         for obj in self.objects:
+            if uids is not None and obj.uid not in uids:
+                continue
             if (not obj.is_closed or len(obj.points)<4 or
                     any(p.point_type!=1 for p in obj.points)):
                 continue
