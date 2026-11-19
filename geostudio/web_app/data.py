@@ -24,7 +24,8 @@ from geostudio.geometry_index import GeometryIndex
 from geostudio.history import History
 from geostudio.topology_edit import linked_vertex_plan
 from geostudio.web_app.topology_safety import rings_overlap, rings_contact, ring_of, nearest_boundary_snap
-from geostudio.web_app.geometry_6a import polygon_of, visible_difference, shape_parts, split_simple, merge_simple
+from geostudio.web_app.geometry_6a import (polygon_of, geometry_of, visible_difference,
+    shape_parts, split_simple, merge_simple, merge_multipart, rings_from_shape)
 from geostudio.interactions import find_snap, closest_point_on_edge, polygon_is_valid
 from geostudio.library_render import native_fill_color
 
@@ -949,8 +950,9 @@ class PreviewWorkspace:
         details={}
         if action in {"repair","merge","split"}:
             for obj in selected:
-                if not obj.is_closed or any(p.point_type!=1 for p in obj.points):
-                    raise ValueError("Wybierz proste, zamknięte poligony (bez P 0).")
+                if not obj.is_closed or (action!="merge" and
+                         any(p.point_type!=1 for p in obj.points)):
+                    raise ValueError("Wybierz zamknięte poligony; podział i Pole + wymagają prostego obrysu.")
         if action=="repair":
             repairs=[obj.uid for obj in selected if self._doc.signed_area(
                 [(p.x,p.y) for p in obj.points[:-1]])<0]
@@ -961,10 +963,14 @@ class PreviewWorkspace:
                    for obj in selected}
             if len(codes)!=1 or len(attrs)!=1:
                 raise ValueError("Scalaj tylko ten sam kod i zgodne wartości A1/A2.")
-            geometry=merge_simple([polygon_of(o) for o in selected])
-            details={"beforeArea":round(sum(polygon_of(o).area
+            geometry=merge_multipart([geometry_of(o) for o in selected])
+            rings=rings_from_shape(geometry)
+            details={"beforeArea":round(sum(geometry_of(o).area
                                                for o in selected),3),
-                     "afterArea":round(abs(self._doc.signed_area(geometry)),3),
+                     "afterArea":round(geometry.area,3),
+                     "components":(len(geometry.geoms)
+                         if geometry.geom_type=="MultiPolygon" else 1),
+                     "rings":len(rings),
                      "metadataWarning":True}
         elif action=="split":
             points=operation.get("points")
@@ -1061,8 +1067,8 @@ class PreviewWorkspace:
                         report["repairs"])
                 elif action=="merge":
                     keeper=selected[0].uid
-                    self._doc.replace_simple_geometry(
-                        keeper,plan["geometry"])
+                    self._doc.replace_polygon_components(
+                        keeper,rings_from_shape(plan["geometry"]))
                     self._doc.delete_objects(
                         [o.uid for o in selected[1:]])
                     self._styles[TOPOLOGY_STACK_KEY]={
@@ -1613,8 +1619,8 @@ class PreviewWorkspace:
                        and max(p.y for p in other.points)>ay0]
                 if upper:
                     try:
-                        base=polygon_of(obj)
-                        shapes=[polygon_of(other) for other in upper]
+                        base=geometry_of(obj)
+                        shapes=[geometry_of(other) for other in upper]
                         result=visible_difference(base,shapes)
                         parts=shape_parts(result)
                         visible_area=round(result.area,3)
