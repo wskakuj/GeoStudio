@@ -14,7 +14,7 @@
     <header class="topbar">
       <div class="identity">
         <div class="mark" aria-hidden="true"><span></span><span></span><span></span></div>
-        <div><strong>GeoStudio</strong><span class="brand-version">2.0 <em>ETAP 4B · A1/A2 — TEST</em></span></div>
+        <div><strong>GeoStudio</strong><span class="brand-version">2.0 <em>ETAP 5A · PRZESUWANIE — TEST</em></span></div>
       </div>
       <div class="header-center"><span class="top-kicker">OBSZAR ROBOCZY</span>
         <span id="document-title">Nowy projekt</span>
@@ -46,6 +46,8 @@
         <div class="tool-row">
           <button class="tool-button active" id="tool-select"><span class="tool-glyph">↖</span>Zaznacz <small>S</small></button>
           <button class="tool-button" id="tool-pan"><span class="tool-glyph">✥</span>Przesuń <small>H</small></button>
+          <button class="tool-button" id="tool-move" title="Przeciągaj wybrane poligony (M)"><span class="tool-glyph">✥</span>Obiekty <small>M</small></button>
+          <button class="tool-button" id="tool-move-offset" title="Dokładne przesunięcie zaznaczenia (Ctrl+Shift+M)"><span class="tool-glyph">⊞</span>Δ X/Y</button>
           <button class="tool-button" id="tool-nodes" title="Edycja węzłów poligonu (P)"><span class="tool-glyph">⬡</span>Węzły <small>P</small></button>
           <button class="tool-button" id="tool-advanced-select" title="Zaznacz według kodu i atrybutów (Ctrl+H)"><span class="tool-glyph">⌕</span>Filtruj <small>Ctrl+H</small></button>
           <button class="tool-button" id="tool-bulk-edit" disabled title="Zmień A1/A2 wielu zaznaczonych obiektów"><span class="tool-glyph">✎</span>Zbiorowo <small>A1/A2</small></button>
@@ -105,6 +107,7 @@
         <div class="floating-tools" aria-label="Narzędzia mapy">
           <button id="float-select" class="floating active" title="Zaznacz (S)">↖</button>
           <button id="float-pan" class="floating" title="Przesuń (H)">✥</button>
+          <button id="float-move" class="floating" title="Przesuwanie poligonów (M)">✥</button>
           <button id="float-nodes" class="floating" title="Edycja węzłów (P)">⬡</button>
           <span class="floating-line"></span>
           <button id="float-plus" class="floating" title="Przybliż">+</button>
@@ -242,6 +245,41 @@
       <div class="select-actions">
         <button type="button" id="bulk-preview" class="button ghost">Sprawdź zmiany</button>
         <button type="submit" id="bulk-apply" class="button primary" disabled>Zastosuj zmiany</button>
+      </div>
+    </form>
+  </dialog>
+  <dialog id="move-dialog" class="advanced-select-dialog bulk-dialog">
+    <form id="move-form" autocomplete="off">
+      <div class="select-head">
+        <div>
+          <div class="eyebrow">ETAP 5A · PRZESUWANIE GEOMETRII</div>
+          <h2>Przesuń wybrane poligony</h2>
+        </div>
+        <button type="button" id="move-close" class="select-close" aria-label="Zamknij">×</button>
+      </div>
+      <div class="select-content">
+        <p class="select-explain" id="move-selection-description">Wybierz poligony na mapie lub przez Ctrl+H.</p>
+        <div class="select-grid">
+          <div><label for="move-dx">Przesunięcie X — północ [m]</label>
+            <input id="move-dx" type="number" step="0.001" value="0" required>
+          </div>
+          <div><label for="move-dy">Przesunięcie Y — wschód [m]</label>
+            <input id="move-dy" type="number" step="0.001" value="0" required>
+          </div>
+        </div>
+        <label class="bulk-checkbox-line" for="move-detach">
+          <input id="move-detach" type="checkbox">
+          <span><strong>Zezwól na rozłączenie wspólnej granicy</strong>
+            <small>Domyślnie blokujemy przesuwanie poligonu, jeżeli sąsiad tego samego kodu zostaje na miejscu</small>
+          </span>
+        </label>
+        <p class="select-explain">Przesuwane są tylko jawnie wybrane obiekty. Pozostałe poligony — także innych kodów — nie są modyfikowane. Zmiany można cofnąć jednym Ctrl+Z; oryginalna mapa pozostaje nietknięta.</p>
+        <p id="move-summary" class="select-preview" role="status">Kliknij „Sprawdź przesunięcie”.</p>
+        <div id="move-samples" class="bulk-samples" hidden></div>
+      </div>
+      <div class="select-actions">
+        <button id="move-preview" type="button" class="button ghost">Sprawdź przesunięcie</button>
+        <button id="move-apply" type="submit" class="button primary" disabled>Przesuń poligony</button>
       </div>
     </form>
   </dialog>
