@@ -581,6 +581,162 @@
       button.disabled=true;$("bulk-preview").disabled=false;
     }
   }
+  function invalidateMovePreview() {
+    state.movePreview=null;
+    $("move-apply").disabled=true;
+    $("move-summary").textContent="Kliknij „Sprawdź przesunięcie” przed zatwierdzeniem.";
+    $("move-samples").hidden=true;
+    $("move-samples").replaceChildren();
+  }
+  function openMoveEditor(ids=selectedObjectIds(),dx=0,dy=0,checkNow=false) {
+    if(!state.meta||!state.edit||state.editBusy){
+      inform("Najpierw otwórz mapę i wybierz poligony.",true);return;
+    }
+    if(!ids.length||ids.length>5000){
+      inform("Zaznacz od 1 do 5 000 poligonów (Ctrl+H lub kliknięcie).",true);return;
+    }
+    state.moveIds=ids.slice();
+    $("move-dx").value=Number(dx).toFixed(3);
+    $("move-dy").value=Number(dy).toFixed(3);
+    $("move-detach").checked=false;
+    $("move-selection-description").textContent=
+      "Wybrano "+display(ids.length)+" obiektów. X oznacza północ–południe, "+
+      "Y wschód–zachód; dodatnie wartości przesuwają na północ i wschód.";
+    invalidateMovePreview();
+    $("move-dialog").showModal();
+    if(checkNow)previewMoveChanges();
+    else $("move-dx").focus();
+  }
+  function moveRequest() {
+    const asNumber=id=>{
+      const raw=$(id).value.trim().replace(",",".");
+      if(!raw||!Number.isFinite(Number(raw)))throw Error("Podaj liczbę w metrach.");
+      return Math.round(Number(raw)*1000)/1000;
+    };
+    return {...editRequestBody(),ids:state.moveIds.slice(),
+      dx:asNumber("move-dx"),dy:asNumber("move-dy"),
+      allowDetach:$("move-detach").checked};
+  }
+  function showMoveSamples(report) {
+    const container=$("move-samples");container.replaceChildren();
+    if(!(report.samples||[]).length){container.hidden=true;return;}
+    const table=document.createElement("table"),head=document.createElement("tr");
+    for(const label of ["Kod / ID","Pierwszy punkt przed (X / Y)","Po przesunięciu (X / Y)"]){
+      const th=document.createElement("th");th.textContent=label;head.append(th);
+    }
+    const thead=document.createElement("thead");thead.append(head);table.append(thead);
+    const body=document.createElement("tbody");
+    for(const item of report.samples) {
+      const tr=document.createElement("tr");
+      const values=[item.code+" · "+item.uid,
+        item.before.x.toFixed(3)+" / "+item.before.y.toFixed(3),
+        item.after.x.toFixed(3)+" / "+item.after.y.toFixed(3)];
+      for(const value of values){
+        const td=document.createElement("td");td.textContent=value;tr.append(td);
+      }
+      body.append(tr);
+    }
+    table.append(body);container.append(table);container.hidden=false;
+  }
+  async function previewMoveChanges() {
+    if(state.editBusy)return;
+    invalidateMovePreview();
+    let payload;
+    try{payload=moveRequest();}
+    catch(error){$("move-summary").textContent=error.message;return;}
+    const button=$("move-preview");button.disabled=true;
+    $("move-summary").textContent="Sprawdzanie geometrii i sąsiedztwa…";
+    try{
+      const report=await api("/api/move/preview",{
+        method:"POST",headers:{"Content-Type":"application/json"},
+        body:JSON.stringify(payload)
+      });
+      if(report.documentToken!==state.edit?.documentToken||
+         report.revision!==state.edit?.revision)
+        throw Error("Zmieniła się wersja mapy. Powtórz podgląd.");
+      const codes=Object.entries(report.codes||{})
+        .map(([key,n])=>key+": "+display(n)).join(", ");
+      const neighbors=report.topologyConflicts||[];
+      const examples=neighbors.slice(0,4)
+        .map(item=>item.code+" ("+item.movingUid+" ↔ "+item.stationaryUid+")").join("; ");
+      $("move-summary").textContent=
+        "Wybrano: "+display(report.selected)+" poligonów / "+
+          display(report.vertexCount)+" węzłów\n"+
+        "Przesunięcie: X "+report.delta.x.toFixed(3)+" m; "+
+          "Y "+report.delta.y.toFixed(3)+" m\n"+
+        "Kody: "+(codes||"brak")+"\n"+
+        "Styki z nieruchomymi poligonami tego samego kodu: "+
+          (neighbors.length?examples:"nie wykryto")+"\n"+
+        (report.topologyBlocked
+          ?"Zablokowano: dodaj sąsiadów do zaznaczenia albo świadomie zaznacz rozłączenie granicy."
+          :report.canApply
+            ?"Sprawdź przykłady poniżej i zatwierdź. Inne obiekty nie zostaną zmienione."
+            :"Brak przesunięcia (0 m).");
+      showMoveSamples(report);
+      if(report.canApply){
+        state.movePreview={payload,previewKey:report.previewKey,report};
+        $("move-apply").disabled=false;
+      }
+    }catch(error){
+      $("move-summary").textContent="Nie można sprawdzić przesunięcia: "+error.message;
+      inform("Przesuwanie poligonów: "+error.message,true);
+    }finally{button.disabled=false;}
+  }
+  async function applyMoveChanges(ev) {
+    ev.preventDefault();
+    if(state.editBusy||!state.movePreview)return;
+    const preview=state.movePreview;
+    try{
+      if(JSON.stringify(moveRequest())!==JSON.stringify(preview.payload)){
+        invalidateMovePreview();
+        inform("Zmieniono przesunięcie po podglądzie. Sprawdź je jeszcze raz.",true);
+        return;
+      }
+    }catch(error){invalidateMovePreview();inform(error.message,true);return;}
+    if((preview.report.selected>=100||preview.report.topologyConflicts?.length)&&
+       !window.confirm(
+         "Potwierdź przesunięcie "+display(preview.report.selected)+
+         " poligonów. Cofnij: Ctrl+Z."))
+      return;
+    state.editBusy=true;updateEditState(state.edit);
+    $("move-apply").disabled=true;$("move-preview").disabled=true;
+    try{
+      const result=await api("/api/move/apply",{
+        method:"POST",headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({...preview.payload,previewKey:preview.previewKey})
+      });
+      updateEditState(result);
+      state.movePreview=null;
+      $("move-dialog").close();
+      if(result.changed){
+        await refreshEditedDocument(state.active);
+        inform("Przesunięto "+display(result.movedObjects)+
+          " poligonów. Cofnij Ctrl+Z; pobierz kopię MAP.");
+      }
+    }catch(error){
+      invalidateMovePreview();
+      $("move-summary").textContent="Nie zastosowano zmian: "+error.message+
+        ". Ponów podgląd.";
+      inform("Przesunięcie: "+error.message,true);
+    }finally{
+      state.editBusy=false;updateEditState(state.edit);
+      $("move-apply").disabled=true;$("move-preview").disabled=false;
+    }
+  }
+  function drawMoveGhost(features) {
+    if(!state.moveGhost)return;
+    const ids=new Set(state.moveGhost.ids);
+    ctx.save();
+    // Canvas axes: horizontal = GEO-MAP Y, vertical = -GEO-MAP X.
+    ctx.translate(state.moveGhost.dy*state.scale,-state.moveGhost.dx*state.scale);
+    ctx.setLineDash([7,5]);
+    ctx.strokeStyle="#00a3e8";ctx.lineWidth=3;
+    for(const feature of features){
+      if(!ids.has(feature.id))continue;
+      addPath(feature.geometry);ctx.stroke();
+    }
+    ctx.restore();
+  }
   function resizeCanvas() {
     const rect = shell.getBoundingClientRect();
     state.width = Math.max(1, rect.width); state.height = Math.max(1, rect.height);
