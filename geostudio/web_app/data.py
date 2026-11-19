@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from collections import Counter
 from dataclasses import dataclass
-from math import isfinite
+from math import isfinite, hypot
 from pathlib import Path
 from threading import RLock
 from secrets import token_hex
@@ -21,6 +21,7 @@ from geostudio.geomap import GeoMap
 from geostudio.forest_classes import forest_class_value
 from geostudio.geometry_index import GeometryIndex
 from geostudio.history import History
+from geostudio.topology_edit import linked_vertex_moves
 from geostudio.library_render import native_fill_color
 
 MAX_MAP_BYTES = 80 * 1024 * 1024
@@ -235,6 +236,52 @@ class PreviewWorkspace:
             self._reindex(self._doc, self._doc.filename)
             self._revision += 1
             return {**self._editing_status(), "changed": True, "object": self.details(fid)}
+
+    def move_vertex(self, fid: str, index: int, x: float, y: float,
+                    *, shared: bool, document_token: str, revision: int) -> dict:
+        """Move a polygon corner in an in-memory copy in one undoable transaction.
+
+        Coordinates are native GEO-MAP northing X / easting Y, not browser
+        pixel coordinates. Shared mode touches coincident SAME-CODE vertices
+        only; other codes stay byte-identical. Validation of all affected
+        closed rings is delegated to the original GeoMap edit engine.
+        """
+        with self._lock:
+            if self._doc is None or self._history is None:
+                raise ValueError("Najpierw otwórz mapę.")
+            if (document_token != self._document_token or
+                    type(revision) is not int or revision != self._revision):
+                raise RuntimeError("Dokument zmienił się od rozpoczęcia edycji.")
+            if (type(index) is not int or type(shared) is not bool or
+                    type(x) not in (int, float) or type(y) not in (int, float) or
+                    not all(isfinite(z) and -1e9 < z < 1e9 for z in (x, y))):
+                raise ValueError("Nieprawidłowe współrzędne lub indeks węzła.")
+            entry = self._lookup.get(fid)
+            if entry is None:
+                raise LookupError("Nie znaleziono wskazanego obiektu.")
+            obj = entry.obj
+            if not obj.uid or not obj.is_closed or len(obj.points) < 4:
+                raise ValueError("Można przesuwać tylko węzły zamkniętych poligonów z ID.")
+            if not 0 <= index < len(obj.points) - 1:
+                raise ValueError("Węzeł poza zakresem poligonu.")
+            # Match the source precision: sending higher precision from a
+            # zoomed Canvas must not alter unrelated source coordinates.
+            x, y = round(x, 3), round(y, 3)
+            old = obj.points[index]
+            if hypot(old.x - x, old.y - y) < 0.0005:
+                return {**self._editing_status(), "changed": False,
+                        "affected": [], "object": self.details(fid)}
+            changes = (linked_vertex_moves(self._doc, obj.uid, index, x, y)
+                       if shared else {obj.uid: {index: (x, y)}})
+            with self._history.begin(
+                "Przesunięcie węzła " + obj.code,
+                selection_before=(obj.uid,),
+            ):
+                self._doc.move_polygon_vertices(changes)
+            self._reindex(self._doc, self._doc.filename)
+            self._revision += 1
+            return {**self._editing_status(), "changed": True,
+                    "affected": list(changes), "object": self.details(fid)}
 
     def step_history(self, direction: str, *, document_token: str,
                      revision: int) -> dict:
