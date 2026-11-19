@@ -1155,8 +1155,8 @@
       inform("Operacja nieudana: "+error.message,true);
     }finally{state.editBusy=false;updateEditState(state.edit);}
   }
-  const mergePolygons=()=>simpleGeometryAction("merge");
-  const repairWinding=()=>simpleGeometryAction("repair");
+  function mergePolygons(){return simpleGeometryAction("merge");}
+  function repairWinding(){return simpleGeometryAction("repair");}
   function drawDraftPolygon() {
     if(!["draw","cut","line","line-edit"].includes(state.tool)||
        !state.drawPoints.length)return;
