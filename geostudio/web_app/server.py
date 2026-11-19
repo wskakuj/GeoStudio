@@ -174,6 +174,22 @@ def create_app(workspace: PreviewWorkspace | None = None) -> FastAPI:
         except (ValueError, KeyError) as exc:
             raise HTTPException(400, str(exc)) from exc
 
+    @app.delete("/api/object/{fid}/vertices/{index}")
+    async def remove_polygon_vertex(fid: str, index: int, request: Request):
+        payload = await edit_payload(request)
+        try:
+            return state.delete_vertex(
+                fid, index, shared=payload.get("shared", False),
+                document_token=payload.get("documentToken"),
+                revision=payload.get("revision"),
+            )
+        except LookupError as exc:
+            raise HTTPException(404, str(exc)) from exc
+        except RuntimeError as exc:
+            raise HTTPException(409, str(exc)) from exc
+        except (ValueError, KeyError) as exc:
+            raise HTTPException(400, str(exc)) from exc
+
     @app.post("/api/edit/{direction}")
     async def history_action(direction: str, request: Request):
         payload = await edit_payload(request)
