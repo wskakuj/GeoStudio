@@ -60,25 +60,34 @@ def save_last_map_directory(settings: Path, directory: Path) -> None:
 
 
 class NativeMapPicker:
-    """JS bridge open_map() returns metadata only, never an absolute path."""
+    """Minimal JS bridge: the only public member is open_map().
+
+    pywebview recursively inspects public attributes of its js_api object.
+    Exposing the native Window or PreviewWorkspace makes it traverse
+    WinForms/WebView2 COM properties, leading to AccessibilityObject.Bounds
+    recursion, UI thread violations and intermittent Windows freezes.
+    Dependencies must remain private and invisible to JS API discovery.
+    """
+
+    __slots__ = ("_workspace", "_settings", "_window")
 
     def __init__(self, workspace: PreviewWorkspace,
                  *, settings: Path | None = None, window=None):
-        self.workspace = workspace
-        self.settings = settings if settings is not None else preference_file()
-        self.window = window
+        self._workspace = workspace
+        self._settings = settings if settings is not None else preference_file()
+        self._window = window
 
     def open_map(self) -> dict:
-        if self.window is None:
+        if self._window is None:
             raise RuntimeError("Natywne okno wyboru pliku jest niedostępne.")
 
         import webview
 
         enum = getattr(webview, "FileDialog", None)
         open_dialog = enum.OPEN if enum is not None else webview.OPEN_DIALOG
-        files = self.window.create_file_dialog(
+        files = self._window.create_file_dialog(
             dialog_type=open_dialog,
-            directory=read_last_map_directory(self.settings),
+            directory=read_last_map_directory(self._settings),
             allow_multiple=False,
             file_types=("Mapy GEO-MAP (*.map;*.MAP)",),
         )
@@ -89,9 +98,9 @@ class NativeMapPicker:
             raise ValueError("Wybierz prawidłowy plik GEO-MAP .MAP.")
         if not 0 < chosen.stat().st_size <= MAX_MAP_BYTES:
             raise ValueError("Plik MAP jest pusty lub przekracza limit 80 MB.")
-        meta = self.workspace.load_map(chosen.read_bytes(), chosen.name)
+        meta = self._workspace.load_map(chosen.read_bytes(), chosen.name)
         try:
-            save_last_map_directory(self.settings, chosen.parent)
+            save_last_map_directory(self._settings, chosen.parent)
         except OSError:
             # Map should still open even if a locked-down user profile
             # disallows saving GUI preferences.
