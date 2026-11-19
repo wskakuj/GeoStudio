@@ -321,6 +321,83 @@
     $("file-map").click();
   }
 
+  function populateSelectCodes() {
+    const box=$("select-code");
+    if(!box)return;
+    const old=box.value;
+    box.replaceChildren(new Option("Wszystkie kody (z filtrem A1/A2)",""));
+    for(const [code,count] of Object.entries(state.meta?.codes||{})
+       .sort((a,b)=>Number(a[0])-Number(b[0]))){
+      box.add(new Option(code+" · "+display(count)+" obiektów",code));
+    }
+    if([...box.options].some(x=>x.value===old))box.value=old;
+  }
+  function openAdvancedSelection() {
+    if(!state.meta){inform("Najpierw wczytaj mapę MAP.",true);return;}
+    const dialog=$("select-dialog");
+    if(dialog.open)return;
+    populateSelectCodes();
+    // Default to the selected object's code, never auto-filter A1/A2.
+    if(state.detail?.code&&[...$("select-code").options]
+       .some(o=>o.value===state.detail.code))
+      $("select-code").value=state.detail.code;
+    $("select-preview").textContent=
+      "Przeszukuje całą mapę, nie tylko bieżący widok.";
+    dialog.showModal();
+    $("select-code").focus();
+  }
+  async function applyAdvancedSelection(event) {
+    event.preventDefault();
+    if(!state.meta)return;
+    const code=$("select-code").value;
+    const a1=$("select-a1").value.trim();
+    const a2=$("select-a2").value.trim();
+    const match=$("select-match").value;
+    const action=$("select-action").value;
+    if(!code&&!a1&&!a2){
+      $("select-preview").textContent=
+        "Podaj kod albo wartość A1/A2, aby uniknąć zaznaczenia całej mapy.";
+      return;
+    }
+    const button=$("select-apply");button.disabled=true;
+    const tokenAtStart=state.edit?.documentToken;
+    const revisionAtStart=state.edit?.revision;
+    $("select-preview").textContent="Sprawdzanie obiektów…";
+    try {
+      const params=new URLSearchParams({code,a1,a2,match});
+      const result=await api("/api/select?"+params);
+      if(result.documentToken!==tokenAtStart||
+         result.revision!==revisionAtStart||
+         state.edit?.documentToken!==tokenAtStart||
+         state.edit?.revision!==revisionAtStart)
+        throw Error("Mapa zmieniła się w trakcie wyszukiwania. Spróbuj ponownie.");
+      const previous=new Set(state.pinned);
+      if(state.active)previous.add(state.active);
+      const matches=new Set(result.ids);
+      if(action==="replace")state.pinned=matches;
+      else if(action==="add")for(const id of matches)previous.add(id);
+      else if(action==="subtract")for(const id of matches)previous.delete(id);
+      if(action!=="replace")state.pinned=previous;
+      const selected=state.pinned.has(state.active)?state.active:
+        (state.pinned.values().next().value||null);
+      state.lastPick=null;
+      $("select-dialog").close();
+      await selectFeature(selected);
+      inform("Wyszukano "+display(result.count)+" obiektów. Aktualne zaznaczenie: "+
+        display(state.pinned.size)+".");
+      requestDraw();
+    }catch(error){
+      $("select-preview").textContent="Nie udało się zaznaczyć: "+error.message;
+      inform("Zaznaczanie: "+error.message,true);
+    }finally{button.disabled=false;}
+  }
+  function clearAdvancedSelection() {
+    state.pinned.clear();
+    state.lastPick=null;
+    selectFeature(null);
+    $("select-preview").textContent="Wyczyszczono wszystkie zaznaczenia.";
+    requestDraw();
+  }
   function resizeCanvas() {
     const rect = shell.getBoundingClientRect();
     state.width = Math.max(1, rect.width); state.height = Math.max(1, rect.height);
@@ -1122,7 +1199,9 @@
       }
     }
     candidates.sort((a,b)=>{
-      const priority=p=>p.code==="5216"?0:p.code==="5230"?1:2;
+      // Put visible buildings first; repeated clicks still cycle all hits.
+      const priority=p=>p.code==="5310"?0:p.code==="5230"?1:
+        p.code==="5220"?2:p.code==="5216"?3:4;
       return priority(a)-priority(b)||(a.inside?1:0)-(b.inside?1:0)||
              a.dist-b.dist||a.area-b.area;
     });
@@ -1203,7 +1282,20 @@
        state.lastPick.p.y-p.y)<8&&hits.includes(state.lastPick.fid))
        index=(hits.indexOf(state.lastPick.fid)+1)%hits.length;
     const fid=hits[index];
-    state.lastPick={p,fid};selectFeature(fid);
+    state.lastPick={p,fid};
+    if(ev.ctrlKey||ev.shiftKey){
+      // Ctrl/Shift-click adds or removes objects without losing the rest
+      // of the multi-selection. Subsequent clicks cycle overlapping hits.
+      const selection=new Set(state.pinned);
+      if(state.active)selection.add(state.active);
+      const wasSelected=selection.has(fid);
+      if(wasSelected)selection.delete(fid);else selection.add(fid);
+      state.pinned=selection;
+      const next=wasSelected?
+        (selection.has(state.active)?state.active:
+          (selection.values().next().value||null)):fid;
+      selectFeature(next);
+    }else selectFeature(fid);
   });
   canvas.addEventListener("dblclick",ev=>{
     if(state.tool!=="nodes"||!state.meta)return;
@@ -1308,6 +1400,10 @@
   link("tool-open",chooseMap);
   link("empty-open",chooseMap);
   link("tool-advanced-select",openAdvancedSelection);
+  link("select-close",()=>$("select-dialog").close());
+  link("select-clear",clearAdvancedSelection);
+  $("select-form").addEventListener("submit",applyAdvancedSelection);
+
   link("tool-sidecar",()=> $("file-sidecar").click());
   link("tool-undo",()=>historyStep("undo"));
   link("tool-redo",()=>historyStep("redo"));
