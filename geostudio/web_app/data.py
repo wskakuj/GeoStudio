@@ -225,6 +225,9 @@ class PreviewWorkspace:
         if not content or len(content)>MAX_STYLES_BYTES:
             raise ValueError("Za duży plik topologii.")
         obj=json.loads(content)
+        if isinstance(obj,dict) and obj.get("format")=="geostudio-topology-v2":
+            self._import_baked_metadata(obj,map_bytes)
+            return
         if (not isinstance(obj,dict) or
                 set(obj)!={"format","sha256","uids"} or
                 obj["format"]!="geostudio-topology-v1" or
