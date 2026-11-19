@@ -223,8 +223,9 @@ class GeoMap:
             obj = self.by_id[uid]
             if not obj.is_closed:
                 raise ValueError('Only closed polygons can be edited')
-            size = len(obj.points) - 1
-            coords = [(p.x, p.y) for p in obj.points[:-1]]
+            multipart = len(obj.display_parts)>1
+            size = len(obj.points) if multipart else len(obj.points)-1
+            coords = [(p.x,p.y) for p in obj.points[:size]]
             for index, value in replacements.items():
                 if not 0 <= index < size:
                     raise IndexError('Vertex outside polygon')
@@ -232,21 +233,29 @@ class GeoMap:
                 if not (isfinite(x) and isfinite(y) and -1e9 < x < 1e9 and -1e9 < y < 1e9):
                     raise ValueError('Invalid coordinates')
                 coords[index] = (x, y)
-            if not polygon_is_valid(coords):
-                raise ValueError('Polygon must have three distinct non-collinear vertices')
-            # In topology mode collapsing an existing distinct corner onto
-            # another vertex would create a zero-length edge. Even though the
-            # signed area might stay nonzero, do not silently corrupt a ring.
-            before = [(p.x, p.y) for p in obj.points[:-1]]
-            if len(set(before)) == len(before) and len(set(coords)) < len(coords):
-                raise ValueError('The edit would collapse two distinct polygon vertices')
+            if multipart:
+                # Compound objects can be moved as an intact group only,
+                # never distorted by the legacy single-ring vertex editor.
+                if len(replacements)!=size:
+                    raise ValueError("Wieloczęściowy obiekt można tylko przesunąć w całości.")
+                deltas={(round(coords[i][0]-p.x,3),round(coords[i][1]-p.y,3))
+                        for i,p in enumerate(obj.points)}
+                if len(deltas)!=1:
+                    raise ValueError("Wieloczęściowe obrysy wymagają jednego wspólnego przesunięcia.")
+            else:
+                if not polygon_is_valid(coords):
+                    raise ValueError('Polygon must have three distinct non-collinear vertices')
+                # Do not collapse an existing distinct corner onto another vertex.
+                before = [(p.x, p.y) for p in obj.points[:-1]]
+                if len(set(before)) == len(before) and len(set(coords)) < len(coords):
+                    raise ValueError('The edit would collapse two distinct polygon vertices')
             records = [(i, POINT_RE.match(raw.rstrip(b'\r\n')))
                        for i, raw in enumerate(self.lines[obj.start+1:obj.end], obj.start+1)]
             records = [(i, match) for i, match in records if match]
             if len(records) != len(obj.points):
                 raise ValueError('Unexpected P record count; refusing to edit')
             expanded = dict(replacements)
-            if 0 in replacements:
+            if 0 in replacements and not multipart:
                 expanded[size] = replacements[0]
             for index, (x, y) in expanded.items():
                 line_no, match = records[index]
@@ -271,7 +280,7 @@ class GeoMap:
                     for index, (x, y) in replacements.items():
                         obj.points[index].x = round(x, 3)
                         obj.points[index].y = round(y, 3)
-                        if index == 0:
+                        if index == 0 and len(obj.display_parts)==1:
                             obj.points[-1].x = round(x, 3)
                             obj.points[-1].y = round(y, 3)
 
