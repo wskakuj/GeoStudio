@@ -40,6 +40,7 @@
     {name:"Usuń wybrane obiekty", hint:"Ctrl+Delete", run:deleteObjects},
     {name:"Rysuj nowy poligon", hint:"N", run:()=>setTool("draw")},
     {name:"Wczytaj plik stylów GeoStudio", hint:"JSON", run:()=> $("file-sidecar").click()},
+    {name:"Wczytaj biblioteki kartograficzne GEO-MAP LAY/CDF/SYM", hint:"Etap 7", run:chooseCartographicLibraries},
     {name:"Dopasuj całą mapę", hint:"0", run:fitToMap},
     {name:"Edytuj atrybuty aktywnego obiektu", hint:"E", run:()=>toggleInspectorEdit(true)},
     {name:"Cofnij ostatnią zmianę", hint:"Ctrl+Z", run:()=>historyStep("undo")},
@@ -75,6 +76,7 @@
       dirty:!!status.dirty,
       canUndo:!!status.canUndo,
       canRedo:!!status.canRedo,
+      hasReversibleMasks:!!status.hasReversibleMasks,
       revision:status.revision,
       documentToken:status.documentToken,
       undoLabel:status.undoLabel||"",
@@ -88,6 +90,8 @@
     $("tool-new-polygon").disabled=state.editBusy||!state.meta;
     $("btn-export").disabled=state.editBusy||!state.meta;
     $("tool-export-baked").disabled=state.editBusy||!state.meta;
+    $("btn-export").textContent=state.edit.hasReversibleMasks
+      ?"↓ Pobierz MAP + JSON":"↓ Pobierz MAP";
     updateBulkButton();
     $("tool-undo").title=state.edit.undoLabel
       ?"Cofnij: "+state.edit.undoLabel+" (Ctrl+Z)":"Cofnij (Ctrl+Z)";
@@ -243,9 +247,11 @@
         }
         return;
       }
+      const hasMasks=!!state.edit.hasReversibleMasks;
       const params=new URLSearchParams({documentToken:state.edit.documentToken,
         normalizePositive:"true"});
-      const response=await fetch("/api/export/map?"+params.toString(),{
+      const response=await fetch((hasMasks?"/api/export/package":"/api/export/map")+
+        "?"+params.toString(),{
         headers:{"X-GeoStudio-Token":token},cache:"no-store"
       });
       if(!response.ok){
@@ -254,14 +260,16 @@
       }
       const blob=await response.blob();
       const original=state.meta.name.replace(/\\/g,"/").split("/").pop();
-      const filename=original.replace(/\.map$/i,"")+"_GeoStudio2_kopia.MAP";
+      const filename=original.replace(/\.map$/i,"")+
+        (hasMasks?"_GeoStudio2_wyciecia.zip":"_GeoStudio2_kopia.MAP");
       const url=URL.createObjectURL(blob);
       const anchor=document.createElement("a");
       anchor.href=url;anchor.download=filename;
       document.body.append(anchor);anchor.click();anchor.remove();
       setTimeout(()=>URL.revokeObjectURL(url),60000);
-      inform("Wysłano "+filename+" do przeglądarki. Sprawdź folder Pobrane "+
-             "(Ctrl+J), a NIE folder źródłowy mapy.");
+      inform(hasMasks
+        ?"Zapisano ZIP zawierający rzeczywiście wycięty MAP oraz plik JSON do odtworzenia. Rozpakuj oba razem."
+        :"Wysłano "+filename+" do pobrania; sprawdź Pobrane (Ctrl+J).");
     }catch(error){inform("Nie udało się zapisać kopii: "+error.message,true);}
   }
   function inform(msg, isError=false) {
@@ -311,6 +319,7 @@
     quality.textContent = meta.checksumValid ? "✓ CHK poprawna" : "⚠ CHK niezgodna";
     quality.classList.toggle("warning", !meta.checksumValid);
     renderLayers(); updateInspector(); fitToMap(); updateSelectionCount();
+    cartographyMessage({libraries:meta.cartographicLibraries});
     inform("Wczytano " + display(meta.objectCount) +
            " obiektów. Oryginalny plik jest chroniony.");
     return true;
@@ -348,6 +357,64 @@
     } catch (error) {
       inform("Nie udało się wczytać JSON: " + error.message, true);
     } finally { busy(false); $("file-sidecar").value = ""; }
+  }
+
+  function cartographyMessage(payload) {
+    const libs=payload?.libraries||{};
+    const summary=Object.entries(libs).map(([name,item])=>
+      name+" ("+(item.definitions||0)+")").join(" · ");
+    $("cartography-status").textContent=summary||"Brak bibliotek";
+    $("cartography-status").title=summary
+      ?"Załadowane biblioteki: "+summary:"Brak dodatkowych bibliotek GEO-MAP";
+  }
+  async function chooseCartographicLibraries() {
+    if(window.pywebview?.api?.open_libraries){
+      try {
+        const result=await window.pywebview.api.open_libraries();
+        if(result&&!result.cancelled){
+          cartographyMessage(result.status);
+          inform("Załadowano biblioteki kartograficzne: "+
+            result.libraries.map(item=>item.kind+" "+item.definitions).join(", "));
+          await refreshViewport();
+        }
+      }catch(error){
+        inform("Nie można załadować bibliotek: "+error.message,true);
+      }
+    }else $("file-library").click();
+  }
+  async function openCartographicFiles(files) {
+    const list=Array.from(files||[]);
+    if(!list.length)return;
+    if(list.length>3){
+      inform("Wybierz najwyżej LAY, CDF i SYM (po jednym pliku).",true);return;
+    }
+    const kinds=new Set();
+    for(const file of list){
+      const type=file.name.split(".").pop().toUpperCase();
+      if(!["LAY","CDF","SYM"].includes(type)||kinds.has(type)||
+         file.size>8*1024*1024){
+        inform("Nieprawidłowe biblioteki: po jednym LAY/CDF/SYM, max 8 MB.",true);
+        return;
+      }
+      kinds.add(type);
+    }
+    busy(true,"Wczytywanie bibliotek kartograficznych");
+    try{
+      for(const file of list){
+        await api("/api/cartography/library",{
+          method:"POST",
+          headers:{"Content-Type":"application/octet-stream",
+                   "X-Library-Name":encodeURIComponent(file.name)},
+          body:await file.arrayBuffer()
+        });
+      }
+      const status=await api("/api/cartography/status");
+      cartographyMessage(status);
+      inform("Załadowano "+list.length+" bibliotek. Renderowanie mapy odświeżone.");
+      await refreshViewport();
+    }catch(error){
+      inform("Błąd biblioteki GEO-MAP: "+error.message,true);
+    }finally{busy(false);$("file-library").value="";}
   }
 
   async function chooseMap() {
@@ -2458,6 +2525,7 @@
   $("select-form").addEventListener("submit",applyAdvancedSelection);
 
   link("tool-sidecar",()=> $("file-sidecar").click());
+  link("tool-cartography",chooseCartographicLibraries);
   link("tool-undo",()=>historyStep("undo"));
   link("tool-redo",()=>historyStep("redo"));
   link("btn-export",downloadMapCopy);
@@ -2490,6 +2558,7 @@
   $("layer-search").addEventListener("input",renderLayers);
   $("file-map").addEventListener("change",ev=>openMap(ev.target.files?.[0]));
   $("file-sidecar").addEventListener("change",ev=>openStyles(ev.target.files?.[0]));
+  $("file-library").addEventListener("change",ev=>openCartographicFiles(ev.target.files));
 
   document.addEventListener("dragover",ev=>{
     if(ev.dataTransfer&&Array.from(ev.dataTransfer.types).includes("Files"))ev.preventDefault();
