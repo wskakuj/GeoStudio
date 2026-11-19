@@ -477,6 +477,91 @@ class PreviewWorkspace:
                 "object": self.details(fid),
             }
 
+    def delete_vertex(self, fid: str, index: int, *,
+                      shared: bool, document_token: str, revision: int) -> dict:
+        """Remove selected native P vertex, protecting other codes and topology.
+
+        Shared mode removes matching vertices of SAME-CODE polygons, never
+        foreign codes. If another same-code edge has a T-junction at this
+        coordinate but NO explicit vertex, reject it as ambiguous.
+        """
+        with self._lock:
+            if self._doc is None or self._history is None:
+                raise ValueError("Najpierw otwórz mapę.")
+            if (document_token != self._document_token or
+                    type(revision) is not int or revision != self._revision):
+                raise RuntimeError("Dokument zmienił się od rozpoczęcia usuwania.")
+            if type(index) is not int or type(shared) is not bool:
+                raise ValueError("Nieprawidłowy numer węzła lub tryb topologii.")
+            entry = self._lookup.get(fid)
+            if entry is None:
+                raise LookupError("Nie znaleziono wskazanego poligonu.")
+            obj = entry.obj
+            if (not obj.uid or self._uid_counts.get(obj.uid) != 1 or
+                    self._doc.by_id.get(obj.uid) is not obj):
+                raise ValueError("Niejednoznaczny identyfikator :ID obiektu.")
+            if not obj.is_closed or not 0 <= index < len(obj.points) - 1:
+                raise ValueError("Wskaż istniejący węzeł zamkniętego poligonu.")
+            if len(obj.points) <= 4:
+                raise ValueError("Nie można usunąć węzła z poligonu trójkątnego.")
+            selected = obj.points[index]
+            removals: dict[str, set[int]] = {obj.uid: {index}}
+            if shared:
+                for other in self._doc.objects:
+                    if (other is obj or other.code != obj.code or
+                            not other.is_closed):
+                        continue
+                    matching = [
+                        i for i, point in enumerate(other.points[:-1])
+                        if hypot(point.x - selected.x,
+                                 point.y - selected.y) <= .0015]
+                    if len(matching) > 1:
+                        raise ValueError("Wspólny węzeł występuje wielokrotnie.")
+                    if matching:
+                        if (not other.uid or self._uid_counts.get(other.uid) != 1 or
+                                self._doc.by_id.get(other.uid) is not other):
+                            raise ValueError("Niejednoznaczny identyfikator sąsiada.")
+                        removals[other.uid] = {matching[0]}
+                        continue
+                    # A junction to an edge without its own P must not be
+                    # silently altered by shortening the source contour.
+                    for oa, ob in zip(other.points, other.points[1:]):
+                        if oa.point_type == 0:
+                            continue
+                        cx, cy = closest_point_on_edge(
+                            selected.x, selected.y, oa.x, oa.y, ob.x, ob.y)
+                        if (hypot(cx - selected.x, cy - selected.y) <= .0015 and
+                                min(hypot(cx - oa.x, cy - oa.y),
+                                    hypot(cx - ob.x, cy - ob.y)) > .005):
+                            raise ValueError(
+                                "Sąsiedni poligon tego samego kodu ma wspólną "
+                                "krawędź bez węzła. Dodaj najpierw jego punkt "
+                                "lub wyłącz tryb wspólnych węzłów.")
+            for uid in removals:
+                candidate = self._doc.by_id.get(uid)
+                if (candidate is None or candidate.code != obj.code or
+                        self._uid_counts.get(uid) != 1):
+                    raise ValueError("Próba zmiany obiektu o innym kodzie została zablokowana.")
+            foreign_before = self._foreign_code_digest(self._doc, obj.code)
+            with self._history.begin(
+                "Usunięcie węzła " + obj.code, selection_before=(obj.uid,)
+            ):
+                self._doc.delete_polygon_vertices(removals)
+                if self._foreign_code_digest(self._doc, obj.code) != foreign_before:
+                    raise ValueError("Wykryto zmianę obiektu innego kodu. Cofnięto operację.")
+            self._reindex(self._doc, self._doc.filename)
+            self._revision += 1
+            return {
+                **self._editing_status(), "changed": True,
+                "sourceCode": obj.code, "foreignCodesProtected": True,
+                "removedSameCodeVertices": len(removals) - 1,
+                "affected": list(removals),
+                "affectedObjects": [
+                    {"uid": uid, "code": obj.code} for uid in removals
+                ],
+                "object": self.details(fid),
+            }
+
     def step_history(self, direction: str, *, document_token: str,
                      revision: int) -> dict:
         with self._lock:
