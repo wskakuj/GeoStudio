@@ -1,7 +1,7 @@
-/* GeoStudio 2.0 — read-only HTML5 map canvas.
+/* GeoStudio 2.0 — experimental HTML5 map canvas and in-memory GEO-MAP editing.
    World coordinates: horizontal = GEO-MAP easting Y, vertical = -northing X.
    This matches the classic geodetic PySide6 orientation.
-   No MAP editing code runs in this preview.
+   Original MAP files are never overwritten: changes are exported as copies.
 */
 (() => {
   "use strict";
@@ -18,7 +18,8 @@
     queryAbort: null, selectionRequest: 0, limited: false,
     firstLoad: true, inspectorCache: new Map(),
     edit: null, editBusy: false,
-    snapEnabled: true, sharedNodes: false, vertexDrag: null
+    snapEnabled: true, sharedNodes: false, vertexDrag: null,
+    hoverInsert: null, selectedVertex: null
   };
   const commands = [
     {name:"Otwórz plik GEO-MAP", hint:"Ctrl+O", run:()=> $("file-map").click()},
@@ -30,6 +31,7 @@
     {name:"Pobierz osobną kopię MAP", hint:"Ctrl+Shift+S", run:downloadMapCopy},
     {name:"Zaznaczanie obiektów", hint:"S", run:()=>setTool("select")},
     {name:"Edytuj węzły zaznaczonego poligonu", hint:"P", run:()=>setTool("nodes")},
+    {name:"Usuń zaznaczony węzeł poligonu", hint:"Delete", run:deleteSelectedVertex},
     {name:"Przesuwanie mapy", hint:"H", run:()=>setTool("pan")},
     {name:"Włącz / wyłącz etykiety", hint:"Aa", run:toggleLabels},
     {name:"Włącz / wyłącz siatkę", hint:"▦", run:toggleGrid},
@@ -324,14 +326,26 @@
     if(state.tool!=="nodes")return;
     const code=state.detail?.code||"brak aktywnego obiektu";
     const link=state.sharedNodes
-      ?"Wspólne węzły: wyłącznie kod "+code
+      ?"Wspólne węzły i przyciąganie: tylko kod "+code
       :"Wspólne węzły: wyłączone";
-    $("geometry-help").textContent="P · Aktywny kod: "+code+". "+link+
-      ". Przyciąganie nie zmienia geometrii innych kodów.";
+    $("geometry-help").textContent="P · Aktywny kod: "+code+
+      ". Kliknij węzeł + Delete, aby usunąć; przeciągnij, żeby przesunąć; "+
+      "dwuklik na krawędzi dodaje węzeł. "+link+". Inne kody bez zmian.";
+  }
+  function updateDeleteNodeButton() {
+    const enabled=state.tool==="nodes"&&state.meta&&state.detail?.closed&&
+      state.selectedVertex!==null&&!state.editBusy;
+    $("tool-delete-node").disabled=!enabled;
+    $("tool-delete-node").title=enabled
+      ?"Usuń węzeł nr "+(state.selectedVertex+1)+" (Delete)"
+      :"Kliknij węzeł w trybie P, następnie naciśnij Delete";
   }
   function setTool(tool) {
     if(state.editBusy)return;
     state.tool=tool;
+    state.hoverInsert=null;
+    if(tool!=="nodes")state.selectedVertex=null;
+    updateDeleteNodeButton();
     shell.classList.toggle("panning",tool==="pan");
     shell.classList.toggle("nodes-editing",tool==="nodes");
     $("geometry-help").hidden=tool!=="nodes"||!state.meta;
@@ -460,12 +474,54 @@
     }
     return index;
   }
+  function closestEditableSegment(screen, radius=9) {
+    // Use native, full-precision P order from the selected object, NEVER
+    // visually-overlapping features from another code. Closing edge included.
+    if(!state.detail?.closed||state.detail.geometryTruncated)return null;
+    const pts=state.detail.points||[];
+    let best=null;
+    for(let i=0;i<pts.length-1;i++){
+      if(pts[i].type===0)continue; // no hidden P0 component connector
+      const a=nativeWorldPoint(pts[i]),b=nativeWorldPoint(pts[i+1]);
+      const pa=worldToScreen(a.x,a.y),pb=worldToScreen(b.x,b.y);
+      const dx=pb.x-pa.x,dy=pb.y-pa.y;
+      const len2=dx*dx+dy*dy;
+      if(len2<16*16)continue; // zoom in before adding to a short edge
+      const t=((screen.x-pa.x)*dx+(screen.y-pa.y)*dy)/len2;
+      if(t<=0||t>=1)continue;
+      const px=pa.x+t*dx,py=pa.y+t*dy;
+      if(Math.hypot(screen.x-px,screen.y-py)>radius)continue;
+      if(Math.min(Math.hypot(px-pa.x,py-pa.y),
+                  Math.hypot(px-pb.x,py-pb.y))<8)continue;
+      const dist=Math.hypot(screen.x-px,screen.y-py);
+      if(!best||dist<best.distance){
+        best={segmentIndex:i,world:screenToWorld(px,py),
+              screen:{x:px,y:py},distance:dist};
+      }
+    }
+    return best;
+  }
   function previewSnap(world) {
     if(!state.snapEnabled)return {point:world,kind:null,code:null};
     const radius=11/state.scale;
     let bestVertex=null,bestEdge=null;
     for(const feature of state.features){
       if(feature.id===state.active)continue;
+      // Shared-node mode must never snap a 5310 corner onto 5220.
+      // Python enforces the same restriction on the entire source MAP.
+      if(state.sharedNodes&&feature.code!==state.detail?.code)continue;
+      // The neighbor that moves together with a dragged corner cannot be
+      // the snap target of its own OLD, stationary boundary.
+      if(state.sharedNodes&&state.vertexDrag){
+        const activePoint=editableVertices()[state.vertexDrag.index];
+        if(activePoint){
+          const original=nativeWorldPoint(activePoint), bb=feature.bbox;
+          if(original.x>=bb[0]-.002&&original.x<=bb[2]+.002&&
+             original.y>=bb[1]-.002&&original.y<=bb[3]+.002&&
+             sameCodeNeighborPreview(feature,original,original))
+            continue;
+        }
+      }
       const b=feature.bbox;
       if(world.x<b[0]-radius||world.x>b[2]+radius||
          world.y<b[1]-radius||world.y>b[3]+radius)continue;
@@ -489,14 +545,81 @@
       }
     }
     const match=bestVertex||bestEdge;
+    if(match&&state.sharedNodes){
+      const active=editableVertices()[state.vertexDrag?.index];
+      if(active){
+        const original=nativeWorldPoint(active);
+        if(Math.hypot(original.x-match.point.x,
+                      original.y-match.point.y)<=.002)
+          return {point:world,kind:null,code:null};
+      }
+    }
     return match?{point:match.point,kind:match.kind,code:match.code}
                 :{point:world,kind:null,code:null};
+  }
+  function sameCodeNeighborPreview(feature, source, destination) {
+    // Display the SAME-CODE topology that will be committed to native MAP.
+    // A neighbor may not have a vertex at the shared T-junction yet; the
+    // backend inserts it at the original point before the move.
+    let touched=false;
+    const parts=feature.geometry.map(part=>{
+      let changed=false;
+      const changedPart=[];
+      for(let i=0;i<part.length;i++){
+        const node=part[i];
+        const near=Math.hypot(node[0]-source.x,node[1]-source.y)<=.0015;
+        if(near){
+          changedPart.push([destination.x,destination.y]);
+          changed=true;
+        }else{
+          if(i>0){
+            const prev=part[i-1],dx=node[0]-prev[0],dy=node[1]-prev[1];
+            const len=dx*dx+dy*dy;
+            if(len>1e-12){
+              const t=((source.x-prev[0])*dx+(source.y-prev[1])*dy)/len;
+              const px=prev[0]+Math.max(0,Math.min(1,t))*dx;
+              const py=prev[1]+Math.max(0,Math.min(1,t))*dy;
+              if(t>0&&t<1&&
+                 Math.hypot(px-source.x,py-source.y)<=.0015&&
+                 Math.hypot(px-prev[0],py-prev[1])>.005&&
+                 Math.hypot(px-node[0],py-node[1])>.005){
+                changedPart.push([destination.x,destination.y]);
+                changed=true;
+              }
+            }
+          }
+          changedPart.push(node);
+        }
+      }
+      if(changed)touched=true;
+      return changedPart;
+    });
+    return touched?parts:null;
   }
   function drawVertexTool() {
     if(state.tool!=="nodes"||!state.detail?.closed)return;
     const points=editableVertices();
     if(!points.length)return;
     const drag=state.vertexDrag;
+    if(drag&&state.sharedNodes){
+      const source=nativeWorldPoint(points[drag.index]);
+      for(const feature of state.features){
+        if(feature.id===drag.fid||feature.code!==drag.code||!isVisible(feature))
+          continue;
+        if(source.x<feature.bbox[0]-.002||source.x>feature.bbox[2]+.002||
+           source.y<feature.bbox[1]-.002||source.y>feature.bbox[3]+.002)
+          continue;
+        const preview=sameCodeNeighborPreview(feature,source,drag.preview);
+        if(preview){
+          addPath(preview);
+          ctx.strokeStyle="#05a989";
+          ctx.lineWidth=2.4;
+          ctx.setLineDash([5,3]);
+          ctx.stroke();
+          ctx.setLineDash([]);
+        }
+      }
+    }
     if(drag){
       ctx.beginPath();
       for(let i=0;i<points.length;i++){
@@ -516,8 +639,21 @@
       const p=worldToScreen(world.x,world.y);
       if(p.x< -10||p.x>state.width+10||p.y< -10||p.y>state.height+10)continue;
       ctx.beginPath();ctx.arc(p.x,p.y,i===drag?.index?6:4,0,2*Math.PI);
-      ctx.fillStyle=i===drag?.index?"#ffc263":"#f8ffff";
-      ctx.fill();ctx.lineWidth=2;ctx.strokeStyle="#078d89";ctx.stroke();
+      ctx.fillStyle=i===drag?.index?"#ffc263":
+        i===state.selectedVertex?"#ffd86a":"#f8ffff";
+      ctx.fill();ctx.lineWidth=i===state.selectedVertex?3:2;
+      ctx.strokeStyle=i===state.selectedVertex?"#d34b22":"#078d89";ctx.stroke();
+    }
+    if(!drag&&state.hoverInsert){
+      const p=state.hoverInsert.screen;
+      ctx.save();
+      ctx.beginPath();ctx.arc(p.x,p.y,8,0,2*Math.PI);
+      ctx.fillStyle="#edfff9";ctx.fill();
+      ctx.lineWidth=2;ctx.strokeStyle="#0b958b";ctx.stroke();
+      ctx.strokeStyle="#0b958b";ctx.lineWidth=2;
+      ctx.beginPath();ctx.moveTo(p.x-4,p.y);ctx.lineTo(p.x+4,p.y);
+      ctx.moveTo(p.x,p.y-4);ctx.lineTo(p.x,p.y+4);ctx.stroke();
+      ctx.restore();
     }
     if(drag?.snap){
       const p=worldToScreen(drag.preview.x,drag.preview.y);
@@ -539,6 +675,87 @@
         ctx.textBaseline="middle";ctx.fillText(note,left+9,top+13);
         ctx.restore();
       }
+    }
+  }
+  async function insertVertexAtSegment(segment) {
+    if(state.editBusy||!state.edit||!state.active||!state.detail?.closed)
+      return;
+    const fid=state.active,code=state.detail.code;
+    state.hoverInsert=null;
+    state.editBusy=true;
+    updateEditState(state.edit);
+    try {
+      const response=await api("/api/object/"+
+        encodeURIComponent(fid)+"/vertices",{
+          method:"POST",
+          headers:{"Content-Type":"application/json"},
+          body:JSON.stringify({...editRequestBody(),
+            segmentIndex:segment.segmentIndex,
+            x:-segment.world.y,y:segment.world.x,
+            shared:state.sharedNodes,
+            edgeRadius:Math.max(.001,Math.min(50,9/state.scale))})
+        });
+      updateEditState(response);
+      const affected=response.affectedObjects||[];
+      if(response.sourceCode!==code||
+         response.foreignCodesProtected!==true||
+         affected.some(item=>item.code!==code)){
+        inform("Nieprawidłowy raport edycji. Sprawdź wynik przed zapisem.",true);
+        await refreshEditedDocument(fid);
+        return;
+      }
+      state.selectedVertex=response.insertedVertexIndex;
+      await refreshEditedDocument(fid);
+      inform("Dodano wierzchołek "+code+
+        (response.insertedSameCodeVertices
+          ?" oraz "+response.insertedSameCodeVertices+
+            " w sąsiednich poligonach "+code:"")+
+        ". Ctrl+Z — cofnięcie.");
+    }catch(error){
+      inform("Nie można dodać wierzchołka: "+error.message,true);
+    }finally{
+      state.editBusy=false;
+      updateEditState(state.edit);
+      updateDeleteNodeButton();
+      requestDraw();
+    }
+  }
+  async function deleteSelectedVertex() {
+    if(state.tool!=="nodes"||!state.detail?.closed||!state.edit||
+       state.editBusy)return;
+    const index=state.selectedVertex;
+    if(index===null||!Number.isInteger(index)){
+      inform("Najpierw kliknij konkretny węzeł poligonu w trybie P.");
+      return;
+    }
+    const fid=state.active,code=state.detail.code;
+    state.editBusy=true;updateEditState(state.edit);
+    updateDeleteNodeButton();
+    try {
+      const response=await api("/api/object/"+
+        encodeURIComponent(fid)+"/vertices/"+index,{
+        method:"DELETE",headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({...editRequestBody(),shared:state.sharedNodes})
+      });
+      updateEditState(response);
+      const affected=response.affectedObjects||[];
+      if(response.sourceCode!==code||
+         response.foreignCodesProtected!==true||
+         affected.some(o=>o.code!==code)){
+        inform("Nieprawidłowa odpowiedź edytora. Sprawdź kopię MAP.",true);
+        await refreshEditedDocument(fid);return;
+      }
+      state.selectedVertex=null;
+      await refreshEditedDocument(fid);
+      inform("Usunięto węzeł "+code+
+        (response.removedSameCodeVertices
+          ?" i "+response.removedSameCodeVertices+" wspólnych węzłów "+code:"")+
+        ". Ctrl+Z przywraca węzły.");
+    }catch(error){
+      inform("Nie udało się usunąć węzła: "+error.message,true);
+    }finally{
+      state.editBusy=false;updateEditState(state.edit);
+      updateDeleteNodeButton();requestDraw();
     }
   }
   async function commitVertexDrag(drag) {
@@ -572,7 +789,9 @@
         }
         await refreshEditedDocument(drag.fid);
         const snappedForeign=response.snap?.code&&response.snap.code!==drag.code;
+        const added=response.insertedSameCodeVertices||0;
         inform("Przesunięto "+affected.length+" obiektów kodu "+drag.code+
+          (added?" (uzupełniono "+added+" węzłów na sąsiednich bokach).":"")+
           ". "+(snappedForeign
             ?"Przyciągnięto do "+response.snap.code+" (bez zmiany jego geometrii). "
             :"")+ "Ctrl+Z cofa.");
@@ -801,7 +1020,8 @@
     $("selection-count").textContent="Zaznaczonych: "+n;
   }
   async function selectFeature(fid) {
-    state.active=fid;state.detail=null;updateInspector();
+    if(state.active!==fid)state.selectedVertex=null;
+    state.active=fid;state.detail=null;updateDeleteNodeButton();updateInspector();
     updateSelectionCount();requestDraw();
     if(fid===null)return;
     const ticket=++state.selectionRequest;
@@ -809,7 +1029,10 @@
       const detail=state.inspectorCache.get(fid)||await api("/api/object/"+encodeURIComponent(fid));
       if(ticket!==state.selectionRequest||state.active!==fid)return;
       state.inspectorCache.set(fid,detail);state.detail=detail;
-      updateInspector();
+      if(state.selectedVertex!==null&&
+         state.selectedVertex>=Math.max(0,detail.pointCount-1))
+        state.selectedVertex=null;
+      updateDeleteNodeButton();updateInspector();
       $("map-status").textContent=detail.code+" · "+detail.layer;
     }catch(error){inform("Nie można odczytać obiektu: "+error.message,true);}
   }
@@ -843,6 +1066,10 @@
     const candidates=[];
     for(const f of state.features){
       if(!isVisible(f))continue;
+      // While editing one code, do not silently switch the active object
+      // to an overlapping 5220 on a subsequent canvas click.
+      if(state.tool==="nodes"&&state.detail?.code&&
+         f.code!==state.detail.code)continue;
       const b=f.bbox;
       if(world.x<b[0]-radius||world.x>b[2]+radius||
          world.y<b[1]-radius||world.y>b[3]+radius)continue;
@@ -868,10 +1095,13 @@
     if(ev.button!==0&&ev.button!==1)return;
     canvas.setPointerCapture(ev.pointerId);
     const p=eventCoords(ev);
+    state.hoverInsert=null;
     if(state.tool==="nodes"&&ev.button===0&&!state.editBusy){
       const index=closestEditableVertex(p);
       if(index>=0){
         const world=nativeWorldPoint(editableVertices()[index]);
+        state.selectedVertex=index;
+        updateDeleteNodeButton();
         state.vertexDrag={fid:state.active,code:state.detail.code,
                           index,preview:world,snap:null};
         state.drag={pointer:ev.pointerId,start:p,last:p,moved:false,node:true};
@@ -885,6 +1115,10 @@
     const p=eventCoords(ev),world=screenToWorld(p.x,p.y);
     $("cursor-coords").textContent="X: "+(-world.y).toFixed(3)+
                                    "   Y: "+world.x.toFixed(3);
+    if(!state.drag&&state.tool==="nodes"&&!state.editBusy){
+      state.hoverInsert=closestEditableSegment(p);
+      requestDraw();
+    }
     if(!state.drag||state.drag.pointer!==ev.pointerId)return;
     const d=state.drag;
     if(Math.hypot(p.x-d.start.x,p.y-d.start.y)>4)d.moved=true;
@@ -911,11 +1145,17 @@
       const moving=state.vertexDrag;
       state.vertexDrag=null;requestDraw();
       if(d.moved&&moving)commitVertexDrag(moving);
+      else if(moving)inform("Zaznaczono węzeł "+(moving.index+1)+". Delete — usuń.");
       return;
     }
     if(d.moved){scheduleViewport();return;}
     if(d.pan)return;
-    const p=eventCoords(ev),world=screenToWorld(p.x,p.y),hits=pick(world);
+    const p=eventCoords(ev);
+    // Single-clicking the selected polygon's edge in P keeps it selected.
+    // Otherwise the second click in a double-click may cycle to a
+    // visually overlapping 5220 before our dblclick handler can insert.
+    if(state.tool==="nodes"&&closestEditableSegment(p))return;
+    const world=screenToWorld(p.x,p.y),hits=pick(world);
     if(!hits.length){selectFeature(null);state.lastPick=null;return;}
     let index=0;
     if(state.lastPick&&Math.hypot(state.lastPick.p.x-p.x,
@@ -923,6 +1163,21 @@
        index=(hits.indexOf(state.lastPick.fid)+1)%hits.length;
     const fid=hits[index];
     state.lastPick={p,fid};selectFeature(fid);
+  });
+  canvas.addEventListener("dblclick",ev=>{
+    if(state.tool!=="nodes"||!state.meta)return;
+    ev.preventDefault();ev.stopPropagation();
+    if(state.editBusy||state.vertexDrag)return;
+    const segment=closestEditableSegment(eventCoords(ev));
+    if(!segment){
+      inform("Dwuklik: wybierz środek krawędzi zaznaczonego poligonu "+
+        "(nie istniejący węzeł). W razie potrzeby przybliż mapę.");
+      return;
+    }
+    insertVertexAtSegment(segment);
+  });
+  canvas.addEventListener("pointerleave",()=>{
+    if(state.hoverInsert){state.hoverInsert=null;requestDraw();}
   });
   canvas.addEventListener("pointercancel",()=>{state.drag=null;state.vertexDrag=null;shell.classList.remove("dragging");requestDraw();});
   canvas.addEventListener("wheel",ev=>{
@@ -967,6 +1222,10 @@
       ev.preventDefault();$("file-map").click();return;
     }
     if(typing)return;
+    if(state.tool==="nodes"&&state.detail&&!ev.ctrlKey&&!ev.metaKey&&!ev.altKey&&
+       (ev.key==="Delete"||ev.key==="Backspace")){
+      ev.preventDefault();deleteSelectedVertex();return;
+    }
     if((ev.ctrlKey||ev.metaKey)&&ev.key.toLowerCase()==="z"){
       ev.preventDefault();historyStep("undo");return;
     }
@@ -1016,6 +1275,7 @@
   link("tool-select",()=>setTool("select"));
   link("tool-pan",()=>setTool("pan"));
   link("tool-nodes",()=>setTool("nodes"));
+  link("tool-delete-node",deleteSelectedVertex);
   link("float-nodes",()=>setTool("nodes"));
   $("opt-snap").addEventListener("change",ev=>{state.snapEnabled=ev.target.checked;});
   $("opt-shared").addEventListener("change",ev=>{

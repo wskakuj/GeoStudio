@@ -14,7 +14,7 @@
     <header class="topbar">
       <div class="identity">
         <div class="mark" aria-hidden="true"><span></span><span></span><span></span></div>
-        <div><strong>GeoStudio</strong><span class="brand-version">2.0 <em>PREVIEW</em></span></div>
+        <div><strong>GeoStudio</strong><span class="brand-version">2.0 <em>WĘZŁY + DWUKLIK — TEST</em></span></div>
       </div>
       <div class="header-center"><span class="top-kicker">OBSZAR ROBOCZY</span>
         <span id="document-title">Nowy projekt</span>
@@ -45,6 +45,7 @@
           <button class="tool-button active" id="tool-select"><span class="tool-glyph">↖</span>Zaznacz <small>S</small></button>
           <button class="tool-button" id="tool-pan"><span class="tool-glyph">✥</span>Przesuń <small>H</small></button>
           <button class="tool-button" id="tool-nodes" title="Edycja węzłów poligonu (P)"><span class="tool-glyph">⬡</span>Węzły <small>P</small></button>
+          <button class="tool-button" id="tool-delete-node" disabled title="Zaznacz węzeł i usuń go (Delete)"><span class="tool-glyph">⊖</span>Usuń węzeł <small>Del</small></button>
           <button class="tool-button" id="tool-fit"><span class="tool-glyph">⛶</span>Dopasuj</button>
         </div>
       </div>
@@ -109,7 +110,7 @@
         <div class="map-scale-box" id="map-scale-box"><span class="north-rose">N <b>▲</b></span><span id="scale-label">Skala podglądu: —</span></div>
         <div class="map-bottom-left"><span class="coordinate-dot"></span><span id="cursor-coords">X: — &nbsp; Y: —</span></div>
         <div class="map-bottom-right" id="render-hint">Odczyt geometrii GEO-MAP</div>
-        <div class="geometry-help" id="geometry-help" hidden>Tryb P: wybierz poligon i przeciągnij jego węzeł. Esc — zaznaczanie.</div>
+        <div class="geometry-help" id="geometry-help" hidden>Tryb P: kliknij węzeł, następnie Delete, aby go usunąć; przeciągnij, żeby przesunąć; dwuklik na krawędzi dodaje punkt.</div>
         <div id="empty-state" class="empty-state">
           <div class="welcome-logo">◈</div>
           <div class="eyebrow">NOWA GENERACJA EDYTORA</div>

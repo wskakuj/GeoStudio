@@ -22,8 +22,8 @@ from geostudio.geomap import GeoMap
 from geostudio.forest_classes import forest_class_value
 from geostudio.geometry_index import GeometryIndex
 from geostudio.history import History
-from geostudio.topology_edit import linked_vertex_moves
-from geostudio.interactions import find_snap
+from geostudio.topology_edit import linked_vertex_plan
+from geostudio.interactions import find_snap, closest_point_on_edge
 from geostudio.library_render import native_fill_color
 
 MAX_MAP_BYTES = 80 * 1024 * 1024
@@ -303,8 +303,19 @@ class PreviewWorkspace:
                 raise ValueError("Nieprawidłowy promień przyciągania.")
             snapped = None
             if snap_radius > 0:
-                # Use all GEO-MAP lines and markers, regardless of map visibility.
                 candidates = self._index.nearby(x, y, snap_radius)
+                if shared:
+                    # A linked neighbor must MOVE with this corner, so its
+                    # OLD edge must never behave as a snap target. That
+                    # otherwise pins a T-junction to the stationary edge.
+                    linked_at_start = linked_vertex_plan(
+                        self._doc, obj.uid, index,
+                        obj.points[index].x, obj.points[index].y)
+                    moving_uids = set(linked_at_start.moves)
+                    candidates = [
+                        item for item in candidates
+                        if item.code == obj.code and item.uid not in moving_uids
+                    ]
                 snapped = find_snap(x, y, candidates, snap_radius,
                                     exclude_uid=obj.uid, hide_connectors=True)
                 if snapped:
@@ -316,8 +327,10 @@ class PreviewWorkspace:
             if hypot(old.x - x, old.y - y) < 0.0005:
                 return {**self._editing_status(), "changed": False,
                         "affected": [], "object": self.details(fid)}
-            changes = (linked_vertex_moves(self._doc, obj.uid, index, x, y)
-                       if shared else {obj.uid: {index: (x, y)}})
+            plan = (linked_vertex_plan(self._doc, obj.uid, index, x, y)
+                    if shared else None)
+            changes = plan.moves if plan else {obj.uid: {index: (x, y)}}
+            insertions = plan.inserts if plan else {}
             # Defense in depth: never trust an input ID or the planner's
             # resulting UID dictionary without resolving each exact object.
             for uid in changes:
@@ -332,6 +345,12 @@ class PreviewWorkspace:
                 "Przesunięcie węzła " + obj.code,
                 selection_before=(obj.uid,),
             ):
+                # A neighboring 5310 may share an edge but have NO P record
+                # exactly where the selected 5310 corner touches it.
+                # Insert the missing native P at that old border coordinate,
+                # then move both vertices. Undo reverses insertion + motion.
+                for uid, (segment, corner) in insertions.items():
+                    self._doc.insert_polygon_vertex(uid, segment, *corner)
                 self._doc.move_polygon_vertices(changes)
                 if self._foreign_code_digest(self._doc, obj.code) != foreign_before:
                     raise ValueError(
@@ -341,6 +360,7 @@ class PreviewWorkspace:
             self._revision += 1
             return {**self._editing_status(), "changed": True,
                     "affected": list(changes),
+                    "insertedSameCodeVertices": len(insertions),
                     "affectedObjects": [
                         {"uid": uid, "code": obj.code} for uid in changes
                     ],
@@ -350,6 +370,197 @@ class PreviewWorkspace:
                     "snap": ({"kind": snapped.kind, "code": snapped.code,
                               "uid": snapped.uid, "x": x, "y": y}
                              if snapped else None)}
+
+    def insert_vertex(self, fid: str, segment_index: int, x: float, y: float,
+                      *, shared: bool, document_token: str, revision: int,
+                      edge_radius: float = 0.0) -> dict:
+        """Insert a P record on the selected polygon edge (double click).
+
+        If shared topology is requested, split precisely coincident edges of
+        OTHER SAME-CODE closed polygons in the SAME transaction. 5220 or any
+        unrelated code must stay byte-identical. No vertex is invented off
+        the selected edge; only its orthogonal projection can be inserted.
+        """
+        with self._lock:
+            if self._doc is None or self._history is None:
+                raise ValueError("Najpierw otwórz mapę.")
+            if (document_token != self._document_token or
+                    type(revision) is not int or revision != self._revision):
+                raise RuntimeError("Dokument zmienił się od rozpoczęcia edycji.")
+            if (type(segment_index) is not int or type(shared) is not bool or
+                    type(x) not in (int, float) or type(y) not in (int, float) or
+                    type(edge_radius) not in (int, float) or
+                    not all(isfinite(v) for v in (x, y, edge_radius)) or
+                    not (-1e9 < x < 1e9 and -1e9 < y < 1e9) or
+                    not 0 <= edge_radius <= 50):
+                raise ValueError("Nieprawidłowy punkt lub promień wstawienia.")
+            entry = self._lookup.get(fid)
+            if entry is None:
+                raise LookupError("Nie znaleziono obiektu.")
+            obj = entry.obj
+            if (not obj.uid or self._uid_counts.get(obj.uid) != 1 or
+                    self._doc.by_id.get(obj.uid) is not obj):
+                raise ValueError("Niejednoznaczny lub brakujący :ID poligonu.")
+            if not obj.is_closed or len(obj.points) < 4:
+                raise ValueError("Dwuklik działa tylko na zamkniętych poligonach.")
+            if not 0 <= segment_index < len(obj.points) - 1:
+                raise ValueError("Wskazana krawędź nie należy do poligonu.")
+            a, b = obj.points[segment_index:segment_index + 2]
+            if a.point_type == 0:
+                raise ValueError("Nie wolno dodawać punktu na ukrytym łączniku P 0.")
+            px, py = closest_point_on_edge(x, y, a.x, a.y, b.x, b.y)
+            if hypot(px - x, py - y) > max(0.002, edge_radius):
+                raise ValueError("Kliknij bezpośrednio na krawędzi poligonu.")
+            px, py = round(px, 3), round(py, 3)
+            # Native precision is 1 mm. Avoid splitting at endpoints or
+            # creating duplicate P records that are nearly coincident.
+            if min(hypot(px - a.x, py - a.y),
+                   hypot(px - b.x, py - b.y)) < 0.006:
+                raise ValueError("Kliknięto zbyt blisko istniejącego węzła.")
+            neighbors = []
+            if shared:
+                # This checks the SOURCE geometry, not potentially altered
+                # indexes. One candidate edge per neighbor or abort.
+                for other in self._doc.objects:
+                    if (other is obj or other.code != obj.code or
+                            not other.is_closed or not other.uid):
+                        continue
+                    candidates = []
+                    already_present = any(
+                        hypot(p.x - px, p.y - py) <= .0015
+                        for p in other.points[:-1])
+                    if already_present:
+                        continue
+                    for i, (oa, ob) in enumerate(zip(
+                            other.points, other.points[1:])):
+                        if oa.point_type == 0:
+                            continue
+                        ex, ey = closest_point_on_edge(
+                            px, py, oa.x, oa.y, ob.x, ob.y)
+                        if (hypot(px - ex, py - ey) <= .0015 and
+                                hypot(ex - oa.x, ey - oa.y) >= .006 and
+                                hypot(ex - ob.x, ey - ob.y) >= .006):
+                            candidates.append(i)
+                    if len(candidates) > 1:
+                        raise ValueError(
+                            "Niejednoznaczna krawędź wspólna kodu " + obj.code)
+                    if candidates:
+                        if (self._uid_counts.get(other.uid) != 1 or
+                                self._doc.by_id.get(other.uid) is not other):
+                            raise ValueError(
+                                "Niejednoznaczny identyfikator sąsiedniego poligonu.")
+                        neighbors.append((other.uid, candidates[0]))
+            foreign_before = self._foreign_code_digest(self._doc, obj.code)
+            with self._history.begin(
+                "Dodanie węzła " + obj.code,
+                selection_before=(obj.uid,),
+            ):
+                self._doc.insert_polygon_vertex(
+                    obj.uid, segment_index, px, py)
+                for uid, edge_index in neighbors:
+                    self._doc.insert_polygon_vertex(uid, edge_index, px, py)
+                if self._foreign_code_digest(self._doc, obj.code) != foreign_before:
+                    raise ValueError(
+                        "Wykryto zmianę innego kodu. Operację w całości cofnięto.")
+            self._reindex(self._doc, self._doc.filename)
+            self._revision += 1
+            uids = [obj.uid] + [uid for uid, _ in neighbors]
+            return {
+                **self._editing_status(), "changed": True,
+                "sourceCode": obj.code, "foreignCodesProtected": True,
+                "insertedVertexIndex": segment_index + 1,
+                "insertedSameCodeVertices": len(neighbors),
+                "newVertex": {"x": px, "y": py},
+                "affected": uids,
+                "affectedObjects": [
+                    {"uid": uid, "code": obj.code} for uid in uids],
+                "object": self.details(fid),
+            }
+
+    def delete_vertex(self, fid: str, index: int, *,
+                      shared: bool, document_token: str, revision: int) -> dict:
+        """Remove selected native P vertex, protecting other codes and topology.
+
+        Shared mode removes matching vertices of SAME-CODE polygons, never
+        foreign codes. If another same-code edge has a T-junction at this
+        coordinate but NO explicit vertex, reject it as ambiguous.
+        """
+        with self._lock:
+            if self._doc is None or self._history is None:
+                raise ValueError("Najpierw otwórz mapę.")
+            if (document_token != self._document_token or
+                    type(revision) is not int or revision != self._revision):
+                raise RuntimeError("Dokument zmienił się od rozpoczęcia usuwania.")
+            if type(index) is not int or type(shared) is not bool:
+                raise ValueError("Nieprawidłowy numer węzła lub tryb topologii.")
+            entry = self._lookup.get(fid)
+            if entry is None:
+                raise LookupError("Nie znaleziono wskazanego poligonu.")
+            obj = entry.obj
+            if (not obj.uid or self._uid_counts.get(obj.uid) != 1 or
+                    self._doc.by_id.get(obj.uid) is not obj):
+                raise ValueError("Niejednoznaczny identyfikator :ID obiektu.")
+            if not obj.is_closed or not 0 <= index < len(obj.points) - 1:
+                raise ValueError("Wskaż istniejący węzeł zamkniętego poligonu.")
+            if len(obj.points) <= 4:
+                raise ValueError("Nie można usunąć węzła z poligonu trójkątnego.")
+            selected = obj.points[index]
+            removals: dict[str, set[int]] = {obj.uid: {index}}
+            if shared:
+                for other in self._doc.objects:
+                    if (other is obj or other.code != obj.code or
+                            not other.is_closed):
+                        continue
+                    matching = [
+                        i for i, point in enumerate(other.points[:-1])
+                        if hypot(point.x - selected.x,
+                                 point.y - selected.y) <= .0015]
+                    if len(matching) > 1:
+                        raise ValueError("Wspólny węzeł występuje wielokrotnie.")
+                    if matching:
+                        if (not other.uid or self._uid_counts.get(other.uid) != 1 or
+                                self._doc.by_id.get(other.uid) is not other):
+                            raise ValueError("Niejednoznaczny identyfikator sąsiada.")
+                        removals[other.uid] = {matching[0]}
+                        continue
+                    # A junction to an edge without its own P must not be
+                    # silently altered by shortening the source contour.
+                    for oa, ob in zip(other.points, other.points[1:]):
+                        if oa.point_type == 0:
+                            continue
+                        cx, cy = closest_point_on_edge(
+                            selected.x, selected.y, oa.x, oa.y, ob.x, ob.y)
+                        if (hypot(cx - selected.x, cy - selected.y) <= .0015 and
+                                min(hypot(cx - oa.x, cy - oa.y),
+                                    hypot(cx - ob.x, cy - ob.y)) > .005):
+                            raise ValueError(
+                                "Sąsiedni poligon tego samego kodu ma wspólną "
+                                "krawędź bez węzła. Dodaj najpierw jego punkt "
+                                "lub wyłącz tryb wspólnych węzłów.")
+            for uid in removals:
+                candidate = self._doc.by_id.get(uid)
+                if (candidate is None or candidate.code != obj.code or
+                        self._uid_counts.get(uid) != 1):
+                    raise ValueError("Próba zmiany obiektu o innym kodzie została zablokowana.")
+            foreign_before = self._foreign_code_digest(self._doc, obj.code)
+            with self._history.begin(
+                "Usunięcie węzła " + obj.code, selection_before=(obj.uid,)
+            ):
+                self._doc.delete_polygon_vertices(removals)
+                if self._foreign_code_digest(self._doc, obj.code) != foreign_before:
+                    raise ValueError("Wykryto zmianę obiektu innego kodu. Cofnięto operację.")
+            self._reindex(self._doc, self._doc.filename)
+            self._revision += 1
+            return {
+                **self._editing_status(), "changed": True,
+                "sourceCode": obj.code, "foreignCodesProtected": True,
+                "removedSameCodeVertices": len(removals) - 1,
+                "affected": list(removals),
+                "affectedObjects": [
+                    {"uid": uid, "code": obj.code} for uid in removals
+                ],
+                "object": self.details(fid),
+            }
 
     def step_history(self, direction: str, *, document_token: str,
                      revision: int) -> dict:

@@ -315,6 +315,98 @@ class GeoMap:
         self.lines.insert(after_line, new_line)
         self._parse()
 
+    def delete_polygon_vertices(self, removals: dict[str, set[int]]) -> None:
+        """Atomically delete P records from closed GEO-MAP polygon rings.
+
+        Never remove the final 3 independent corners. For the first vertex
+        update the duplicated closing P coordinates to the new first corner.
+        All preflight checks run BEFORE mutating raw map lines, including
+        rejecting a new edge crossing any existing non-adjacent edge.
+        Vertex flags, other fields, and unknown records remain intact.
+        """
+        from .interactions import polygon_is_valid
+
+        if not removals:
+            raise ValueError("Nie wskazano żadnego węzła.")
+        pending_deletes: set[int] = set()
+        pending_rewrites: dict[int, bytes] = {}
+
+        def intersects(a, b, c, d) -> bool:
+            def cross(p, q, r):
+                return (q[0] - p[0]) * (r[1] - p[1]) - (
+                    q[1] - p[1]) * (r[0] - p[0])
+
+            def on_segment(p, q, r):
+                return (min(p[0], r[0]) - 1e-9 <= q[0] <= max(p[0], r[0]) + 1e-9
+                        and min(p[1], r[1]) - 1e-9 <= q[1] <= max(p[1], r[1]) + 1e-9)
+            s1, s2 = cross(a, b, c), cross(a, b, d)
+            s3, s4 = cross(c, d, a), cross(c, d, b)
+            if s1 * s2 < -1e-18 and s3 * s4 < -1e-18:
+                return True
+            return ((abs(s1) <= 1e-9 and on_segment(a, c, b)) or
+                    (abs(s2) <= 1e-9 and on_segment(a, d, b)) or
+                    (abs(s3) <= 1e-9 and on_segment(c, a, d)) or
+                    (abs(s4) <= 1e-9 and on_segment(c, b, d)))
+
+        for uid, indices in removals.items():
+            if not isinstance(indices, set) or len(indices) != 1:
+                raise ValueError("Usuwanie obejmuje jeden węzeł w każdym poligonie.")
+            obj = self.by_id.get(uid)
+            if obj is None or not obj.is_closed:
+                raise ValueError("Usuwanie wymaga zamkniętego poligonu z ID.")
+            size = len(obj.points) - 1
+            index = next(iter(indices))
+            if type(index) is not int or not 0 <= index < size:
+                raise ValueError("Nieprawidłowy numer węzła.")
+            if size <= 3:
+                raise ValueError("Poligon musi zachować co najmniej 3 wierzchołki.")
+            if any(point.point_type == 0 for point in obj.points[:-1]):
+                raise ValueError("Usuwanie węzłów poligonów wieloczęściowych jest zablokowane.")
+
+            original = [(p.x, p.y) for p in obj.points[:-1]]
+            remaining = original[:index] + original[index + 1:]
+            if len(set(remaining)) != len(remaining) or not polygon_is_valid(remaining):
+                raise ValueError("Usunięcie węzła stworzyłoby nieprawidłowy poligon.")
+            ax, bx = original[(index - 1) % size], original[(index + 1) % size]
+            for j in range(len(remaining)):
+                c, d = remaining[j], remaining[(j + 1) % len(remaining)]
+                # Only the newly-created connecting edge needs checking.
+                if c in (ax, bx) or d in (ax, bx):
+                    continue
+                if intersects(ax, bx, c, d):
+                    raise ValueError("Usunięcie węzła przecięłoby inną krawędź.")
+
+            matches = [(line_no, POINT_RE.match(raw.rstrip(b"\r\n")))
+                       for line_no, raw in enumerate(
+                           self.lines[obj.start + 1:obj.end], obj.start + 1)]
+            matches = [(line_no, match) for line_no, match in matches if match]
+            if len(matches) != len(obj.points):
+                raise ValueError("Nieoczekiwana liczba rekordów P.")
+            pending_deletes.add(matches[index][0])
+
+            if index == 0:
+                # GEO-MAP's last P duplicates the first. Removing first P
+                # without rewriting this closure would leave an open ring.
+                close_line_no, close_match = matches[-1]
+                original_close = self.lines[close_line_no]
+                eol = (b"\r\n" if original_close.endswith(b"\r\n")
+                       else b"\n" if original_close.endswith(b"\n") else b"")
+                x, y = remaining[0]
+                pending_rewrites[close_line_no] = (
+                    original_close[:close_match.start(2)]
+                    + f"{x:.3f}".encode("ascii") + b"   "
+                    + f"{y:.3f}".encode("ascii")
+                    + close_match.group(4) + eol
+                )
+
+        for line_no, content in pending_rewrites.items():
+            if line_no in pending_deletes:
+                raise ValueError("Niejednoznaczne rekordy P.")
+            self.lines[line_no] = content
+        for line_no in sorted(pending_deletes, reverse=True):
+            del self.lines[line_no]
+        self._parse()
+
     def delete_objects(self, uids: list[str] | set[str]) -> int:
         """Delete entire object records in one pass without touching adjacent objects.
 

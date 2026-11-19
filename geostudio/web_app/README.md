@@ -23,6 +23,78 @@ Gdy pywebview/WebView2 nie wyświetla prawidłowo okna, użyj:
 To uruchomi tę samą lokalną aplikację w domyślnej przeglądarce.
 Wymaga Python 3.11+, lokalnego Edge WebView2 dla natywnego okna.
 
+## Etap 3D — usuwanie wybranego węzła
+
+W trybie **P — Węzły** kliknij pojedynczy istniejący węzeł.
+Uchwyt podświetli się na żółto. Naciśnij **Delete** (lub
+**Backspace**) albo wybierz **Usuń węzeł** na wstążce.
+
+- **Wspólne węzły wyłączone:** usunięcie jednego P dotyczy tylko
+  aktywnego poligonu.
+- **Wspólne węzły włączone:** identyczne węzły w sąsiednich
+  poligonach **tego samego kodu** są usuwane jednym krokiem.
+  Inne kody są zawsze nietykalne.
+- **Ograniczenia bezpieczeństwa:** co najmniej trzy niezależne
+  wierzchołki, bez duplikatów, z zerwanych domknięć,
+  samoprzecięć i niewidocznych łączników P0.
+  Niejednoznaczne styki typu T bez odpowiadającego punktu
+  na drugim poligonie są blokowane.
+- **Ctrl+Z / Ctrl+Y** przywracają lub ponawiają całe usunięcie.
+  Wszystkie zmiany pozostają w pamięci do pobrania nowego MAP.
+
+Węzły nie są usuwane przy samym przeciąganiu. Przycisk
+**Usuń węzeł** staje się aktywny dopiero po wybraniu konkretnego punktu.
+
+## Etap 3C — dodawanie wierzchołka przez dwuklik
+
+1. Zaznacz zamknięty poligon w trybie **S** i włącz **P — Węzły**.
+2. Najedź na **jego obrys** pomiędzy dwoma istniejącymi punktami.
+   Na linii pojawi się małe oznaczenie **+**.
+3. **Kliknij dwukrotnie** oznaczenie +. GeoStudio wstawi w tym
+   miejscu nowy rekord `P` GEO-MAP.
+4. Jeśli **Wspólne węzły (ten sam kod)** są włączone i dokładnie
+   w tym miejscu istnieje pokrywająca się krawędź innego poligonu
+   o tym samym kodzie, dostanie on również nowy wierzchołek.
+   Poligon `5220` nigdy nie zostanie zmieniony przy edycji `5310`.
+5. **Ctrl+Z** usuwa dodane punkty w jednej operacji,
+   **Ctrl+Y** je przywraca. Wyeksportowana kopia `.MAP`
+   otrzyma zaktualizowane `N` i `CHK`.
+
+Dwuklik nie przesuwa punktów ani nie przełącza wybranego
+obiektu, jeśli jest wykonywany na jego obrysie. Zbyt krótki
+segment lub dwuklik tuż przy istniejącym węźle nie tworzy
+duplikatu — przybliż mapę i kliknij między wierzchołkami.
+
+Pozycja nowego punktu jest **rzutowana dokładnie na wybraną
+krawędź w geometrii źródłowej**, bez przyciągania do innych
+kodów. Przy włączonym trybie wspólnym jedynie jednoznaczne,
+dokładnie przyległe krawędzie tego samego kodu zostają
+podzielone. Wszelkie zmiany nadal są wyłącznie w pamięci.
+
+## Wspólny bok dwóch poligonów tego samego kodu (łączenie T)
+
+W trybie **P / Wspólne węzły** program łączy nie tylko
+dwa identyczne węzły `5310 + 5310`. Jeśli węzeł pierwszego
+`5310` leży na **boku** drugiego `5310` (a drugi nie ma tam
+jeszcze rekordu P), wstawia na tym boku brakujący rekord P i
+przesuwa go razem z pierwszym poligonem. Dodanie węzła oraz
+przesunięcie obu poligonów to **jedna operacja** historii.
+
+Tryb wspólnych węzłów ogranicza także **przyciąganie** do
+tego samego kodu. Nie przyciąga do `5220` i `5230` nawet
+gdy te obiekty nakładają się na edytowany `5310`.
+Nie przyciąga też węzła do **starej krawędzi sąsiada 5310**,
+który ma zostać przesunięty wraz z nim.
+
+W P wybór kolejnych obiektów pozostaje ograniczony do kodu
+aktualnie zaznaczonego poligonu; żeby wybrać inny kod,
+wróć do narzędzia **S — Zaznacz**.
+
+**Wyjątek:** zmiany są realizowane tylko dla jednoznacznie
+sąsiadujących segmentów w granicach dokładności pliku MAP
+(około 1,5 mm). Niejednoznaczne, wielokrotne przecięcia
+boków są odrzucane, a nie automatycznie poprawiane.
+
 ## Bezpieczeństwo: wspólne węzły i różne kody
 
 **Wspólne węzły** nigdy nie powinny zmieniać obiektów o innym kodzie.
@@ -69,9 +141,9 @@ operacją. Próby utworzenia degeneracji lub nieprawidłowych współrzędnych
 są odrzucane bez częściowych zmian. Węzły i geometria są zmieniane
 **wyłącznie w pamięci**. Oryginał na dysku nigdy nie jest nadpisywany.
 
-To pierwsza wersja: przeciąganie dotyczy istniejących węzłów
-zamkniętych poligonów z identyfikatorem GEO-MAP. Dodawanie i
-usuwanie węzłów, polilinie i rozbudowane operacje topologiczne
+Edycja dotyczy istniejących węzłów oraz dodawania nowych
+węzłów na krawędziach zamkniętych poligonów z ID GEO-MAP.
+Edycja polilinii i rozbudowane operacje topologiczne
 są przewidziane w kolejnych etapach. Przyciąganie wyświetla
 podgląd najbliższych obiektów załadowanych w kadrze, natomiast
 ostateczne współrzędne potwierdza parser Python na całej mapie.
@@ -147,7 +219,7 @@ podłączenia tych samych bibliotek i testów na tej samej wersji mapy.
 
 ## Celowo NIEZAIMPLEMENTOWANE w tym etapie
 
-- Dodawanie/usuwanie węzłów, rysowanie nowych poligonów, zapisywanie oryginału MAP,
+- Usuwanie węzłów, rysowanie nowych poligonów, zapisywanie oryginału MAP,
   import WMS, eksport wielkoformatowy, pełne renderowanie symboli
   .SYM/.LAY/.CDF, raster i georeferencja.
 - PixiJS/WebGL: Canvas 2D jest pierwszym rendererem do sprawdzenia
