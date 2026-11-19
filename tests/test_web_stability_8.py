@@ -130,3 +130,126 @@ def test_100k_line_map_roundtrip_with_valid_checksum_is_bounded():
     assert doc.checksum_valid
     assert doc.to_bytes()==source
     assert perf_counter()-start<45
+
+
+
+def test_recovery_snapshot_is_atomic_bound_to_source_and_tamper_detected(tmp_path):
+    from hashlib import sha256
+    from geostudio.web_app.recovery import LocalRecoveryStore
+    source=tmp_path/"source.MAP"
+    source.write_bytes(_multipart_with_or_without_gmw_closure(False))
+    orig=source.read_bytes()
+    store=LocalRecoveryStore(tmp_path/"user_recovery")
+    initial=sha256(orig).hexdigest()
+    changed=_multipart_with_or_without_gmw_closure(True)
+    topo=b'{"format":"test-only-topology"}'
+    saved=store.save(source,initial,changed,topo,revision=3)
+    assert saved["saved"] and saved["revision"]==3
+    assert store.candidate(source,initial)["available"]
+    assert store.load(source,initial)[1:]==(changed,topo)
+    assert source.read_bytes()==orig
+    assert store.candidate(source,sha256(changed).hexdigest()) is None
+    # Damage just the stored MAP. The manifest can no longer validate it.
+    manifest=store._metadata(source)
+    (store.directory/manifest["mapFile"]).write_bytes(b"bad")
+    assert store.candidate(source,initial) is None
+    assert store.load(source,initial) is None
+    assert source.read_bytes()==orig
+
+
+def test_crash_during_new_recovery_keeps_previous_complete_snapshot(tmp_path,
+                                                                     monkeypatch):
+    from hashlib import sha256
+    import geostudio.web_app.recovery as rec
+    source=tmp_path/"source.MAP"
+    orig=_multipart_with_or_without_gmw_closure(False)
+    source.write_bytes(orig)
+    store=rec.LocalRecoveryStore(tmp_path/"recovery")
+    digest=sha256(orig).hexdigest()
+    original=store.save(source,digest,orig,b"{}",revision=1)
+    real=rec._atomic_new
+    def interrupt(path,data):
+        if Path(path)==store._index(source):
+            raise OSError("simulated disk full at manifest stage")
+        return real(path,data)
+    monkeypatch.setattr(rec,"_atomic_new",interrupt)
+    with pytest.raises(OSError,match="disk full"):
+        store.save(source,digest,_multipart_with_or_without_gmw_closure(True),
+                   b'{"format":"new"}',revision=2)
+    manifest,raw,meta=store.load(source,digest)
+    assert manifest["revision"]==1
+    assert raw==orig and meta==b"{}"
+    assert len(list(store.directory.glob("*.MAP")))==1
+    assert source.read_bytes()==orig
+
+
+def test_native_restore_requires_user_consent_and_marks_unsaved(tmp_path,
+                                                                 monkeypatch):
+    from hashlib import sha256
+    from conftest import MapBuilder
+    from geostudio.web_app.native_picker import NativeMapPicker
+    raw=(MapBuilder()
+      .object("5310","B1",{"A1":"l","A2":"So120|II-0.3"},
+              [(0,0),(0,10),(10,10),(10,0)])
+      .object("5310","B2",{"A1":"l","A2":"So120|II-0.3"},
+              [(10,0),(10,10),(20,10),(20,0)])
+      .build())
+    src=tmp_path/"Mapa.MAP"
+    src.write_bytes(raw)
+    monkeypatch.setattr(NativeMapPicker,"_choose_path",lambda self:str(src))
+    first=PreviewWorkspace()
+    bridge=NativeMapPicker(first,settings=tmp_path/"settings"/"preferences.json")
+    opened=bridge.open_map()
+    assert opened["metadata"]["objectCount"]==2
+    auth={"document_token":first.editing_status()["documentToken"],
+          "revision":first.editing_status()["revision"]}
+    preview=first.preview_move_polygons(["f1"],5,0,allow_detach=True,
+                                        snap_distance=0,**auth)
+    assert preview["canApply"]
+    first.apply_move_polygons(["f1"],5,0,allow_detach=True,
+        preview_key=preview["previewKey"],snap_distance=0,**auth)
+    edited=first.export_copy(first.editing_status()["documentToken"])[1]
+    assert bridge.save_recovery()["saved"]
+    assert src.read_bytes()==raw
+    second=PreviewWorkspace()
+    reopened=NativeMapPicker(second,settings=tmp_path/"settings"/"preferences.json")
+    info=reopened.open_map()
+    assert info["metadata"]["recoveryAvailable"]["revision"]==1
+    assert second.export_copy(second.editing_status()["documentToken"])[1]==raw
+    result=reopened.restore_recovery()
+    assert result["restored"]
+    assert second.export_copy(second.editing_status()["documentToken"])[1]==edited
+    assert second.editing_status()["dirty"]
+    assert not second.editing_status()["canUndo"]
+    assert src.read_bytes()==raw
+    # If an external program replaces the source file, the recovery is blocked.
+    src.write_bytes(raw+b"garbage")
+    with pytest.raises(ValueError,match="zmienił"):
+        reopened.restore_recovery()
+
+
+def test_dragging_moves_multiple_polygons_directly_without_showing_dialog():
+    src=(Path(__file__).resolve().parents[1]/
+         "geostudio/web_app/static/map.js").read_text(encoding="utf-8")
+    assert "async function commitDraggedMove(" in src
+    section=src.split("if(d.moveIds){",1)[1].split("if(d.node){",1)[0]
+    assert "commitDraggedMove(d.moveIds,ghost)" in section
+    assert "openMoveEditor(" not in section
+    assert "previewMoveChanges()" not in section
+    quick=src.split("async function commitDraggedMove(",1)[1].split(
+        "function drawMoveGhost(",1)[0]
+    assert "allowDetach:true" in quick
+    assert "snapDistance:" in quick
+    assert '"/api/move/preview"' in quick
+    assert '"/api/move/apply"' in quick
+
+
+def test_recovery_exposes_only_local_native_bridge_and_no_source_overwrite():
+    from geostudio.web_app.native_picker import NativeMapPicker
+    assert hasattr(NativeMapPicker,"save_recovery")
+    assert hasattr(NativeMapPicker,"restore_recovery")
+    source=(Path(__file__).resolve().parents[1]/
+            "geostudio/web_app/native_picker.py").read_text(encoding="utf-8")
+    assert 'self._settings.parent/"recovery"' in source
+    assert 'self._workspace.mark_recovered_unsaved()' in source
+    assert 'if sha256(path.read_bytes()).hexdigest()!=identity:' in source
