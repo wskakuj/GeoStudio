@@ -74,8 +74,10 @@ class NativeMapPicker:
 
         import webview
 
+        enum = getattr(webview, "FileDialog", None)
+        open_dialog = enum.OPEN if enum is not None else webview.OPEN_DIALOG
         files = self.window.create_file_dialog(
-            dialog_type=webview.FileDialog.OPEN,
+            dialog_type=open_dialog,
             directory=read_last_map_directory(self.settings),
             allow_multiple=False,
             file_types=("Mapy GEO-MAP (*.map;*.MAP)",),
