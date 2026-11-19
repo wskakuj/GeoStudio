@@ -7,11 +7,11 @@ from __future__ import annotations
 
 from html import escape
 from pathlib import Path
-from urllib.parse import unquote
+from urllib.parse import unquote, quote
 import secrets
 
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
 
 from .data import (
     PreviewWorkspace, MAX_MAP_BYTES, MAX_STYLES_BYTES, MAX_RENDER_FEATURES,
@@ -106,6 +106,66 @@ def create_app(workspace: PreviewWorkspace | None = None) -> FastAPI:
             return state.viewport((xmin, ymin, xmax, ymax), limit)
         except ValueError as exc:
             raise HTTPException(400, str(exc)) from exc
+
+    @app.get("/api/edit/status")
+    async def edit_status():
+        return state.editing_status()
+
+    async def edit_payload(request: Request) -> dict:
+        body = await receive(request, 8 * 1024)
+        try:
+            payload = __import__("json").loads(body)
+        except (ValueError, UnicodeDecodeError) as exc:
+            raise HTTPException(400, "Nieprawidłowe dane edycji JSON.") from exc
+        if not isinstance(payload, dict):
+            raise HTTPException(400, "Oczekiwano obiektu JSON.")
+        return payload
+
+    @app.patch("/api/object/{fid}/fields")
+    async def update_object_fields(fid: str, request: Request):
+        payload = await edit_payload(request)
+        try:
+            return state.edit_fields(
+                fid, payload.get("changes"),
+                document_token=payload.get("documentToken"),
+                revision=payload.get("revision"),
+            )
+        except LookupError as exc:
+            raise HTTPException(404, str(exc)) from exc
+        except RuntimeError as exc:
+            raise HTTPException(409, str(exc)) from exc
+        except (ValueError, KeyError) as exc:
+            raise HTTPException(400, str(exc)) from exc
+
+    @app.post("/api/edit/{direction}")
+    async def history_action(direction: str, request: Request):
+        payload = await edit_payload(request)
+        try:
+            return state.step_history(
+                direction, document_token=payload.get("documentToken"),
+                revision=payload.get("revision"),
+            )
+        except RuntimeError as exc:
+            raise HTTPException(409, str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from exc
+
+    @app.get("/api/export/map")
+    async def download_map_copy(documentToken: str):
+        try:
+            filename, content = state.export_copy(documentToken)
+        except RuntimeError as exc:
+            raise HTTPException(409, str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from exc
+        # Safe fixed ASCII fallback plus RFC5987 encoding for Polish letters.
+        disposition = ("attachment; filename=GeoStudio2_kopia.MAP; "
+                       "filename*=UTF-8''" + quote(filename, safe=""))
+        return Response(
+            content, media_type="application/octet-stream",
+            headers={"Content-Disposition": disposition,
+                     "X-Map-Checksum": "regenerated"},
+        )
 
     @app.get("/api/object/{fid}")
     async def details(fid: str):
