@@ -324,13 +324,13 @@ class History:
 
         try:
             self._verify(entry, forward=forward)
-            for hunk in sorted(entry.hunks, key=lambda item: item.start,
-                               reverse=True):
-                # undo: the "added" text must be present, replace it with
-                # what was there before. redo: the opposite.
+            for hunk, start in reversed(self._hunk_positions(entry, forward=forward)):
+                # Hunk.start is always indexed in BEFORE-image lines.
+                # In the AFTER image, every earlier insertion/deletion
+                # shifts later positions; undo must use those offsets.
+                # Reverse order keeps all remaining positions stable.
                 expected = hunk.removed if forward else hunk.added
                 replacement = hunk.added if forward else hunk.removed
-                start = hunk.start
                 target.lines[start:start + len(expected)] = list(replacement)
             if entry.styles is not None:
                 self._apply_styles(target.visual_styles, target.label_positions,
@@ -345,11 +345,29 @@ class History:
             target.reparse()
             raise
 
+    @staticmethod
+    def _hunk_positions(entry: HistoryEntry, *, forward: bool) -> list[tuple[Hunk, int]]:
+        """Locate diff hunks in either BEFORE (redo) or AFTER (undo) lines.
+
+        Hunk.start is measured in the old document. When one transaction adds
+        vertices to multiple polygons, the second inserted line is shifted by
+        the first insert in the AFTER document. Old absolute offsets were
+        correct for redo but caused HistoryConflict on undo.
+        """
+        displacement = 0
+        positions = []
+        for hunk in sorted(entry.hunks, key=lambda item: item.start):
+            positions.append((
+                hunk,
+                hunk.start if forward else hunk.start + displacement,
+            ))
+            displacement += len(hunk.added) - len(hunk.removed)
+        return positions
+
     def _verify(self, entry: HistoryEntry, *, forward: bool) -> None:
         target = self.target
-        for hunk in entry.hunks:
+        for hunk, start in self._hunk_positions(entry, forward=forward):
             expected = hunk.removed if forward else hunk.added
-            start = hunk.start
             current = target.lines[start:start + len(expected)]
             if list(current) != list(expected):
                 raise HistoryConflict(
