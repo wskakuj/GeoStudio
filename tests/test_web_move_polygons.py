@@ -241,12 +241,12 @@ def test_moving_inside_same_code_is_always_blocked(ws):
 
 def test_magnetic_snap_reaches_shared_border_without_overlap(ws):
     plan=ws.preview_move_polygons(
-        ["f2"],-29.75,0,allow_detach=False,snap_distance=.5,**auth(ws))
+        ["f2"],-19.75,0,allow_detach=False,snap_distance=.5,**auth(ws))
     assert plan["snapApplied"] is not None
-    assert plan["delta"]["x"] == -30.0
+    assert plan["delta"]["x"] == -20.0
     assert plan["overlapConflicts"] == []
     outcome=ws.apply_move_polygons(
-        ["f2"],-29.75,0,allow_detach=False,snap_distance=.5,
+        ["f2"],-19.75,0,allow_detach=False,snap_distance=.5,
         preview_key=plan["previewKey"],**auth(ws))
     assert outcome["changed"]
-    assert ws.details("f2")["points"][0]["x"]==10.0
+    assert ws.details("f2")["points"][0]["x"]==20.0
