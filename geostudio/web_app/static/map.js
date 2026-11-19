@@ -188,7 +188,7 @@
       }
       const blob=await response.blob();
       const original=state.meta.name.replace(/\\/g,"/").split("/").pop();
-      const filename=original.replace(/\\.map$/i,"")+"_GeoStudio2_kopia.MAP";
+      const filename=original.replace(/\.map$/i,"")+"_GeoStudio2_kopia.MAP";
       const url=URL.createObjectURL(blob);
       const anchor=document.createElement("a");
       anchor.href=url;anchor.download=filename;
@@ -224,7 +224,7 @@
       inform("Wybierz plik z rozszerzeniem .MAP.", true);
       return;
     }
-    if(!confirmDiscardEdits()){$("file-map").value="";return;}
+    if(!confirmDiscardEdits()){$("file-map").value="";return false;}
     busy(true,"Wczytywanie " + file.name);
     try {
       const meta = await api("/api/map", {
@@ -254,9 +254,11 @@
       quality.classList.toggle("warning", !meta.checksumValid);
       renderLayers(); updateInspector(); fitToMap(); updateSelectionCount();
       inform("Wczytano " + display(meta.objectCount) +
-             " obiektów. Podgląd jest tylko do odczytu.");
+             " obiektów. Oryginalny plik jest chroniony.");
+      return true;
     } catch (error) {
       inform("Nie udało się otworzyć MAP: " + error.message, true);
+      return false;
     } finally { busy(false); $("file-map").value = ""; }
   }
   async function openStyles(file) {
@@ -838,7 +840,7 @@
       const files=Array.from(ev.dataTransfer.files);
       const map=files.find(file=>file.name.toLowerCase().endsWith(".map"));
       const style=files.find(file=>file.name.toLowerCase().endsWith(".json"));
-      if(map)openMap(map).then(()=>{if(style)openStyles(style);});
+      if(map)openMap(map).then(ok=>{if(ok&&style)openStyles(style);});
       else if(style)openStyles(style);
     }
   });
