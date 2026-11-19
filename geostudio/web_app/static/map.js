@@ -59,6 +59,7 @@
     {name:"Zmień motyw płótna", hint:"◐", run:toggleTheme}
   ];
   let toastTimer;
+  let recoveryTimer=null,recoverySavedKey='',recoveryBusy=false;
   const htmlText = (node, value) => { node.textContent = String(value); };
   const api = async (path, options={}) => {
     const res = await fetch(path, {
@@ -102,7 +103,43 @@
     const marker=$("dirty-marker");
     marker.textContent=state.edit.dirty?"Niezapisane zmiany w pamięci":"Oryginał chroniony";
     marker.classList.toggle("unsaved",state.edit.dirty);
+    scheduleRecovery();
   }
+  function scheduleRecovery() {
+    clearTimeout(recoveryTimer);
+    if(!state.edit?.dirty||!window.pywebview?.api?.save_recovery)return;
+    const tokenBefore=state.edit.documentToken;
+    const revisionBefore=state.edit.revision;
+    const key=tokenBefore+":"+revisionBefore;
+    if(key===recoverySavedKey)return;
+    recoveryTimer=setTimeout(async()=>{
+      if(state.editBusy||recoveryBusy){scheduleRecovery();return;}
+      if(!state.edit?.dirty||state.edit.documentToken!==tokenBefore||
+         state.edit.revision!==revisionBefore){scheduleRecovery();return;}
+      recoveryBusy=true;
+      try{
+        const saved=await window.pywebview.api.save_recovery();
+        if(saved?.saved){
+          recoverySavedKey=key;
+          $("dirty-marker").title=
+            "Zmiany są w pamięci i w lokalnej kopii awaryjnej: "+
+            (saved.savedAt||"teraz")+
+            ". Oryginalny MAP pozostaje niezmieniony.";
+        }
+      }catch(error){
+        $("dirty-marker").title="Nie udało się zapisać kopii awaryjnej: "+
+          (error.message||String(error));
+        inform("Ostrzeżenie: nie zapisano kopii awaryjnej. "+
+          (error.message||String(error)),true);
+      }finally{
+        recoveryBusy=false;
+        if(state.edit?.dirty&&
+           (state.edit.documentToken+":"+state.edit.revision)!==key)
+          scheduleRecovery();
+      }
+    },1300);
+  }
+
   function editRequestBody() {
     return {documentToken:state.edit?.documentToken,
             revision:state.edit?.revision};
@@ -492,10 +529,34 @@
         if(!confirmDiscardEdits())return;
         try {
           const answer=await window.pywebview.api.open_map();
-          if(answer&&!answer.cancelled&&answer.metadata)
-            {finishOpeningMap(answer.metadata);
-             if(answer.metadata.topologyWarning)
-               inform(answer.metadata.topologyWarning,true);}
+          if(answer&&!answer.cancelled&&answer.metadata){
+            finishOpeningMap(answer.metadata);
+            if(answer.metadata.topologyWarning)
+              inform(answer.metadata.topologyWarning,true);
+            if(answer.metadata.recoveryAvailable&&
+               window.pywebview.api?.restore_recovery){
+              const candidate=answer.metadata.recoveryAvailable;
+              const consent=window.confirm(
+                "Wykryto kopię awaryjną niezapisanych zmian z "+candidate.savedAt+
+                " (wersja "+candidate.revision+").\n\n"+
+                "Odtworzyć poprzednią sesję GeoStudio? "+
+                "Oryginalny plik MAP pozostanie nienaruszony.");
+              if(consent){
+                busy(true,"Odzyskiwanie zmian z kopii awaryjnej");
+                try{
+                  const restored=await window.pywebview.api.restore_recovery();
+                  if(restored?.restored){
+                    finishOpeningMap(restored.metadata);
+                    inform("Odzyskano niezapisane zmiany. "+
+                      "Zapisz je jako NOWY MAP; źródło pozostaje chronione.");
+                  }
+                }catch(error){
+                  inform("Nie udało się odzyskać zmian: "+
+                    (error.message||String(error)),true);
+                }finally{busy(false);}
+              }
+            }
+          }
         }catch(error){
           const message=error?.message||String(error);
           inform("Nie udało się otworzyć okna z ostatniego folderu: "+
