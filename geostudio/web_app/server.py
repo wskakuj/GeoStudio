@@ -107,6 +107,15 @@ def create_app(workspace: PreviewWorkspace | None = None) -> FastAPI:
         except ValueError as exc:
             raise HTTPException(400, str(exc)) from exc
 
+    @app.get("/api/select")
+    async def select_by_attributes(code: str = "", a1: str = "",
+                                   a2: str = "", match: str = "exact"):
+        try:
+            return state.select_by_attributes(
+                code=code, a1=a1, a2=a2, match=match)
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from exc
+
     @app.get("/api/edit/status")
     async def edit_status():
         return state.editing_status()
