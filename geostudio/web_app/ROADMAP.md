@@ -87,11 +87,41 @@ Aktualizacja: 19 listopada 2026. Dokument będziemy uzupełniać po każdym zwer
 - [ ] Podział i scalenie nie mogą bezpiecznie przeliczać ewidencyjnych
   A4/A6, więc aplikacja wyświetla ostrzeżenie o ręcznej weryfikacji.
 
+## Etap 6B — testowa geometria wieloczęściowa i zapis prawdziwych wycięć
+
+- [ ] **Scalanie bez styku**: jeden obiekt :ID może zawierać wiele wysp
+  nieprzylegających i stykających się tylko w pojedynczym węźle. Używamy
+  natywnego P 0 do kończenia każdej części, bez fałszywych krawędzi.
+  Otwory są oddzielnymi konturami; suma powierzchni ma poprawny znak.
+- [ ] **Auto dodatnie pole**: zwykłe Windows „Zapisz jako” zawsze
+  normalizuje orientację prostych zamkniętych obrysów w NOWYM pliku.
+  Nie modyfikuje oryginalnego MAP ani historii. Nowe poligony i kopie
+  są także tworzone z dodatnim kierunkiem.
+- [ ] **Eksport natywnych wycięć 6B**: oddzielny przycisk generuje
+  rzeczywiste różnice geometryczne w MAP (P0 — wiele części i otwory)
+  dla tego samego kodu. Sprawdzamy poprawność po ponownym parsowaniu,
+  numery ID, CHK, sumę pól, niezmienność obcych obiektów i siatkę 1 mm.
+- [ ] **Odtwarzanie oryginału**: obok MAP powstaje dodatkowy
+  \`.geostudio-topology.json\` v2 związany SHA256, zawierający
+  kopię pierwotnych rekordów P zmienionych poligonów. Przy otwieraniu
+  obu plików w GeoStudio 2.0 oryginalna geometria zostaje
+  zweryfikowana i odtworzona do edycji w pamięci.
+- [ ] **Bezpieczeństwo zapisu**: natywny eksport wycięć wymaga
+  nowej nazwy MAP, przygotowuje oba pliki na dysku przed publikacją,
+  w razie błędu usuwa nowy plik towarzyszący.
+  **Pełne przykrycie poligonu na razie blokuje eksport**, aby nie zgubić ID.
+- [ ] **Zgodność klasycznego GEO-MAP DO POTWIERDZENIA:** poprawność
+  składni i obliczeń sprawdzają testy automatyczne, ale w klasycznym
+  programie trzeba zweryfikować otwarcie i reprezentację P0
+  z otworami oraz wieloma wyspami. Nie stosować produkcyjnie bez testu.
+- [ ] Ręczny test eksportu wieloczęściowych 5310, 5220 i 5230
+  oraz otwartych linii przy rzeczywistej MOKRA WIEŚ.MAP.
+
 ## Pozostałe duże obszary
 
 1. **Dopracowanie zaznaczania**: wybór według geometrii, wykluczanie nakładających się obiektów, testy bardzo dużych map.
 2. **Obiekty i topologia**: rysowanie/edycja linii, scalanie i cięcie poligonów, zaawansowane granice i dzielenie powierzchni.
-3. **Zaawansowane GIS 6B**: natywny zapis różnic z otworami, przywracanie w klasycznym GEO-MAP, podział poligonów z otworami, edycja łamanych przez przesuwanie pojedynczych węzłów, pomiary i kontrola metadanych.
+3. **Zaawansowane GIS 6C**: zgodność P0 z klasycznym GEO-MAP, poprawny eksport w pełni przykrytych poligonów z odzyskaniem ID, podział złożonych wielokonturowych obiektów, weryfikacja A4/A6, pomiary i topologia.
 4. **Pełna kartografia**: biblioteki LAY / CDF / SYM, etykiety, wzory, symbole; możliwie wierny klasyczny renderer.
 5. **Wersja produkcyjna**: wydajność na wielkich mapach, zapis bezpośredni z kopią zapasową, odzyskiwanie awaryjne, instalator, testy rzeczywistych plików.
 
