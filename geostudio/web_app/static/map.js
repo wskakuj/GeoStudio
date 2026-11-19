@@ -320,12 +320,22 @@
     };
     requestDraw(); scheduleViewport();
   }
+  function updateGeometryHelp() {
+    if(state.tool!=="nodes")return;
+    const code=state.detail?.code||"brak aktywnego obiektu";
+    const link=state.sharedNodes
+      ?"Wspólne węzły: wyłącznie kod "+code
+      :"Wspólne węzły: wyłączone";
+    $("geometry-help").textContent="P · Aktywny kod: "+code+". "+link+
+      ". Przyciąganie nie zmienia geometrii innych kodów.";
+  }
   function setTool(tool) {
     if(state.editBusy)return;
     state.tool=tool;
     shell.classList.toggle("panning",tool==="pan");
     shell.classList.toggle("nodes-editing",tool==="nodes");
     $("geometry-help").hidden=tool!=="nodes"||!state.meta;
+    updateGeometryHelp();
     for(const [name,id] of [
       ["select","tool-select"],["pan","tool-pan"],["nodes","tool-nodes"],
       ["select","float-select"],["pan","float-pan"],["nodes","float-nodes"]
@@ -451,7 +461,7 @@
     return index;
   }
   function previewSnap(world) {
-    if(!state.snapEnabled)return {point:world,kind:null};
+    if(!state.snapEnabled)return {point:world,kind:null,code:null};
     const radius=11/state.scale;
     let bestVertex=null,bestEdge=null;
     for(const feature of state.features){
@@ -464,7 +474,7 @@
           const point=part[i];
           const dist=Math.hypot(point[0]-world.x,point[1]-world.y);
           if(dist<=radius&&(!bestVertex||dist<bestVertex.dist))
-            bestVertex={dist,point:{x:point[0],y:point[1]},kind:"węzeł"};
+            bestVertex={dist,point:{x:point[0],y:point[1]},kind:"węzeł",code:feature.code};
           if(i===0)continue;
           const a=part[i-1], b=point;
           const dx=b[0]-a[0],dy=b[1]-a[1],len=dx*dx+dy*dy;
@@ -474,12 +484,13 @@
           const px=a[0]+t*dx,py=a[1]+t*dy;
           const d=Math.hypot(px-world.x,py-world.y);
           if(d<=radius&&(!bestEdge||d<bestEdge.dist))
-            bestEdge={dist:d,point:{x:px,y:py},kind:"krawędź"};
+            bestEdge={dist:d,point:{x:px,y:py},kind:"krawędź",code:feature.code};
         }
       }
     }
     const match=bestVertex||bestEdge;
-    return match?{point:match.point,kind:match.kind}:{point:world,kind:null};
+    return match?{point:match.point,kind:match.kind,code:match.code}
+                :{point:world,kind:null,code:null};
   }
   function drawVertexTool() {
     if(state.tool!=="nodes"||!state.detail?.closed)return;
@@ -512,10 +523,30 @@
       const p=worldToScreen(drag.preview.x,drag.preview.y);
       ctx.beginPath();ctx.arc(p.x,p.y,10,0,2*Math.PI);
       ctx.lineWidth=1.5;ctx.strokeStyle="#dc8c32";ctx.stroke();
+      if(drag.snap.code){
+        const foreign=drag.snap.code!==drag.code;
+        const note=foreign
+          ?"PRZYCIĄGANIE DO "+drag.snap.code+" · bez zmiany "+drag.snap.code
+          :"PRZYCIĄGANIE · "+drag.snap.code;
+        ctx.save();
+        ctx.font="bold 11px Segoe UI, sans-serif";
+        const width=Math.min(315,ctx.measureText(note).width+18);
+        const left=Math.max(12,Math.min(state.width-width-12,p.x+14));
+        const top=Math.max(12,Math.min(state.height-35,p.y-39));
+        ctx.fillStyle=foreign?"#244459":"#136f65";
+        ctx.fillRect(left,top,width,27);
+        ctx.fillStyle="#ffffff";
+        ctx.textBaseline="middle";ctx.fillText(note,left+9,top+13);
+        ctx.restore();
+      }
     }
   }
   async function commitVertexDrag(drag) {
     if(state.editBusy||!state.edit||!state.active)return;
+    if(state.detail?.code!==drag.code||state.active!==drag.fid){
+      inform("Zmienił się aktywny obiekt. Ponownie wybierz poligon przed edycją.",true);
+      return;
+    }
     const before=nativeWorldPoint(editableVertices()[drag.index]);
     if(!before)return;
     if(Math.hypot(drag.preview.x-before.x,drag.preview.y-before.y)*
@@ -531,9 +562,20 @@
       });
       updateEditState(response);
       if(response.changed){
+        const affected=response.affectedObjects||[];
+        const wrongCode=affected.some(item=>item.code!==drag.code);
+        if(response.sourceCode!==drag.code||wrongCode||
+           response.foreignCodesProtected!==true){
+          inform("Nieprawidłowy raport kodów. Sprawdź kopię mapy przed dalszą edycją.",true);
+          await refreshEditedDocument(drag.fid);
+          return;
+        }
         await refreshEditedDocument(drag.fid);
-        inform("Przesunięto węzeł ("+response.affected.length+
-          " obiektów). Ctrl+Z cofa.");
+        const snappedForeign=response.snap?.code&&response.snap.code!==drag.code;
+        inform("Przesunięto "+affected.length+" obiektów kodu "+drag.code+
+          ". "+(snappedForeign
+            ?"Przyciągnięto do "+response.snap.code+" (bez zmiany jego geometrii). "
+            :"")+ "Ctrl+Z cofa.");
       }
     }catch(error){
       inform("Nie udało się przesunąć węzła: "+error.message,true);
@@ -738,6 +780,7 @@
     if(!detail)return;
     $("inspector-edit-toggle").disabled=!(detail.editableFields||[]).length;
     $("inspector-code").textContent=detail.code;
+    updateGeometryHelp();
     $("inspector-layer").textContent=detail.layer;
     $("inspector-uid").textContent=detail.sourceUid||detail.id;
     const fields=$("inspector-fields");fields.replaceChildren();
@@ -829,7 +872,8 @@
       const index=closestEditableVertex(p);
       if(index>=0){
         const world=nativeWorldPoint(editableVertices()[index]);
-        state.vertexDrag={fid:state.active,index,preview:world,snap:null};
+        state.vertexDrag={fid:state.active,code:state.detail.code,
+                          index,preview:world,snap:null};
         state.drag={pointer:ev.pointerId,start:p,last:p,moved:false,node:true};
         requestDraw();return;
       }
@@ -848,7 +892,7 @@
       if(d.moved){
         const snap=previewSnap(world);
         state.vertexDrag.preview=snap.point;
-        state.vertexDrag.snap=snap.kind;
+        state.vertexDrag.snap=snap.kind?snap:null;
         requestDraw();
       }
     }else if(d.moved){
@@ -974,7 +1018,9 @@
   link("tool-nodes",()=>setTool("nodes"));
   link("float-nodes",()=>setTool("nodes"));
   $("opt-snap").addEventListener("change",ev=>{state.snapEnabled=ev.target.checked;});
-  $("opt-shared").addEventListener("change",ev=>{state.sharedNodes=ev.target.checked;});
+  $("opt-shared").addEventListener("change",ev=>{
+    state.sharedNodes=ev.target.checked;updateGeometryHelp();
+  });
   link("tool-fit",fitToMap);
   link("float-select",()=>setTool("select"));
   link("float-pan",()=>setTool("pan"));

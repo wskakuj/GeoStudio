@@ -9,6 +9,7 @@ No user-uploaded map is written to disk.
 from __future__ import annotations
 
 from collections import Counter
+from hashlib import sha256
 from dataclasses import dataclass
 from math import isfinite, hypot
 from pathlib import Path
@@ -99,6 +100,7 @@ class PreviewWorkspace:
         self._entries: tuple[_Entry, ...] = ()
         self._lookup: dict[str, _Entry] = {}
         self._object_id: dict[int, str] = {}
+        self._uid_counts: Counter = Counter()
         self._index: GeometryIndex | None = None
         self._styles: dict[str, dict] = {}
         self._label_positions: dict[str, dict] = {}
@@ -172,6 +174,7 @@ class PreviewWorkspace:
         }
         with self._lock:
             self._doc = doc
+            self._uid_counts = Counter(obj.uid for obj in doc.objects if obj.uid)
             self._entries = tuple(entries)
             self._lookup = {entry.fid: entry for entry in entries}
             self._object_id = {id(entry.obj): entry.fid for entry in entries}
@@ -208,6 +211,11 @@ class PreviewWorkspace:
             entry = self._lookup.get(fid)
             if entry is None or not entry.obj.uid:
                 raise LookupError("Nie znaleziono edytowalnego obiektu z ID.")
+            if (self._uid_counts.get(entry.obj.uid) != 1 or
+                    self._doc.by_id.get(entry.obj.uid) is not entry.obj):
+                raise ValueError(
+                    "Niejednoznaczny identyfikator :ID. "
+                    "Nie można bezpiecznie edytować atrybutów tego obiektu.")
             if (not isinstance(changes, dict) or not changes or
                     len(changes) > len(LABEL_FIELDS)):
                 raise ValueError("Podaj zmiany w znanych atrybutach.")
@@ -238,6 +246,22 @@ class PreviewWorkspace:
             self._revision += 1
             return {**self._editing_status(), "changed": True, "object": self.details(fid)}
 
+    @staticmethod
+    def _foreign_code_digest(doc: GeoMap, edited_code: str) -> bytes:
+        """Fingerprint every unedited-code record including native P lines.
+
+        Used inside the atomic History transaction. A mismatch raises and
+        History rolls back the WHOLE edit, rather than exporting damaged MAP.
+        """
+        digest = sha256()
+        for record in doc.objects:
+            if record.code == edited_code:
+                continue
+            digest.update(b"\\x00" + record.code.encode("ascii", "replace"))
+            for raw in doc.lines[record.start:record.end]:
+                digest.update(raw)
+        return digest.digest()
+
     def move_vertex(self, fid: str, index: int, x: float, y: float,
                     *, shared: bool, document_token: str, revision: int,
                     snap_radius: float = 0) -> dict:
@@ -262,6 +286,14 @@ class PreviewWorkspace:
             if entry is None:
                 raise LookupError("Nie znaleziono wskazanego obiektu.")
             obj = entry.obj
+            if obj.uid and (self._uid_counts.get(obj.uid) != 1 or
+                            self._doc.by_id.get(obj.uid) is not obj):
+                # GEO-MAP IDs can appear more than once in malformed/merged
+                # source maps. by_id would point to the LAST occurrence,
+                # possibly a 5220 despite a selected 5310. Never guess.
+                raise ValueError(
+                    "Niejednoznaczny identyfikator :ID obiektu. "
+                    "Edycja węzła została zablokowana, aby nie zmienić innego kodu.")
             if not obj.uid or not obj.is_closed or len(obj.points) < 4:
                 raise ValueError("Można przesuwać tylko węzły zamkniętych poligonów z ID.")
             if not 0 <= index < len(obj.points) - 1:
@@ -286,15 +318,35 @@ class PreviewWorkspace:
                         "affected": [], "object": self.details(fid)}
             changes = (linked_vertex_moves(self._doc, obj.uid, index, x, y)
                        if shared else {obj.uid: {index: (x, y)}})
+            # Defense in depth: never trust an input ID or the planner's
+            # resulting UID dictionary without resolving each exact object.
+            for uid in changes:
+                linked = self._doc.by_id.get(uid)
+                if (self._uid_counts.get(uid) != 1 or linked is None or
+                        linked.code != obj.code):
+                    raise ValueError(
+                        "Zablokowano zmianę: wspólne węzły mogą dotyczyć "
+                        "wyłącznie jednoznacznych obiektów kodu " + obj.code + ".")
+            foreign_before = self._foreign_code_digest(self._doc, obj.code)
             with self._history.begin(
                 "Przesunięcie węzła " + obj.code,
                 selection_before=(obj.uid,),
             ):
                 self._doc.move_polygon_vertices(changes)
+                if self._foreign_code_digest(self._doc, obj.code) != foreign_before:
+                    raise ValueError(
+                        "Przerwano edycję: wykryto zmianę rekordu innego kodu. "
+                        "Wszystkie współrzędne zostały przywrócone.")
             self._reindex(self._doc, self._doc.filename)
             self._revision += 1
             return {**self._editing_status(), "changed": True,
-                    "affected": list(changes), "object": self.details(fid),
+                    "affected": list(changes),
+                    "affectedObjects": [
+                        {"uid": uid, "code": obj.code} for uid in changes
+                    ],
+                    "sourceCode": obj.code,
+                    "foreignCodesProtected": True,
+                    "object": self.details(fid),
                     "snap": ({"kind": snapped.kind, "code": snapped.code,
                               "uid": snapped.uid, "x": x, "y": y}
                              if snapped else None)}
