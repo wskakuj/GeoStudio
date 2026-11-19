@@ -174,3 +174,17 @@ def test_ui_stage6_controls_and_magnet():
     assert "function magneticMove(" in j
     assert "function quickDuplicate(" in j
     assert "/api/geometry/preview" in j and "/api/geometry/apply" in j
+
+
+def test_browser_script_is_valid_javascript():
+    """Catch syntax regressions even if GUI/WebView2 is not on CI."""
+    import shutil
+    import subprocess
+    from pathlib import Path
+    node=shutil.which("node")
+    if not node:
+        pytest.skip("Node.js not installed on this runner")
+    path=Path(__file__).resolve().parents[1]/"geostudio/web_app/static/map.js"
+    check=subprocess.run([node,"--check",str(path)],capture_output=True,
+                         text=True,timeout=15,check=False)
+    assert check.returncode==0,check.stderr
