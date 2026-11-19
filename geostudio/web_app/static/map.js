@@ -1782,6 +1782,10 @@
     canvas.setPointerCapture(ev.pointerId);
     const p=eventCoords(ev);
     state.hoverInsert=null;
+    if(state.tool==="draw"&&ev.button===0&&!state.editBusy&&state.meta){
+      state.drag={pointer:ev.pointerId,start:p,last:p,moved:false,draw:true};
+      return;
+    }
     if(state.tool==="move"&&ev.button===0&&!state.editBusy){
       const world=screenToWorld(p.x,p.y);
       const hits=pick(world),selected=selectedObjectIds();
@@ -1816,6 +1820,9 @@
     const p=eventCoords(ev),world=screenToWorld(p.x,p.y);
     $("cursor-coords").textContent="X: "+(-world.y).toFixed(3)+
                                    "   Y: "+world.x.toFixed(3);
+    if(state.tool==="draw"&&!state.editBusy){
+      state.drawHover={x:-world.y,y:world.x};requestDraw();
+    }
     if(!state.drag&&state.tool==="nodes"&&!state.editBusy){
       state.hoverInsert=closestEditableSegment(p);
       requestDraw();
@@ -1846,6 +1853,22 @@
   canvas.addEventListener("pointerup", ev=>{
     const d=state.drag;state.drag=null;shell.classList.remove("dragging");
     if(!d||ev.pointerId!==d.pointer)return;
+    if(d.draw){
+      if(!d.moved){
+        const p=eventCoords(ev),world=screenToWorld(p.x,p.y);
+        const next=[Math.round(-world.y*1000)/1000,
+                    Math.round(world.x*1000)/1000];
+        const last=state.drawPoints[state.drawPoints.length-1];
+        if(!last||Math.hypot(next[0]-last[0],next[1]-last[1])>0.003){
+          if(state.drawPoints.length<500)state.drawPoints.push(next);
+          else inform("Osiągnięto limit 500 węzłów.",true);
+        }
+        requestDraw();
+        inform("Rysowanie poligonu: "+state.drawPoints.length+
+          " punktów. Enter/dwuklik — zakończ; Esc — anuluj.");
+      }
+      return;
+    }
     if(d.moveIds){
       const ghost=state.moveGhost;
       state.moveGhost=null;requestDraw();
@@ -1890,6 +1913,9 @@
     }else selectFeature(fid);
   });
   canvas.addEventListener("dblclick",ev=>{
+    if(state.tool==="draw"&&state.meta){
+      ev.preventDefault();ev.stopPropagation();finishDrawPolygon();return;
+    }
     if(state.tool!=="nodes"||!state.meta)return;
     ev.preventDefault();ev.stopPropagation();
     if(state.editBusy||state.vertexDrag)return;
@@ -1903,6 +1929,7 @@
   });
   canvas.addEventListener("pointerleave",()=>{
     if(state.hoverInsert){state.hoverInsert=null;requestDraw();}
+    if(state.drawHover){state.drawHover=null;requestDraw();}
   });
   canvas.addEventListener("pointercancel",()=>{state.drag=null;state.vertexDrag=null;state.moveGhost=null;shell.classList.remove("dragging");requestDraw();});
   canvas.addEventListener("wheel",ev=>{
@@ -1955,7 +1982,18 @@
     if((ev.ctrlKey||ev.metaKey)&&ev.shiftKey&&ev.key.toLowerCase()==="m"){
       ev.preventDefault();openMoveEditor();return;
     }
+    if($("copy-dialog").open||$("create-dialog").open||$("move-dialog").open||
+       $("bulk-dialog").open||$("select-dialog").open)return;
     if(typing)return;
+    if((ev.ctrlKey||ev.metaKey)&&ev.key==="Delete"){
+      ev.preventDefault();deleteObjects();return;
+    }
+    if((ev.ctrlKey||ev.metaKey)&&ev.key.toLowerCase()==="d"){
+      ev.preventDefault();openCopyEditor();return;
+    }
+    if(state.tool==="draw"&&ev.key==="Enter"){
+      ev.preventDefault();finishDrawPolygon();return;
+    }
     if(state.tool==="nodes"&&state.detail&&!ev.ctrlKey&&!ev.metaKey&&!ev.altKey&&
        (ev.key==="Delete"||ev.key==="Backspace")){
       ev.preventDefault();deleteSelectedVertex();return;
@@ -1981,13 +2019,14 @@
     }
     if(ev.key==="Escape"){
       if(dialog.open)dialog.close();
-      else if(state.tool==="nodes"||state.tool==="move"){
+      else if(state.tool==="nodes"||state.tool==="move"||state.tool==="draw"){
         state.vertexDrag=null;setTool("select");
       }else selectFeature(null);
       return;
     }
     if(ev.key.toLowerCase()==="s")setTool("select");
     if(ev.key.toLowerCase()==="m")setTool("move");
+    if(ev.key.toLowerCase()==="n")setTool("draw");
     if(ev.key.toLowerCase()==="h")setTool("pan");
     if(ev.key.toLowerCase()==="b")pinActive();
     if(ev.key==="0")fitToMap();
@@ -2001,6 +2040,20 @@
   link("tool-advanced-select",openAdvancedSelection);
   link("tool-bulk-edit",openBulkEditor);
   link("tool-move",()=>setTool("move"));
+  link("tool-new-polygon",()=>setTool("draw"));
+  link("tool-copy",openCopyEditor);
+  link("tool-delete-objects",deleteObjects);
+  link("copy-close",()=>$("copy-dialog").close());
+  link("create-close",()=>$("create-dialog").close());
+  link("create-back",()=>$("create-dialog").close());
+  link("copy-preview",()=>previewObject("copy"));
+  link("create-preview",()=>previewObject("create"));
+  $("copy-form").addEventListener("submit",ev=>applyObject("copy",ev));
+  $("create-form").addEventListener("submit",ev=>applyObject("create",ev));
+  for(const id of ["copy-dx","copy-dy"])
+    $(id).addEventListener("input",()=>invalidateObjectPreview("copy"));
+  for(const id of ["create-code","create-a1","create-a2"])
+    $(id).addEventListener("input",()=>invalidateObjectPreview("create"));
   link("float-move",()=>setTool("move"));
   link("tool-move-offset",()=>openMoveEditor());
   link("move-close",()=>$("move-dialog").close());
