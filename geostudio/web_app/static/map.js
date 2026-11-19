@@ -18,7 +18,8 @@
     queryAbort: null, selectionRequest: 0, limited: false,
     firstLoad: true, inspectorCache: new Map(),
     edit: null, editBusy: false,
-    snapEnabled: true, sharedNodes: false, vertexDrag: null
+    snapEnabled: true, sharedNodes: false, vertexDrag: null,
+    hoverInsert: null
   };
   const commands = [
     {name:"Otwórz plik GEO-MAP", hint:"Ctrl+O", run:()=> $("file-map").click()},
@@ -326,12 +327,14 @@
     const link=state.sharedNodes
       ?"Wspólne węzły i przyciąganie: tylko kod "+code
       :"Wspólne węzły: wyłączone";
-    $("geometry-help").textContent="P · Aktywny kod: "+code+". "+link+
-      ". Innych kodów nie można przesunąć w trybie P.";
+    $("geometry-help").textContent="P · Aktywny kod: "+code+
+      ". Przeciągnij węzeł lub kliknij DWUKROTNIE na krawędzi, by dodać punkt. "+
+      link+". Inne kody pozostają bez zmian.";
   }
   function setTool(tool) {
     if(state.editBusy)return;
     state.tool=tool;
+    state.hoverInsert=null;
     shell.classList.toggle("panning",tool==="pan");
     shell.classList.toggle("nodes-editing",tool==="nodes");
     $("geometry-help").hidden=tool!=="nodes"||!state.meta;
@@ -459,6 +462,33 @@
       if(dist<best){best=dist;index=i;}
     }
     return index;
+  }
+  function closestEditableSegment(screen, radius=9) {
+    // Use native, full-precision P order from the selected object, NEVER
+    // visually-overlapping features from another code. Closing edge included.
+    if(!state.detail?.closed||state.detail.geometryTruncated)return null;
+    const pts=state.detail.points||[];
+    let best=null;
+    for(let i=0;i<pts.length-1;i++){
+      if(pts[i].type===0)continue; // no hidden P0 component connector
+      const a=nativeWorldPoint(pts[i]),b=nativeWorldPoint(pts[i+1]);
+      const pa=worldToScreen(a.x,a.y),pb=worldToScreen(b.x,b.y);
+      const dx=pb.x-pa.x,dy=pb.y-pa.y;
+      const len2=dx*dx+dy*dy;
+      if(len2<16*16)continue; // zoom in before adding to a short edge
+      const t=((screen.x-pa.x)*dx+(screen.y-pa.y)*dy)/len2;
+      if(t<=0||t>=1)continue;
+      const px=pa.x+t*dx,py=pa.y+t*dy;
+      if(Math.hypot(screen.x-px,screen.y-py)>radius)continue;
+      if(Math.min(Math.hypot(px-pa.x,py-pa.y),
+                  Math.hypot(px-pb.x,py-pb.y))<8)continue;
+      const dist=Math.hypot(screen.x-px,screen.y-py);
+      if(!best||dist<best.distance){
+        best={segmentIndex:i,world:screenToWorld(px,py),
+              screen:{x:px,y:py},distance:dist};
+      }
+    }
+    return best;
   }
   function previewSnap(world) {
     if(!state.snapEnabled)return {point:world,kind:null,code:null};
@@ -601,6 +631,17 @@
       ctx.fillStyle=i===drag?.index?"#ffc263":"#f8ffff";
       ctx.fill();ctx.lineWidth=2;ctx.strokeStyle="#078d89";ctx.stroke();
     }
+    if(!drag&&state.hoverInsert){
+      const p=state.hoverInsert.screen;
+      ctx.save();
+      ctx.beginPath();ctx.arc(p.x,p.y,8,0,2*Math.PI);
+      ctx.fillStyle="#edfff9";ctx.fill();
+      ctx.lineWidth=2;ctx.strokeStyle="#0b958b";ctx.stroke();
+      ctx.strokeStyle="#0b958b";ctx.lineWidth=2;
+      ctx.beginPath();ctx.moveTo(p.x-4,p.y);ctx.lineTo(p.x+4,p.y);
+      ctx.moveTo(p.x,p.y-4);ctx.lineTo(p.x,p.y+4);ctx.stroke();
+      ctx.restore();
+    }
     if(drag?.snap){
       const p=worldToScreen(drag.preview.x,drag.preview.y);
       ctx.beginPath();ctx.arc(p.x,p.y,10,0,2*Math.PI);
@@ -621,6 +662,47 @@
         ctx.textBaseline="middle";ctx.fillText(note,left+9,top+13);
         ctx.restore();
       }
+    }
+  }
+  async function insertVertexAtSegment(segment) {
+    if(state.editBusy||!state.edit||!state.active||!state.detail?.closed)
+      return;
+    const fid=state.active,code=state.detail.code;
+    state.hoverInsert=null;
+    state.editBusy=true;
+    updateEditState(state.edit);
+    try {
+      const response=await api("/api/object/"+
+        encodeURIComponent(fid)+"/vertices",{
+          method:"POST",
+          headers:{"Content-Type":"application/json"},
+          body:JSON.stringify({...editRequestBody(),
+            segmentIndex:segment.segmentIndex,
+            x:-segment.world.y,y:segment.world.x,
+            shared:state.sharedNodes,
+            edgeRadius:Math.max(.001,Math.min(50,9/state.scale))})
+        });
+      updateEditState(response);
+      const affected=response.affectedObjects||[];
+      if(response.sourceCode!==code||
+         response.foreignCodesProtected!==true||
+         affected.some(item=>item.code!==code)){
+        inform("Nieprawidłowy raport edycji. Sprawdź wynik przed zapisem.",true);
+        await refreshEditedDocument(fid);
+        return;
+      }
+      await refreshEditedDocument(fid);
+      inform("Dodano wierzchołek "+code+
+        (response.insertedSameCodeVertices
+          ?" oraz "+response.insertedSameCodeVertices+
+            " w sąsiednich poligonach "+code:"")+
+        ". Ctrl+Z — cofnięcie.");
+    }catch(error){
+      inform("Nie można dodać wierzchołka: "+error.message,true);
+    }finally{
+      state.editBusy=false;
+      updateEditState(state.edit);
+      requestDraw();
     }
   }
   async function commitVertexDrag(drag) {
@@ -956,6 +1038,7 @@
     if(ev.button!==0&&ev.button!==1)return;
     canvas.setPointerCapture(ev.pointerId);
     const p=eventCoords(ev);
+    state.hoverInsert=null;
     if(state.tool==="nodes"&&ev.button===0&&!state.editBusy){
       const index=closestEditableVertex(p);
       if(index>=0){
@@ -973,6 +1056,10 @@
     const p=eventCoords(ev),world=screenToWorld(p.x,p.y);
     $("cursor-coords").textContent="X: "+(-world.y).toFixed(3)+
                                    "   Y: "+world.x.toFixed(3);
+    if(!state.drag&&state.tool==="nodes"&&!state.editBusy){
+      state.hoverInsert=closestEditableSegment(p);
+      requestDraw();
+    }
     if(!state.drag||state.drag.pointer!==ev.pointerId)return;
     const d=state.drag;
     if(Math.hypot(p.x-d.start.x,p.y-d.start.y)>4)d.moved=true;
@@ -1003,7 +1090,12 @@
     }
     if(d.moved){scheduleViewport();return;}
     if(d.pan)return;
-    const p=eventCoords(ev),world=screenToWorld(p.x,p.y),hits=pick(world);
+    const p=eventCoords(ev);
+    // Single-clicking the selected polygon's edge in P keeps it selected.
+    // Otherwise the second click in a double-click may cycle to a
+    // visually overlapping 5220 before our dblclick handler can insert.
+    if(state.tool==="nodes"&&closestEditableSegment(p))return;
+    const world=screenToWorld(p.x,p.y),hits=pick(world);
     if(!hits.length){selectFeature(null);state.lastPick=null;return;}
     let index=0;
     if(state.lastPick&&Math.hypot(state.lastPick.p.x-p.x,
@@ -1011,6 +1103,21 @@
        index=(hits.indexOf(state.lastPick.fid)+1)%hits.length;
     const fid=hits[index];
     state.lastPick={p,fid};selectFeature(fid);
+  });
+  canvas.addEventListener("dblclick",ev=>{
+    if(state.tool!=="nodes"||!state.meta)return;
+    ev.preventDefault();ev.stopPropagation();
+    if(state.editBusy||state.vertexDrag)return;
+    const segment=closestEditableSegment(eventCoords(ev));
+    if(!segment){
+      inform("Dwuklik: wybierz środek krawędzi zaznaczonego poligonu "+
+        "(nie istniejący węzeł). W razie potrzeby przybliż mapę.");
+      return;
+    }
+    insertVertexAtSegment(segment);
+  });
+  canvas.addEventListener("pointerleave",()=>{
+    if(state.hoverInsert){state.hoverInsert=null;requestDraw();}
   });
   canvas.addEventListener("pointercancel",()=>{state.drag=null;state.vertexDrag=null;shell.classList.remove("dragging");requestDraw();});
   canvas.addEventListener("wheel",ev=>{
