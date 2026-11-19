@@ -112,104 +112,91 @@ def test_authenticated_http_selection_and_invalid_queries():
 
 def test_native_picker_remembers_previous_folder_across_new_instances(
         tmp_path, monkeypatch):
-    # No real WebView2 window is needed to test native persistence.
-    monkeypatch.setitem(sys.modules, "webview",
-                       SimpleNamespace(FileDialog=SimpleNamespace(OPEN=10)))
+    # A fake Tk dialog tests native folder persistence on headless CI.
     folder = tmp_path / "Polskie mapy"
     folder.mkdir()
     path = folder / "MOKRA WIEŚ.MAP"
     path.write_bytes(source())
     prefs = tmp_path / "settings" / "preferences.json"
-    class Window:
-        def __init__(self, selection):
-            self.selection = selection
-            self.arguments = None
-        def create_file_dialog(self, **kwargs):
-            self.arguments = kwargs
-            return self.selection
-    first_window = Window((str(path),))
-    bridge = NativeMapPicker(PreviewWorkspace(),settings=prefs,window=first_window)
+    calls = []
+    selected = [str(path), ""]
+
+    class Root:
+        def withdraw(self): pass
+        def attributes(self, *args): pass
+        def update(self): pass
+        def destroy(self): pass
+    def askopenfilename(**kwargs):
+        calls.append(kwargs)
+        return selected.pop(0)
+    tkinter_mock = SimpleNamespace(
+        Tk=Root,
+        filedialog=SimpleNamespace(askopenfilename=askopenfilename),
+    )
+    monkeypatch.setitem(sys.modules, "tkinter", tkinter_mock)
+
+    bridge = NativeMapPicker(PreviewWorkspace(), settings=prefs)
     result = bridge.open_map()
     assert result["cancelled"] is False
     assert result["metadata"]["name"] == "MOKRA WIEŚ.MAP"
     assert result["metadata"]["objectCount"] == 6
     assert "last_map_directory" not in result["metadata"]
     assert str(folder) not in str(result)
-    assert first_window.arguments["directory"] == ""
+    assert calls[0]["initialdir"] == str(Path.home())
     assert read_last_map_directory(prefs) == str(folder)
     assert json.loads(prefs.read_text(encoding="utf-8")) == {
-        "last_map_directory": str(folder)}
-    second_window = Window(None)
-    other = NativeMapPicker(PreviewWorkspace(),settings=prefs,window=second_window)
+        "last_map_directory": str(folder)
+    }
+
+    other = NativeMapPicker(PreviewWorkspace(), settings=prefs)
     assert other.open_map() == {"cancelled": True}
-    assert second_window.arguments["directory"] == str(folder)
+    assert calls[1]["initialdir"] == str(folder)
 
-
-def test_pywebview_js_bridge_never_exposes_native_window_or_workspace(tmp_path):
-    """Prevent WinForms COM recursion through pywebview public discovery.
-
-    Regression for errors:
-      window.native.AccessibilityObject.Bounds.Empty...
-      maximum recursion depth exceeded / WebView2 UI thread exception.
-    Public js_api fields must be only safe callable entry points. If the
-    Window leaks as a member, pywebview walks its .native COM graph.
-    """
-    class DangerousWindow:
-        def __init__(self):
-            self.native_accesses = 0
-        @property
-        def native(self):
-            self.native_accesses += 1
-            raise RuntimeError("Native COM object must never be inspected")
-
-    fake_window = DangerousWindow()
+def test_pywebview_js_bridge_has_no_native_window_or_workspace(tmp_path):
+    """Prevent recursive WinForms COM inspection by the JS API."""
     workspace = PreviewWorkspace()
-    picker = NativeMapPicker(
-        workspace, settings=tmp_path / "preferences.json",
-        window=fake_window)
-    # Simulate pywebview's public attribute traversal.
-    members = [
-        name for name in dir(picker)
-        if not name.startswith("_")
-    ]
-    assert members == ["open_map"]
-    assert callable(getattr(picker, "open_map"))
-    assert fake_window.native_accesses == 0
-    assert picker._window is fake_window
+    picker = NativeMapPicker(workspace, settings=tmp_path / "preferences.json")
+    exposed = [name for name in dir(picker) if not name.startswith("_")]
+    assert exposed == ["open_map"]
+    assert callable(picker.open_map)
     assert picker._workspace is workspace
+    assert not hasattr(picker, "_window")
     assert not hasattr(picker, "__dict__")
     with pytest.raises(AttributeError):
-        picker.window = fake_window
+        picker.window = object()
     with pytest.raises(AttributeError):
         picker.workspace = workspace
-    assert fake_window.native_accesses == 0
 
-
-def test_desktop_window_assignment_is_private_in_launcher():
+def test_desktop_window_not_exported_to_js_api():
     from geostudio.web_app import __main__ as entry
     import inspect
-    source = inspect.getsource(entry.main)
-    assert "native_picker._window = window" in source
-    assert "native_picker.window = window" not in source
-
+    source_text = inspect.getsource(entry.main)
+    assert "js_api=native_picker" in source_text
+    assert "native_picker._window = window" not in source_text
+    assert "native_picker.window = window" not in source_text
 
 def test_bad_map_does_not_replace_last_folder(tmp_path, monkeypatch):
-    monkeypatch.setitem(sys.modules, "webview",
-                       SimpleNamespace(FileDialog=SimpleNamespace(OPEN=10)))
     previous = tmp_path / "old"
     previous.mkdir()
     prefs = tmp_path / "prefs.json"
     save_last_map_directory(prefs, previous)
     bad = tmp_path / "broken.MAP"
     bad.write_bytes(b"not a GEO-MAP map")
-    class Window:
-        def create_file_dialog(self, **kwargs):
-            return (str(bad),)
-    picker = NativeMapPicker(PreviewWorkspace(),settings=prefs,window=Window())
+    monkeypatch.setattr(NativeMapPicker, "_choose_path",
+                        lambda self: str(bad))
+    picker = NativeMapPicker(PreviewWorkspace(),settings=prefs)
     with pytest.raises(ValueError):
         picker.open_map()
     assert read_last_map_directory(prefs) == str(previous)
 
+
+def test_native_picker_failure_gives_clickable_fallback(tmp_path, monkeypatch):
+    def fail(self):
+        raise RuntimeError("No native picker")
+    monkeypatch.setattr(NativeMapPicker, "_choose_path", fail)
+    picker = NativeMapPicker(PreviewWorkspace(), settings=tmp_path / "prefs.json")
+    with pytest.raises(RuntimeError, match="Wybierz z dysku"):
+        picker.open_map()
 
 def test_web_buttons_and_browser_fallback_exist():
     static = Path(__file__).resolve().parents[1] / "geostudio/web_app/static"
@@ -220,8 +207,12 @@ def test_web_buttons_and_browser_fallback_exist():
                     "select-apply", "select-clear"]:
         assert 'id="'+element+'"' in html
     assert 'ev.key.toLowerCase()==="h"' in js
-    assert 'window.pywebview?.api?.open_map' in js
-    assert "showOpenFilePicker" in js
+    assert 'window.pywebview.api?.open_map' in js
+    assert 'id="btn-open-direct"' in html
+    assert 'for="file-map"' in html
+    assert 'if(window.pywebview)' in js
+    assert 'window.pywebview.api?.open_map' in js
+    assert 'window.showOpenFilePicker' in js
     assert 'id:"geostudio-map-folder"' in js
     assert "state.pinned=matches" in js
     assert "state.tool===\"nodes\"" in js
