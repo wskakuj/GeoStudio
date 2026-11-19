@@ -183,3 +183,24 @@ body.dark-map .empty-state .hint-chips span { background:#20374a; color:#9bb8ca;
   .top-icon kbd { display:none; }
   .statusbar-right { display:none; }
 }
+
+
+/* GeoStudio 2.0 attribute editor — compact, high contrast and keyboard-friendly. */
+button:disabled { opacity:.38; cursor:not-allowed; filter:none !important; }
+.button.export { color:#77dfce; background:#173944; border-color:#346d6b; white-space:nowrap; }
+.button.ghost { background:#1a2b3e; border-color:#385065; }
+.document-meta.unsaved { color:#ffbd74; }
+.inspector-section-heading { display:flex; justify-content:space-between; align-items:center; gap:8px; }
+.inspector-section-heading h3 { margin:0 0 10px; }
+.text-edit-button { padding:5px 9px; color:#84e5d5; border:1px solid #396471; background:#173344; font-size:11px; border-radius:7px; margin-bottom:9px; }
+.text-edit-button:hover { background:#1d4958; }
+.inspector-edit { border-top:1px solid #2e4b5b; margin-top:11px; padding-top:9px; }
+.inspector-edit p { margin:0 0 12px; color:#a8bbca; font-size:11px; line-height:1.65; }
+.inspector-edit-fields { display:grid; gap:11px; max-height:48vh; overflow:auto; padding-right:4px; scrollbar-width:thin; }
+.inspector-edit-field { display:grid; gap:4px; }
+.inspector-edit-field label { font-size:10px; letter-spacing:.07em; color:#86a7b9; font-weight:680; }
+.inspector-edit-field input { width:100%; min-height:36px; border-radius:7px; padding:8px 9px; border:1px solid #355269; color:#e6eff7; background:#0d1b2c; font-size:12px; outline:none; }
+.inspector-edit-field input:focus { border-color:#4bcdbc; box-shadow:0 0 0 2px #2cc9b41c; }
+.inspector-edit-actions { display:flex; gap:7px; padding-top:14px; }
+.inspector-edit-actions .button { flex:1; padding:9px 7px; font-size:11px; }
+@media (max-width:1120px) { .toolbar .tool-button { padding:6px 7px; } .button.export { padding:9px; } }
