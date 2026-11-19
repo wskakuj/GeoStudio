@@ -69,7 +69,7 @@ def test_preview_has_no_side_effects_and_reports_topology(ws):
     assert any(x["stationaryUid"] == "B" for x in report["topologyConflicts"])
     assert ws.export_copy(auth(ws)["document_token"])[1] == raw
     assert ws.editing_status()["canUndo"] is False
-    with pytest.raises(ValueError, match="wspólną granicę"):
+    with pytest.raises(ValueError, match="nachodzą na siebie"):
         apply(ws, ["f0"], report)
 
 
@@ -110,13 +110,13 @@ def test_move_multiple_adjacent_same_code_polygons_undo_redo(ws):
 
 
 def test_explicit_detach_moves_only_selected_same_code_without_touching_neighbors(ws):
-    plan = preview(ws, ["f0"], allow_detach=True)
+    plan = preview(ws, ["f0"], dx=-2, dy=-3, allow_detach=True)
     assert plan["topologyConflicts"] and plan["canApply"]
-    result = apply(ws, ["f0"], plan, allow_detach=True)
+    result = apply(ws, ["f0"], plan, dx=-2, dy=-3, allow_detach=True)
     assert result["topologyDetached"] is True
     doc = GeoMap(ws.export_copy(auth(ws)["document_token"])[1])
     base = GeoMap(source())
-    assert doc.by_id["A"].points[0].x == 2
+    assert doc.by_id["A"].points[0].x == -2
     for uid in ("B", "C", "LAND", "ROAD", "LINE"):
         assert objlines(doc, uid) == objlines(base, uid)
 
@@ -229,3 +229,24 @@ def test_ui_contains_move_dialog_and_shortcuts():
                      "function drawMoveGhost", "state.moveGhost",
                      'ev.key.toLowerCase()==="m"'):
         assert required in js
+
+
+def test_moving_inside_same_code_is_always_blocked(ws):
+    plan=preview(ws,["f2"],dx=-35,dy=0,allow_detach=True)
+    assert plan["overlapBlocked"]
+    assert not plan["canApply"]
+    with pytest.raises(ValueError,match="nachodzą"):
+        apply(ws,["f2"],plan,dx=-35,dy=0,allow_detach=True)
+
+
+def test_magnetic_snap_reaches_shared_border_without_overlap(ws):
+    plan=ws.preview_move_polygons(
+        ["f2"],-29.75,0,allow_detach=False,snap_distance=.5,**auth(ws))
+    assert plan["snapApplied"] is not None
+    assert plan["delta"]["x"] == -30.0
+    assert plan["overlapConflicts"] == []
+    outcome=ws.apply_move_polygons(
+        ["f2"],-29.75,0,allow_detach=False,snap_distance=.5,
+        preview_key=plan["previewKey"],**auth(ws))
+    assert outcome["changed"]
+    assert ws.details("f2")["points"][0]["x"]==10.0
