@@ -117,6 +117,7 @@ class PreviewWorkspace:
         self._bulk_preview_key = ""
         self._move_preview_key = ""
         self._objects_preview_key = ""
+        self._geometry_preview_key = ""
 
     def load_map(self, content: bytes, filename: str) -> dict:
         if not content or len(content) > MAX_MAP_BYTES:
@@ -900,6 +901,196 @@ class PreviewWorkspace:
             self._bulk_preview_key=""
             return {**self._editing_status(),"changed":True,"action":action,
                     "affected":payload.get("ids",[]),
+                    "createdUids":created,
+                    "createdIds":[self._object_id[id(self._doc.by_id[uid])]
+                                  for uid in created]}
+
+    def _geometry_plan(self, operation: dict, *,
+                       document_token: str, revision: int) -> dict:
+        """Strict preflight for explicit native GEO-MAP geometry operations."""
+        if (self._doc is None or self._history is None):
+            raise ValueError("Najpierw otwórz mapę.")
+        if (document_token!=self._document_token or
+                type(revision) is not int or revision!=self._revision):
+            raise RuntimeError("Mapa została zmieniona. Sprawdź ponownie.")
+        if not isinstance(operation,dict):
+            raise ValueError("Nieprawidłowe parametry geometrii.")
+        action=operation.get("action")
+        fields={
+            "repair":{"action","ids"},
+            "merge":{"action","ids"},
+            "split":{"action","ids","points"},
+            "create_line":{"action","code","points","fields"},
+            "edit_line":{"action","ids","points"},
+        }
+        if action not in fields or set(operation)-fields.get(action,set()):
+            raise ValueError("Nieznane lub nieobsługiwane polecenie geometrii.")
+        selected=[]
+        if action!="create_line":
+            ids=operation.get("ids")
+            if (not isinstance(ids,list) or not ids or
+                    len(ids)>100 or len(ids)!=len(set(str(x) for x in ids))):
+                raise ValueError("Wymagane 1–100 różnych obiektów.")
+            if action in {"split","edit_line"} and len(ids)!=1:
+                raise ValueError("Ta operacja wymaga dokładnie jednego obiektu.")
+            if action=="merge" and len(ids)<2:
+                raise ValueError("Scalenie wymaga minimum dwóch obiektów.")
+            for fid in ids:
+                if not isinstance(fid,str) or fid not in self._lookup:
+                    raise LookupError("Nieznany identyfikator obiektu.")
+                obj=self._lookup[fid].obj
+                if (not obj.uid or self._uid_counts.get(obj.uid)!=1 or
+                        self._doc.by_id.get(obj.uid) is not obj):
+                    raise ValueError("Obiekt ma niejednoznaczne :ID.")
+                selected.append(obj)
+        geometry=None
+        coordinates=[]
+        details={}
+        if action in {"repair","merge","split"}:
+            for obj in selected:
+                if not obj.is_closed or any(p.point_type!=1 for p in obj.points):
+                    raise ValueError("Wybierz proste, zamknięte poligony (bez P 0).")
+        if action=="repair":
+            repairs=[obj.uid for obj in selected if self._doc.signed_area(
+                [(p.x,p.y) for p in obj.points[:-1]])<0]
+            details={"repairs":repairs}
+        elif action=="merge":
+            codes={obj.code for obj in selected}
+            attrs={(obj.fields.get("A1",""),obj.fields.get("A2",""))
+                   for obj in selected}
+            if len(codes)!=1 or len(attrs)!=1:
+                raise ValueError("Scalaj tylko ten sam kod i zgodne wartości A1/A2.")
+            geometry=merge_simple([polygon_of(o) for o in selected])
+            details={"beforeArea":round(sum(polygon_of(o).area
+                                               for o in selected),3),
+                     "afterArea":round(abs(self._doc.signed_area(geometry)),3),
+                     "metadataWarning":True}
+        elif action=="split":
+            points=operation.get("points")
+            if not isinstance(points,list) or not 2<=len(points)<=500:
+                raise ValueError("Narysuj linię podziału z 2–500 punktów.")
+            for point in points:
+                if (not isinstance(point,list) or len(point)!=2 or
+                        any(type(v) not in (int,float) or
+                            not isfinite(v) or abs(v)>1e9 for v in point)):
+                    raise ValueError("Nieprawidłowe punkty linii podziału.")
+                coordinates.append(tuple(round(v,3) for v in point))
+            geometry=split_simple(polygon_of(selected[0]),coordinates)
+            details={"parts":len(geometry),
+                     "beforeArea":round(polygon_of(selected[0]).area,3),
+                     "afterArea":round(sum(abs(self._doc.signed_area(part))
+                                           for part in geometry),3),
+                     "metadataWarning":True}
+        if action in {"create_line","edit_line"}:
+            points=operation.get("points")
+            if not isinstance(points,list) or not 2<=len(points)<=500:
+                raise ValueError("Linia wymaga 2–500 punktów.")
+            for point in points:
+                if (not isinstance(point,list) or len(point)!=2 or
+                        any(type(v) not in (int,float) or
+                            not isfinite(v) or abs(v)>1e9 for v in point)):
+                    raise ValueError("Nieprawidłowy punkt linii.")
+                coordinates.append(tuple(round(v,3) for v in point))
+            from shapely.geometry import LineString
+            polyline=LineString(coordinates)
+            if not polyline.is_simple or polyline.length<=0.001:
+                raise ValueError("Linia jest zbyt krótka lub przecina samą siebie.")
+            if action=="edit_line":
+                if selected[0].is_closed or selected[0].code not in {
+                        "6900","6000","6301","2364","4100"}:
+                    raise ValueError("Wybrany obiekt nie jest obsługiwaną linią.")
+            else:
+                code=operation.get("code")
+                if code not in {"6900","6000","6301","2364"}:
+                    raise ValueError("Wybierz kod linii 6900, 6000, 6301 lub 2364.")
+                attrs=operation.get("fields")
+                if not isinstance(attrs,dict) or set(attrs)-{"A1","A2"}:
+                    raise ValueError("Linia obsługuje A1/A2.")
+                for value in attrs.values():
+                    if (not isinstance(value,str) or any(c in value for c in "\r\n]")):
+                        raise ValueError("Niedozwolone znaki w atrybucie.")
+                    try:
+                        if len(value.encode("cp1250"))>512:
+                            raise ValueError("Atrybut jest zbyt długi.")
+                    except UnicodeEncodeError as e:
+                        raise ValueError("Użyj polskich znaków CP1250.") from e
+        allowed=(bool(details.get("repairs")) if action=="repair" else True)
+        payload={"operation":operation,"documentToken":document_token,
+                 "revision":revision}
+        key=sha256(json.dumps(payload,sort_keys=True,
+                             ensure_ascii=False,separators=(",",":")).encode()).hexdigest()
+        return {"action":action,"selected":selected,"coordinates":coordinates,
+                "geometry":geometry,
+                "report":{"action":action,"canApply":allowed,
+                          "previewKey":key,"selected":len(selected),
+                          "codes":dict(Counter(o.code for o in selected)),
+                          **details,**self._editing_status()}}
+
+    def preview_geometry_operation(self, operation: dict, *,
+                                   document_token: str,revision: int) -> dict:
+        with self._lock:
+            plan=self._geometry_plan(operation,
+                                    document_token=document_token,revision=revision)
+            self._geometry_preview_key=plan["report"]["previewKey"]
+            return plan["report"]
+
+    def apply_geometry_operation(self, operation: dict, *, preview_key: str,
+                                 document_token: str, revision: int) -> dict:
+        with self._lock:
+            plan=self._geometry_plan(operation,
+                                    document_token=document_token,revision=revision)
+            report=plan["report"]
+            if (not report["canApply"] or not isinstance(preview_key,str) or
+                    preview_key!=report["previewKey"] or
+                    preview_key!=getattr(self,"_geometry_preview_key","")):
+                raise RuntimeError("Podgląd jest nieaktualny lub nie ma zmian.")
+            action=plan["action"]
+            selected=plan["selected"]
+            created=[]
+            affected={obj.uid for obj in selected}
+            with self._history.begin({
+                "repair":"Kierunek obrysu i dodatnie pole",
+                "merge":"Scalenie poligonów",
+                "split":"Podział poligonu",
+                "create_line":"Nowa linia",
+                "edit_line":"Zmiana linii",
+            }[action],selection_before=tuple(affected)):
+                if action=="repair":
+                    self._doc.normalize_polygon_winding(
+                        report["repairs"])
+                elif action=="merge":
+                    keeper=selected[0].uid
+                    self._doc.replace_simple_geometry(
+                        keeper,plan["geometry"])
+                    self._doc.delete_objects(
+                        [o.uid for o in selected[1:]])
+                    self._styles[TOPOLOGY_STACK_KEY]={
+                        "uids":[uid for uid in self._overlay_uids()
+                                if uid not in affected or uid==keeper]}
+                elif action=="split":
+                    original=selected[0].uid
+                    pieces=plan["geometry"]
+                    if len(pieces)>1:
+                        for piece in pieces[1:]:
+                            clone=self._doc.duplicate_polygons(
+                                [original],0,0)[0]
+                            self._doc.replace_simple_geometry(clone,piece)
+                            created.append(clone)
+                        self._doc.replace_simple_geometry(original,pieces[0])
+                elif action=="create_line":
+                    created=[self._doc.append_polyline(
+                        plan["coordinates"],code=operation["code"],
+                        fields=operation["fields"])]
+                else:
+                    self._doc.replace_simple_geometry(
+                        selected[0].uid,plan["coordinates"],closed=False)
+            self._reindex(self._doc,self._doc.filename)
+            self._revision+=1
+            self._geometry_preview_key=""
+            self._move_preview_key=""
+            self._objects_preview_key=""
+            return {**self._editing_status(),"changed":True,
+                    "action":action,"affected":operation.get("ids",[]),
                     "createdUids":created,
                     "createdIds":[self._object_id[id(self._doc.by_id[uid])]
                                   for uid in created]}
