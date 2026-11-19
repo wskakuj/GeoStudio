@@ -211,6 +211,11 @@ class PreviewWorkspace:
             entry = self._lookup.get(fid)
             if entry is None or not entry.obj.uid:
                 raise LookupError("Nie znaleziono edytowalnego obiektu z ID.")
+            if (self._uid_counts.get(entry.obj.uid) != 1 or
+                    self._doc.by_id.get(entry.obj.uid) is not entry.obj):
+                raise ValueError(
+                    "Niejednoznaczny identyfikator :ID. "
+                    "Nie można bezpiecznie edytować atrybutów tego obiektu.")
             if (not isinstance(changes, dict) or not changes or
                     len(changes) > len(LABEL_FIELDS)):
                 raise ValueError("Podaj zmiany w znanych atrybutach.")
