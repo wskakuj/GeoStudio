@@ -23,6 +23,49 @@ Gdy pywebview/WebView2 nie wyświetla prawidłowo okna, użyj:
 To uruchomi tę samą lokalną aplikację w domyślnej przeglądarce.
 Wymaga Python 3.11+, lokalnego Edge WebView2 dla natywnego okna.
 
+## Etap 4A — zaznaczanie zaawansowane i ostatni folder map
+
+### Ctrl+H — wybór wg kodu, A1 i A2
+Wczytaj plik MAP, a potem kliknij **Filtruj** na wstążce
+lub naciśnij **Ctrl+H** (w natywnym oknie GeoStudio).
+
+- **Kod:** wybierz np. `5310`; bez innych warunków wybierze wszystkie
+  poligony z tym kodem z **całej mapy**, nie tylko z widocznego kadru.
+- **A1 / A2:** opcjonalnie zawężają wybór, np. `5310` z `A2` równym
+  konkretnej wartości. Można też filtrować tylko po A1/A2 bez kodu.
+- **Dokładnie / zawiera:** dopasowanie bez uwzględniania wielkości liter.
+- **Zastąp / Dodaj / Odejmij:** operacje na dotychczasowym zaznaczeniu.
+- **Ctrl+klik lub Shift+klik:** dodaje albo usuwa wybrany obiekt.
+  Kolejne kliknięcia w nakładające się elementy nadal je przełączają;
+  kod `5310` ma wyższy priorytet od leżącej pod nim działki.
+- Aktywny obiekt ma podświetlone również etykiety **A1 i A2**, o ile
+  są widoczne w obecnej skali.
+
+Wyszukiwanie nie zmienia pliku MAP ani historii edycji. Przy ponad
+50 000 trafień prosi o doprecyzowanie kryteriów, zamiast zwracać
+niepełne zaznaczenie.
+
+### Zapamiętywanie folderu z mapami
+
+**Natywne okno GeoStudio 2.0 uruchamiane przez `start_web_ui.bat`:**
+przycisk Otwórz / Ctrl+O używa natywnego dialogu Windows. Po
+pomyślnym wyborze MAP zapamiętuje jego katalog w ustawieniach
+użytkownika (`%LOCALAPPDATA%\\GeoStudio2\\preferences.json`).
+Przy kolejnym otwieraniu, również po restarcie aplikacji,
+zaczyna od tego katalogu.
+
+Jest to tylko lokalna preferencja katalogu; nie zapisujemy
+w niej danych MAP i nie czytamy automatycznie poprzedniej mapy.
+Oryginał i sposób bezpiecznej edycji pozostają bez zmian.
+
+**Tryb `--browser`:** od teraz preferuje stały port localhost
+`63871`, żeby Chromium mogło pamiętać folder dla identyfikatora
+systemowego okna wyboru plików. Jeśli ten port jest zajęty,
+aplikacja wybiera port awaryjny, a przeglądarka może utracić
+zapamiętaną lokalizację. W starszych przeglądarkach,
+które nie obsługują File System Access API, działa nadal
+standardowy wybór pliku bez gwarancji zapamiętania ścieżki.
+
 ## Etap 3D — usuwanie wybranego węzła
 
 W trybie **P — Węzły** kliknij pojedynczy istniejący węzeł.
