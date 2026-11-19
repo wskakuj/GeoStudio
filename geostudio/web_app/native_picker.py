@@ -101,10 +101,12 @@ class NativeMapPicker:
     def open_map(self) -> dict:
         try:
             filename = self._choose_path()
-        except (ImportError, RuntimeError, OSError) as exc:
+        except Exception as exc:
+            # TkError and missing Tcl/Tk on minimally installed Python also
+            # need a comprehensible fallback, not a silent JS bridge hang.
             raise RuntimeError(
                 "Nie udało się wyświetlić okna wyboru Windows. "
-                "Użyj przycisku Wybierz z dysku."
+                "Użyj przycisku Z dysku."
             ) from exc
         if not filename:
             return {"cancelled": True}
