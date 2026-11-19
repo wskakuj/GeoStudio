@@ -155,6 +155,25 @@ def create_app(workspace: PreviewWorkspace | None = None) -> FastAPI:
         except (ValueError, KeyError) as exc:
             raise HTTPException(400, str(exc)) from exc
 
+    @app.post("/api/object/{fid}/vertices")
+    async def insert_polygon_vertex(fid: str, request: Request):
+        payload = await edit_payload(request)
+        try:
+            return state.insert_vertex(
+                fid, payload.get("segmentIndex"),
+                payload.get("x"), payload.get("y"),
+                shared=payload.get("shared", False),
+                edge_radius=payload.get("edgeRadius", 0),
+                document_token=payload.get("documentToken"),
+                revision=payload.get("revision"),
+            )
+        except LookupError as exc:
+            raise HTTPException(404, str(exc)) from exc
+        except RuntimeError as exc:
+            raise HTTPException(409, str(exc)) from exc
+        except (ValueError, KeyError) as exc:
+            raise HTTPException(400, str(exc)) from exc
+
     @app.post("/api/edit/{direction}")
     async def history_action(direction: str, request: Request):
         payload = await edit_payload(request)
