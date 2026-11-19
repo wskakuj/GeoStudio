@@ -704,6 +704,7 @@
         await refreshEditedDocument(fid);
         return;
       }
+      state.selectedVertex=response.insertedVertexIndex;
       await refreshEditedDocument(fid);
       inform("Dodano wierzchołek "+code+
         (response.insertedSameCodeVertices
@@ -715,6 +716,7 @@
     }finally{
       state.editBusy=false;
       updateEditState(state.edit);
+      updateDeleteNodeButton();
       requestDraw();
     }
   }
@@ -1098,6 +1100,8 @@
       const index=closestEditableVertex(p);
       if(index>=0){
         const world=nativeWorldPoint(editableVertices()[index]);
+        state.selectedVertex=index;
+        updateDeleteNodeButton();
         state.vertexDrag={fid:state.active,code:state.detail.code,
                           index,preview:world,snap:null};
         state.drag={pointer:ev.pointerId,start:p,last:p,moved:false,node:true};
@@ -1141,6 +1145,7 @@
       const moving=state.vertexDrag;
       state.vertexDrag=null;requestDraw();
       if(d.moved&&moving)commitVertexDrag(moving);
+      else if(moving)inform("Zaznaczono węzeł "+(moving.index+1)+". Delete — usuń.");
       return;
     }
     if(d.moved){scheduleViewport();return;}
@@ -1217,6 +1222,10 @@
       ev.preventDefault();$("file-map").click();return;
     }
     if(typing)return;
+    if(state.tool==="nodes"&&state.detail&&!ev.ctrlKey&&!ev.metaKey&&!ev.altKey&&
+       (ev.key==="Delete"||ev.key==="Backspace")){
+      ev.preventDefault();deleteSelectedVertex();return;
+    }
     if((ev.ctrlKey||ev.metaKey)&&ev.key.toLowerCase()==="z"){
       ev.preventDefault();historyStep("undo");return;
     }
@@ -1266,6 +1275,7 @@
   link("tool-select",()=>setTool("select"));
   link("tool-pan",()=>setTool("pan"));
   link("tool-nodes",()=>setTool("nodes"));
+  link("tool-delete-node",deleteSelectedVertex);
   link("float-nodes",()=>setTool("nodes"));
   $("opt-snap").addEventListener("change",ev=>{state.snapEnabled=ev.target.checked;});
   $("opt-shared").addEventListener("change",ev=>{
