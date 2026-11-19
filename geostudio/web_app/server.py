@@ -7,6 +7,7 @@ from __future__ import annotations
 
 from html import escape
 from pathlib import Path
+from urllib.parse import unquote
 import secrets
 
 from fastapi import FastAPI, HTTPException, Request
@@ -84,7 +85,7 @@ def create_app(workspace: PreviewWorkspace | None = None) -> FastAPI:
 
     @app.post("/api/map")
     async def open_map(request: Request):
-        name = request.headers.get("x-map-name", "mapa.MAP")
+        name = unquote(request.headers.get("x-map-name", "mapa.MAP"))
         try:
             return state.load_map(await receive(request, MAX_MAP_BYTES), name)
         except ValueError as exc:
