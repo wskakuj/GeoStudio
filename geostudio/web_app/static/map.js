@@ -927,7 +927,10 @@
     // Parcel numbers are suppressed at map overview scale, but appear
     // when zoomed enough to read them. Building labels remain prioritized.
     const ordered=[...features].sort((a,b)=>{
-      const priority=f=>f.code==="5310"?0:
+      // Active object's A1/A2 should not be hidden by competing labels.
+      const priority=f=>f.id===state.active?-2:
+        state.pinned.has(f.id)?-1:
+        f.code==="5310"?0:
         ["7900","6000","6301","6900"].includes(f.code)?1:
         f.code==="5216"?2:3;
       return priority(a)-priority(b);
@@ -966,6 +969,15 @@
         if(collisions.some(r=>r[0]<rect[2]&&r[2]>rect[0]&&
                               r[1]<rect[3]&&r[3]>rect[1]))continue;
         collisions.push(rect);
+        const showSelectedLabel=feature.id===state.active&&
+          (label.field==="A1"||label.field==="A2");
+        if(showSelectedLabel){
+          // When a polygon 5310 is active, highlight BOTH corresponding
+          // description strings, not just the geometry outline.
+          ctx.fillStyle="rgba(27,150,143,.23)";
+          ctx.fillRect(rect[0]-2,rect[1]-2,
+            rect[2]-rect[0]+4,rect[3]-rect[1]+4);
+        }
         ctx.textBaseline="alphabetic";
         for(let j=0;j<lines.length;j++){
           const line=lines[j].slice(0,100);
