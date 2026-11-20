@@ -157,8 +157,9 @@ def test_pywebview_js_bridge_has_no_native_window_or_workspace(tmp_path):
     workspace = PreviewWorkspace()
     picker = NativeMapPicker(workspace, settings=tmp_path / "preferences.json")
     exposed = [name for name in dir(picker) if not name.startswith("_")]
-    assert exposed == ["open_libraries", "open_map", "save_baked_map",
-                       "save_base_map", "save_map"]
+    assert exposed == ["open_libraries", "open_map", "restore_recovery",
+                       "save_baked_map", "save_base_map", "save_map",
+                       "save_recovery"]
     assert callable(picker.open_map)
     assert picker._workspace is workspace
     assert not hasattr(picker, "_window")

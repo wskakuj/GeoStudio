@@ -437,6 +437,14 @@ class History:
     def is_dirty(self) -> bool:
         return self.current_state_id != self._saved_state
 
+    def mark_recovered_unsaved(self) -> None:
+        """A restored recovery snapshot is not a committed MAP save.
+
+        Preserve the current in-memory document but prompt before discarding
+        it; the recovery becomes the new baseline for Undo/Redo operations.
+        """
+        self._saved_state = -1
+
     def mark_saved(self) -> None:
         """Record that the current state reached the disk — all of it.
 

@@ -574,3 +574,103 @@ wpisów w LAY/CDF/SYM.
 niezweryfikowane instrukcje. Dokładna zgodność z klasycznym GEO-MAP
 wymaga dostarczenia tych samych bibliotek używanych przez program,
 testów wielu kodów oraz oceny wydruków w tej samej skali.
+
+
+## Etap 8 — stabilizacja, natywne etykiety GMW, odzyskiwanie i Windows
+
+### Zgodność z klasycznym GEO-MAP (odkryta na rzeczywistych test.MAP)
+
+W GMW 10.52 poligon z wieloma osobnymi konturami P 0 ma dodatkowe
+**końcowe \`P 1\`, które ponownie wskazuje pierwszy punkt całego obiektu**,
+już po zamknięciu ostatniej części. Sam komplet L 1/L 2/L 3 nie
+wystarczył: GEO-MAP nie pokazywał etykiet 5310 A1=l,
+A2=So120|II-0.3. Plik poprawiony w GMW różnił się właśnie
+tym końcowym rekordem. W tym etapie zapis multipart dodaje taki
+rekord, a parser rozpoznaje go jako domknięcie obiektu, nie jako
+dodatkową krawędź geometrii. Testy regresji nie zawierają
+prywatnych fragmentów z rzeczywistej mapy użytkownika, tylko
+syntetyczny równoważny przypadek.
+
+### Przesuwanie wielu poligonów
+
+Tryb **M** przesuwa cały poligon albo wszystkie zaznaczone przez
+Ctrl+H poligony po przeciągnięciu jednego z nich. Po puszczeniu
+przycisku myszy przesunięcie odbywa się **bez formularza i okna
+zatwierdzenia**, z aktywnym magnetycznym przyciąganiem do granic
+obiektów tego samego kodu i z dozwolonym rozłączeniem dotychczas
+wspólnej granicy. Serwer nadal sprawdza revision/documentToken,
+topologię, liczbę wybranych węzłów oraz niezmienność wszystkich
+pozostałych obiektów. Cała grupa stanowi jedną operację Ctrl+Z.
+Ręczny dialog \`Ctrl+Shift+M\` pozostaje dla liczbowego DX/DY.
+
+### Automatyczne migawki awaryjne — tylko aplikacja Windows
+
+Po edycji kopia stanu aktualnej mapy oraz odwracalnych nakładań
+zapisywana jest po krótkim opóźnieniu do
+\`%LOCALAPPDATA%\GeoStudio2\recovery\`. Oryginalna mapa nie jest
+nadpisywana. Zapis idzie przez pliki tymczasowe, fsync i atomową
+podmianę manifestu na końcu. Manifest zawiera SHA256 oryginalnej
+mapy, kopii roboczej i topologii; niekompletne pliki są ignorowane.
+
+Po awaryjnym zamknięciu wybierz **ten sam plik MAP przez „Otwórz MAP”
+(w natywnym oknie plików)**. Jeśli źródło nadal jest identyczne,
+GeoStudio zapyta, czy przywrócić sesję. Po odtworzeniu dokument jest
+oznaczony jako niezapisany; zapisz go jako **nową kopię MAP**.
+Migawka nie przenosi pełnej historii Undo — odzyskuje bieżący
+stan MAP oraz priorytet odwracalnych masek. To funkcja testowa;
+**nie zastępuje ręcznego Zapisz jako**, zwłaszcza dla danych
+produkcyjnych. W zwykłej przeglądarce automatyczne migawki na
+dysku nie są jeszcze dostępne.
+
+### Duże mapy
+
+Parser i eksport mają regresję z mapą 112 tys. linii, testy
+niezmienności źródła, checksum CHK oraz konturów wieloczęściowych.
+Indeks obiektów pozwala żądaniom małego viewportu uniknąć
+ponownego skanowania całej mapy przy przesuwaniu i powiększaniu.
+Historia Undo nadal ma ograniczoną pamięć, a renderer
+limituje liczbę geometrii przesyłanych jednorazowo.
+
+### Biblioteki LAY/CDF/SYM
+
+Po wybraniu bibliotek, przy kartografii pojawia się informacja
+\`CDF: zastosowania/dopasowania\`, analogicznie dla LAY i SYM.
+Wczytane LAY może teraz wpływać także na kolor linii z zapisu
+Windows COLORREF (BGR); jawny obrys CDF ma pierwszeństwo.
+Zera oznaczają, że aktualnie widoczna część mapy nie zawiera
+rozpoznanych kodów lub ich reguł renderer nie stosuje — nie
+oznacza to błędnego importu. **Graniczniki domyślnie są ukryte**,
+więc SYM może być niewidoczny. Włącz tę warstwę w lewym panelu.
+Złożone makra SYM, wszystkie desenie i pełna zgodność
+wydruku nadal nie są zaimplementowane.
+
+### Instalator Windows x64 — wersja testowa
+
+Pipeline \`Windows GeoStudio2 preview installer\` buduje pakiet
+**portable** przez PyInstaller i instalator **per-user**
+przez Inno Setup 6, bez uprawnień administratora.
+Po przejściu workflow pliki dostępne są jako GitHub Actions
+Artifacts na stronie przebiegu workflow PR — instalator nie
+jest oficjalnym podpisanym wydaniem.
+
+Lokalne komendy na Windows z Pythonem 3.12 i Inno Setup 6:
+
+\`\`\`powershell
+cd C:\GeoStudio-2-preview
+.\tools\windows\build.ps1
+# Samodzielny folder portable bez Inno Setup:
+.\tools\windows\build.ps1 -SkipInstaller
+\`\`\`
+
+Build trafia do \`dist/GeoStudio2\`, a instalator do
+\`dist/installer\`. WebView2 Runtime musi być dostępny
+w systemie; instalator preview go nie doinstalowuje.
+W razie problemów w pierwszej kolejności użyj
+\`.\start_web_ui.bat\`, który uruchamia tę samą aplikację
+ze środowiska Pythona.
+
+Przed akceptacją: użyj testowego scalania i eksportu w
+klasycznym GEO-MAP, przesuń grupy 5310 oraz 5216, przeprowadź
+restart po edycji i odtwórz sesję, porównaj wygląd LAY/CDF/SYM
+z rzeczywistymi bibliotekami, przetestuj instalator na
+Windows 11. Gałąź jest draft i **nie modyfikuje main**.

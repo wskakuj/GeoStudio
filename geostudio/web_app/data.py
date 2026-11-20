@@ -110,6 +110,7 @@ class PreviewWorkspace:
         self._entries: tuple[_Entry, ...] = ()
         self._lookup: dict[str, _Entry] = {}
         self._object_id: dict[int, str] = {}
+        self._entry_by_objid: dict[int, _Entry] = {}
         self._uid_counts: Counter = Counter()
         self._index: GeometryIndex | None = None
         self._styles: dict[str, dict] = {}
@@ -201,6 +202,7 @@ class PreviewWorkspace:
             self._entries = tuple(entries)
             self._lookup = {entry.fid: entry for entry in entries}
             self._object_id = {id(entry.obj): entry.fid for entry in entries}
+            self._entry_by_objid = {id(entry.obj): entry for entry in entries}
             self._index = index
             self._bounds = extent
             self._meta = metadata
@@ -1630,6 +1632,13 @@ class PreviewWorkspace:
                 "object": self.details(fid),
             }
 
+    def mark_recovered_unsaved(self) -> None:
+        """Recovered session has not been saved as a new MAP by the user."""
+        with self._lock:
+            if self._history is None or self._doc is None:
+                raise ValueError("Brak dokumentu do oznaczenia po odzyskaniu.")
+            self._history.mark_recovered_unsaved()
+
     def step_history(self, direction: str, *, document_token: str,
                      revision: int) -> dict:
         with self._lock:
@@ -1746,8 +1755,13 @@ class PreviewWorkspace:
                 self._carto_cdf,*cache_key)
         cdf=self._carto_match_cache[cache_key]
         lay=lay_for_code(self._carto_lay,obj.code)
+        # CDF override > LAY line colour > MAP native COLORREF. LAY's
+        # numeric word is a Windows BGR COLORREF, not an HTML RGB string.
+        # Ignore zero (often a "default pen" marker) and bad values.
+        lay_rgb=(tuple((lay.colorref>>shift)&255 for shift in (0,8,16))
+                 if lay and 0<lay.colorref<=0xFFFFFF else None)
         border_rgb=(cdf.border if cdf and cdf.border!=(0,0,0)
-                    else obj.colorref)
+                    else lay_rgb if lay_rgb else obj.colorref)
         border = "#" + "".join(f"{c:02X}" for c in border_rgb)
         native = native_fill_color(obj.style)
         land_use = obj.fields.get("A1", "").strip().casefold()
@@ -1815,6 +1829,26 @@ class PreviewWorkspace:
                       "fill" not in code_style else 0),
             "symbolSegments": segments,
             "symbolCircles": circles,
+            # Stage 8 diagnostics: loaded definitions can be unrelated to the
+            # codes in this viewport. Tell the user about real matches rather
+            # than claiming the map's appearance has changed.
+            "libraryMatches": [
+                kind for kind,matched in (
+                    ("CDF",cdf is not None),
+                    ("LAY",lay is not None),
+                    ("SYM",sym_dash is not None or bool(symbols))
+                ) if matched
+            ],
+            "libraryApplied": [
+                kind for kind,applied in (
+                    ("CDF",cdf is not None and (
+                        cdf.border!=(0,0,0) or cdf.width>0 or
+                        (fill_color is not None and not native))),
+                    ("LAY",lay is not None and (lay_rgb is not None or
+                     (sym_dash is None and lay.line_id.endswith(".008")))),
+                    ("SYM",sym_dash is not None or bool(segments) or bool(circles))
+                ) if applied
+            ],
         }
 
     def _labels(self, entry: _Entry) -> list[dict]:
@@ -1874,21 +1908,23 @@ class PreviewWorkspace:
             })
         return result
 
-    def _feature(self, entry: _Entry, overlay_objects=()) -> dict:
+    def _feature(self, entry: _Entry, overlay_objects=(),
+                 overlay_rank=None) -> dict:
         obj=entry.obj
         parts=[[[p.y,-p.x] for p in segment]
                for segment in obj.display_parts if segment]
         visible_area=obj.area_m2
         mask_count=0
         if obj.is_closed and overlay_objects:
-            order=self._overlay_uids()
-            at=order.index(obj.uid) if obj.uid in order else -1
-            upper_ids=set(order[at+1:])
-            # Same code only. Preserve unrelated codes even when geometries
-            # intersect; overlays never modify the actual MAP records.
+            rank=overlay_rank
+            if rank is None:
+                rank={uid:i for i,uid in enumerate(self._overlay_uids())}
+            at=rank.get(obj.uid,-1)
+            # Only later objects of exactly the SAME code can mask this
+            # object, and stationary foreign-code lines remain protected.
             upper=[other for other in overlay_objects
-                   if other.uid in upper_ids and other.uid!=obj.uid
-                   and other.code==obj.code]
+                   if other.uid!=obj.uid and other.code==obj.code
+                   and rank.get(other.uid,-1)>at]
             if upper:
                 ax0=min(p.x for p in obj.points)
                 ay0=min(p.y for p in obj.points)
@@ -1941,16 +1977,33 @@ class PreviewWorkspace:
             candidates = self._index.nearby(-(s + n) / 2,
                                             (w + e) / 2, radius)
             ids = {id(item) for item in candidates}
-            visible = [entry for entry in self._entries
-                       if id(entry.obj) in ids and _intersects(entry.bbox, clipped)]
-            total = len(visible)
+            if len(ids)*3<len(self._entries):
+                # Small local pans on 100k-object MAP should not scan every
+                # source object. Preserve original order by feature index.
+                visible=sorted(
+                    (entry for key in ids
+                     if (entry:=self._entry_by_objid.get(key)) is not None
+                     and _intersects(entry.bbox,clipped)),
+                    key=lambda entry:int(entry.fid[1:]))
+            else:
+                visible=[entry for entry in self._entries
+                         if id(entry.obj) in ids
+                         and _intersects(entry.bbox,clipped)]
+            total=len(visible)
             stack=self._overlay_uids()
-            overlay=[self._doc.by_id[uid] for uid in stack
-                     if uid in self._doc.by_id
-                     and self._uid_counts.get(uid)==1
-                     and self._doc.by_id[uid].is_closed]
+            overlay_by_code={}
+            rank={}
+            for index,uid in enumerate(stack):
+                obj=self._doc.by_id.get(uid)
+                if (obj is None or self._uid_counts.get(uid)!=1
+                        or not obj.is_closed):
+                    continue
+                rank[uid]=index
+                overlay_by_code.setdefault(obj.code,[]).append(obj)
             return {
-                "features":[self._feature(entry,overlay) for entry in visible[:limit]],
+                "features":[self._feature(entry,
+                    overlay_by_code.get(entry.obj.code,()),rank)
+                    for entry in visible[:limit]],
                 "limited":total>limit,"total":total,
             }
 

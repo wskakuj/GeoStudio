@@ -13,6 +13,7 @@
     meta: null, features: [], visibleLayers: new Set(), hiddenGrades: new Set(),
     center: {x: 0, y: 0}, scale: 1, tool: "select",
     labels: true, grid: false, active: null, detail: null, pinned: new Set(),
+    cartoLibraries: {},
     width: 1, height: 1, pixelRatio: 1, isDragging: false, drag: null,
     lastPick: null, scheduled: false, refreshTimer: null, queryCounter: 0,
     queryAbort: null, selectionRequest: 0, limited: false,
@@ -59,6 +60,7 @@
     {name:"Zmień motyw płótna", hint:"◐", run:toggleTheme}
   ];
   let toastTimer;
+  let recoveryTimer=null,recoverySavedKey='',recoveryBusy=false;
   const htmlText = (node, value) => { node.textContent = String(value); };
   const api = async (path, options={}) => {
     const res = await fetch(path, {
@@ -102,7 +104,43 @@
     const marker=$("dirty-marker");
     marker.textContent=state.edit.dirty?"Niezapisane zmiany w pamięci":"Oryginał chroniony";
     marker.classList.toggle("unsaved",state.edit.dirty);
+    scheduleRecovery();
   }
+  function scheduleRecovery() {
+    clearTimeout(recoveryTimer);
+    if(!state.edit?.dirty||!window.pywebview?.api?.save_recovery)return;
+    const tokenBefore=state.edit.documentToken;
+    const revisionBefore=state.edit.revision;
+    const key=tokenBefore+":"+revisionBefore;
+    if(key===recoverySavedKey)return;
+    recoveryTimer=setTimeout(async()=>{
+      if(state.editBusy||recoveryBusy){scheduleRecovery();return;}
+      if(!state.edit?.dirty||state.edit.documentToken!==tokenBefore||
+         state.edit.revision!==revisionBefore){scheduleRecovery();return;}
+      recoveryBusy=true;
+      try{
+        const saved=await window.pywebview.api.save_recovery();
+        if(saved?.saved){
+          recoverySavedKey=key;
+          $("dirty-marker").title=
+            "Zmiany są w pamięci i w lokalnej kopii awaryjnej: "+
+            (saved.savedAt||"teraz")+
+            ". Oryginalny MAP pozostaje niezmieniony.";
+        }
+      }catch(error){
+        $("dirty-marker").title="Nie udało się zapisać kopii awaryjnej: "+
+          (error.message||String(error));
+        inform("Ostrzeżenie: nie zapisano kopii awaryjnej. "+
+          (error.message||String(error)),true);
+      }finally{
+        recoveryBusy=false;
+        if(state.edit?.dirty&&
+           (state.edit.documentToken+":"+state.edit.revision)!==key)
+          scheduleRecovery();
+      }
+    },1300);
+  }
+
   function editRequestBody() {
     return {documentToken:state.edit?.documentToken,
             revision:state.edit?.revision};
@@ -426,12 +464,36 @@
   }
 
   function cartographyMessage(payload) {
-    const libs=payload?.libraries||{};
-    const summary=Object.entries(libs).map(([name,item])=>
-      name+" ("+(item.definitions||0)+")").join(" · ");
-    $("cartography-status").textContent=summary||"Brak bibliotek";
-    $("cartography-status").title=summary
-      ?"Załadowane biblioteki: "+summary:"Brak dodatkowych bibliotek GEO-MAP";
+    state.cartoLibraries=payload?.libraries||{};
+    renderCartographyMatches();
+  }
+  function renderCartographyMatches() {
+    const loaded=state.cartoLibraries||{};
+    if(!Object.keys(loaded).length){
+      $("cartography-status").textContent="Brak bibliotek";
+      $("cartography-status").title="Wczytaj oryginalne LAY/CDF/SYM, aby odwzorować znane style GEO-MAP.";
+      return;
+    }
+    const matched={CDF:0,LAY:0,SYM:0},applied={CDF:0,LAY:0,SYM:0};
+    for(const feature of state.features){
+      if(!isVisible(feature))continue;
+      for(const type of feature.style?.libraryMatches||[])
+        if(Object.hasOwn(matched,type))matched[type]++;
+      for(const type of feature.style?.libraryApplied||[])
+        if(Object.hasOwn(applied,type))applied[type]++;
+    }
+    const summary=Object.entries(loaded).map(([kind,item])=>
+      kind+": "+applied[kind]+"/"+matched[kind]).join(" · ");
+    const noMatch=Object.keys(loaded).every(type=>!matched[type]);
+    $("cartography-status").textContent=summary||
+      "Brak dopasowań";
+    $("cartography-status").title=
+      "W aktualnie wyświetlonej części mapy: ZASTOSOWANIA / DOPASOWANIA. "+
+      Object.entries(loaded).map(([kind,item])=>kind+": "+
+        (item.definitions||0)+" rozpoznanych definicji, "+
+        (matched[kind]||0)+" obiektów pasuje, "+
+        (applied[kind]||0)+" wykorzystuje styl.").join(" ")+
+      (noMatch?" Wybrane biblioteki mogą nie zawierać kodów widocznej mapy.":"");
   }
   async function chooseCartographicLibraries() {
     if(window.pywebview?.api?.open_libraries){
@@ -442,6 +504,9 @@
           inform("Załadowano biblioteki kartograficzne: "+
             result.libraries.map(item=>item.kind+" "+item.definitions).join(", "));
           await refreshViewport();
+          if(result.libraries.some(x=>x.kind==="SYM")&&
+             !state.visibleLayers.has("Graniczniki"))
+            inform("Symbole SYM mogą być niewidoczne: warstwa Graniczniki jest ukryta. Włącz ją w panelu warstw.");
         }
       }catch(error){
         inform("Nie można załadować bibliotek: "+error.message,true);
@@ -478,6 +543,8 @@
       cartographyMessage(status);
       inform("Załadowano "+list.length+" bibliotek. Renderowanie mapy odświeżone.");
       await refreshViewport();
+      if(kinds.has("SYM")&&!state.visibleLayers.has("Graniczniki"))
+        inform("Włącz warstwę Graniczniki w panelu, by zobaczyć symbole punktowe SYM.");
     }catch(error){
       inform("Błąd biblioteki GEO-MAP: "+error.message,true);
     }finally{busy(false);$("file-library").value="";}
@@ -492,10 +559,34 @@
         if(!confirmDiscardEdits())return;
         try {
           const answer=await window.pywebview.api.open_map();
-          if(answer&&!answer.cancelled&&answer.metadata)
-            {finishOpeningMap(answer.metadata);
-             if(answer.metadata.topologyWarning)
-               inform(answer.metadata.topologyWarning,true);}
+          if(answer&&!answer.cancelled&&answer.metadata){
+            finishOpeningMap(answer.metadata);
+            if(answer.metadata.topologyWarning)
+              inform(answer.metadata.topologyWarning,true);
+            if(answer.metadata.recoveryAvailable&&
+               window.pywebview.api?.restore_recovery){
+              const candidate=answer.metadata.recoveryAvailable;
+              const consent=window.confirm(
+                "Wykryto kopię awaryjną niezapisanych zmian z "+candidate.savedAt+
+                " (wersja "+candidate.revision+").\n\n"+
+                "Odtworzyć poprzednią sesję GeoStudio? "+
+                "Oryginalny plik MAP pozostanie nienaruszony.");
+              if(consent){
+                busy(true,"Odzyskiwanie zmian z kopii awaryjnej");
+                try{
+                  const restored=await window.pywebview.api.restore_recovery();
+                  if(restored?.restored){
+                    finishOpeningMap(restored.metadata);
+                    inform("Odzyskano niezapisane zmiany. "+
+                      "Zapisz je jako NOWY MAP; źródło pozostaje chronione.");
+                  }
+                }catch(error){
+                  inform("Nie udało się odzyskać zmian: "+
+                    (error.message||String(error)),true);
+                }finally{busy(false);}
+              }
+            }
+          }
         }catch(error){
           const message=error?.message||String(error);
           inform("Nie udało się otworzyć okna z ostatniego folderu: "+
@@ -791,7 +882,7 @@
     state.moveIds=ids.slice();
     $("move-dx").value=Number(dx).toFixed(3);
     $("move-dy").value=Number(dy).toFixed(3);
-    $("move-detach").checked=false;
+    $("move-detach").checked=true;
     $("move-snap").checked=true;
     $("move-selection-description").textContent=
       "Wybrano "+display(ids.length)+" obiektów. X oznacza północ–południe, "+
@@ -924,6 +1015,55 @@
       $("move-apply").disabled=true;$("move-preview").disabled=false;
     }
   }
+  async function commitDraggedMove(ids,ghost) {
+    // Zero dialogs: preview and apply are still separate, revision-guarded
+    // server operations. Protect other codes and preserve one undo transaction.
+    if(state.editBusy||!state.edit||!ids?.length||!ghost)return;
+    const before=editRequestBody();
+    const payload={
+      ...before,ids:ids.slice(),
+      dx:Math.round(ghost.dx*1000)/1000,
+      dy:Math.round(ghost.dy*1000)/1000,
+      allowDetach:true,
+      // Canvas magnetic snap has already chosen the exact same-code edge.
+      // Do not perform a second, conflicting server-side correction.
+      snapDistance:ghost.snap?0:
+        Math.round(Math.min(2,Math.max(0.02,10/state.scale))*1000)/1000
+    };
+    state.editBusy=true;updateEditState(state.edit);
+    try{
+      const report=await api("/api/move/preview",{
+        method:"POST",headers:{"Content-Type":"application/json"},
+        body:JSON.stringify(payload)
+      });
+      if(report.documentToken!==before.documentToken||
+         report.revision!==before.revision)
+        throw Error("Mapa zmieniła się podczas przesuwania.");
+      if(!report.canApply||report.topologyBlocked)
+        throw Error("Nie można wykonać przesunięcia: "+
+                    (report.topologyBlocked?"konflikt topologii":"brak zmiany")+".");
+      const result=await api("/api/move/apply",{
+        method:"POST",headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({...payload,previewKey:report.previewKey})
+      });
+      updateEditState(result);
+      if(result.changed){
+        await refreshEditedDocument(state.active);
+        const snap=result.snapApplied?" · przyciągnięto do granicy":
+          ghost.snap?" · magnes: "+ghost.snap.kind:"";
+        inform("Przesunięto "+display(result.movedObjects)+
+          (result.movedObjects===1?" poligon":" poligonów")+snap+
+          ". Cofnij: Ctrl+Z.");
+      }
+    }catch(error){
+      inform("Nie przesunięto obiektów: "+error.message,true);
+      scheduleViewport(true);
+    }finally{
+      state.editBusy=false;
+      updateEditState(state.edit);
+    }
+  }
+
   function drawMoveGhost(features) {
     if(!state.moveGhost)return;
     const ids=new Set(state.moveGhost.ids);
@@ -2130,6 +2270,7 @@
       if(ticket!==state.queryCounter)return;
       state.features=res.features;
       state.limited=res.limited;
+      renderCartographyMatches();
       requestDraw();
     }catch(err){
       if(err.name!=="AbortError")inform("Nie udało się narysować mapy: "+err.message,true);
@@ -2147,6 +2288,7 @@
     toggle.checked=state.visibleLayers.has(name);
     toggle.addEventListener("change",()=>{
       if(toggle.checked)state.visibleLayers.add(name);else state.visibleLayers.delete(name);
+      renderCartographyMatches();
       requestDraw();refreshInspectorVisibility();
     });
     const color=document.createElement("span");color.className="layer-swatch";
@@ -2415,14 +2557,9 @@
       const ghost=state.moveGhost;
       state.moveGhost=null;requestDraw();
       if(d.moved&&ghost&&(ghost.dx||ghost.dy)){
-        // Make exactly ONE request, AFTER the snap checkbox has its final
-        // value. Parallel previews would race and invalidate the approval key.
-        openMoveEditor(d.moveIds,ghost.dx,ghost.dy,false);
-        if(ghost.snap){
-          $("move-snap").checked=false;
-          inform("Magnes: "+ghost.snap.kind+" tego samego kodu.");
-        }
-        previewMoveChanges();
+        // Dragging is a single action. Keep a guarded server preview/apply
+        // but no interrupting dialog or extra confirmation window.
+        commitDraggedMove(d.moveIds,ghost);
       }
       return;
     }
