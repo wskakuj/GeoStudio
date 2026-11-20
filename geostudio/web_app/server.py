@@ -18,6 +18,8 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
 from .data import (
     PreviewWorkspace, MAX_MAP_BYTES, MAX_STYLES_BYTES, MAX_RENDER_FEATURES,
 )
+from .underlay_wms import list_layers as wms_layers, map_png as wms_map_png
+
 
 ROOT = Path(__file__).resolve().parent / "static"
 UPLOAD_CHUNK = 1024 * 1024
@@ -75,6 +77,34 @@ def create_app(workspace: PreviewWorkspace | None = None) -> FastAPI:
     @app.get("/api/map")
     async def metadata():
         return state.metadata()
+
+    @app.get("/api/underlay/wms/layers")
+    def underlay_wms_layers(preset: str = "standard"):
+        """Read capabilities from an allowlisted Geoportal endpoint only."""
+        try:
+            return wms_layers(preset)
+        except RuntimeError as exc:
+            raise HTTPException(502, str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from exc
+
+    @app.get("/api/underlay/wms/map")
+    def underlay_wms_map(preset: str, layer: str, epsg: int,
+                         xmin: float, ymin: float, xmax: float, ymax: float,
+                         width: int, height: int):
+        """Read-only PNG image. Values are Canvas world coordinates."""
+        if not state.metadata().get("loaded"):
+            raise HTTPException(409, "Najpierw otwórz mapę MAP.")
+        try:
+            image = wms_map_png(preset, layer, epsg, xmin, ymin,
+                                xmax, ymax, width, height)
+        except RuntimeError as exc:
+            raise HTTPException(502, str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from exc
+        return Response(image, media_type="image/png",
+                        headers={"Cache-Control": "no-store"})
+
 
     async def receive(request: Request, limit: int) -> bytes:
         header = request.headers.get("content-length")
