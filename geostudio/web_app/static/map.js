@@ -638,8 +638,11 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
     const select=$("outline-style-code");
     const last=select.value;
     select.replaceChildren();
-    for(const code of Object.keys(state.meta.codes||{}).sort())
-      select.add(new Option(code+" · "+display(state.meta.codes[code])+" ob.",code));
+    const supported=new Set(["5216","5220","5230","5310",
+      ...Object.keys(state.meta.codes||{})]);
+    for(const code of [...supported].sort())
+      select.add(new Option(code+" · "+
+        display((state.meta.codes||{})[code]||0)+" ob.",code));
     const preferred=state.detail?.code||last||"5310";
     if([...select.options].some(opt=>opt.value===preferred))
       select.value=preferred;
