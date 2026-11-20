@@ -242,3 +242,16 @@ Przed etapem 10A test magnetu i napisów na mapie użytkownika.
 Dalszy etap po potwierdzeniu 10A: wyszukiwanie F,
 zamiana fraz Ctrl+F, dobieranie dowolnych kodów 4-cyfrowych,
 następnie eksport i druk PNG/TIFF/DXF, WMS/rastry i GCP.
+
+
+## Etap 10B — wyszukiwanie, zamiana i nawigacja bez sieci (testowy)
+
+- [x] F / Znajdź: pełno-mapowe wyszukiwanie po źródłowym ID, kodzie i polach A1–A6, TX, MP, KR albo dowolnym tekście. Zawiera / dokładna wartość, bez rozróżniania wielkości liter; opcjonalny czterocyfrowy kod. Wyniki pokazują źródłowe ID, kod i A1/A2/TX, kliknięcie centruje oraz zaznacza obiekt. Przy liczbie ponad 120 wyników informujemy o obcięciu listy.
+- [x] Ctrl+F / Zamień: tylko istniejący wskazany atrybut, ciąg znaków, dowolny zamiennik (także pusty), opcjonalny kod; zaznaczone obiekty lub świadomie cała mapa. PreviewKey zależny od dokumentu, rewizji i operacji, podgląd 16 par przed → po. Sprawdzamy kodowanie CP1250 i limit 512 bajtów. Do 5000 zmienianych obiektów, jedna transakcja Ctrl+Z. MAP źródłowa bez zmian.
+- [x] Stałe rozmiary etykiet ekranowych: font A1/A2/TX nie zmienia wielkości w pikselach podczas przybliżania lub oddalania, odrębna kontrola wielkości przez ustawienia kodu i skalę opracowania. Przy odległym widoku etykiety niektórych mikroskopijnych obiektów są ukrywane, lecz nie powiększane.
+- [x] Bez sieci po pierwszym otwarciu: mapy do 12000 obiektów / 150000 wierzchołków pobierają pełną geometrię raz, następnie zoom i pan renderują na lokalnym Canvas, bez HTTP. Większe mapy używają nadal przestrzennego ładowania z podglądem ostatniej klatki. Eksport, edycje i zmiana bibliotek odświeżają dane w razie potrzeby.
+- [x] Zapytanie o cały obszar mapy bez promieniowego przybliżenia indeksu; brak pominięć w narożnikach wydłużonych arkuszy.
+- [x] Testy backendu, regresje tekstów, historii, tokenów, HTTP, niezmienności MAP/CHK oraz JS.
+- [ ] Weryfikacja ręczna na rzeczywistej MOKRA WIEŚ.MAP w Windows/WebView2, przede wszystkim wydajność pełnego Canvas i szybki zoom.
+
+Potencjalne następne etapy: wydruk/eksport PNG/TIFF/DXF; rastry/WMS z kalibracją GCP; transformacje X/Y i pełniejsze LAY/CDF/SYM.
