@@ -667,6 +667,197 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
     }
     if([...box.options].some(x=>x.value===old))box.value=old;
   }
+  let findList=[],replacePreview=null;
+  function openFindDialog(){
+    if(!state.meta){inform("Najpierw otwórz mapę MAP.");return;}
+    $("find-dialog").showModal();
+    $("find-value").focus();
+  }
+  function openReplaceDialog(){
+    if(!state.meta){inform("Najpierw otwórz mapę MAP.");return;}
+    $("replace-scope").value="selection";
+    invalidateReplacePreview();
+    $("replace-dialog").showModal();
+    $("replace-needle").focus();
+  }
+  function findOptions(){
+    return {
+      code:$("find-code").value.trim(),
+      field:$("find-field").value,
+      value:$("find-value").value.trim(),
+      match:$("find-match").value,
+      limit:"120"
+    };
+  }
+  function zoomToSearchResult(result){
+    if(!state.meta)return;
+    const b=result.bbox||state.meta.bounds;
+    const width=Math.max(.2,b[2]-b[0]);
+    const height=Math.max(.2,b[3]-b[1]);
+    const target=Math.min((state.width-160)/width,
+                          (state.height-160)/height)*.75;
+    state.center={x:(b[0]+b[2])/2,y:(b[1]+b[3])/2};
+    state.scale=Math.max(.08,Math.min(1500,target));
+    state.previewActive=false;state.previewCamera=null;
+    state.pinned.clear();state.lastPick=null;
+    selectFeature(result.id);
+    requestDraw();scheduleViewport();
+    $("find-dialog").close();
+    canvas.focus({preventScroll:true});
+    inform("Znaleziono "+result.code+" · "+(result.uid||result.id)+
+      ". Obiekt zaznaczony i wycentrowany.");
+  }
+  async function submitFind(ev){
+    ev.preventDefault();
+    const params=new URLSearchParams(findOptions());
+    $("find-summary").textContent="Przeszukiwanie całej mapy…";
+    $("find-results").replaceChildren();
+    $("find-select-all").disabled=true;
+    findList=[];
+    try{
+      const res=await api("/api/find?"+params.toString());
+      if(res.documentToken!==state.edit?.documentToken||
+         res.revision!==state.edit?.revision)
+        throw Error("Mapa zmieniła się podczas wyszukiwania.");
+      findList=res.results||[];
+      $("find-summary").textContent=
+        "Znaleziono "+display(res.count)+" obiektów. "+
+        (res.truncated
+         ?"Wyświetlono tylko "+display(findList.length)+
+          " pierwszych — zawęź wyszukiwanie."
+         :"Kliknij wynik, aby go zaznaczyć na mapie.");
+      $("find-select-all").disabled=!findList.length;
+      for(const result of findList){
+        const row=document.createElement("button");
+        row.type="button";row.className="geostudio-find-result";
+        row.setAttribute("role","listitem");
+        const title=document.createElement("strong");
+        title.textContent=result.code+" · "+(result.uid||result.id);
+        const description=document.createElement("span");
+        description.textContent=
+          ["A1: "+(result.A1||"—"),
+           "A2: "+(result.A2||"—"),
+           result.TX?"TX: "+result.TX:""].filter(Boolean).join(" · ");
+        row.append(title,description);
+        row.addEventListener("click",()=>zoomToSearchResult(result));
+        $("find-results").append(row);
+      }
+    }catch(err){
+      $("find-summary").textContent="Nie udało się wyszukać: "+err.message;
+      inform("Błąd wyszukiwania: "+err.message,true);
+    }
+  }
+  function selectFindResults(){
+    if(!findList.length)return;
+    const selected=findList.map(item=>item.id);
+    state.pinned=new Set(selected);
+    state.active=selected[0]||null;
+    $("find-dialog").close();
+    updateSelectionCount();
+    selectFeature(state.active);
+    inform("Zaznaczono "+display(selected.length)+
+      " wyświetlonych wyników. Ctrl+H umożliwia pełniejsze filtrowanie.");
+  }
+  function replaceOperation(){
+    return {
+      field:$("replace-field").value,
+      needle:$("replace-needle").value,
+      replacement:$("replace-replacement").value,
+      caseSensitive:$("replace-case").checked,
+      scope:$("replace-scope").value,
+      ids:$("replace-scope").value==="selection"?selectedObjectIds():[],
+      code:$("replace-code").value.trim()
+    };
+  }
+  function invalidateReplacePreview(){
+    replacePreview=null;
+    $("replace-apply").disabled=true;
+    $("replace-examples").replaceChildren();
+    $("replace-summary").textContent=
+      "Podgląd jest wymagany po każdej zmianie kryteriów.";
+  }
+  async function previewReplacePhrase(){
+    if(state.editBusy||!state.meta)return;
+    invalidateReplacePreview();
+    const operation=replaceOperation();
+    if(operation.scope==="selection"&&!operation.ids.length){
+      $("replace-summary").textContent=
+        "Brak zaznaczenia. Wybierz obiekty przez Ctrl+H "+
+        "albo świadomie ustaw zakres «Cała mapa».";
+      return;
+    }
+    const request={...editRequestBody(),operation};
+    $("replace-preview").disabled=true;
+    $("replace-summary").textContent="Sprawdzanie wszystkich wartości i kodowania CP1250…";
+    try{
+      const res=await api("/api/replace/preview",{
+        method:"POST",headers:{"Content-Type":"application/json"},
+        body:JSON.stringify(request)
+      });
+      if(res.documentToken!==request.documentToken||
+         res.revision!==request.revision)
+        throw Error("Mapa zmieniła się podczas podglądu.");
+      replacePreview={request,report:res};
+      $("replace-apply").disabled=!res.canApply;
+      $("replace-summary").textContent=
+        "Pasujących obiektów: "+display(res.changedObjects)+
+        " · Zamienianych wystąpień: "+display(res.occurrences)+
+        " · Sprawdzonych: "+display(res.scanned)+
+        ". Całość można cofnąć jednym Ctrl+Z.";
+      for(const entry of res.examples||[]){
+        const row=document.createElement("div");
+        row.className="geostudio-find-result replace-preview-row";
+        row.setAttribute("role","listitem");
+        const title=document.createElement("strong");
+        title.textContent=entry.code+" · "+entry.uid;
+        const before=document.createElement("span");
+        before.textContent="Przed: "+entry.before;
+        const after=document.createElement("span");
+        after.textContent="Po: "+entry.after;
+        row.append(title,before,after);
+        $("replace-examples").append(row);
+      }
+    }catch(err){
+      $("replace-summary").textContent="Podgląd nieudany: "+err.message;
+      inform("Nie można zamienić: "+err.message,true);
+    }finally{$("replace-preview").disabled=false;}
+  }
+  async function applyReplacePhrase(ev){
+    ev.preventDefault();
+    if(!replacePreview||state.editBusy)return;
+    const current={...editRequestBody(),operation:replaceOperation()};
+    if(JSON.stringify(current)!==JSON.stringify(replacePreview.request)){
+      invalidateReplacePreview();
+      inform("Zmieniono zaznaczenie lub mapę. Wykonaj podgląd ponownie.",true);
+      return;
+    }
+    const report=replacePreview.report;
+    if(!report.canApply)return;
+    if(!window.confirm("Zamienić "+display(report.occurrences)+
+      " fragmentów w "+display(report.changedObjects)+
+      " obiektach?\n\nWszystkie zmiany cofniesz jednym Ctrl+Z. "+
+      "Oryginalny MAP nie zostanie nadpisany."))return;
+    state.editBusy=true;updateEditState(state.edit);
+    $("replace-apply").disabled=true;
+    try{
+      const res=await api("/api/replace/apply",{
+        method:"POST",headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({...current,previewKey:report.previewKey})
+      });
+      updateEditState(res);
+      replacePreview=null;
+      $("replace-dialog").close();
+      await refreshEditedDocument(state.active);
+      inform("Zamieniono "+display(res.occurrences)+" wystąpień w "+
+        display(res.changedObjects)+" obiektach. Jedno Ctrl+Z cofa całość.");
+    }catch(err){
+      invalidateReplacePreview();
+      inform("Nie wykonano zamiany: "+err.message,true);
+    }finally{
+      state.editBusy=false;updateEditState(state.edit);
+    }
+  }
+
   function openAdvancedSelection() {
     if(!state.meta){inform("Najpierw wczytaj mapę MAP.",true);return;}
     const dialog=$("select-dialog");
