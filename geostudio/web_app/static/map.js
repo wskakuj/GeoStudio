@@ -3217,12 +3217,25 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
   }
   const APPEARANCE_KEY="geostudio-appearance-v1";
   const validMapColor=value=>/^#[0-9a-fA-F]{6}$/.test(value);
+  let appearanceWriteTimer=null,appearanceRevision=0;
   function persistAppearance(){
+    appearanceRevision++;
+    const preference={
+      theme:state.appTheme,mapBackground:state.mapBackground
+    };
     try{
-      window.localStorage.setItem(APPEARANCE_KEY,JSON.stringify({
-        theme:state.appTheme,mapBackground:state.mapBackground
-      }));
+      window.localStorage.setItem(APPEARANCE_KEY,JSON.stringify(preference));
     }catch(_error){ /* Preferences are optional in restricted WebView2. */ }
+    // Desktop uses a different local origin each time. Write to the
+    // persistent GeoStudio2 preferences.json through the authenticated
+    // local API so theme and canvas color survive restarts.
+    clearTimeout(appearanceWriteTimer);
+    appearanceWriteTimer=setTimeout(()=>{
+      api("/api/appearance",{
+        method:"POST",headers:{"Content-Type":"application/json"},
+        body:JSON.stringify(preference)
+      }).catch(()=>{ /* Canvas and theme still work without disk access. */ });
+    },160);
   }
   function applyAppearance(){
     document.body.dataset.theme=state.appTheme;
@@ -3239,7 +3252,7 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
       state.appTheme==="dark"?"#111d2d":"#f6f8fb";
     requestDraw();
   }
-  function restoreAppearance(){
+  async function restoreAppearance(){
     try{
       const saved=JSON.parse(window.localStorage.getItem(APPEARANCE_KEY)||"null");
       if(saved?.theme==="light"||saved?.theme==="dark")
@@ -3248,6 +3261,17 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
         state.mapBackground=saved.mapBackground.toUpperCase();
     }catch(_error){ /* Unsupported or malformed local preference. */ }
     applyAppearance();
+    const version=appearanceRevision;
+    try{
+      const stored=await api("/api/appearance");
+      // A user's newer click takes precedence over a slow initial GET.
+      if(appearanceRevision!==version)return;
+      if(stored.theme==="light"||stored.theme==="dark")
+        state.appTheme=stored.theme;
+      if(validMapColor(stored.mapBackground))
+        state.mapBackground=stored.mapBackground.toUpperCase();
+      applyAppearance();
+    }catch(_error){ /* Local browser preference remains the fallback. */ }
   }
   function toggleTheme(){
     state.appTheme=state.appTheme==="dark"?"light":"dark";
