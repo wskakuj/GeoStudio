@@ -35,7 +35,7 @@ const sample={field:'A1',text:'l',size:16};
 const mapFeature={code:'5310'};
 function size(scale,dpi,compilation=5000){
   const state={
-    scale,exporting:dpi!==96,exportFontRatio:dpi/96,
+    scale,exporting:dpi!==96,exportDpi:dpi,exportFontRatio:dpi/96,
     edit:{compilationScale:compilation,sourceCompilationScale:5000}
   };
   return new Function('state',fontSource+';return labelFontSize;')
@@ -49,6 +49,7 @@ for(const scale of [.012,.1,1,8]){
   // different physical DPI values rather than using viewport zoom.
   assert.equal(size(scale,150),16);
   assert.equal(size(scale,300),16);
+  assert.equal(size(scale,600),32);
 }
 assert.ok(size(1,96,1000)<size(1,96,5000));
 assert.ok(size(1,96,10000)>size(1,96,5000));
