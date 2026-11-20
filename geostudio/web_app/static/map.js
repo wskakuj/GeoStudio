@@ -8,6 +8,10 @@
   const $ = id => document.getElementById(id);
   const token = document.querySelector('meta[name="api-token"]').content;
   const canvas = $("map-canvas"), shell = $("canvas-shell");
+  // The label layer lives above the geometry canvas and never participates
+  // in its bitmap zoom/pan. One CSS px means the same on every wheel tick.
+  const labelCanvas = $("map-labels-canvas");
+  const labelCtx = labelCanvas.getContext("2d");
   let ctx = canvas.getContext("2d");
   const viewportSnapshot=document.createElement("canvas");
   const snapshotContext=viewportSnapshot.getContext("2d");
@@ -1837,8 +1841,10 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
     state.pixelRatio = Math.min(2, window.devicePixelRatio || 1);
     const w = Math.round(state.width * state.pixelRatio);
     const h = Math.round(state.height * state.pixelRatio);
-    if (canvas.width !== w || canvas.height !== h) {
+    if (canvas.width !== w || canvas.height !== h ||
+        labelCanvas.width !== w || labelCanvas.height !== h) {
       canvas.width=w;canvas.height=h;
+      labelCanvas.width=w;labelCanvas.height=h;
       state.previewActive=false;state.previewCamera=null;
       state.geometrySnapshotValid=false;
     }
@@ -2708,6 +2714,18 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
     }
     ctx.restore();
   }
+  function renderScreenLabels(features) {
+    // Map geometry is camera-zoomed. Labels are a separate transparent
+    // screen-space canvas: only devicePixelRatio affects glyph pixels,
+    // never state.scale. This also prevents browser bitmap resampling
+    // from changing font size during continuous wheel zoom.
+    labelCtx.setTransform(state.pixelRatio,0,0,state.pixelRatio,0,0);
+    labelCtx.clearRect(0,0,state.width,state.height);
+    const previousContext=ctx;
+    ctx=labelCtx;
+    try { renderLabels(features); }
+    finally { ctx=previousContext; }
+  }
   function draw() {
     state.scheduled=false;
     const isDark=document.body.classList.contains("dark-map");
@@ -2716,12 +2734,12 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
     ctx.fillStyle=isDark?"#17283b":"#FAFCFD";
     ctx.fillRect(0,0,state.width,state.height);
     drawGrid();
-    if(!state.meta)return;
+    if(!state.meta){renderScreenLabels([]);return;}
     // Keep the last verified viewport visible while the spatial request
     // catches up to the new camera, avoiding blank flashes on zoom.
     if(drawNavigationPreview()){
       const labelBounds=boundsFromViewport(.05);
-      renderLabels(state.features.filter(f=>isVisible(f)&&isInView(f.bbox,labelBounds)));
+      renderScreenLabels(state.features.filter(f=>isVisible(f)&&isInView(f.bbox,labelBounds)));
       return;
     }
     const box=boundsFromViewport(.05);
@@ -2734,7 +2752,8 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
     for(const feature of features) renderFill(feature);
     for(const feature of features) renderStroke(feature);
     renderHighlights(features);drawMoveGhost(features);drawMoveMagnet();
-    // Snapshot without labels: bitmap zoom is smooth, text never scales.
+    // Snapshot includes only the geometry canvas. Overlay labels never
+    // enter the bitmap used for zoom/pan previews.
     if(viewportSnapshot.width!==canvas.width||viewportSnapshot.height!==canvas.height){
       viewportSnapshot.width=canvas.width;viewportSnapshot.height=canvas.height;
     }
@@ -2742,7 +2761,7 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
     snapshotContext.clearRect(0,0,canvas.width,canvas.height);
     snapshotContext.drawImage(canvas,0,0);
     state.geometrySnapshotValid=true;
-    renderLabels(features);drawDraftPolygon();drawMagnetMarker();drawVertexTool();
+    renderScreenLabels(features);drawDraftPolygon();drawMagnetMarker();drawVertexTool();
     updateScaleReadout();
     $("count-visible").textContent=display(features.length);
     $("render-hint").textContent=state.limited
