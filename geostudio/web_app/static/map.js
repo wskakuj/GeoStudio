@@ -2391,19 +2391,16 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
     }finally{state.editBusy=false;updateEditState(state.edit);}
   }
   function labelFontSize(feature,label,selected) {
+    // Pixel-perfect, zoom-invariant labels, as requested for classic GIS:
+    // at 1:500, 1:5000 and 1:25000 the chosen A1/A2 size is the SAME.
+    // Only explicit changes to the *compilation* scale or style editor
+    // affect typography. Distant overview clutter is handled by culling
+    // geometrically tiny objects, not by magnifying fonts.
     const source=state.edit?.sourceCompilationScale||5000;
     const compilation=state.edit?.compilationScale||source;
     const ratio=Math.max(.1,Math.min(10,compilation/source));
-    // The previous stage's worldHeight=2.25 caused 5310 text to be
-    // effectively invisible (0–2px) at everyday cadastral zoom.
-    // Scale continuously with the map without giant fixed-pixel overviews.
-    const world=label.worldTextHeight;
-    const wanted=world!==null&&world!==undefined
-      ?Number(world)*state.scale*ratio
-      :(label.size||16)*Math.pow(Math.max(1e-6,state.scale)/.65,.43)*ratio;
-    if(!Number.isFinite(wanted))return 0;
-    if(wanted<7)return selected?11:0;
-    return Math.max(7,Math.min(40,wanted));
+    const base=Math.max(8,Math.min(36,Number(label.size)||16));
+    return Math.round(Math.max(8,Math.min(40,base*ratio))*10)/10;
   }
   function labelTextRows(label,size) {
     const lines=String(label.text||"").split("\n").slice(0,6);
