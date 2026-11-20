@@ -9,13 +9,13 @@ from __future__ import annotations
 import struct
 
 
-def tiff_header(width: int, height: int, dpi: int) -> tuple[bytes, int, bool]:
+def tiff_header(width: int, height: int, dpi: int, *, force_big: bool = False) -> tuple[bytes, int, bool]:
     if (type(width) is not int or type(height) is not int or
             not 1 <= width <= 200_000 or not 1 <= height <= 200_000 or
             type(dpi) is not int or dpi not in (96, 150, 300, 600)):
         raise ValueError("Nieprawidłowy rozmiar lub DPI obrazu TIFF.")
     byte_count = width * height * 3
-    big = byte_count + 180 > 0xFFFFFFFF
+    big = force_big or byte_count + 180 > 0xFFFFFFFF
     entries = (
         (256, 4, 1, width),       # ImageWidth
         (257, 4, 1, height),      # ImageLength
