@@ -1532,12 +1532,12 @@ class PreviewWorkspace:
                 raise ValueError("Linia jest zbyt krótka lub przecina samą siebie.")
             if action=="edit_line":
                 if selected[0].is_closed or selected[0].code not in {
-                        "6900","6000","6301","2364","4100"}:
+                        "5214","6900","6000","6301","2364","4100"}:
                     raise ValueError("Wybrany obiekt nie jest obsługiwaną linią.")
             else:
                 code=operation.get("code")
-                if code not in {"6900","6000","6301","2364"}:
-                    raise ValueError("Wybierz kod linii 6900, 6000, 6301 lub 2364.")
+                if code not in {"5214","6900","6000","6301","2364"}:
+                    raise ValueError("Wybierz kod linii 5214, 6900, 6000, 6301 lub 2364.")
                 attrs=operation.get("fields")
                 if not isinstance(attrs,dict) or set(attrs)-{"A1","A2"}:
                     raise ValueError("Linia obsługuje A1/A2.")
@@ -2451,7 +2451,7 @@ class PreviewWorkspace:
             if self._doc is None:
                 raise ValueError("Najpierw otwórz mapę.")
             entry=next((e for e in self._entries if e.obj.code==code),None)
-            if entry is None and code not in {"5216","5220","5230","5310"}:
+            if entry is None and code not in {"5214","5216","5220","5230","5310"}:
                 raise ValueError("Kod nie występuje w otwartej mapie.")
             saved=self._styles.get("code:"+code,{})
             style=self._style(entry) if entry else {
@@ -2471,7 +2471,7 @@ class PreviewWorkspace:
         with self._lock:
             self._require_edit(document_token,revision)
             if (not re.fullmatch(r"[0-9]{4}",str(code)) or
-                    (code not in {"5216","5220","5230","5310"} and
+                    (code not in {"5214","5216","5220","5230","5310"} and
                      code not in {e.obj.code for e in self._entries})):
                 raise ValueError("Nieprawidłowy kod obrysu.")
             if type(reset) is not bool:
