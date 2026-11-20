@@ -170,6 +170,8 @@ class PreviewWorkspace:
         layer_counts = Counter()
         codes = Counter()
         forest = Counter()
+        land_use_counts = Counter()
+        land_use_labels = {}
         for ix, obj in enumerate(doc.objects):
             if not obj.points:
                 continue
@@ -184,6 +186,14 @@ class PreviewWorkspace:
             codes[obj.code] += 1
             if grade:
                 forest[grade] += 1
+            if layer == "Użytki":
+                # A1 is the real cadastral land-use class. Case-insensitive
+                # keys avoid showing duplicate rows for e.g. R/r, but the
+                # displayed label keeps the original GEO-MAP spelling.
+                value = str(obj.fields.get("A1", "") or "").strip()
+                key = value.casefold()
+                land_use_counts[key] += 1
+                land_use_labels.setdefault(key, value or "(bez A1)")
         extent = [
             min(entry.bbox[0] for entry in entries),
             min(entry.bbox[1] for entry in entries),
@@ -201,6 +211,11 @@ class PreviewWorkspace:
             "layers": [{"name": key, "count": n} for key, n in sorted(layer_counts.items())],
             "codes": dict(codes),
             "forestClasses": dict(sorted(forest.items())),
+            "landUseClasses": [
+                {"key": key, "label": land_use_labels[key], "count": amount}
+                for key, amount in sorted(land_use_counts.items(),
+                                          key=lambda item: item[0])
+            ],
             "readOnly": True,  # uploaded source is never changed on disk
             "editingEnabled": True,
             "renderer": "HTML Canvas 2D — editable in-memory copy",
@@ -2025,6 +2040,12 @@ class PreviewWorkspace:
             page=self.viewport(bounds,limit=MAX_RENDER_FEATURES)
             if page["limited"] or page["total"]>85000:
                 raise ValueError("Za dużo obiektów do pojedynczego PDF; zawęź widok.")
+            hidden_uses=options.get("hiddenLandUses", [])
+            if (not isinstance(hidden_uses,list) or len(hidden_uses)>2000 or
+                    not all(isinstance(key,str) and len(key)<=120
+                            for key in hidden_uses)):
+                raise ValueError("Nieprawidłowe filtrowanie klas użytków.")
+            hidden_set=set(hidden_uses)
             visible=options.get("visibleLayers")
             if visible is not None:
                 if (not isinstance(visible,list) or len(visible)>300 or
@@ -2034,6 +2055,9 @@ class PreviewWorkspace:
                 features=[f for f in page["features"] if f["layer"] in chosen]
             else:
                 features=page["features"]
+            if hidden_set:
+                features=[f for f in features if not (
+                    f["layer"]=="Użytki" and f["landUse"] in hidden_set)]
             data=render_vector_pdf(features,options)
             base=_display_name(self._doc.filename)
             return base[:-4]+"_arkusz_wektorowy.pdf", data
@@ -2638,7 +2662,10 @@ class PreviewWorkspace:
                         # Preserve the original rather than risk data loss.
                         pass
         return {"id":entry.fid,"code":obj.code,"layer":entry.layer,
-                "grade":entry.grade,"bbox":entry.bbox,"closed":obj.is_closed,
+                "grade":entry.grade,
+                "landUse": (str(obj.fields.get("A1", "") or "").strip().casefold()
+                            if entry.layer == "Użytki" else None),
+                "bbox":entry.bbox,"closed":obj.is_closed,
                 "geometry":parts,"style":self._style(entry),
                 "labels":self._labels(entry) if parts else [],
                 "baseAreaM2":obj.area_m2,
