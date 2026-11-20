@@ -1822,6 +1822,26 @@ class PreviewWorkspace:
                       "fill" not in code_style else 0),
             "symbolSegments": segments,
             "symbolCircles": circles,
+            # Stage 8 diagnostics: loaded definitions can be unrelated to the
+            # codes in this viewport. Tell the user about real matches rather
+            # than claiming the map's appearance has changed.
+            "libraryMatches": [
+                kind for kind,matched in (
+                    ("CDF",cdf is not None),
+                    ("LAY",lay is not None),
+                    ("SYM",sym_dash is not None or bool(symbols))
+                ) if matched
+            ],
+            "libraryApplied": [
+                kind for kind,applied in (
+                    ("CDF",cdf is not None and (
+                        cdf.border!=(0,0,0) or cdf.width>0 or
+                        (fill_color is not None and not native))),
+                    ("LAY",lay is not None and sym_dash is None and
+                     lay.line_id.endswith(".008")),
+                    ("SYM",sym_dash is not None or bool(segments) or bool(circles))
+                ) if applied
+            ],
         }
 
     def _labels(self, entry: _Entry) -> list[dict]:
