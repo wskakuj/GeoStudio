@@ -170,6 +170,15 @@ class NativeMapPicker:
                 "format":"geostudio-topology-v1",
                 "sha256":sha256(raw).hexdigest(),"uids":[]
             },separators=(",",":")).encode("utf-8")
+        # Crash recovery must include label moves and compilation scale too;
+        # placing the visual snapshot in the checksum-bound recovery blob
+        # changes neither the public 6A nor 6B topology companion format.
+        visual=self._workspace.export_visual_sidecar(raw)
+        if visual:
+            envelope=json.loads(companion)
+            envelope["recoveryVisual"]=json.loads(visual)
+            companion=json.dumps(envelope,ensure_ascii=False,
+                                 separators=(",",":")).encode("utf-8")
         new=self._workspace.editing_status()
         if (new["revision"]!=status["revision"] or
                 new["documentToken"]!=status["documentToken"] or
@@ -197,8 +206,15 @@ class NativeMapPicker:
         if (not check.checksum_valid or
                 check.declared_lines!=len(check.lines)):
             raise ValueError("Migawka zawiera nieprawidłową sumę GEO-MAP.")
+        recovery_meta=json.loads(companion)
+        visual=recovery_meta.pop("recoveryVisual",None)
+        topology=json.dumps(recovery_meta,ensure_ascii=False,
+                            separators=(",",":")).encode("utf-8")
         self._workspace.load_map(raw,path.name)
-        self._workspace.import_topology_metadata(companion,raw)
+        self._workspace.import_topology_metadata(topology,raw)
+        if visual:
+            self._workspace.set_visual_sidecar(
+                json.dumps(visual,ensure_ascii=False).encode("utf-8"))
         self._workspace.mark_recovered_unsaved()
         return {"restored":True,"metadata":self._workspace.metadata()}
 
