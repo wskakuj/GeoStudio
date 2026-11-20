@@ -2326,6 +2326,58 @@ class PreviewWorkspace:
             ],
         }
 
+    def outline_settings(self, code: str) -> dict:
+        """One global stroke preset for all current/future objects of a code."""
+        if not re.fullmatch(r"[0-9]{4}", str(code)):
+            raise ValueError("Kod obrysu musi mieć cztery cyfry.")
+        with self._lock:
+            if self._doc is None:
+                raise ValueError("Najpierw otwórz mapę.")
+            entry=next((e for e in self._entries if e.obj.code==code),None)
+            if entry is None:
+                raise ValueError("Kod nie występuje w otwartej mapie.")
+            style=self._style(entry)
+            saved=self._styles.get("code:"+code,{})
+            return {
+                "code":code,"stroke":style["stroke"],
+                "strokeWidth":style["strokeWidth"],
+                "custom":("stroke" in saved or "stroke_width" in saved)
+            }
+
+    def set_outline_settings(self, code: str, stroke: str,
+                             width: float, *, reset: bool=False,
+                             document_token: str, revision: int) -> dict:
+        """Undoable visual-only code style; never change original MAP."""
+        with self._lock:
+            self._require_edit(document_token,revision)
+            if (not re.fullmatch(r"[0-9]{4}",str(code)) or
+                    code not in {e.obj.code for e in self._entries}):
+                raise ValueError("Nieprawidłowy kod obrysu.")
+            if type(reset) is not bool:
+                raise ValueError("Nieprawidłowy tryb przywracania stylu.")
+            if not reset and (
+                    type(stroke) is not str or not HEX.fullmatch(stroke) or
+                    type(width) not in (float,int) or not isfinite(width) or
+                    not .5<=width<=12):
+                raise ValueError("Wybierz kolor #RRGGBB i grubość 0,5–12 px.")
+            key="code:"+code
+            old=dict(self._styles.get(key,{}))
+            new=dict(old)
+            if reset:
+                new.pop("stroke",None)
+                new.pop("stroke_width",None)
+            else:
+                new["stroke"]=stroke.upper()
+                new["stroke_width"]=round(float(width),2)
+            if new==old:
+                return {**self._editing_status(),"changed":False}
+            with self._history.begin("Obrys kodu "+code):
+                if new:self._styles[key]=new
+                else:self._styles.pop(key,None)
+            self._revision+=1
+            return {**self._editing_status(),"changed":True,
+                    "code":code}
+
     def label_settings(self,code: str) -> dict:
         if not re.fullmatch(r"[0-9]{4}",str(code)):
             raise ValueError("Kod etykiety musi mieć cztery cyfry.")
