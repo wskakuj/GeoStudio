@@ -2582,6 +2582,8 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
     gcpView.waiting=false;gcpView.pending=null;gcpView.open=false;
     gcpView.activeIndex=null;gcpView.mapDragging=null;gcpView.dragging=null;
     gcpView.consumeMapUp=null;gcpView.fitSerial++;
+    canvas.style.cursor="";
+    $("raster-gcp-canvas").style.cursor="crosshair";
     if($("raster-visual-dialog").open)$("raster-visual-dialog").close();
     requestDraw();
   }
@@ -2612,7 +2614,15 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
   }
   function moveGcpMapPoint(ev){
     const drag=gcpView.mapDragging;
-    if(!drag||drag.pointer!==ev.pointerId)return;
+    if(!drag){
+      if(gcpView.open&&raster.image){
+        const p=eventCoords(ev);
+        const close=gcpNearestMapPoint(p.x,p.y)>=0;
+        canvas.style.cursor=close?"grab":gcpView.waiting?"crosshair":"";
+      }
+      return;
+    }
+    if(drag.pointer!==ev.pointerId)return;
     ev.preventDefault();ev.stopImmediatePropagation();
     if(!raster.gcps[drag.index])return;
     Object.assign(raster.gcps[drag.index],gcpMapPoint(ev));
@@ -2709,7 +2719,13 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
     });
     canvas.addEventListener("pointermove",ev=>{
       const drag=gcpView.dragging;
-      if(!drag||drag.id!==ev.pointerId)return;
+      if(!drag){
+        const rect=canvas.getBoundingClientRect();
+        canvas.style.cursor=gcpNearestRasterPoint(
+          ev.clientX-rect.left,ev.clientY-rect.top)>=0?"grab":"crosshair";
+        return;
+      }
+      if(drag.id!==ev.pointerId)return;
       if(drag.kind==="pan"){
         gcpView.panX+=ev.clientX-drag.x;
         gcpView.panY+=ev.clientY-drag.y;
