@@ -56,7 +56,7 @@ assert.ok(!fontSource.includes('exportFontRatio'));
 """)
 
 
-def test_labels_of_different_buildings_cull_across_export_batches():
+def test_both_5310_labels_remain_visible_even_across_export_batches():
     _node_assertions(r"""
 const assert=require('node:assert/strict');
 const fs=require('node:fs');
@@ -94,8 +94,8 @@ renderLabels([building('f1','a')],collisions);
 assert.deepEqual(painted,['a','II-0.5']);
 assert.equal(collisions.length,2);
 renderLabels([building('f2','b')],collisions);
-assert.deepEqual(painted,['a','II-0.5']);
-assert.equal(collisions.length,2);
+assert.deepEqual(painted,['a','II-0.5','b','II-0.5']);
+assert.equal(collisions.length,4);
 // A subsequent export page uses the SAME ledger; the export renderer
 // never applies a second text scale for 300 DPI.
 assert.ok(src.includes('renderLabels(visible,collisions)'));
