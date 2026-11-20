@@ -17,6 +17,7 @@
     labels: true, grid: false, active: null, detail: null, pinned: new Set(),
     cartoLibraries: {},
     previewActive:false,previewCamera:null,
+    localMapReady:false,localMapCandidate:false,
     width: 1, height: 1, pixelRatio: 1, isDragging: false, drag: null,
     lastPick: null, scheduled: false, refreshTimer: null, queryCounter: 0,
     queryAbort: null, selectionRequest: 0, limited: false,
@@ -33,6 +34,8 @@
   const commands = [
     {name:"Otwórz plik GEO-MAP", hint:"Ctrl+O", run:chooseMap},
     {name:"Wybierz obiekty według kodu, A1, A2", hint:"Ctrl+H", run:openAdvancedSelection},
+    {name:"Znajdź obiekt po ID, kodzie lub treści", hint:"F", run:openFindDialog},
+    {name:"Zamień fragment w atrybutach z podglądem", hint:"Ctrl+F", run:openReplaceDialog},
     {name:"Edytuj zbiorowo pola A1/A2", hint:"Ctrl+Shift+E", run:openBulkEditor},
     {name:"Przeciągaj wybrane poligony", hint:"M", run:()=>setTool("move")},
     {name:"Kopiuj obok i przesuń myszą", hint:"Ctrl+D", run:quickDuplicate},
@@ -396,11 +399,17 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
     state.vertexDrag=null;state.moveGhost=null;state.movePreview=null;
     state.labelDrag=null;state.labelSelected=null;state.labelHits=[];
     state.previewActive=false;state.previewCamera=null;
+    state.localMapReady=false;state.localMapCandidate=false;
     state.moveIds=[];state.copyIds=[];state.drawPoints=[];
     state.cutIds=[];state.lineEditId=null;state.geometryPreview=null;
     state.drawHover=null;state.drawSnap=null;state.drawCursorWorld=null;
     state.objectPreview=null;setTool("select");
     state.features = []; state.inspectorCache.clear();
+    // Ordinary cadastral MAP: transfer the whole geometry just ONCE.
+    // Zoom and pan then render local Canvas data, without HTTP requests.
+    state.localMapCandidate=meta.objectCount<=12000&&
+      meta.vertexCount<=150000;
+    state.localMapReady=false;
     // Match the old user's map view: survey markers are opt-in.
     // Their heavy symbol density otherwise hides the parcel boundaries.
     state.visibleLayers = new Set(
@@ -660,6 +669,197 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
     }
     if([...box.options].some(x=>x.value===old))box.value=old;
   }
+  let findList=[],replacePreview=null;
+  function openFindDialog(){
+    if(!state.meta){inform("Najpierw otwórz mapę MAP.");return;}
+    $("find-dialog").showModal();
+    $("find-value").focus();
+  }
+  function openReplaceDialog(){
+    if(!state.meta){inform("Najpierw otwórz mapę MAP.");return;}
+    $("replace-scope").value="selection";
+    invalidateReplacePreview();
+    $("replace-dialog").showModal();
+    $("replace-needle").focus();
+  }
+  function findOptions(){
+    return {
+      code:$("find-code").value.trim(),
+      field:$("find-field").value,
+      value:$("find-value").value.trim(),
+      match:$("find-match").value,
+      limit:"120"
+    };
+  }
+  function zoomToSearchResult(result){
+    if(!state.meta)return;
+    const b=result.bbox||state.meta.bounds;
+    const width=Math.max(.2,b[2]-b[0]);
+    const height=Math.max(.2,b[3]-b[1]);
+    const target=Math.min((state.width-160)/width,
+                          (state.height-160)/height)*.75;
+    state.center={x:(b[0]+b[2])/2,y:(b[1]+b[3])/2};
+    state.scale=Math.max(.08,Math.min(1500,target));
+    state.previewActive=false;state.previewCamera=null;
+    state.pinned.clear();state.lastPick=null;
+    selectFeature(result.id);
+    requestDraw();scheduleViewport();
+    $("find-dialog").close();
+    canvas.focus({preventScroll:true});
+    inform("Znaleziono "+result.code+" · "+(result.uid||result.id)+
+      ". Obiekt zaznaczony i wycentrowany.");
+  }
+  async function submitFind(ev){
+    ev.preventDefault();
+    const params=new URLSearchParams(findOptions());
+    $("find-summary").textContent="Przeszukiwanie całej mapy…";
+    $("find-results").replaceChildren();
+    $("find-select-all").disabled=true;
+    findList=[];
+    try{
+      const res=await api("/api/find?"+params.toString());
+      if(res.documentToken!==state.edit?.documentToken||
+         res.revision!==state.edit?.revision)
+        throw Error("Mapa zmieniła się podczas wyszukiwania.");
+      findList=res.results||[];
+      $("find-summary").textContent=
+        "Znaleziono "+display(res.count)+" obiektów. "+
+        (res.truncated
+         ?"Wyświetlono tylko "+display(findList.length)+
+          " pierwszych — zawęź wyszukiwanie."
+         :"Kliknij wynik, aby go zaznaczyć na mapie.");
+      $("find-select-all").disabled=!findList.length;
+      for(const result of findList){
+        const row=document.createElement("button");
+        row.type="button";row.className="geostudio-find-result";
+        row.setAttribute("role","listitem");
+        const title=document.createElement("strong");
+        title.textContent=result.code+" · "+(result.uid||result.id);
+        const description=document.createElement("span");
+        description.textContent=
+          ["A1: "+(result.A1||"—"),
+           "A2: "+(result.A2||"—"),
+           result.TX?"TX: "+result.TX:""].filter(Boolean).join(" · ");
+        row.append(title,description);
+        row.addEventListener("click",()=>zoomToSearchResult(result));
+        $("find-results").append(row);
+      }
+    }catch(err){
+      $("find-summary").textContent="Nie udało się wyszukać: "+err.message;
+      inform("Błąd wyszukiwania: "+err.message,true);
+    }
+  }
+  function selectFindResults(){
+    if(!findList.length)return;
+    const selected=findList.map(item=>item.id);
+    state.pinned=new Set(selected);
+    state.active=selected[0]||null;
+    $("find-dialog").close();
+    updateSelectionCount();
+    selectFeature(state.active);
+    inform("Zaznaczono "+display(selected.length)+
+      " wyświetlonych wyników. Ctrl+H umożliwia pełniejsze filtrowanie.");
+  }
+  function replaceOperation(){
+    return {
+      field:$("replace-field").value,
+      needle:$("replace-needle").value,
+      replacement:$("replace-replacement").value,
+      caseSensitive:$("replace-case").checked,
+      scope:$("replace-scope").value,
+      ids:$("replace-scope").value==="selection"?selectedObjectIds():[],
+      code:$("replace-code").value.trim()
+    };
+  }
+  function invalidateReplacePreview(){
+    replacePreview=null;
+    $("replace-apply").disabled=true;
+    $("replace-examples").replaceChildren();
+    $("replace-summary").textContent=
+      "Podgląd jest wymagany po każdej zmianie kryteriów.";
+  }
+  async function previewReplacePhrase(){
+    if(state.editBusy||!state.meta)return;
+    invalidateReplacePreview();
+    const operation=replaceOperation();
+    if(operation.scope==="selection"&&!operation.ids.length){
+      $("replace-summary").textContent=
+        "Brak zaznaczenia. Wybierz obiekty przez Ctrl+H "+
+        "albo świadomie ustaw zakres «Cała mapa».";
+      return;
+    }
+    const request={...editRequestBody(),operation};
+    $("replace-preview").disabled=true;
+    $("replace-summary").textContent="Sprawdzanie wszystkich wartości i kodowania CP1250…";
+    try{
+      const res=await api("/api/replace/preview",{
+        method:"POST",headers:{"Content-Type":"application/json"},
+        body:JSON.stringify(request)
+      });
+      if(res.documentToken!==request.documentToken||
+         res.revision!==request.revision)
+        throw Error("Mapa zmieniła się podczas podglądu.");
+      replacePreview={request,report:res};
+      $("replace-apply").disabled=!res.canApply;
+      $("replace-summary").textContent=
+        "Pasujących obiektów: "+display(res.changedObjects)+
+        " · Zamienianych wystąpień: "+display(res.occurrences)+
+        " · Sprawdzonych: "+display(res.scanned)+
+        ". Całość można cofnąć jednym Ctrl+Z.";
+      for(const entry of res.examples||[]){
+        const row=document.createElement("div");
+        row.className="geostudio-find-result replace-preview-row";
+        row.setAttribute("role","listitem");
+        const title=document.createElement("strong");
+        title.textContent=entry.code+" · "+entry.uid;
+        const before=document.createElement("span");
+        before.textContent="Przed: "+entry.before;
+        const after=document.createElement("span");
+        after.textContent="Po: "+entry.after;
+        row.append(title,before,after);
+        $("replace-examples").append(row);
+      }
+    }catch(err){
+      $("replace-summary").textContent="Podgląd nieudany: "+err.message;
+      inform("Nie można zamienić: "+err.message,true);
+    }finally{$("replace-preview").disabled=false;}
+  }
+  async function applyReplacePhrase(ev){
+    ev.preventDefault();
+    if(!replacePreview||state.editBusy)return;
+    const current={...editRequestBody(),operation:replaceOperation()};
+    if(JSON.stringify(current)!==JSON.stringify(replacePreview.request)){
+      invalidateReplacePreview();
+      inform("Zmieniono zaznaczenie lub mapę. Wykonaj podgląd ponownie.",true);
+      return;
+    }
+    const report=replacePreview.report;
+    if(!report.canApply)return;
+    if(!window.confirm("Zamienić "+display(report.occurrences)+
+      " fragmentów w "+display(report.changedObjects)+
+      " obiektach?\n\nWszystkie zmiany cofniesz jednym Ctrl+Z. "+
+      "Oryginalny MAP nie zostanie nadpisany."))return;
+    state.editBusy=true;updateEditState(state.edit);
+    $("replace-apply").disabled=true;
+    try{
+      const res=await api("/api/replace/apply",{
+        method:"POST",headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({...current,previewKey:report.previewKey})
+      });
+      updateEditState(res);
+      replacePreview=null;
+      $("replace-dialog").close();
+      await refreshEditedDocument(state.active);
+      inform("Zamieniono "+display(res.occurrences)+" wystąpień w "+
+        display(res.changedObjects)+" obiektach. Jedno Ctrl+Z cofa całość.");
+    }catch(err){
+      invalidateReplacePreview();
+      inform("Nie wykonano zamiany: "+err.message,true);
+    }finally{
+      state.editBusy=false;updateEditState(state.edit);
+    }
+  }
+
   function openAdvancedSelection() {
     if(!state.meta){inform("Najpierw wczytaj mapę MAP.",true);return;}
     const dialog=$("select-dialog");
@@ -1687,7 +1887,7 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
   function zoomAt(factor, px, py) {
     if (!state.meta) return;
     const origin=screenToWorld(px,py);
-    beginNavigationPreview();
+    if(!state.localMapReady)beginNavigationPreview();
     state.scale=Math.max(.000001,Math.min(3500,state.scale*factor));
     state.center={
       x:origin.x-(px-state.width/2)/state.scale,
@@ -2384,19 +2584,16 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
     }finally{state.editBusy=false;updateEditState(state.edit);}
   }
   function labelFontSize(feature,label,selected) {
+    // Pixel-perfect, zoom-invariant labels, as requested for classic GIS:
+    // at 1:500, 1:5000 and 1:25000 the chosen A1/A2 size is the SAME.
+    // Only explicit changes to the *compilation* scale or style editor
+    // affect typography. Distant overview clutter is handled by culling
+    // geometrically tiny objects, not by magnifying fonts.
     const source=state.edit?.sourceCompilationScale||5000;
     const compilation=state.edit?.compilationScale||source;
     const ratio=Math.max(.1,Math.min(10,compilation/source));
-    // The previous stage's worldHeight=2.25 caused 5310 text to be
-    // effectively invisible (0–2px) at everyday cadastral zoom.
-    // Scale continuously with the map without giant fixed-pixel overviews.
-    const world=label.worldTextHeight;
-    const wanted=world!==null&&world!==undefined
-      ?Number(world)*state.scale*ratio
-      :(label.size||16)*Math.pow(Math.max(1e-6,state.scale)/.65,.43)*ratio;
-    if(!Number.isFinite(wanted))return 0;
-    if(wanted<7)return selected?11:0;
-    return Math.max(7,Math.min(40,wanted));
+    const base=Math.max(8,Math.min(36,Number(label.size)||16));
+    return Math.round(Math.max(8,Math.min(40,base*ratio))*10)/10;
   }
   function labelTextRows(label,size) {
     const lines=String(label.text||"").split("\n").slice(0,6);
@@ -2540,7 +2737,10 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
     const ticket=++state.queryCounter;
     if(state.queryAbort) state.queryAbort.abort();
     const controller=new AbortController();state.queryAbort=controller;
-    let view=boundsFromViewport();
+    // One whole-map response for manageable files (<=12k objects/150k
+    // vertices). Reuse all geometry for instant local navigation.
+    let view=state.localMapCandidate?[...state.meta.bounds]:
+      boundsFromViewport();
     // Bound requests to the actual map extent. This prevents huge spatial
     // index scans when a user zooms far out or pans away from their map.
     const map=state.meta.bounds;
@@ -2559,6 +2759,8 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
       if(ticket!==state.queryCounter)return;
       state.features=res.features;
       state.limited=res.limited;
+      state.localMapReady=state.localMapCandidate&&!res.limited&&
+        res.total<=12000;
       state.previewActive=false;state.previewCamera=null;
       renderCartographyMatches();
       requestDraw();
@@ -2570,6 +2772,8 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
     }
   }
   function scheduleViewport(now=false) {
+    // Wheel/pan never call HTTP after the entire small/medium MAP is loaded.
+    if(state.localMapReady)return;
     clearTimeout(state.refreshTimer);
     if(now)refreshViewport();
     else state.refreshTimer=setTimeout(refreshViewport,100);
@@ -2885,7 +3089,7 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
       }
     }else if(d.moved){
       if(d.pan||state.tool==="select"){
-        beginNavigationPreview();
+        if(!state.localMapReady)beginNavigationPreview();
         state.center.x-=(p.x-d.last.x)/state.scale;
         state.center.y-=(p.y-d.last.y)/state.scale;
         shell.classList.add("dragging");requestDraw();
@@ -3074,8 +3278,16 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
     if($("line-dialog").open||$("split-dialog").open||
        $("copy-dialog").open||$("create-dialog").open||$("move-dialog").open||
        $("bulk-dialog").open||$("select-dialog").open||
-       $("label-settings-dialog").open)return;
+       $("label-settings-dialog").open||
+       $("find-dialog").open||$("replace-dialog").open)return;
+    if((ev.ctrlKey||ev.metaKey)&&!ev.shiftKey&&!ev.altKey&&
+       ev.key.toLowerCase()==="f"){
+      ev.preventDefault();openReplaceDialog();return;
+    }
     if(typing)return;
+    if(!ev.ctrlKey&&!ev.metaKey&&!ev.altKey&&ev.key.toLowerCase()==="f"){
+      ev.preventDefault();openFindDialog();return;
+    }
     if((ev.ctrlKey||ev.metaKey)&&ev.shiftKey&&ev.key.toLowerCase()==="g"){
       ev.preventDefault();mergePolygons();return;
     }
@@ -3165,6 +3377,24 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
   link("tool-open",chooseMap);
   link("empty-open",chooseMap);
   link("tool-advanced-select",openAdvancedSelection);
+  link("tool-find",openFindDialog);
+  link("tool-replace-phrase",openReplaceDialog);
+  link("find-close",()=>$("find-dialog").close());
+  link("find-select-all",selectFindResults);
+  $("find-form").addEventListener("submit",submitFind);
+  for(const id of ["find-code","find-field","find-value","find-match"])
+    $(id).addEventListener("input",()=>{
+      findList=[];
+      $("find-select-all").disabled=true;
+      $("find-results").replaceChildren();
+      $("find-summary").textContent="Kryteria zmienione. Kliknij Szukaj.";
+    });
+  link("replace-close",()=>$("replace-dialog").close());
+  link("replace-preview",previewReplacePhrase);
+  $("replace-form").addEventListener("submit",applyReplacePhrase);
+  for(const id of ["replace-field","replace-scope","replace-needle",
+                   "replace-replacement","replace-code","replace-case"])
+    $(id).addEventListener("input",invalidateReplacePreview);
   link("tool-bulk-edit",openBulkEditor);
   link("tool-move",()=>setTool("move"));
   link("tool-label-move",()=>setTool("labels"));

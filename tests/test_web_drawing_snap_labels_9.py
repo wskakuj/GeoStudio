@@ -102,14 +102,16 @@ const make=(scale,compilationScale=5000)=>
 const feature={code:'5310'};
 const a1={field:'A1',text:'l',x:10,y:20,size:16};
 const a2={field:'A2',text:'So120\nII-0.3',x:10,y:20,size:16};
-assert.equal(make(.01)(feature,a1,false),0);
-assert.ok(make(.2)(feature,a1,false)>=8);
-assert.ok(make(1)(feature,a1,false)>make(.2)(feature,a1,false));
-assert.ok(make(5)(feature,a1,false)>make(1)(feature,a1,false));
-assert.ok(make(12)(feature,a1,false)<=40);
-assert.equal(make(.01)(feature,a1,true),11);
-assert.equal(make(.6,1000)(feature,a1,false),0);
-assert.ok(make(.6,10000)(feature,a1,false)>make(.6)(feature,a1,false));
+// Constant SCREEN size at all zoom levels, including whole-map overview.
+assert.equal(make(.01)(feature,a1,false),16);
+assert.equal(make(.2)(feature,a1,false),16);
+assert.equal(make(1)(feature,a1,false),16);
+assert.equal(make(5)(feature,a1,false),16);
+assert.equal(make(12)(feature,a1,false),16);
+assert.equal(make(.01)(feature,a1,true),16);
+// Compilation scale, unlike camera zoom, intentionally changes font size.
+assert.ok(make(.6,1000)(feature,a1,false)<16);
+assert.ok(make(.6,10000)(feature,a1,false)>16);
 const main=src.slice(stop,src.indexOf('  function draw() {',stop));
 assert.ok(main.includes('for(const label of feature.labels)'));
 assert.ok(main.includes('item.fid!==feature.id'));

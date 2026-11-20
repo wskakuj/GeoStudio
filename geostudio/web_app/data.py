@@ -130,6 +130,7 @@ class PreviewWorkspace:
         self._revision = 0
         self._document_token = ""
         self._bulk_preview_key = ""
+        self._replace_preview_key = ""
         self._move_preview_key = ""
         self._objects_preview_key = ""
         self._geometry_preview_key = ""
@@ -574,6 +575,201 @@ class PreviewWorkspace:
             "compilationScale":self._current_compilation_scale(),
             "sourceCompilationScale":self._source_compilation_scale,
         }
+
+    def find_objects(self, *,code: str = "", field: str = "*",
+                     value: str = "", match: str = "contains",
+                     limit: int = 120) -> dict:
+        """Search the WHOLE map, including objects outside the viewport.
+
+        No mutation, no saved searches, no automatic selection of ambiguous
+        duplicate identifiers; results carry index-backed feature IDs and
+        native UIDs separately. Reporting a truncated result is explicit.
+        """
+        if any(not isinstance(x,str) or len(x)>160
+               for x in (code,field,value,match)):
+            raise ValueError("Nieprawidłowe kryteria wyszukiwania.")
+        code=code.strip()
+        value=value.strip()
+        valid_fields=set(LABEL_FIELDS)|{"*","ID"}
+        if (code and not re.fullmatch(r"[0-9]{4}",code)) or field not in valid_fields:
+            raise ValueError("Podaj czterocyfrowy kod lub prawidłowe pole.")
+        if not code and not value:
+            raise ValueError("Podaj kod albo szukaną wartość/ID.")
+        if match not in {"contains","exact"}:
+            raise ValueError("Wybierz dopasowanie dokładne lub fragment tekstu.")
+        if type(limit) is not int or not 1<=limit<=250:
+            raise ValueError("Nieprawidłowy limit wyników.")
+        pattern=value.casefold()
+        with self._lock:
+            if self._doc is None:raise ValueError("Najpierw otwórz MAP.")
+            total=0
+            result=[]
+            for entry in self._entries:
+                obj=entry.obj
+                if code and obj.code!=code:continue
+                if value:
+                    if field=="*":
+                        haystacks=[obj.code,obj.uid or "",*obj.fields.values()]
+                    elif field=="ID":
+                        haystacks=[obj.uid or ""]
+                    else:
+                        haystacks=[obj.fields.get(field,"")]
+                    if not any((h.strip().casefold()==pattern if match=="exact"
+                                else pattern in h.strip().casefold())
+                               for h in haystacks):
+                        continue
+                total+=1
+                if len(result)<limit:
+                    result.append({
+                        "id":entry.fid,"uid":obj.uid or "",
+                        "code":obj.code,"layer":entry.layer,
+                        "bbox":list(entry.bbox),
+                        "A1":str(obj.fields.get("A1",""))[:140],
+                        "A2":str(obj.fields.get("A2",""))[:140],
+                        "TX":str(obj.fields.get("TX",""))[:140],
+                    })
+            return {"results":result,"count":total,"truncated":total>limit,
+                    "limit":limit,"documentToken":self._document_token,
+                    "revision":self._revision}
+
+    def _replace_phrase_plan(self, operation: dict, *,
+                             document_token: str, revision: int) -> dict:
+        """Validate the full replacement batch, with no in-place mutation."""
+        self._require_edit(document_token,revision)
+        if not isinstance(operation,dict) or set(operation)!={
+                "field","needle","replacement","caseSensitive",
+                "scope","ids","code"}:
+            raise ValueError("Niepoprawny plan zamiany.")
+        field=operation["field"]
+        needle=operation["needle"]
+        replacement=operation["replacement"]
+        sensitive=operation["caseSensitive"]
+        scope=operation["scope"]
+        ids=operation["ids"]
+        code=operation["code"]
+        if (field not in LABEL_FIELDS or not isinstance(needle,str)
+            or not 0<len(needle)<=160 or not isinstance(replacement,str)
+            or len(replacement)>512 or type(sensitive) is not bool
+            or scope not in {"selection","all"}
+            or not isinstance(code,str) or (code and
+                re.fullmatch(r"[0-9]{4}",code) is None)
+            or not isinstance(ids,list) or len(ids)>MAX_BULK_EDIT_OBJECTS
+            or any(not isinstance(v,str) or len(v)>25 for v in ids)
+            or len(ids)!=len(set(ids))):
+            raise ValueError("Uzupełnij pole, frazę i zakres zamiany.")
+        if any(ch in replacement for ch in "\r\n]"):
+            raise ValueError("Zamiennik nie może zawierać ] ani nowych linii.")
+        if scope=="selection" and not ids:
+            raise ValueError("Wybierz obiekty albo ustaw zakres: cała mapa.")
+        if scope=="all" and ids:
+            raise ValueError("Dla całej mapy nie przesyłaj zaznaczenia.")
+        try:
+            replacement.encode("cp1250",errors="strict")
+        except UnicodeEncodeError as exc:
+            raise ValueError("Zamiennik zawiera znaki spoza kodowania CP1250.") from exc
+        pattern=re.compile(re.escape(needle),0 if sensitive else re.IGNORECASE)
+        chosen=[]
+        if scope=="selection":
+            for fid in ids:
+                entry=self._lookup.get(fid)
+                if entry is None:raise LookupError("Nieznany obiekt w zaznaczeniu.")
+                chosen.append(entry)
+        else:
+            chosen=self._entries
+        pending={}
+        samples=[]
+        affected=[]
+        occurrences=0
+        scanned=0
+        for entry in chosen:
+            obj=entry.obj
+            if code and obj.code!=code:continue
+            scanned+=1
+            old=obj.fields.get(field)
+            if old is None:continue
+            newer,count=pattern.subn(lambda _match:replacement,old)
+            if not count or newer==old:continue
+            if (not obj.uid or self._uid_counts.get(obj.uid)!=1
+                    or self._doc.by_id.get(obj.uid) is not obj):
+                raise ValueError("Pasujący obiekt ma niejednoznaczne :ID; całość anulowana.")
+            if any(ch in newer for ch in "\r\n]"):
+                raise ValueError("Zamiana utworzyłaby niedozwoloną wartość pola.")
+            try:
+                encoded=newer.encode("cp1250",errors="strict")
+            except UnicodeEncodeError as exc:
+                raise ValueError("Zamiana dałaby znaki spoza kodowania CP1250.") from exc
+            if len(newer)>512 or len(encoded)>512:
+                raise ValueError("Wynik zamiany przekracza limit 512 bajtów GEO-MAP.")
+            pending[(obj.uid,field)]=newer
+            affected.append(entry.fid)
+            occurrences+=count
+            if len(affected)>MAX_BULK_EDIT_OBJECTS:
+                raise ValueError("Ponad 5 000 pasujących obiektów. Zawęź kod lub zakres.")
+            if len(samples)<16:
+                samples.append({"id":entry.fid,"uid":obj.uid,
+                    "code":obj.code,"before":old,"after":newer,"count":count})
+        payload={"operation":operation,"documentToken":document_token,
+                 "revision":revision}
+        key=sha256(json.dumps(payload,ensure_ascii=False,sort_keys=True,
+                             separators=(",",":")).encode("utf-8")).hexdigest()
+        return {"pending":pending,"affected":affected,
+                "report":{**self._editing_status(),"previewKey":key,
+                          "changedObjects":len(affected),
+                          "changedFields":len(pending),
+                          "occurrences":occurrences,
+                          "scanned":scanned,"examples":samples,
+                          "canApply":bool(pending)}}
+
+    def preview_replace_phrase(self, operation: dict, *,
+                               document_token: str, revision: int) -> dict:
+        with self._lock:
+            report=self._replace_phrase_plan(
+                operation,document_token=document_token,revision=revision)["report"]
+            self._replace_preview_key=report["previewKey"]
+            return report
+
+    def apply_replace_phrase(self, operation: dict, *,
+                             document_token: str, revision: int,
+                             preview_key: str) -> dict:
+        with self._lock:
+            plan=self._replace_phrase_plan(
+                operation,document_token=document_token,revision=revision)
+            report=plan["report"]
+            if (not isinstance(preview_key,str) or
+                    not self._replace_preview_key or
+                    preview_key!=report["previewKey"] or
+                    preview_key!=self._replace_preview_key):
+                raise RuntimeError("Podgląd wygasł. Sprawdź ponownie zamianę.")
+            self._replace_preview_key=""
+            if not plan["pending"]:
+                return {**self._editing_status(),"changed":False}
+            modified={uid for uid,field in plan["pending"]}
+            untouched=sha256()
+            for obj in self._doc.objects:
+                if obj.uid not in modified:
+                    for line in self._doc.lines[obj.start:obj.end]:
+                        untouched.update(line)
+            before=untouched.digest()
+            with self._history.begin(
+                "Zamiana frazy w "+operation["field"]+" ("+
+                str(report["changedObjects"])+" obiektów)",
+                selection_before=tuple(modified)
+            ):
+                self._doc.bulk_update_fields(plan["pending"])
+                after=sha256()
+                for obj in self._doc.objects:
+                    if obj.uid not in modified:
+                        for line in self._doc.lines[obj.start:obj.end]:
+                            after.update(line)
+                if after.digest()!=before:
+                    raise ValueError("Zamiana naruszyła obcy obiekt; operację cofnięto.")
+            self._reindex(self._doc,self._doc.filename)
+            self._revision+=1
+            return {**self._editing_status(),"changed":True,
+                    "changedObjects":report["changedObjects"],
+                    "changedFields":report["changedFields"],
+                    "occurrences":report["occurrences"],
+                    "affected":plan["affected"]}
 
     def select_by_attributes(self, *, code: str = "", a1: str = "",
                              a2: str = "", match: str = "exact") -> dict:
@@ -2145,11 +2341,21 @@ class PreviewWorkspace:
             clipped = (max(west, area[0]), max(south, area[1]),
                        min(east, area[2]), min(north, area[3]))
             w, s, e, n = clipped
-            radius = max(e - w, n - s) / 2
-            candidates = self._index.nearby(-(s + n) / 2,
-                                            (w + e) / 2, radius)
-            ids = {id(item) for item in candidates}
-            if len(ids)*3<len(self._entries):
+            # A complete-map request uses the already indexed list. Do not
+            # approximate a wide rectangle with a centre/radius query:
+            # that can omit narrow corners of a cadastral sheet.
+            full_map=(tuple(clipped)==tuple(area) and
+                      len(self._entries)<=limit)
+            if full_map:
+                visible=list(self._entries)
+                ids=set()
+            else:
+                radius=max(e-w,n-s)/2
+                candidates=self._index.nearby(-(s+n)/2,(w+e)/2,radius)
+                ids={id(item) for item in candidates}
+            if full_map:
+                pass
+            elif len(ids)*3<len(self._entries):
                 # Small local pans on 100k-object MAP should not scan every
                 # source object. Preserve original order by feature index.
                 visible=sorted(
