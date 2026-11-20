@@ -2341,11 +2341,21 @@ class PreviewWorkspace:
             clipped = (max(west, area[0]), max(south, area[1]),
                        min(east, area[2]), min(north, area[3]))
             w, s, e, n = clipped
-            radius = max(e - w, n - s) / 2
-            candidates = self._index.nearby(-(s + n) / 2,
-                                            (w + e) / 2, radius)
-            ids = {id(item) for item in candidates}
-            if len(ids)*3<len(self._entries):
+            # A complete-map request uses the already indexed list. Do not
+            # approximate a wide rectangle with a centre/radius query:
+            # that can omit narrow corners of a cadastral sheet.
+            full_map=(tuple(clipped)==tuple(area) and
+                      len(self._entries)<=limit)
+            if full_map:
+                visible=list(self._entries)
+                ids=set()
+            else:
+                radius=max(e-w,n-s)/2
+                candidates=self._index.nearby(-(s+n)/2,(w+e)/2,radius)
+                ids={id(item) for item in candidates}
+            if full_map:
+                pass
+            elif len(ids)*3<len(self._entries):
                 # Small local pans on 100k-object MAP should not scan every
                 # source object. Preserve original order by feature index.
                 visible=sorted(
