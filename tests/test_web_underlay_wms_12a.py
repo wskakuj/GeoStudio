@@ -110,7 +110,7 @@ def test_underlay_is_behind_vectors_and_not_in_export():
     assert 'scheduleUnderlayRefresh();' in js
     assert 'if(pass==="fills")for(const item of visible)renderFill(item);' in js
     assert 'state.exporting=true;' in js
-    assert '!state.exporting ? .40 : 1' in js
+    assert 'state.hasVisibleUnderlay&&!state.exporting?.40:1' in js
     assert '"X-GeoStudio-Token":token' in js
 
 
