@@ -1647,6 +1647,126 @@
     };
     requestDraw(); scheduleViewport();
   }
+  // Same logical-DPI convention as the classic Qt scale selector.
+  // This is an APPROXIMATE screen scale, never a claimed source EPSG.
+  const cssPixelsPerGroundMetre=96/.0254;
+  function scaleDenominator(value,min,max) {
+    const raw=String(value||"").replace(/\s/g,"").replace(",",".");
+    const parts=raw.split(":");
+    if(parts.length>2)return null;
+    const n=Number(parts.at(-1));
+    return Number.isFinite(n)&&n>=min&&n<=max?n:null;
+  }
+  function updateScaleReadout() {
+    const den=Math.round(cssPixelsPerGroundMetre/state.scale);
+    if(Number.isFinite(den)&&den>0&&den<=1e9&&
+       document.activeElement!==$("view-scale"))
+      $("view-scale").value="1:"+den;
+    $("scale-label").textContent="Podgląd: "+
+       state.scale.toFixed(state.scale<1?3:1)+" px / jedn.";
+  }
+  function applyViewScale() {
+    if(!state.meta)return;
+    const den=scaleDenominator($("view-scale").value,10,10000000);
+    if(!den){inform("Skala widoku: wpisz 1:N (10–10000000).",true);return;}
+    const next=cssPixelsPerGroundMetre/den;
+    if(!(next>1e-6&&next<=3500)){
+      inform("Ta skala widoku przekracza zakres GeoStudio.",true);return;
+    }
+    zoomAt(next/state.scale,state.width/2,state.height/2);
+    inform("Przybliżona skala ekranu: 1:"+den+
+      ". Współrzędne X/Y i MAP nie zostały zmienione.");
+  }
+  async function applyCompilationScale() {
+    if(!state.meta||state.editBusy)return;
+    const den=scaleDenominator($("compilation-scale").value,100,1000000);
+    if(!den||!Number.isInteger(den)){
+      inform("Skala opracowania musi być 1:N, N od 100 do 1000000.",true);
+      return;
+    }
+    state.editBusy=true;updateEditState(state.edit);
+    try{
+      const status=await api("/api/compilation-scale",{
+        method:"POST",headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({...editRequestBody(),denominator:den})
+      });
+      updateEditState(status);
+      requestDraw();
+      inform("Skala opracowania ustawiona na 1:"+den+
+        ". Opisy zmieniają rozmiar; geometria MAP pozostaje bez zmian.");
+    }catch(err){
+      inform("Nie zmieniono skali opracowania: "+err.message,true);
+    }finally{state.editBusy=false;updateEditState(state.edit);}
+  }
+  let labelConfigFields={},labelConfigTicket=0;
+  function fillLabelSettingsForm(){
+    const field=$("label-settings-field").value;
+    const code=$("label-settings-code").value.trim();
+    const spec=labelConfigFields[field]||{};
+    const isBuilding=code==="5310";
+    $("label-settings-visible").checked=spec.visible!==false;
+    $("label-settings-size").value=spec.size||
+      (isBuilding?16:code==="5216"?12:11);
+    $("label-settings-color").value=spec.color||
+      (isBuilding?"#CC202C":code==="5230"||code==="5220"?"#35753A":"#58686F");
+    $("label-settings-bold").checked=spec.bold===undefined?isBuilding:!!spec.bold;
+  }
+  async function refreshLabelSettingsForm(){
+    const code=$("label-settings-code").value.trim();
+    if(!/^[0-9]{4}$/.test(code)){
+      $("label-settings-summary").textContent="Wybierz czterocyfrowy kod.";
+      return;
+    }
+    const ticket=++labelConfigTicket;
+    try{
+      const data=await api("/api/labels/settings?code="+encodeURIComponent(code));
+      if(ticket!==labelConfigTicket)return;
+      labelConfigFields=data.fields||{};
+      fillLabelSettingsForm();
+      $("label-settings-summary").textContent=
+        "Zapisz, aby zmienić osobno wybrany opis kodu "+code+
+        ". Ctrl+Z cofa konfigurację.";
+    }catch(err){
+      $("label-settings-summary").textContent="Nie odczytano ustawień: "+err.message;
+    }
+  }
+  function openLabelSettings(){
+    if(!state.meta)return;
+    const selectedFeature=state.features.find(x=>x.id===state.labelSelected?.fid);
+    $("label-settings-code").value=state.detail?.code||
+       selectedFeature?.code||"5310";
+    $("label-settings-field").value=["A1","A2","TX"].includes(
+       state.labelSelected?.field)?state.labelSelected.field:"A1";
+    $("label-settings-dialog").showModal();
+    refreshLabelSettingsForm();
+  }
+  async function saveLabelSettings(ev){
+    ev.preventDefault();
+    if(state.editBusy)return;
+    const code=$("label-settings-code").value.trim();
+    const field=$("label-settings-field").value;
+    const properties={
+      visible:$("label-settings-visible").checked,
+      size:Number($("label-settings-size").value),
+      color:$("label-settings-color").value,
+      bold:$("label-settings-bold").checked
+    };
+    state.editBusy=true;updateEditState(state.edit);
+    try{
+      const status=await api("/api/labels/settings",{
+        method:"POST",headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({...editRequestBody(),code,field,properties})
+      });
+      updateEditState(status);
+      $("label-settings-dialog").close();
+      await refreshViewport();
+      inform("Zmieniono "+field+" dla kodu "+code+
+        ". A1 i A2 pozostają osobnymi opisami. Ctrl+Z cofa.");
+    }catch(err){
+      $("label-settings-summary").textContent="Błąd zapisu: "+err.message;
+      inform("Nie zapisano stylu opisów: "+err.message,true);
+    }finally{state.editBusy=false;updateEditState(state.edit);}
+  }
   function updateGeometryHelp() {
     if(state.tool!=="nodes")return;
     const code=state.detail?.code||"brak aktywnego obiektu";
