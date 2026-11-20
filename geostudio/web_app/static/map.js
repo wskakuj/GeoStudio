@@ -3088,38 +3088,38 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
     if(!style.hatch)return style.fill;
     const key=style.fill+"|"+style.hatch;
     if(hatchCache.has(key))return hatchCache.get(key);
-    const size=12;
+    // The old Qt renderer uses 8x8 QBrush patterns:
+    // 1=Qt.Dense4 (50%), 2=Qt.Dense5 (37.5%), 3–8 directional hatches.
+    // Match the grid density/orientation without guessing vendor IDs >8.
+    const size=8;
     const tile=document.createElement("canvas");
     tile.width=tile.height=size;
     const g=tile.getContext("2d");
     g.clearRect(0,0,size,size);
-    g.strokeStyle=style.fill;
-    g.fillStyle=style.fill;
-    g.lineWidth=1;
+    g.strokeStyle=style.fill;g.fillStyle=style.fill;g.lineWidth=1;
     const segment=(x1,y1,x2,y2)=>{
       g.beginPath();g.moveTo(x1,y1);g.lineTo(x2,y2);g.stroke();
     };
-    switch(style.hatch){
-      case 1:
-        for(const x of [1,5,9])for(const y of [1,5,9])
-          g.fillRect(x,y,2,2);
-        break;
-      case 2:
-        for(const x of [1,4,7,10])for(const y of [1,4,7,10])
-          g.fillRect(x,y,2,2);
-        break;
-      case 3: segment(0,6,12,6); break;
-      case 4: segment(6,0,6,12); break;
-      case 5: segment(0,6,12,6);segment(6,0,6,12); break;
+    if(style.hatch===1||style.hatch===2){
+      const threshold=style.hatch===1?8:6;
+      const bayer=[
+        [0,8,2,10],[12,4,14,6],[3,11,1,9],[15,7,13,5]
+      ];
+      for(let y=0;y<8;y++)for(let x=0;x<8;x++)
+        if(bayer[y%4][x%4]<threshold)g.fillRect(x,y,1,1);
+    }else switch(style.hatch){
+      case 3: segment(0,4,8,4); break;
+      case 4: segment(4,0,4,8); break;
+      case 5: segment(0,4,8,4);segment(4,0,4,8); break;
       case 6:
-        for(const d of [-12,0,12])segment(d,0,d+12,12);
+        for(const d of [-8,0,8])segment(d,0,d+8,8);
         break;
       case 7:
-        for(const d of [0,12,24])segment(d,0,d-12,12);
+        for(const d of [0,8,16])segment(d,0,d-8,8);
         break;
       case 8:
-        for(const d of [-12,0,12])segment(d,0,d+12,12);
-        for(const d of [0,12,24])segment(d,0,d-12,12);
+        for(const d of [-8,0,8])segment(d,0,d+8,8);
+        for(const d of [0,8,16])segment(d,0,d-8,8);
         break;
       default:
         return style.fill;
@@ -3129,7 +3129,6 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
     hatchCache.set(key,pattern);
     return pattern;
   }
-
   function renderFill(feature) {
     const style=feature.style;
     if(!feature.closed||!style.hasFill||style.opacity<=0)return;
