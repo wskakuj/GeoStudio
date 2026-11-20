@@ -672,10 +672,10 @@
       <button type="button" id="raster-visual-close" class="select-close" aria-label="Zamknij kalibrację">×</button>
     </div>
     <div class="visual-calibration-body">
-      <p class="select-explain">1. Kliknij rozpoznawalny punkt na obrazie. 2. Wybierz „Punkt na mapie”. 3. Kliknij odpowiednik na mapie. Powtórz dla co najmniej 3 punktów, najlepiej 6–10 w różnych częściach.</p>
+      <p class="select-explain">Kliknij punkt na obrazie, a następnie jego odpowiednik na mapie — bez dodatkowego przycisku. Ponowne kliknięcie obrazu zastępuje oczekujący punkt. Istniejące punkty można przeciągać na obrazie i na mapie. Zalecane 6–10 par rozmieszczonych po całym rastrze.</p>
       <canvas id="raster-gcp-canvas" width="450" height="270" aria-label="Kliknij punkt charakterystyczny na rastrowym obrazie"></canvas>
       <div class="visual-calibration-actions">
-        <button type="button" id="raster-pick-map" class="button ghost" disabled>Wybierz odpowiednik na mapie</button>
+        <button type="button" id="raster-gcp-cancel" class="button ghost" disabled>Anuluj oczekujący punkt</button>
         <button type="button" id="raster-gcp-undo" class="button ghost">Usuń ostatnią parę</button>
       </div>
       <p class="select-preview" id="raster-visual-status" role="status">Najpierw kliknij punkt na obrazie.</p>
