@@ -612,6 +612,23 @@
           </select>
         </div>
       </div>
+      <div class="underlay-crs-tools">
+        <div><label for="underlay-prj-file">Zweryfikuj EPSG z pliku PRJ (opcjonalnie)</label>
+          <input type="file" id="underlay-prj-file" accept=".prj"></div>
+        <div><label for="underlay-crs-target">Przelicz punkt kontrolny do układu</label>
+          <select id="underlay-crs-target">
+            <option value="2180">EPSG:2180 — PL-1992</option>
+            <option value="2176">EPSG:2176 — PL-2000 strefa 5</option>
+            <option value="2177">EPSG:2177 — PL-2000 strefa 6</option>
+            <option value="2178">EPSG:2178 — PL-2000 strefa 7</option>
+            <option value="2179">EPSG:2179 — PL-2000 strefa 8</option>
+          </select>
+        </div>
+      </div>
+      <div class="underlay-layer-line">
+        <button type="button" id="underlay-crs-convert" class="button ghost">Przelicz współrzędne środka mapy</button>
+      </div>
+      <p id="underlay-crs-result" class="select-preview" role="status">Współrzędne MAP pozostają bez zmian. Przeliczany jest wyłącznie punkt testowy.</p>
       <div class="underlay-layer-line">
         <label for="underlay-layer">Warstwa udostępniana przez Geoportal</label>
         <button type="button" id="underlay-layers" class="button ghost">Pobierz warstwy</button>
