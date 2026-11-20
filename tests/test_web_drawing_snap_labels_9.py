@@ -81,7 +81,7 @@ def test_magnet_applies_to_all_draw_tools_uses_actual_clicked_point_and_alt():
     assert "state.features.filter(isVisible)" in src
     assert "drawingSnapAt(world,ev.altKey)" in src
     assert '["draw","cut","line","line-edit"]' in src
-    assert "renderLabels(features);drawDraftPolygon();drawMagnetMarker();" in src
+    assert "renderScreenLabels(features);drawDraftPolygon();drawMagnetMarker();" in src
     # The marker must also render BEFORE the first draft point is added.
     assert "state.drawSnap=null;state.drawCursorWorld=null;" in src
     assert "Math.round(-snapped.point.y*1000)/1000" in src
