@@ -3045,12 +3045,24 @@
     if((ev.ctrlKey||ev.metaKey)&&ev.shiftKey&&ev.key.toLowerCase()==="e"){
       ev.preventDefault();openBulkEditor();return;
     }
-    if((ev.ctrlKey||ev.metaKey)&&ev.shiftKey&&ev.key.toLowerCase()==="m"){
-      ev.preventDefault();openMoveEditor();return;
+    if((ev.ctrlKey||ev.metaKey)&&ev.altKey&&ev.key.toLowerCase()==="l"){
+      ev.preventDefault();openLabelSettings();return;
+    }
+    if((ev.ctrlKey||ev.metaKey)&&ev.key.toLowerCase()==="m"&&
+       !ev.shiftKey&&!ev.altKey){
+      ev.preventDefault();$("view-scale").focus();$("view-scale").select();return;
+    }
+    if((ev.ctrlKey||ev.metaKey)&&ev.key==="F5"){
+      ev.preventDefault();
+      $("compilation-scale").focus();$("compilation-scale").select();return;
+    }
+    if(ev.altKey&&!ev.ctrlKey&&!ev.metaKey&&ev.key.toLowerCase()==="l"){
+      ev.preventDefault();setTool("labels");return;
     }
     if($("line-dialog").open||$("split-dialog").open||
        $("copy-dialog").open||$("create-dialog").open||$("move-dialog").open||
-       $("bulk-dialog").open||$("select-dialog").open)return;
+       $("bulk-dialog").open||$("select-dialog").open||
+       $("label-settings-dialog").open)return;
     if(typing)return;
     if((ev.ctrlKey||ev.metaKey)&&ev.shiftKey&&ev.key.toLowerCase()==="g"){
       ev.preventDefault();mergePolygons();return;
@@ -3143,6 +3155,8 @@
   link("tool-advanced-select",openAdvancedSelection);
   link("tool-bulk-edit",openBulkEditor);
   link("tool-move",()=>setTool("move"));
+  link("tool-label-move",()=>setTool("labels"));
+  link("tool-label-config",openLabelSettings);
   link("tool-new-polygon",()=>setTool("draw"));
   link("tool-draw-snap",toggleDrawMagnet);
   link("tool-merge",mergePolygons);
@@ -3224,6 +3238,17 @@
   link("float-fit",fitToMap);
   link("tool-grid",toggleGrid);
   link("tool-labels",toggleLabels);
+  link("label-settings-close",()=>$("label-settings-dialog").close());
+  link("label-settings-cancel",()=>$("label-settings-dialog").close());
+  $("label-settings-code").addEventListener("change",refreshLabelSettingsForm);
+  $("label-settings-field").addEventListener("change",fillLabelSettingsForm);
+  $("label-settings-form").addEventListener("submit",saveLabelSettings);
+  $("view-scale").addEventListener("change",applyViewScale);
+  $("compilation-scale").addEventListener("change",applyCompilationScale);
+  for(const id of ["view-scale","compilation-scale"])
+    $(id).addEventListener("keydown",ev=>{
+      if(ev.key==="Enter"){ev.preventDefault();$(id).blur();}
+    });
   link("btn-theme",toggleTheme);
   link("btn-command",openCommands);
   link("layers-all",showAllLayers);
