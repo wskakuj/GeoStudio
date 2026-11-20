@@ -527,9 +527,101 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
     }finally{busy(false);$("file-topology").value="";}
   }
 
+  let cartographyCatalog=null;
+  function drawCartographySample(canvas,style){
+    const g=canvas.getContext("2d"),w=canvas.width,h=canvas.height;
+    g.clearRect(0,0,w,h);g.fillStyle="#f7fafb";g.fillRect(0,0,w,h);
+    const color=style.stroke||"#334e60";
+    const segments=style.symbolSegments||[],circles=style.symbolCircles||[];
+    if(segments.length||circles.length){
+      g.strokeStyle=color;g.lineWidth=Math.max(.8,style.strokeWidth||1);
+      g.beginPath();
+      for(const [x1,y1,x2,y2] of segments.slice(0,64)){
+        g.moveTo(w/2+x1*5,h/2-y1*5);
+        g.lineTo(w/2+x2*5,h/2-y2*5);
+      }
+      for(const [x,y,r] of circles.slice(0,32)){
+        g.moveTo(w/2+(x+r)*5,h/2-y*5);
+        g.arc(w/2+x*5,h/2-y*5,r*5,0,2*Math.PI);
+      }
+      g.stroke();return;
+    }
+    if(style.hasFill){
+      g.save();g.globalAlpha=Math.min(1,Math.max(0,style.opacity));
+      g.fillStyle=hatchPattern(style);
+      g.fillRect(8,8,w-16,h-16);g.restore();
+    }
+    g.lineWidth=Math.max(.5,Math.min(8,style.strokeWidth||1));
+    g.strokeStyle=color;
+    g.setLineDash(Array.isArray(style.dash)?style.dash:[]);
+    g.strokeRect(8,8,w-16,h-16);
+    g.setLineDash([]);
+  }
+  function renderCartographyCatalog(){
+    const list=$("carto-catalog-list");list.replaceChildren();
+    const catalog=cartographyCatalog;
+    if(!catalog)return;
+    const pattern=$("carto-catalog-filter").value.trim().toLocaleLowerCase("pl-PL");
+    const selected=catalog.items.filter(item=>
+      [item.code,item.layer,item.a1,item.a2].some(
+        value=>String(value||"").toLocaleLowerCase("pl-PL").includes(pattern)));
+    const libraries=Object.entries(catalog.libraries||{})
+      .map(([type,item])=>type+": "+(item.filename||"")+" ("+
+        item.definitions+" definicji)").join(" · ")||"Nie załadowano bibliotek";
+    $("carto-catalog-summary").textContent=
+      libraries+" · "+selected.length+" z "+catalog.totalCodes+
+      " kodów · katalog przykładów, nie pełna zgodność GEO-MAP.";
+    if(!selected.length){
+      const text=document.createElement("p");text.className="panel-placeholder";
+      text.textContent="Brak kodów odpowiadających filtrowi.";
+      list.append(text);return;
+    }
+    for(const item of selected){
+      const card=document.createElement("article");card.className="carto-catalog-row";
+      const canvas=document.createElement("canvas");
+      canvas.width=112;canvas.height=56;canvas.className="carto-catalog-swatch";
+      drawCartographySample(canvas,item.style);
+      const info=document.createElement("div");info.className="carto-catalog-info";
+      const title=document.createElement("strong");
+      title.textContent=item.code+" · "+item.layer+" ("+item.count+" ob.)";
+      const sample=document.createElement("span");
+      sample.textContent="Przykład: A1 "+(item.a1||"—")+
+        ", A2 "+(item.a2||"—");
+      const found=document.createElement("span");
+      found.textContent="Dopasowano "+
+        ((item.style.libraryMatches||[]).join(", ")||"brak")+
+        " · użyto "+((item.style.libraryApplied||[]).join(", ")||"styl bazowy")+
+        " · kreska "+(item.style.strokeWidth||1)+" px"+
+        (item.style.hatch?" · deseń CDF "+item.style.hatch:"");
+      info.append(title,sample,found);
+      if(item.notes.length){
+        const warning=document.createElement("span");
+        warning.className="carto-catalog-warning";
+        warning.textContent=item.notes.join(" · ");info.append(warning);
+      }
+      card.append(canvas,info);list.append(card);
+    }
+  }
+  async function loadCartographyCatalog(){
+    if(!state.meta){inform("Najpierw otwórz plik MAP.",true);return;}
+    $("carto-catalog-summary").textContent="Odczytuję wzorce z mapy i bibliotek…";
+    try{
+      cartographyCatalog=await api("/api/cartography/catalog?limit=200");
+      renderCartographyCatalog();
+    }catch(error){
+      $("carto-catalog-summary").textContent="Błąd katalogu: "+error.message;
+    }
+  }
+  function openCartographyCatalog(){
+    if(!state.meta){inform("Najpierw otwórz plik MAP.",true);return;}
+    $("cartography-catalog-dialog").showModal();
+    loadCartographyCatalog();
+  }
   function cartographyMessage(payload) {
     state.cartoLibraries=payload?.libraries||{};
+    cartographyCatalog=null;
     renderCartographyMatches();
+    if($("cartography-catalog-dialog").open)loadCartographyCatalog();
   }
   function renderCartographyMatches() {
     const loaded=state.cartoLibraries||{};
@@ -4889,6 +4981,11 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
   });
   link("tool-sidecar",()=> $("file-sidecar").click());
   link("tool-cartography",chooseCartographicLibraries);
+  link("tool-carto-catalog",openCartographyCatalog);
+  link("carto-catalog-refresh",loadCartographyCatalog);
+  link("carto-catalog-close",()=>$("cartography-catalog-dialog").close());
+  link("carto-catalog-close-bottom",()=>$("cartography-catalog-dialog").close());
+  $("carto-catalog-filter").addEventListener("input",renderCartographyCatalog);
   link("tool-topology",()=> $("file-topology").click());
   link("tool-undo",()=>historyStep("undo"));
   link("tool-redo",()=>historyStep("redo"));
