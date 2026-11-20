@@ -155,3 +155,42 @@ def test_browser_pdf_controls_a1_and_delete_are_explicit():
     assert "if(ev.key===\"Delete\"" in js
     assert 'pdfLayoutOptions()' in js
     assert '"/api/export/pdf"' in js
+
+
+def test_5214_can_be_drawn_and_edited_as_line_not_polygon():
+    from geostudio.geomap import GeoMap
+    ws=PreviewWorkspace();ws.load_map(fixture_map(),"test.MAP")
+    def credentials():
+        state=ws.editing_status()
+        return {"document_token":state["documentToken"],
+                "revision":state["revision"]}
+    operation={"action":"create_line","code":"5214",
+               "points":[[82,82],[88,93],[94,107]],"fields":{"A1":"obręb"}}
+    report=ws.preview_geometry_operation(operation,**credentials())
+    assert report["canApply"] is True
+    made=ws.apply_geometry_operation(
+        operation,preview_key=report["previewKey"],**credentials())
+    uid=made["createdUids"][0]
+    obj=GeoMap(ws.export_copy(credentials()["document_token"])[1]).by_id[uid]
+    assert obj.code=="5214" and not obj.is_closed
+    edit={"action":"edit_line","ids":made["createdIds"],
+          "points":[[82,82],[90,98],[97,113]]}
+    plan=ws.preview_geometry_operation(edit,**credentials())
+    assert plan["canApply"] is True
+    ws.apply_geometry_operation(edit,preview_key=plan["previewKey"],
+                                **credentials())
+    obj=GeoMap(ws.export_copy(credentials()["document_token"])[1]).by_id[uid]
+    assert obj.points[-1].x==97
+
+
+def test_5214_visible_in_line_tool_and_selected_delete_no_confirmation():
+    from pathlib import Path
+    root=Path(__file__).resolve().parents[1]/"geostudio/web_app/static"
+    html=(root/"index.html").read_text("utf-8")
+    js=(root/"map.js").read_text("utf-8")
+    assert '<option value="5214">5214 — linia obrębu</option>' in html
+    assert 'state.selectedVertex!==null' in js
+    delete=js[js.index("  async function deleteObjects() {"):
+              js.index("  function finishDrawPolygon()",js.index("  async function deleteObjects() {"))]
+    assert "window.confirm" not in delete
+    assert "window.prompt" not in delete
