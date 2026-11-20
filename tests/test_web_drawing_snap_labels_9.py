@@ -121,7 +121,8 @@ assert.ok(make(.6,10000)(feature,a1,false)>
           make(.6,5000)(feature,a1,false));
 const main=src.slice(stop,src.indexOf('  function draw() {',stop));
 assert.ok(main.includes('for(const label of feature.labels)'));
-assert.ok(main.includes('item.fid!==feature.id'));
+assert.ok(main.includes('item.fid!==fid'));
+assert.ok(main.includes('overlapsAnother(feature.id,rect)'));
 assert.ok(main.includes('state.labelHits.push({fid:feature.id,field:label.field'));
 assert.ok(!main.includes('for(const group of labelGroups('));
 """)
