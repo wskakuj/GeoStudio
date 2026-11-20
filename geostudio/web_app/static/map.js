@@ -26,7 +26,7 @@
     width: 1, height: 1, pixelRatio: 1, isDragging: false, drag: null,
     lastPick: null, scheduled: false, refreshTimer: null, queryCounter: 0,
     queryAbort: null, selectionRequest: 0, limited: false,
-    firstLoad: true, inspectorCache: new Map(),
+    firstLoad: true, inspectorCache: new Map(), viewportFeatureCache:new Map(),
     edit: null, editBusy: false, bulkPreview: null, movePreview: null,
     moveIds: [], moveGhost: null, objectPreview:null,
     drawPoints:[], drawHover:null, drawSnap:null,
@@ -108,6 +108,10 @@
   };
   function updateEditState(status) {
     if(!status)return;
+    // Cached viewport geometry is scoped to an edit revision.
+    if(state.edit&&(state.edit.revision!==status.revision||
+       state.edit.documentToken!==status.documentToken))
+      state.viewportFeatureCache.clear();
     state.edit={
       dirty:!!status.dirty,
       canUndo:!!status.canUndo,
@@ -432,6 +436,7 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
     state.drawHover=null;state.drawSnap=null;state.drawCursorWorld=null;
     state.objectPreview=null;setTool("select");
     state.features = []; state.inspectorCache.clear();
+    state.viewportFeatureCache.clear();
     // Ordinary cadastral MAP: transfer the whole geometry just ONCE.
     // Zoom and pan then render local Canvas data, without HTTP requests.
     state.localMapCandidate=meta.objectCount<=50000&&
@@ -2136,6 +2141,7 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
   }
   function selectRasterLayer(id){
     if(id===raster.id)return;
+    if(gcpView.open)closeVisualCalibration();
     const index=raster.layers.findIndex(item=>item.id===id);
     if(index<0)return;
     raster.ticket++;
@@ -3503,10 +3509,23 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
     try {
       const res=await api("/api/viewport?"+params.toString(),{signal:controller.signal});
       if(ticket!==state.queryCounter)return;
-      state.features=res.features;
       state.limited=res.limited;
       state.localMapReady=state.localMapCandidate&&!res.limited&&
         res.total<=50000;
+      if(state.localMapReady){
+        // Entire MAP is resident; never fetch on subsequent zoom/pan.
+        state.viewportFeatureCache.clear();state.features=res.features;
+      }else{
+        // Keep neighboring features already visited instead of dropping
+        // them while a new padded viewport request is in flight.
+        for(const feature of res.features){
+          state.viewportFeatureCache.delete(feature.id);
+          state.viewportFeatureCache.set(feature.id,feature);
+        }
+        while(state.viewportFeatureCache.size>65000)
+          state.viewportFeatureCache.delete(state.viewportFeatureCache.keys().next().value);
+        state.features=[...state.viewportFeatureCache.values()];
+      }
       state.previewActive=false;state.previewCamera=null;
       renderCartographyMatches();
       requestDraw();
@@ -4799,6 +4818,8 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
   api("/api/map").then(meta=>{
     if(meta.loaded){
       state.meta=meta;
+      state.localMapCandidate=meta.objectCount<=50000&&meta.vertexCount<=750000;
+      state.localMapReady=false;state.viewportFeatureCache.clear();
       updateEditState(meta);
       state.visibleLayers=new Set(
         meta.layers.map(layer=>layer.name).filter(name=>name!=="Graniczniki"));
