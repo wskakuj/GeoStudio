@@ -10,7 +10,7 @@
   <script defer src="/drawing_snap.js"></script>
   <script defer src="/map.js"></script>
 </head>
-<body>
+<body data-theme="dark">
   <div class="app-shell">
     <header class="topbar">
       <div class="identity">
@@ -23,7 +23,33 @@
       </div>
       <div class="header-actions">
         <button id="btn-command" class="top-icon" title="Polecenia (Ctrl+K)" aria-label="Wyszukaj polecenie">⌕ <kbd>⌘ K</kbd></button>
-        <button id="btn-theme" class="top-icon" title="Przełącz jasny/ciemny wygląd">◐</button>
+        <button id="btn-theme" class="top-icon" type="button"
+          title="Zmień motyw programu" aria-label="Jasny lub ciemny motyw programu"
+          aria-pressed="true">☀</button>
+        <details id="map-background-menu" class="map-background-menu">
+          <summary class="top-icon" aria-label="Wybierz kolor tła mapy"
+            title="Kolor tła mapy — niezależny od motywu programu">◩</summary>
+          <div class="map-background-popover" role="group" aria-label="Kolor tła mapy">
+            <strong>Kolor tła mapy</strong>
+            <p>Nie zmienia motywu programu ani kolorów obiektów.</p>
+            <label for="map-background-color">Własny kolor</label>
+            <div class="map-background-edit">
+              <input id="map-background-color" type="color" value="#FFFFFF"
+                aria-label="Wybierz dowolny kolor tła mapy">
+              <output id="map-background-value" for="map-background-color">#FFFFFF</output>
+            </div>
+            <div class="map-background-presets" aria-label="Przykładowe kolory">
+              <button type="button" data-map-bg="#FFFFFF"
+                style="--swatch:#FFFFFF" title="Białe tło">Biały</button>
+              <button type="button" data-map-bg="#F1F4F6"
+                style="--swatch:#F1F4F6" title="Jasnoszare tło">Jasnoszary</button>
+              <button type="button" data-map-bg="#E5E7EB"
+                style="--swatch:#E5E7EB" title="Szare tło">Szary</button>
+              <button type="button" data-map-bg="#F6F1E7"
+                style="--swatch:#F6F1E7" title="Ciepłe tło">Kremowy</button>
+            </div>
+          </div>
+        </details>
         <button id="btn-layout" class="button ghost" disabled title="Eksport PNG, JPG, TIFF i DXF, skala, legenda i wydruk">▤ Eksport / druk</button>
         <button id="btn-export" class="button export" disabled title="Zapisz MAP z rzeczywistymi wycięciami automatycznie, z plikiem odtworzenia oryginału">↓ Pobierz MAP</button>
         <label id="btn-open-direct" class="button ghost direct-open" for="file-map"
@@ -114,13 +140,13 @@
         <div id="vectors-layer-panel" class="layer-tab-panel" role="tabpanel" aria-labelledby="layers-vectors-tab">
           <div class="panel-padding">
             <label class="search-box"><span>⌕</span>
-              <input type="search" id="layer-search" placeholder="Filtruj warstwy…" autocomplete="off">
+              <input type="search" id="layer-search" placeholder="Szukaj warstw i użytków…" autocomplete="off">
               <kbd>/</kbd>
             </label>
           </div>
           <div class="layer-section-header"><span>WIDOCZNOŚĆ</span><button id="layers-all" class="subtle-link">Pokaż wszystkie</button></div>
           <div id="layers-list" class="layers-list">
-            <div class="panel-placeholder">Otwórz plik .MAP, aby zobaczyć warstwy i klasoużytki.</div>
+            <div class="panel-placeholder">Otwórz plik .MAP, aby zobaczyć warstwy i rodzaje użytków.</div>
           </div>
         </div>
         <div id="rasters-layer-panel" class="layer-tab-panel" role="tabpanel" aria-labelledby="layers-rasters-tab" hidden>
