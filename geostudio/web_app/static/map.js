@@ -3914,7 +3914,8 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
     renderHighlights(features);drawMoveGhost(features);drawMoveMagnet();
     // No bitmap snapshot or resampling is made during a wheel frame.
     // The map remains rendered in native screen-space vector precision.
-    renderScreenLabels(features);drawExportAreaOverlay();drawGcpMapMarkers();
+    renderScreenLabels(features);drawGcpMapMarkers();
+    drawExportAreaOverlay();
     drawDraftPolygon();drawMagnetMarker();drawVertexTool();
     updateScaleReadout();
     $("count-visible").textContent=display(features.length);
@@ -3990,7 +3991,8 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
     else state.refreshTimer=setTimeout(refreshViewport,85);
   }
 
-  // Export bounds are independent of screen zoom and pan.
+  // Stage 11: screen exporter keeps native vector geometry.
+  // Stage 14B: export bounds are independent of screen zoom and pan.
   function selectedExportBounds(){
     if($("layout-scope").value==="all")return [...state.meta.bounds];
     if($("layout-scope").value==="rect"&&state.exportAreaBounds)
@@ -4606,7 +4608,7 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
       const blob=await encodeLayoutRaster(raster,options);
       // Each upload is bounded to at most 120 MB; the ZIP is assembled
       // on disk and never passed through the small-image Save As buffer.
-      await api("/api/export/tiles/"+ticket+"/"+i,{
+      await api("/api/export/tiles/"+ticket+"/part/"+i,{
         method:"POST",body:blob
       });
       raster.width=0;raster.height=0;
