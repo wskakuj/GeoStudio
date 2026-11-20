@@ -203,18 +203,18 @@ def test_esc_undoes_last_sketch_point_and_first_vertex_closes_one_click():
     assert 'state.drawMagnet' in ui
 
 
-def test_stale_frame_is_retained_during_zoom_and_pan():
+def test_zoom_uses_live_vectors_instead_of_blurred_bitmap():
     ui=(Path(__file__).resolve().parents[1]/
         "geostudio/web_app/static/map.js").read_text("utf-8")
+    assert "function beginNavigationPreview()" not in ui
+    assert "function drawNavigationPreview()" not in ui
+    assert "snapshotContext.drawImage(canvas,0,0);" not in ui
     for source in (
-        "function beginNavigationPreview()",
-        "function drawNavigationPreview()",
-        "state.geometrySnapshotValid=true;",
         "renderScreenLabels(features);drawGcpMapMarkers();",
-        "snapshotContext.drawImage(canvas,0,0);",
         "state.previewActive=false;state.previewCamera=null;",
-        "// Render current vector coordinates at the current camera on EVERY"
-
+        "// Render current vector coordinates at the current camera on EVERY",
+        "for(const feature of features) renderFill(feature);",
+        "for(const feature of features) renderStroke(feature);"
     ):
         assert source in ui
 
