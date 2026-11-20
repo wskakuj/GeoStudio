@@ -89,7 +89,8 @@ def main(argv=None):
         if not server.started:
             raise RuntimeError("Lokalny serwer nie wystartował.")
         from .native_picker import NativeMapPicker
-        native_picker = NativeMapPicker(workspace)
+        native_picker = NativeMapPicker(workspace,
+            tile_exports=app.state.tile_exports)
         webview.create_window(
             "GeoStudio 2.0 — Podgląd",
             address, width=1480, height=940, min_size=(960, 640),

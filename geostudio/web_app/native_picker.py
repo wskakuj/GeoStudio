@@ -71,11 +71,13 @@ class NativeMapPicker:
     synchronous HTML file input fallback.
     """
 
-    __slots__ = ("_workspace", "_settings", "_source_path", "_source_sha")
+    __slots__ = ("_workspace", "_settings", "_source_path", "_source_sha",
+                 "_tile_exports")
 
     def __init__(self, workspace: PreviewWorkspace,
-                 *, settings: Path | None = None):
+                 *, settings: Path | None = None, tile_exports=None):
         self._workspace = workspace
+        self._tile_exports = tile_exports
         self._settings = settings if settings is not None else preference_file()
         self._source_path = None
         self._source_sha = None
@@ -257,6 +259,61 @@ class NativeMapPicker:
         return {"cancelled":False,"libraries":reports,
                 "status":self._workspace.cartography_status()}
 
+
+
+    def save_tiled_export(self, ticket: str) -> dict:
+        """Native Save As for large ZIP archives, streamed from temporary disk.
+
+        The browser never supplies a filesystem path and the source MAP
+        remains untouched. This avoids the existing 120 MB in-memory export
+        buffer limit, including for uncompressed TIFF tiles.
+        """
+        if self._tile_exports is None:
+            raise ValueError("Obsługa kafelkowego eksportu jest niedostępna.")
+        import tkinter as tk
+        from tkinter import filedialog
+        import shutil
+        suggested, source = self._tile_exports.archive(ticket)
+        root = tk.Tk()
+        try:
+            root.withdraw()
+            root.attributes("-topmost", True)
+            root.update()
+            directory = (self._source_path.parent if self._source_path
+                         else Path(read_last_map_directory(self._settings) or
+                                   str(Path.home() / "Documents")))
+            chosen_name = filedialog.asksaveasfilename(
+                parent=root, initialdir=str(directory),
+                initialfile=suggested,
+                title="GeoStudio 2.0 — Zapisz pełną mapę w ZIP",
+                defaultextension=".zip",
+                filetypes=(("Archiwum ZIP", "*.zip"),),
+                confirmoverwrite=True)
+        finally:
+            root.destroy()
+        if not chosen_name:
+            return {"cancelled": True}
+        chosen=Path(chosen_name)
+        if chosen.suffix.lower() != ".zip":
+            raise ValueError("Wybierz plik .zip.")
+        if self._source_path and chosen.resolve() == self._source_path:
+            raise ValueError("Nie wolno nadpisać pliku MAP.")
+        fd, temporary = tempfile.mkstemp(
+            prefix=".geostudio-tiles-",suffix=".tmp",dir=str(chosen.parent))
+        try:
+            with os.fdopen(fd, "wb") as out, source.open("rb") as inp:
+                shutil.copyfileobj(inp, out, length=1024*1024)
+                out.flush()
+                os.fsync(out.fileno())
+            os.replace(temporary, chosen)
+        finally:
+            try:
+                os.unlink(temporary)
+            except FileNotFoundError:
+                pass
+        size=chosen.stat().st_size
+        self._tile_exports.discard(ticket)
+        return {"cancelled": False, "path": str(chosen), "bytes": size}
 
     def save_generated_export(self, ticket: str) -> dict:
         """Windows Save As for PNG/JPG/TIFF/DXF produced in the browser.

@@ -21,6 +21,7 @@ from .data import (
 from .underlay_wms import list_layers as wms_layers, map_png as wms_map_png
 from .underlay_raster import prepare_raster, fit_gcp_payload, MAX_RASTER_BYTES
 from .underlay_crs import verified_prj_epsg, convert_point, MAX_PRJ
+from .tile_exports import TiledArchiveStore, MAX_TILE_BYTES
 from starlette.concurrency import run_in_threadpool
 import json
 
@@ -36,6 +37,7 @@ def create_app(workspace: PreviewWorkspace | None = None) -> FastAPI:
     token = secrets.token_urlsafe(32)
     app.state.workspace = state
     app.state.api_token = token
+    app.state.tile_exports = TiledArchiveStore(state)
 
     @app.middleware("http")
     async def local_only(request: Request, next_handler):
@@ -606,6 +608,62 @@ def create_app(workspace: PreviewWorkspace | None = None) -> FastAPI:
                                  "X-GeoStudio-Export":"map-topology-and-labels"})
 
 
+    @app.post("/api/export/tiles/start")
+    async def begin_large_raster_export(request: Request):
+        """Start a temporary disk-backed ZIP, bound to this exact MAP revision."""
+        try:
+            data=json.loads(await receive(request,64*1024))
+            if not isinstance(data,dict):
+                raise ValueError("Nieprawidłowe opcje eksportu.")
+            ticket=app.state.tile_exports.begin(
+                data.get("documentToken"),data.get("revision"),
+                data.get("filename"),data.get("format"),
+                data.get("columns"),data.get("rows"),data.get("manifest",""))
+            return {"ticket":ticket}
+        except RuntimeError as exc:
+            raise HTTPException(409,str(exc)) from exc
+        except (ValueError,TypeError) as exc:
+            raise HTTPException(400,str(exc)) from exc
+
+    @app.post("/api/export/tiles/{ticket}/part/{index}")
+    async def add_large_raster_tile(ticket: str,index: int,request: Request):
+        """One bounded browser-rendered tile, not a giant Canvas bitmap."""
+        data=await receive(request,MAX_TILE_BYTES)
+        try:
+            app.state.tile_exports.add(ticket,index,data)
+            return {"index":index,"stored":True}
+        except RuntimeError as exc:
+            raise HTTPException(409,str(exc)) from exc
+        except LookupError as exc:
+            raise HTTPException(404,str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(400,str(exc)) from exc
+
+    @app.post("/api/export/tiles/{ticket}/finish")
+    async def finish_large_raster_export(ticket: str):
+        try:
+            return app.state.tile_exports.finish(ticket)
+        except RuntimeError as exc:
+            raise HTTPException(409,str(exc)) from exc
+        except LookupError as exc:
+            raise HTTPException(404,str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(400,str(exc)) from exc
+
+    @app.get("/api/export/tiles/{ticket}/download")
+    async def download_large_raster_export(ticket: str):
+        """Browser fallback; FileResponse streams the archive from disk."""
+        try:
+            filename,path=app.state.tile_exports.archive(ticket)
+        except RuntimeError as exc:
+            raise HTTPException(409,str(exc)) from exc
+        except LookupError as exc:
+            raise HTTPException(404,str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(400,str(exc)) from exc
+        return FileResponse(path,media_type="application/zip",
+            filename=filename)
+
     @app.post("/api/export/buffer")
     async def save_generated_export_buffer(request: Request):
         try:
@@ -642,9 +700,10 @@ def create_app(workspace: PreviewWorkspace | None = None) -> FastAPI:
                 "filename*=UTF-8''"+quote(filename,safe=""))})
 
     @app.get("/api/export/dxf")
-    async def download_dxf(documentToken: str):
+    async def download_dxf(documentToken: str, bounds: str | None = None):
         try:
-            name, content = state.export_dxf(documentToken)
+            region=json.loads(bounds) if bounds is not None else None
+            name, content = state.export_dxf(documentToken, bounds=region)
         except RuntimeError as exc:
             raise HTTPException(409, str(exc)) from exc
         except ValueError as exc:

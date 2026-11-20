@@ -111,6 +111,10 @@
     if(state.edit&&(state.edit.revision!==status.revision||
        state.edit.documentToken!==status.documentToken))
       state.viewportFeatureCache.clear();
+    if(state.edit&&state.edit.documentToken!==status.documentToken){
+      state.exportAreaBounds=null;state.exportAreaPicking=false;
+      state.exportAreaDrag=null;
+    }
     state.edit={
       dirty:!!status.dirty,
       canUndo:!!status.canUndo,
@@ -3911,6 +3915,7 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
     // No bitmap snapshot or resampling is made during a wheel frame.
     // The map remains rendered in native screen-space vector precision.
     renderScreenLabels(features);drawGcpMapMarkers();
+    drawExportAreaOverlay();
     drawDraftPolygon();drawMagnetMarker();drawVertexTool();
     updateScaleReadout();
     $("count-visible").textContent=display(features.length);
@@ -3986,27 +3991,133 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
     else state.refreshTimer=setTimeout(refreshViewport,85);
   }
 
-  // Stage 11: screen layout uses its own physical print scale, independent
-  // of the editing camera. Work with bounded viewport pages even on big MAPs.
-  function openLayoutDialog(){
+  // Stage 11: screen exporter keeps native vector geometry.
+  // Stage 14B: export bounds are independent of screen zoom and pan.
+  function selectedExportBounds(){
+    if($("layout-scope").value==="all")return [...state.meta.bounds];
+    if($("layout-scope").value==="rect"&&state.exportAreaBounds)
+      return [...state.exportAreaBounds];
+    throw Error("Najpierw zaznacz prostokąt na mapie.");
+  }
+  function updateExportAreaControls(){
+    const rectangle=$("layout-scope").value==="rect";
+    $("layout-rectangle-tools").hidden=!rectangle;
+    const b=state.exportAreaBounds;
+    $("layout-area-status").textContent=b
+      ?"Wybrano obszar "+(b[2]-b[0]).toFixed(1)+" × "+
+         (b[3]-b[1]).toFixed(1)+" m. Możesz zaznaczyć go ponownie."
+      :"Nie wybrano obszaru. Przeciągnij prostokąt na mapie.";
+    $("layout-choose-area").textContent=b
+      ?"▧ Zmień prostokąt":"▧ Zaznacz prostokąt na mapie";
+  }
+  function openLayoutDialog(resume=false){
     if(!state.meta||!state.edit)return;
-    $("layout-title").value=state.meta.name.replace(/\.map$/i,"");
-    const denominator=Math.round(cssPixelsPerGroundMetre/state.scale);
-    if(Number.isFinite(denominator)&&denominator>=10&&denominator<=100000000)
-      $("layout-scale").value=denominator;
+    if(resume!==true){
+      $("layout-title").value=state.meta.name.replace(/\.map$/i,"");
+      // Do not derive export scale from state.scale (current zoom).
+      $("layout-scale").value=String(state.edit.compilationScale||5000);
+    }
     if(!$("layout-legend-rows").value.trim())
       $("layout-legend-rows").value=(state.meta.layers||[])
         .filter(layer=>state.visibleLayers.has(layer.name))
         .slice(0,40).map(layer=>layer.name+" | "+colorForLayer(layer.name))
         .join("\n");
-    $("layout-summary").textContent=
-      "PDF wektorowy obsługuje A0–A4 niezależnie od DPI. " +
-      "Drukuj w skali 100%, bez dopasowywania do strony.";
-    $("layout-dialog").showModal();
+    updateExportAreaControls();
+    $("layout-summary").textContent="Skala opracowania: 1:"+
+      $("layout-scale").value+". Duże rastry: pełna jakość i ZIP z arkuszami.";
+    if(!$("layout-dialog").open)$("layout-dialog").showModal();
+  }
+  function beginExportAreaSelection(){
+    if(!state.meta||state.editBusy)return;
+    if($("layout-dialog").open)$("layout-dialog").close();
+    state.exportAreaPicking=true;
+    state.exportAreaDrag=null;
+    canvas.style.cursor="crosshair";
+    inform("Przytrzymaj mysz i narysuj prostokąt eksportu. Esc — anuluj.");
+    requestDraw();
+  }
+  function finishExportAreaSelection(cancel=false){
+    state.exportAreaPicking=false;
+    state.exportAreaDrag=null;
+    canvas.style.cursor="";
+    if(cancel)inform("Anulowano wybieranie prostokąta.");
+    openLayoutDialog(true);
+    requestDraw();
+  }
+  function drawExportAreaOverlay(){
+    if(!state.meta)return;
+    let b=state.exportAreaBounds;
+    if(state.exportAreaPicking&&state.exportAreaDrag){
+      const d=state.exportAreaDrag;
+      b=[Math.min(d.start.x,d.end.x),Math.min(d.start.y,d.end.y),
+         Math.max(d.start.x,d.end.x),Math.max(d.start.y,d.end.y)];
+    }
+    if(!b||($("layout-scope").value!=="rect"&&!state.exportAreaPicking))return;
+    const a=worldToScreen(b[0],b[1]),z=worldToScreen(b[2],b[3]);
+    const x=Math.min(a.x,z.x),y=Math.min(a.y,z.y);
+    const w=Math.abs(z.x-a.x),h=Math.abs(z.y-a.y);
+    labelCtx.save();
+    labelCtx.fillStyle="rgba(0,165,151,.10)";
+    labelCtx.fillRect(x,y,w,h);
+    labelCtx.lineWidth=2.2;
+    labelCtx.strokeStyle="#008c80";
+    labelCtx.setLineDash([8,5]);labelCtx.strokeRect(x,y,w,h);
+    labelCtx.restore();
+  }
+  function installExportAreaCapture(){
+    const map=$("map-canvas");
+    map.addEventListener("pointerdown",ev=>{
+      if(!state.exportAreaPicking||ev.button!==0)return;
+      ev.preventDefault();ev.stopImmediatePropagation();
+      const p=eventCoords(ev),w=screenToWorld(p.x,p.y);
+      state.exportAreaDrag={id:ev.pointerId,start:w,end:w,startPx:p};
+      map.setPointerCapture(ev.pointerId);requestDraw();
+    },true);
+    map.addEventListener("pointermove",ev=>{
+      if(!state.exportAreaPicking)return;
+      ev.preventDefault();ev.stopImmediatePropagation();
+      const drag=state.exportAreaDrag;
+      if(!drag||drag.id!==ev.pointerId)return;
+      const p=eventCoords(ev);
+      drag.end=screenToWorld(p.x,p.y);requestDraw();
+    },true);
+    map.addEventListener("pointerup",ev=>{
+      if(!state.exportAreaPicking)return;
+      ev.preventDefault();ev.stopImmediatePropagation();
+      const drag=state.exportAreaDrag;
+      if(!drag||drag.id!==ev.pointerId)return;
+      if(map.hasPointerCapture?.(ev.pointerId))
+        map.releasePointerCapture(ev.pointerId);
+      const p=eventCoords(ev),end=screenToWorld(p.x,p.y);
+      if(Math.abs(p.x-drag.startPx.x)<8||
+         Math.abs(p.y-drag.startPx.y)<8){
+        state.exportAreaDrag=null;
+        inform("Prostokąt jest za mały. Spróbuj ponownie.",true);
+        requestDraw();return;
+      }
+      const bounds=state.meta.bounds;
+      const rect=[
+        Math.max(bounds[0],Math.min(drag.start.x,end.x)),
+        Math.max(bounds[1],Math.min(drag.start.y,end.y)),
+        Math.min(bounds[2],Math.max(drag.start.x,end.x)),
+        Math.min(bounds[3],Math.max(drag.start.y,end.y))
+      ];
+      if(rect[2]<=rect[0]||rect[3]<=rect[1]){
+        state.exportAreaDrag=null;
+        inform("Zaznacz obszar wewnątrz mapy.",true);requestDraw();return;
+      }
+      state.exportAreaBounds=rect;
+      $("layout-scope").value="rect";
+      finishExportAreaSelection();
+    },true);
+    map.addEventListener("pointercancel",ev=>{
+      if(!state.exportAreaPicking)return;
+      ev.preventDefault();ev.stopImmediatePropagation();
+      finishExportAreaSelection(true);
+    },true);
   }
   function pdfLayoutOptions(){
-    const bounds=$("layout-scope").value==="all"
-      ?[...state.meta.bounds]:boundsFromViewport(0);
+    const bounds=selectedExportBounds();
     const denominator=Number($("layout-scale").value);
     if(!Number.isInteger(denominator)||denominator<10||denominator>100000000)
       throw Error("Nieprawidłowy mianownik skali PDF.");
@@ -4051,9 +4162,7 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
     };
   }
   function layoutOptions(){
-    const source=$("layout-scope").value==="all"
-      ?state.meta.bounds:boundsFromViewport(0);
-    const bounds=[...source];
+    const bounds=selectedExportBounds();
     if(bounds.some(value=>!Number.isFinite(value))||
        bounds[2]<=bounds[0]||bounds[3]<=bounds[1])
       throw Error("Nieprawidłowy obszar mapy.");
@@ -4074,14 +4183,13 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
     const legend=$("layout-legend").checked?mm(52):0;
     const fullWidth=width+margin*2+legend;
     const fullHeight=height+head+foot;
-    if(fullWidth>12000||fullHeight>12000||
-       fullWidth*fullHeight>40000000)
-      throw Error("Arkusz byłby zbyt duży ("+fullWidth+" × "+
-        fullHeight+" px). Zmniejsz DPI, zwiększ mianownik skali "+
-        "lub wybierz bieżący widok.");
+    // Large print sheets become full-resolution tiled archives.
+    const tiled=fullWidth>12000||fullHeight>12000||
+      fullWidth*fullHeight>40000000;
     return {
       bounds,denominator,dpi,pxPerUnit,width,height,margin,head,foot,
-      legend,fullWidth,fullHeight,
+      legend,fullWidth,fullHeight,tiled,
+      orientation:$("layout-orientation").value,
       title:$("layout-title").value.trim().slice(0,100)||"Mapa GEO-MAP",
       frame:$("layout-frame").checked,north:$("layout-north").checked,
       scaleBar:$("layout-scalebar").checked,
@@ -4365,6 +4473,153 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
     patched.set(bytes.subarray(insertAt),insertAt+chunk.length);
     return new Blob([patched],{type:"image/png"});
   }
+  function planRasterTiles(options){
+    // The full MAP is a single pixel coordinate grid, not the viewport.
+    // Partition that grid into balanced cells so adjacent sheets share
+    // exact boundaries and their physical DPI remains unchanged.
+    const landscape=options.orientation!=="portrait";
+    const sheetW=landscape?6500:5600;
+    const sheetH=landscape?5600:6500;
+    const maxW=sheetW-options.margin*2-options.legend;
+    const maxH=sheetH-options.head-options.foot;
+    if(maxW<100||maxH<100)throw Error("Za duża oprawa dla kafli eksportu.");
+    const columns=Math.max(1,Math.ceil(options.width/maxW));
+    const rows=Math.max(1,Math.ceil(options.height/maxH));
+    if(columns*rows>256)
+      throw Error("Mapa wymaga ponad 256 arkuszy. Wybierz mniejszy "+
+        "prostokąt lub niższe DPI. Nie zmniejszono jakości obrazu.");
+    const centerX=(options.bounds[0]+options.bounds[2])/2;
+    const centerY=(options.bounds[1]+options.bounds[3])/2;
+    const tiles=[];
+    for(let row=0;row<rows;row++)for(let col=0;col<columns;col++){
+      const x0=Math.floor(options.width*col/columns);
+      const x1=Math.floor(options.width*(col+1)/columns);
+      const y0=Math.floor(options.height*row/rows);
+      const y1=Math.floor(options.height*(row+1)/rows);
+      const width=x1-x0,height=y1-y0;
+      const px=options.pxPerUnit;
+      const bounds=[
+        centerX+(x0-options.width/2)/px,
+        centerY+(y0-options.height/2)/px,
+        centerX+(x1-options.width/2)/px,
+        centerY+(y1-options.height/2)/px
+      ];
+      const item={...options,bounds,width,height,
+        fullWidth:width+options.margin*2+options.legend,
+        fullHeight:height+options.head+options.foot,
+        tiled:false,partLabel:"Arkusz "+(tiles.length+1)+"/"+(rows*columns)};
+      if(item.fullWidth*item.fullHeight>40000000||
+         item.fullWidth>12000||item.fullHeight>12000)
+        throw Error("Wewnętrzny limit pojedynczego arkusza.");
+      tiles.push(item);
+    }
+    return {columns,rows,tiles};
+  }
+  function tiledExportManifest(options,plan){
+    const lines=[
+      "GeoStudio 2.0 — eksport dużej mapy",
+      "Mapę podzielono na arkusze bez obniżania rozdzielczości.",
+      "Kolejność: najpierw wiersze z góry na dół, potem kolumny od lewej.",
+      "Opracowanie 1:"+options.denominator+", "+
+        options.dpi+" DPI, format "+options.format.toUpperCase(),
+      "Łączny obraz mapy: "+options.width+" x "+options.height+" pikseli",
+      "Arkusze: "+plan.columns+" kolumn, "+plan.rows+" wierszy",
+      "Zakres (osie ekranu GEO-MAP): "+options.bounds.join(", "),
+      "Arkusze zawierają własne ramki, legendy i inne wybrane dodatki.",
+      "",
+      "Plik; xmin; ymin; xmax; ymax"
+    ];
+    const ext={jpeg:"jpg",tiff:"tif",png:"png"}[options.format];
+    for(let i=0;i<plan.tiles.length;i++){
+      const tile=plan.tiles[i];
+      const r=Math.floor(i/plan.columns)+1,c=i%plan.columns+1;
+      lines.push("mapa_r"+String(r).padStart(3,"0")+"_c"+
+        String(c).padStart(3,"0")+"."+ext+"; "+tile.bounds.join("; "));
+    }
+    return lines.join("\n");
+  }
+  async function encodeLayoutRaster(image,options){
+    const raw=options.format==="tiff"
+      ?makeRGBTiff(image,options.dpi)
+      :await canvasBlob(image,options.format==="jpeg"?"image/jpeg":"image/png",
+        options.format==="jpeg"?.96:undefined);
+    return options.format==="tiff"?raw:
+      withRasterDpi(raw,options.format==="jpeg"?"jpeg":"png",options.dpi);
+  }
+  async function saveTiledArchive(ticket,filename){
+    if(window.pywebview?.api?.save_tiled_export){
+      exportInfo("Wybierz miejsce zapisu dużej mapy ZIP…");
+      const result=await window.pywebview.api.save_tiled_export(ticket);
+      if(!result||result.cancelled)return false;
+      inform("Zapisano arkusze mapy: "+result.path+".");
+      return true;
+    }
+    const response=await fetch("/api/export/tiles/"+ticket+"/download",{
+      headers:{"X-GeoStudio-Token":token},cache:"no-store"
+    });
+    if(!response.ok){
+      const message=await response.json().catch(()=>({}));
+      throw Error(message.detail||"Nie można pobrać archiwum ZIP.");
+    }
+    if(window.showSaveFilePicker&&response.body){
+      const handle=await window.showSaveFilePicker({
+        suggestedName:filename,
+        types:[{description:"Archiwum ZIP",accept:{"application/zip":[".zip"]}}]
+      });
+      const file=await handle.createWritable();
+      try{
+        await response.body.pipeTo(file);
+      }catch(error){
+        await file.abort().catch(()=>{});
+        throw error;
+      }
+      return true;
+    }
+    const blob=await response.blob();
+    const url=URL.createObjectURL(blob);
+    const a=document.createElement("a");
+    a.href=url;a.download=filename;document.body.append(a);
+    a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),60000);
+    return true;
+  }
+  async function exportTiledLayout(options,basename){
+    const plan=planRasterTiles(options);
+    const session=await api("/api/export/tiles/start",{
+      method:"POST",headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({
+        documentToken:state.edit.documentToken,
+        revision:state.edit.revision,
+        filename:basename,format:options.format,
+        columns:plan.columns,rows:plan.rows,
+        manifest:tiledExportManifest(options,plan)
+      })
+    });
+    const ticket=session.ticket;
+    const tokenAtStart=state.edit.documentToken;
+    const revisionAtStart=state.edit.revision;
+    for(let i=0;i<plan.tiles.length;i++){
+      if(state.edit?.documentToken!==tokenAtStart||
+         state.edit?.revision!==revisionAtStart)
+        throw Error("Mapa zmieniła się podczas eksportu. Spróbuj ponownie.");
+      const tile=plan.tiles[i];
+      exportInfo("Arkusz "+(i+1)+"/"+plan.tiles.length+
+        " · "+tile.width+" × "+tile.height+" px · "+options.dpi+" DPI");
+      const raster=await renderLayoutCanvas(tile);
+      const blob=await encodeLayoutRaster(raster,options);
+      // Each upload is bounded to at most 120 MB; the ZIP is assembled
+      // on disk and never passed through the small-image Save As buffer.
+      await api("/api/export/tiles/"+ticket+"/part/"+i,{
+        method:"POST",body:blob
+      });
+      raster.width=0;raster.height=0;
+    }
+    const complete=await api("/api/export/tiles/"+ticket+"/finish",{
+      method:"POST"
+    });
+    exportInfo("Gotowe: "+complete.tiles+" arkuszy. Wybierz zapis ZIP.");
+    return saveTiledArchive(ticket,complete.filename);
+  }
+
   async function downloadLayoutFile(blob,filename){
     // WebView2 may silently ignore browser-only download links. Use the same
     // native Save As mechanism as MAP for a guaranteed chosen Windows path.
@@ -4439,7 +4694,12 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
         ?pdfLayoutOptions():layoutOptions();
     }catch(error){exportInfo(error.message);inform(error.message,true);return;}
     if(print&&options.format==="dxf"){
-      inform("Druk wymaga obrazu. Wybierz PNG, JPG lub TIFF.",true);return;
+      inform("Druk wymaga obrazu. Wybierz PNG, JPG, TIFF lub PDF.",true);return;
+    }
+    if(print&&options.tiled){
+      inform("Wielkoformatowy wydruk przygotuj z PDF wektorowego; "+
+        "JPG/PNG/TIFF o tym rozmiarze są zapisywane jako osobne arkusze ZIP.",true);
+      return;
     }
     button.disabled=true;printButton.disabled=true;
     try{
@@ -4469,7 +4729,8 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
       }else if(!print&&options.format==="dxf"){
         exportInfo("Generowanie edytowalnego DXF…");
         const query=new URLSearchParams({
-          documentToken:state.edit.documentToken});
+          documentToken:state.edit.documentToken,
+          bounds:JSON.stringify(selectedExportBounds())});
         const response=await fetch("/api/export/dxf?"+query.toString(),{
           headers:{"X-GeoStudio-Token":token},cache:"no-store"});
         if(!response.ok){
@@ -4479,6 +4740,9 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
         if(!await downloadLayoutFile(await response.blob(),basename+".dxf")){
           exportInfo("Anulowano zapis DXF.");return;
         }
+      }else if(options.tiled){
+        const saved=await exportTiledLayout(options,basename);
+        if(!saved){exportInfo("Anulowano zapis wieloarkuszowego ZIP.");return;}
       }else{
         const raster=await renderLayoutCanvas(options);
         const raw=(print||options.format==="png")
@@ -4949,6 +5213,10 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
   });
 
   document.addEventListener("keydown",ev=>{
+    if(state.exportAreaPicking&&ev.key==="Escape"){
+      ev.preventDefault();finishExportAreaSelection(true);return;
+    }
+    if(state.exportAreaPicking)return;
     const typing=ev.target.matches("input,textarea,[contenteditable]");
     if((ev.ctrlKey||ev.metaKey)&&ev.key.toLowerCase()==="k"){
       ev.preventDefault();openCommands();return;
@@ -5208,6 +5476,7 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
   link("raster-remove",removeRaster);
   link("raster-calibrate",openVisualCalibration);
   setupVisualCalibration();
+  installExportAreaCapture();
   // Visual calibration installs its own GCP capture handlers.
   $("raster-opacity").addEventListener("input",ev=>{
     raster.opacity=Number(ev.target.value)/100;
@@ -5237,6 +5506,13 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
   link("btn-export",downloadMapCopy);
   link("btn-layout",openLayoutDialog);
   link("layout-close",()=>$("layout-dialog").close());
+  link("layout-choose-area",beginExportAreaSelection);
+  $("layout-scope").addEventListener("change",()=>{
+    updateExportAreaControls();
+    if($("layout-scope").value==="rect"&&!state.exportAreaBounds)
+      beginExportAreaSelection();
+    else requestDraw();
+  });
   $("layout-form").addEventListener("submit",event=>{event.preventDefault();exportLayout(false);});
   link("layout-print",()=>exportLayout(true));
   link("tool-export-baked",downloadNativeCutouts);
