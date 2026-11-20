@@ -192,6 +192,18 @@ def create_app(workspace: PreviewWorkspace | None = None) -> FastAPI:
         except ValueError as exc:
             raise HTTPException(409, str(exc)) from exc
 
+    @app.get("/api/topology/audit")
+    async def topology_audit(documentToken: str, revision: int,
+                             limit: int = 600):
+        """Inspect native GEO-MAP P records without modifying the map."""
+        try:
+            return await run_in_threadpool(
+                state.topology_audit, documentToken, revision, limit)
+        except RuntimeError as exc:
+            raise HTTPException(409,str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(400,str(exc)) from exc
+
     @app.get("/api/viewport")
     async def viewport(xmin: float, ymin: float, xmax: float, ymax: float,
                        limit: int = MAX_RENDER_FEATURES, offset: int = 0):
