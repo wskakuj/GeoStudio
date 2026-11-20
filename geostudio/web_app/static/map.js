@@ -41,6 +41,7 @@
   };
   const raster = {
     image:null,affine:null,epsg:null,boundEPSG:null,opacity:.72,name:"",
+    sourceWidth:0,sourceHeight:0,
     ticket:0,pendingWorld:null,visible:true,gcps:[],id:0,
     layers:[],serial:0
   };
@@ -2128,11 +2129,13 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
       epsg:raster.epsg,boundEPSG:raster.boundEPSG,
       opacity:raster.opacity,visible:raster.visible,
       name:raster.name,pendingWorld:raster.pendingWorld,
+      sourceWidth:raster.sourceWidth,sourceHeight:raster.sourceHeight,
       gcps:raster.gcps};
   }
   function assignRaster(entry){
     for(const field of ["id","image","affine","epsg","boundEPSG",
-      "opacity","visible","name","pendingWorld","gcps"])
+      "opacity","visible","name","pendingWorld","gcps",
+      "sourceWidth","sourceHeight"])
       raster[field]=entry[field];
     $("raster-opacity").value=Math.round(raster.opacity*100);
     $("raster-opacity-value").textContent=Math.round(raster.opacity*100)+"%";
@@ -2155,6 +2158,7 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
     if(!all&&raster.layers.length)assignRaster(raster.layers.pop());
     else assignRaster({id:0,image:null,affine:null,epsg:null,
       boundEPSG:null,opacity:.72,visible:true,name:"",
+      sourceWidth:0,sourceHeight:0,
       pendingWorld:null,gcps:[]});
     if($("raster-summary"))rasterInfo("Raster usunięty. MAP pozostaje bez zmian.");
     if(state.meta){state.previewActive=false;state.geometrySnapshotValid=false;requestDraw();}
@@ -2297,29 +2301,30 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
     rasterInfo("Wczytywanie rastra "+file.name+"…");
     try{
       const lower=file.name.toLowerCase();
-      let imageBlob=file,affine=null,epsg=null;
-      if(/\.tiff?$/i.test(lower)){
-        const response=await fetch("/api/underlay/raster/prepare",{
-          method:"POST",headers:{"X-GeoStudio-Token":token,
-            "Content-Type":"application/octet-stream"},
-          body:file,cache:"no-store"
-        });
-        if(!response.ok){
-          const body=await response.json().catch(()=>({}));
-          throw Error(body.detail||"Nie można odczytać TIFF.");
-        }
-        affine=JSON.parse(response.headers.get("x-raster-affine")||"null");
-        epsg=Number(response.headers.get("x-raster-epsg")||0)||null;
-        imageBlob=await response.blob();
-      }else if(!/\.(png|jpe?g|webp)$/i.test(lower)){
+      // Local decoder creates a bounded preview for all supported image
+      // formats and reports ORIGINAL dimensions for GCP and world files.
+      if(!/\.(tiff?|png|jpe?g|webp)$/i.test(lower))
         throw Error("Obsługiwane obrazy: PNG, JPG, WebP i TIFF.");
+      const response=await fetch("/api/underlay/raster/prepare",{
+        method:"POST",headers:{"X-GeoStudio-Token":token,
+          "Content-Type":"application/octet-stream"},
+        body:file,cache:"no-store"
+      });
+      if(!response.ok){
+        const body=await response.json().catch(()=>({}));
+        throw Error(body.detail||"Nie można odczytać rastra.");
       }
-      const decoded=await imageFromBlob(imageBlob);
-      if(decoded.width*decoded.height>24000000)
-        throw Error("Raster przekracza limit 24 mln pikseli.");
+      const affine=JSON.parse(response.headers.get("x-raster-affine")||"null");
+      const epsg=Number(response.headers.get("x-raster-epsg")||0)||null;
+      const sourceWidth=Number(response.headers.get("x-raster-source-width")||0);
+      const sourceHeight=Number(response.headers.get("x-raster-source-height")||0);
+      const decoded=await imageFromBlob(await response.blob());
+      if(!sourceWidth||!sourceHeight)
+        throw Error("Serwer nie podał oryginalnych wymiarów rastra.");
       if(ticket!==raster.ticket||documentToken!==state.edit?.documentToken)return;
       if(raster.image)raster.layers.push(rasterEntry());
       raster.image=decoded;raster.affine=affine;raster.epsg=epsg;
+      raster.sourceWidth=sourceWidth;raster.sourceHeight=sourceHeight;
       raster.boundEPSG=null;raster.gcps=[];raster.visible=true;
       raster.opacity=.72;raster.id=++raster.serial;
       raster.name=file.name;
@@ -2329,9 +2334,14 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
         return;
       }
       if(raster.pendingWorld)raster.affine=raster.pendingWorld;
-      rasterInfo(raster.affine
+      const previewNote=(sourceWidth!==decoded.width||sourceHeight!==decoded.height)
+        ?" Podgląd "+decoded.width+"×"+decoded.height+
+          " z oryginału "+sourceWidth+"×"+sourceHeight+
+          " (GCP w oryginalnych pikselach).":"";
+      rasterInfo((raster.affine
         ?file.name+" — odczytano georeferencję."
-        :file.name+" — brak georeferencji. Dodaj world lub punkty GCP.");
+        :file.name+" — brak georeferencji. Dodaj world lub punkty GCP.")+
+        previewNote);
       if(raster.affine)showRasterIfCalibrated();
     }catch(error){
       rasterInfo("Nie udało się otworzyć rastra: "+error.message);
@@ -2401,7 +2411,10 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
     const markers=raster.gcps.map((pt,i)=>({u:pt.u,v:pt.v,label:String(i+1),color:"#54ead8"}));
     if(gcpView.pending)markers.push({...gcpView.pending,label:"+",color:"#ffbc57"});
     for(const item of markers){
-      const x=pos.left+item.u*pos.scale,y=pos.top+item.v*pos.scale;
+      const x=pos.left+item.u*pos.scale*raster.image.width/
+          (raster.sourceWidth||raster.image.width);
+      const y=pos.top+item.v*pos.scale*raster.image.height/
+          (raster.sourceHeight||raster.image.height);
       g.beginPath();g.arc(x,y,6,0,Math.PI*2);g.fillStyle=item.color;g.fill();
       g.strokeStyle="#092335";g.lineWidth=2;g.stroke();
       g.font="bold 13px sans-serif";g.fillStyle="#fff";g.fillText(item.label,x+9,y-7);
@@ -2489,7 +2502,13 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
       const u=(ev.clientX-rect.left-pos.left)/pos.scale;
       const v=(ev.clientY-rect.top-pos.top)/pos.scale;
       if(u<0||v<0||u>raster.image.width||v>raster.image.height)return;
-      gcpView.pending={u,v};gcpView.waiting=false;
+      // Pair coordinates always refer to ORIGINAL pixels, not the
+      // lower-resolution browser preview of a large raster.
+      gcpView.pending={
+        u:u*(raster.sourceWidth||raster.image.width)/raster.image.width,
+        v:v*(raster.sourceHeight||raster.image.height)/raster.image.height
+      };
+      gcpView.waiting=false;
       updateGcpUi("Zaznaczono piksel obrazu. Kliknij „Wybierz odpowiednik na mapie”.");
     });
     canvas.addEventListener("pointermove",ev=>{
@@ -2541,9 +2560,12 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
     for(const item of [...raster.layers,...(raster.image?[rasterEntry()]:[])]){
       if(!rasterCanShow(item))continue;
       const [a,b,c,d,e,f]=item.affine;
+      const sourceX=(item.sourceWidth||item.image.width)/item.image.width;
+      const sourceY=(item.sourceHeight||item.image.height)/item.image.height;
       ctx.save();ctx.globalAlpha=item.opacity;
       ctx.imageSmoothingEnabled=true;ctx.imageSmoothingQuality="high";
-      ctx.transform(d*state.scale,-a*state.scale,e*state.scale,-b*state.scale,
+      ctx.transform(d*sourceX*state.scale,-a*sourceX*state.scale,
+        e*sourceY*state.scale,-b*sourceY*state.scale,
         (f-state.center.x)*state.scale+state.width/2,
         (-c-state.center.y)*state.scale+state.height/2);
       ctx.drawImage(item.image,0,0);
