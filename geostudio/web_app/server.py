@@ -700,9 +700,10 @@ def create_app(workspace: PreviewWorkspace | None = None) -> FastAPI:
                 "filename*=UTF-8''"+quote(filename,safe=""))})
 
     @app.get("/api/export/dxf")
-    async def download_dxf(documentToken: str):
+    async def download_dxf(documentToken: str, bounds: str | None = None):
         try:
-            name, content = state.export_dxf(documentToken)
+            region=json.loads(bounds) if bounds is not None else None
+            name, content = state.export_dxf(documentToken, bounds=region)
         except RuntimeError as exc:
             raise HTTPException(409, str(exc)) from exc
         except ValueError as exc:
