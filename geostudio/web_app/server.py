@@ -622,6 +622,25 @@ def create_app(workspace: PreviewWorkspace | None = None) -> FastAPI:
         except (ValueError,TypeError) as exc:
             raise HTTPException(400,str(exc)) from exc
 
+    @app.post("/api/export/pdf")
+    async def download_vector_pdf(request: Request):
+        """True vector A0-A4 PDF; user-authored legend/frame/table in JSON."""
+        raw=await receive(request,64*1024)
+        try:
+            payload=json.loads(raw)
+            if not isinstance(payload,dict):
+                raise ValueError("Nieprawidłowe parametry PDF.")
+            filename,pdf=await run_in_threadpool(
+                state.export_vector_pdf,payload.get("documentToken"),
+                payload.get("options"))
+        except RuntimeError as exc:
+            raise HTTPException(409,str(exc)) from exc
+        except (ValueError,TypeError) as exc:
+            raise HTTPException(400,str(exc)) from exc
+        return Response(pdf,media_type="application/pdf",
+            headers={"Content-Disposition":("attachment; filename=GeoStudio2_arkusz.pdf; "+
+                "filename*=UTF-8''"+quote(filename,safe=""))})
+
     @app.get("/api/export/dxf")
     async def download_dxf(documentToken: str):
         try:
