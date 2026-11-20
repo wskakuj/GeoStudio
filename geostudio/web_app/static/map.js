@@ -1959,7 +1959,8 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
   }
   const geoportalWmsUrls={
     standard:"https://mapy.geoportal.gov.pl/wss/service/PZGIK/ORTO/WMS/StandardResolution",
-    high:"https://mapy.geoportal.gov.pl/wss/service/PZGIK/ORTO/WMS/HighResolution"
+    high:"https://mapy.geoportal.gov.pl/wss/service/PZGIK/ORTO/WMS/HighResolution",
+    kieg:"https://integracja.gugik.gov.pl/cgi-bin/KrajowaIntegracjaEwidencjiGruntow"
   };
   function showWmsPresetAddress(){
     $("underlay-url").value=geoportalWmsUrls[$("underlay-preset").value]||"";
