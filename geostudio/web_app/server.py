@@ -664,6 +664,63 @@ def create_app(workspace: PreviewWorkspace | None = None) -> FastAPI:
         return FileResponse(path,media_type="application/zip",
             filename=filename)
 
+    @app.post("/api/export/mosaic/start")
+    async def begin_single_tiff(request: Request):
+        """Prepare one huge TIFF file without using a huge browser canvas."""
+        try:
+            data=json.loads(await receive(request,64*1024))
+            if not isinstance(data,dict):
+                raise ValueError("Nieprawidłowe parametry TIFF.")
+            ticket=app.state.tile_exports.begin_mosaic(
+                data.get("documentToken"),data.get("revision"),
+                data.get("filename"),data.get("width"),data.get("height"),
+                data.get("dpi"),data.get("tileWidth"),data.get("tileHeight"))
+            return {"ticket":ticket}
+        except RuntimeError as exc:
+            raise HTTPException(409,str(exc)) from exc
+        except (ValueError,TypeError) as exc:
+            raise HTTPException(400,str(exc)) from exc
+
+    @app.post("/api/export/mosaic/{ticket}/part/{index}")
+    async def add_single_tiff_part(ticket: str, index: int, request: Request):
+        try:
+            data=await receive(request,MAX_TILE_BYTES)
+            await run_in_threadpool(app.state.tile_exports.add_mosaic,
+                                    ticket,index,data)
+            return {"index":index,"stored":True}
+        except RuntimeError as exc:
+            raise HTTPException(409,str(exc)) from exc
+        except LookupError as exc:
+            raise HTTPException(404,str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(400,str(exc)) from exc
+
+    @app.post("/api/export/mosaic/{ticket}/finish")
+    async def complete_single_tiff(ticket: str):
+        try:
+            return app.state.tile_exports.finish_mosaic(ticket)
+        except RuntimeError as exc:
+            raise HTTPException(409,str(exc)) from exc
+        except LookupError as exc:
+            raise HTTPException(404,str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(400,str(exc)) from exc
+
+    @app.get("/api/export/mosaic/{ticket}/download")
+    async def download_single_tiff(ticket: str):
+        """Stream a single TIFF/BigTIFF file from temporary disk."""
+        try:
+            filename,path=app.state.tile_exports.archive(ticket)
+            if not filename.endswith(".tif"):
+                raise ValueError("Wybrany eksport nie jest obrazem TIFF.")
+        except RuntimeError as exc:
+            raise HTTPException(409,str(exc)) from exc
+        except LookupError as exc:
+            raise HTTPException(404,str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(400,str(exc)) from exc
+        return FileResponse(path,media_type="image/tiff",filename=filename)
+
     @app.post("/api/export/buffer")
     async def save_generated_export_buffer(request: Request):
         try:
