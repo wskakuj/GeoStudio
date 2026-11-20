@@ -524,3 +524,42 @@ button:disabled { opacity:.38; cursor:not-allowed; filter:none !important; }
 }
 .layer-source-dialog .select-actions{flex-wrap:wrap;}
 .layer-source-dialog .select-actions .button{flex:1 1 auto;}
+
+/* Stage 12: independent vector/raster layer switches and visibility manager. */
+.layer-tablist{display:grid;grid-template-columns:1fr 1fr;gap:5px;padding:10px 13px 4px;}
+.layer-tab{min-height:35px;border-radius:8px;border:1px solid #34495d;background:#142538;color:#97b7c8;font-size:12px;font-weight:650;cursor:pointer;}
+.layer-tab.active{color:#80eadd;background:#1b4050;border-color:#308580;}
+.layer-tab span{display:inline-block;margin-left:4px;background:#244a52;border-radius:6px;padding:2px 6px;font-size:10px;}
+.layer-tab-panel{display:flex;flex-direction:column;min-height:0;flex:1;}
+.layer-tab-panel[hidden]{display:none!important;}
+.layer-tab-panel #layers-list{flex:1;min-height:0;}
+.raster-layers-list{overflow-y:auto;min-height:0;flex:1;padding:9px 11px;scrollbar-color:#35566a transparent;}
+.raster-layer-item{background:#172b3f;border:1px solid #365067;border-radius:10px;padding:11px;margin-bottom:9px;display:grid;gap:7px;}
+.raster-layer-head{display:flex;align-items:center;gap:9px;}
+.raster-layer-head input{width:17px;height:17px;accent-color:#47cbb7;flex:none;}
+.raster-layer-meta{min-width:0;display:grid;gap:3px;overflow:hidden;}
+.raster-layer-meta strong{color:#e1f3f7;font-size:11px;text-overflow:ellipsis;overflow:hidden;white-space:nowrap;}
+.raster-layer-meta span{color:#8fb4bf;font-size:10px;}
+.raster-layer-item input[type=range]{width:100%;accent-color:#41c2b0;height:18px;cursor:pointer;}
+.raster-layer-actions{display:flex;gap:6px;}
+.raster-layer-actions button{border:1px solid #315b64;background:#20394b;color:#b5e3de;border-radius:7px;padding:6px 9px;font-size:11px;cursor:pointer;}
+.raster-layer-actions button:hover{background:#245968;}
+.raster-layers-help{color:#8caabc;line-height:1.6;font-size:10px;padding:8px 14px 2px;margin:0;}
+/* GCP picker is intentionally MODELESS: the user clicks the real map
+   while the image picker remains open, exactly as in classic GeoStudio. */
+.raster-visual-dialog{position:fixed;top:110px;right:24px;left:auto;bottom:auto;margin:0;
+  width:min(500px,calc(100vw - 32px));max-height:calc(100vh - 145px);overflow:auto;
+  z-index:15;padding:0;color:#d9edf2;background:#13283b;border:1px solid #3e6f7b;
+  box-shadow:0 18px 45px #001c2ccc;border-radius:12px;}
+.visual-calibration-body{display:grid;gap:10px;padding:14px 17px 18px;}
+#raster-gcp-canvas{width:100%;height:290px;display:block;background:#092237;
+  border:1px solid #376878;border-radius:9px;cursor:crosshair;touch-action:none;}
+.visual-calibration-actions{display:flex;gap:8px;flex-wrap:wrap;}
+.visual-calibration-actions button{flex:1 1 150px;font-size:11px;padding:8px;}
+.visual-gcp-pairs{display:flex;flex-wrap:wrap;gap:5px;max-height:100px;overflow-y:auto;}
+.gcp-pair-tag{padding:5px 8px;border-radius:7px;background:#1c4552;border:1px solid #396b74;
+  color:#c4eeed;font-size:10px;white-space:nowrap;}
+@media(max-width:760px){
+  .raster-visual-dialog{right:8px;top:92px;max-height:calc(100vh - 120px);}
+  #raster-gcp-canvas{height:220px;}
+}
