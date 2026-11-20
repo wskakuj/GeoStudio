@@ -210,3 +210,49 @@ assert.ok(segments>=4);
     result=subprocess.run([node,"-e",script],cwd=STATIC,
        capture_output=True,text=True,timeout=20)
     assert result.returncode==0,result.stdout+result.stderr
+
+
+def test_drag_existing_image_gcp_keeps_source_pixels_and_requests_refit():
+    node=shutil.which("node")
+    if not node:return
+    script=r"""
+const fs=require('node:fs'),assert=require('node:assert/strict');
+const src=fs.readFileSync('map.js','utf8');
+const a=src.indexOf('  function setupVisualCalibration()');
+const b=src.indexOf('  function drawGcpMapMarkers()',a);
+assert.ok(a>=0&&b>a);
+const callbacks={};
+const image={
+ addEventListener(name,fn){callbacks[name]=fn;},
+ getBoundingClientRect(){return {left:0,top:0};},
+ setPointerCapture(){},hasPointerCapture(){return true;},
+ releasePointerCapture(){}
+};
+const map={addEventListener(){}};
+const raster={image:{width:1000,height:800},sourceWidth:2000,
+  sourceHeight:1600,gcps:[{u:100,v:200,x:500,y:800}]};
+const gcpView={waiting:false,pending:null,activeIndex:null};
+let fits=0;
+const setup=new Function('raster','gcpView','$','gcpNearestRasterPoint',
+ 'gcpScreenToSource','updateGcpUi','drawGcpCanvas','zoomGcpAt',
+ 'link','finishGcpAdjustment','applyVisualGCP','closeVisualCalibration',
+ 'pickGcpMapPoint','moveGcpMapPoint','releaseGcpMapPoint',
+ src.slice(a,b)+'return setupVisualCalibration;')(
+ raster,gcpView,id=>id==='raster-gcp-canvas'?image:map,
+ ()=>0,(x,y)=>({u:x*2,v:y*2}),()=>{},()=>{},()=>{},
+ ()=>{},()=>fits++,()=>{},()=>{},()=>{},()=>{},()=>{});
+setup();
+callbacks.pointerdown({button:0,pointerId:1,clientX:50,clientY:100});
+assert.equal(gcpView.dragging.kind,'point');
+callbacks.pointermove({pointerId:1,clientX:160,clientY:250});
+assert.equal(raster.gcps[0].u,320);
+assert.equal(raster.gcps[0].v,500);
+assert.equal(raster.gcps[0].x,500);
+assert.equal(raster.gcps[0].y,800);
+callbacks.pointerup({pointerId:1});
+assert.equal(fits,1);
+assert.equal(gcpView.dragging,null);
+"""
+    result=subprocess.run([node,"-e",script],cwd=STATIC,
+       capture_output=True,text=True,timeout=20)
+    assert result.returncode==0,result.stdout+result.stderr
