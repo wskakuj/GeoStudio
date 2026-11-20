@@ -34,7 +34,7 @@ def test_pdf_labels_are_centered_stacked_and_collision_aware():
         "id": "building", "code": "5310", "bbox": [0, 0, 100, 100],
         "labels": [
             {"field": "A1", "text": "a", "x": 10, "y": 10, "size": 16},
-            {"field": "A2", "text": "II\\n0.5", "x": 10, "y": 10, "size": 16},
+            {"field": "A2", "text": "II\n0.5", "x": 10, "y": 10, "size": 16},
         ],
     }
     parcel = {
