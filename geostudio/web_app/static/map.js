@@ -5028,7 +5028,7 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
       row.append(disclosure);
       const heading=document.createElement("div");
       heading.className="landuse-list-heading";
-      heading.textContent="KLASY W POLU A1 · "+landUses.length;
+      heading.textContent="KLASY BONITACYJNE A2 · "+landUses.length;
       details.append(heading);
       for(const landUse of landUses){
         if(filter&&!landUse.label.toLocaleLowerCase("pl-PL").includes(filter)&&
@@ -5111,7 +5111,7 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
     if(state.detail&&(!state.visibleLayers.has(state.detail.layer)||
        (state.detail.grade&&state.hiddenGrades.has(state.detail.grade))||
        (state.detail.layer==="Użytki"&&state.hiddenLandUses.has(
-         String(state.detail.fields?.A1||"").trim().toLocaleLowerCase("pl-PL"))))){
+         String(state.detail.fields?.A2||"").trim().toLocaleLowerCase("pl-PL"))))){
       state.active=null;state.detail=null;updateInspector();
     }
     updateSelectionCount();
