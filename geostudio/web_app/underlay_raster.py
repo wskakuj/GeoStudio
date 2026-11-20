@@ -7,13 +7,17 @@ u grows right, v grows down. The affine coefficients always map
 from __future__ import annotations
 
 from io import BytesIO
-from math import isfinite
+from math import isfinite, sqrt
 from typing import Any
 
 from geostudio.raster_georef import GroundControlPoint, fit_affine
 
 MAX_RASTER_BYTES = 48 * 1024 * 1024
-MAX_RASTER_PIXELS = 24_000_000
+# Preview tiles may be kept entirely in browser memory. Source rasters can
+# exceed this cap, but an image preview must remain reasonably small.
+MAX_SOURCE_PIXELS = 80_000_000
+MAX_RASTER_PIXELS = 14_000_000
+MAX_ALPHA_PREVIEW_PIXELS = 10_000_000
 
 
 def parse_world_text(text: str) -> tuple[float, float, float, float, float, float]:
@@ -106,35 +110,63 @@ def _geo_transform(tags) -> tuple[float, ...] | None:
     return coeff
 
 
-def prepare_geotiff(content: bytes) -> tuple[bytes, dict]:
-    """Decode TIFF into PNG and return optional embedded affine/EPSG.
+def prepare_raster(content: bytes, *, tiff_only: bool = False) -> tuple[bytes, dict]:
+    """Prepare a browser-safe preview and keep original pixel coordinates.
 
-    A normal TIFF without GeoTIFF tags is accepted as an unpositioned
-    image; it must be calibrated with GCP or a world file.
+    Large rasters are downsampled solely for display. The original image
+    dimensions and (when present) GeoTIFF affine are returned separately.
+    Georeferencing must be composed with the preview-to-source pixel ratio
+    before drawing on the Canvas. User GCPs remain in source pixels.
     """
     if not content or len(content) > MAX_RASTER_BYTES:
-        raise ValueError("Raster TIFF jest pusty lub przekracza 48 MB.")
+        raise ValueError("Raster jest pusty lub przekracza limit 48 MB pliku.")
     try:
-        from PIL import Image, UnidentifiedImageError
+        from PIL import Image
         with Image.open(BytesIO(content)) as image:
-            if image.format != "TIFF":
+            if tiff_only and image.format != "TIFF":
                 raise ValueError("Przesłano plik inny niż TIFF.")
-            width, height = image.size
-            if not width or not height or width*height > MAX_RASTER_PIXELS:
-                raise ValueError("Raster przekracza limit 24 mln pikseli.")
-            tags = image.tag_v2
+            if image.format not in ("TIFF", "PNG", "JPEG", "WEBP"):
+                raise ValueError("Obsługiwane obrazy: TIFF, PNG, JPG, WebP.")
+            source_width, source_height = image.size
+            pixels = source_width * source_height
+            if source_width < 1 or source_height < 1 or pixels > MAX_SOURCE_PIXELS:
+                raise ValueError(
+                    "Raster przekracza bezpieczny limit 80 mln pikseli źródła.")
+            tags = image.tag_v2 if image.format == "TIFF" else {}
             epsg = _epsg_from_tags(tags)
             transform = _geo_transform(tags)
-            if epsg and epsg not in (2180,2176,2177,2178,2179):
+            if epsg and epsg not in (2180, 2176, 2177, 2178, 2179):
                 raise ValueError("GeoTIFF używa nieobsługiwanego EPSG: " + str(epsg))
-            buffer = BytesIO()
-            image.convert("RGBA").save(buffer, format="PNG")
-            payload = buffer.getvalue()
-            if len(payload) > MAX_RASTER_BYTES:
-                raise ValueError("Rozkodowany obraz przekracza limit.")
-            return payload, {"width":width,"height":height,
-                             "epsg":epsg, "coefficients":transform}
-    except (OSError, ValueError, Image.DecompressionBombError) as exc:
-        if isinstance(exc, ValueError):
-            raise
-        raise ValueError("Nie udało się otworzyć pliku TIFF.") from exc
+            has_alpha = "A" in image.getbands() or "transparency" in image.info
+            max_pixels = MAX_ALPHA_PREVIEW_PIXELS if has_alpha else MAX_RASTER_PIXELS
+            if pixels > max_pixels:
+                factor = sqrt(max_pixels / pixels)
+                width = max(1, int(source_width * factor))
+                height = max(1, int(source_height * factor))
+                # JPEG's built-in decoder can downsample before allocating
+                # the full decoded source; other formats use thumbnail.
+                if image.format == "JPEG":
+                    image.draft("RGB", (width, height))
+                image.thumbnail((width, height), Image.Resampling.LANCZOS)
+            rendered = image.convert("RGBA" if has_alpha else "RGB")
+            output = BytesIO()
+            rendered.save(output, format="PNG", compress_level=5)
+            result = output.getvalue()
+            if len(result) > MAX_RASTER_BYTES:
+                raise ValueError(
+                    "Podgląd jest zbyt duży; użyj mniej szczegółowego rastra.")
+            return result, {
+                "width": rendered.width,
+                "height": rendered.height,
+                "sourceWidth": source_width,
+                "sourceHeight": source_height,
+                "epsg": epsg,
+                "coefficients": transform,
+            }
+    except (OSError, Image.DecompressionBombError) as exc:
+        raise ValueError("Nie można bezpiecznie odczytać rastra.") from exc
+
+
+def prepare_geotiff(content: bytes) -> tuple[bytes, dict]:
+    """Compatibility entry point for callers requiring TIFF input."""
+    return prepare_raster(content, tiff_only=True)
