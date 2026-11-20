@@ -2347,30 +2347,173 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
       }
     }catch(error){rasterInfo("World: "+error.message);inform(error.message,true);}
   }
-  async function calibrateRasterGCP(){
-    if(!raster.image){inform("Najpierw wczytaj obraz rastra.",true);return;}
-    if(!rasterGeoValid())return;
+  // Non-modal visual calibration follows the classic Qt workflow:
+  // raster pixel click -> matching map click -> 3+ pairs -> affine RMSE.
+  const gcpView={waiting:false,pending:null,zoom:1,panX:0,panY:0,
+    dragging:null,open:false};
+  function gcpCanvasLayout(){
+    const canvas=$("raster-gcp-canvas");
+    const w=Math.max(250,canvas.clientWidth||450);
+    const h=Math.max(160,canvas.clientHeight||270);
+    const img=raster.image;
+    if(!img)return {w,h,scale:1,left:0,top:0};
+    const scale=Math.min(w/img.width,h/img.height)*gcpView.zoom;
+    return {w,h,scale,
+      left:(w-img.width*scale)/2+gcpView.panX,
+      top:(h-img.height*scale)/2+gcpView.panY};
+  }
+  function drawGcpCanvas(){
+    if(!raster.image)return;
+    const canvas=$("raster-gcp-canvas");
+    const pos=gcpCanvasLayout();
+    const dpr=Math.max(1,Math.min(2,window.devicePixelRatio||1));
+    const w=Math.round(pos.w*dpr),h=Math.round(pos.h*dpr);
+    if(canvas.width!==w||canvas.height!==h){canvas.width=w;canvas.height=h;}
+    const g=canvas.getContext("2d");
+    g.setTransform(dpr,0,0,dpr,0,0);
+    g.clearRect(0,0,pos.w,pos.h);
+    g.fillStyle="#102538";g.fillRect(0,0,pos.w,pos.h);
+    g.imageSmoothingEnabled=true;g.imageSmoothingQuality="high";
+    g.drawImage(raster.image,pos.left,pos.top,
+      raster.image.width*pos.scale,raster.image.height*pos.scale);
+    const markers=raster.gcps.map((pt,i)=>({u:pt.u,v:pt.v,label:String(i+1),color:"#54ead8"}));
+    if(gcpView.pending)markers.push({...gcpView.pending,label:"+",color:"#ffbc57"});
+    for(const item of markers){
+      const x=pos.left+item.u*pos.scale,y=pos.top+item.v*pos.scale;
+      g.beginPath();g.arc(x,y,6,0,Math.PI*2);g.fillStyle=item.color;g.fill();
+      g.strokeStyle="#092335";g.lineWidth=2;g.stroke();
+      g.font="bold 13px sans-serif";g.fillStyle="#fff";g.fillText(item.label,x+9,y-7);
+    }
+  }
+  function updateGcpUi(message){
+    $("raster-pick-map").disabled=!gcpView.pending;
+    $("raster-gcp-apply").disabled=raster.gcps.length<3;
+    $("raster-gcp-undo").disabled=!raster.gcps.length;
+    $("raster-visual-status").textContent=message||
+      (gcpView.waiting?"Kliknij odpowiednik na mapie (poza oknem kalibracji).":
+      raster.gcps.length+" par. Kliknij kolejny punkt na obrazie.");
+    const list=$("raster-gcp-pairs");list.replaceChildren();
+    for(const [i,pt] of raster.gcps.entries()){
+      const item=document.createElement("span");item.className="gcp-pair-tag";
+      item.textContent=(i+1)+". raster "+
+        Math.round(pt.u)+","+Math.round(pt.v)+" ↔ mapa "+
+        pt.x.toFixed(2)+","+pt.y.toFixed(2);
+      list.append(item);
+    }
+    drawGcpCanvas();requestDraw();
+  }
+  function openVisualCalibration(){
+    if(!raster.image){inform("Najpierw dodaj obraz rastra.",true);return;}
+    if($("raster-dialog").open)$("raster-dialog").close();
+    gcpView.open=true;gcpView.waiting=false;gcpView.pending=null;
+    gcpView.zoom=1;gcpView.panX=0;gcpView.panY=0;
+    // show(), not showModal(): the MAP behind the window must receive
+    // the second click without closing the calibration workspace.
+    if(!$("raster-visual-dialog").open)$("raster-visual-dialog").show();
+    updateGcpUi(raster.gcps.length+" par. Wskaż punkt charakterystyczny na obrazie.");
+  }
+  function closeVisualCalibration(){
+    gcpView.waiting=false;gcpView.pending=null;gcpView.open=false;
+    if($("raster-visual-dialog").open)$("raster-visual-dialog").close();
+    requestDraw();
+  }
+  function pickGcpMapPoint(ev){
+    if(!gcpView.waiting||ev.button!==0||!raster.image||!gcpView.pending)return;
+    ev.preventDefault();ev.stopImmediatePropagation();
+    const p=eventCoords(ev),world=screenToWorld(p.x,p.y);
+    // GEO-MAP native X north, Y east; Canvas x is Y, y is -X.
+    raster.gcps.push({u:gcpView.pending.u,v:gcpView.pending.v,
+      x:-world.y,y:world.x});
+    gcpView.waiting=false;gcpView.pending=null;
+    updateGcpUi("Dodano parę "+raster.gcps.length+
+      ". Wybierz kolejny punkt na obrazie lub oblicz dopasowanie.");
+    renderRasterLayers();
+  }
+  async function applyVisualGCP(){
+    if(!raster.image||raster.gcps.length<3){
+      inform("Do kalibracji potrzebne są minimum trzy pary punktów.",true);return;
+    }
+    const ticket=raster.ticket,documentToken=state.edit?.documentToken;
+    const imageId=raster.id,points=raster.gcps.map(item=>({...item}));
     try{
-      const lines=$("raster-gcp").value.trim().split(/\r?\n/).filter(Boolean);
-      const points=lines.map(line=>{
-        const values=line.trim().split(/[;,\s]+/).map(Number);
-        if(values.length!==4||values.some(v=>!Number.isFinite(v)))
-          throw Error("Wpisz cztery liczby u v X Y w każdym wierszu.");
-        return {u:values[0],v:values[1],x:values[2],y:values[3]};
-      });
       const result=await api("/api/underlay/gcp",{
         method:"POST",headers:{"Content-Type":"application/json"},
         body:JSON.stringify({points})
       });
+      if(ticket!==raster.ticket||imageId!==raster.id||
+         documentToken!==state.edit?.documentToken)return;
       raster.affine=result.coefficients;
-      raster.pendingWorld=null;
-      showRasterIfCalibrated();
-      rasterInfo("Kalibracja GCP: "+result.count+" punktów, RMSE "+
-         result.rmse.toFixed(3)+" m. Sprawdź dopasowanie wizualnie.");
+      raster.epsg=null; // visual GCP calibrates against native MAP XY.
+      raster.boundEPSG=state.mapEPSG;
+      raster.visible=true;raster.pendingWorld=null;
+      rasterInfo("Wizualne GCP: "+result.count+" par, RMSE "+
+        result.rmse.toFixed(3)+" m. Sprawdź położenie na innych punktach.");
+      closeVisualCalibration();
+      requestDraw();
     }catch(error){
-      rasterInfo("Nie udało się skalibrować: "+error.message);
-      inform("GCP: "+error.message,true);
+      updateGcpUi("Kalibracja nie powiodła się: "+error.message+
+        ". Sprawdź rozmieszczenie punktów.");
     }
+  }
+  function setupVisualCalibration(){
+    const canvas=$("raster-gcp-canvas");
+    canvas.addEventListener("pointerdown",ev=>{
+      if(ev.button===2||ev.button===1){
+        ev.preventDefault();canvas.setPointerCapture(ev.pointerId);
+        gcpView.dragging={id:ev.pointerId,x:ev.clientX,y:ev.clientY};return;
+      }
+      if(ev.button!==0||!raster.image)return;
+      const rect=canvas.getBoundingClientRect(),pos=gcpCanvasLayout();
+      const u=(ev.clientX-rect.left-pos.left)/pos.scale;
+      const v=(ev.clientY-rect.top-pos.top)/pos.scale;
+      if(u<0||v<0||u>raster.image.width||v>raster.image.height)return;
+      gcpView.pending={u,v};gcpView.waiting=false;
+      updateGcpUi("Zaznaczono piksel obrazu. Kliknij „Wybierz odpowiednik na mapie”.");
+    });
+    canvas.addEventListener("pointermove",ev=>{
+      if(!gcpView.dragging||gcpView.dragging.id!==ev.pointerId)return;
+      gcpView.panX+=ev.clientX-gcpView.dragging.x;
+      gcpView.panY+=ev.clientY-gcpView.dragging.y;
+      gcpView.dragging.x=ev.clientX;gcpView.dragging.y=ev.clientY;
+      drawGcpCanvas();
+    });
+    for(const event of ["pointerup","pointercancel"])
+      canvas.addEventListener(event,()=>{gcpView.dragging=null;});
+    canvas.addEventListener("contextmenu",ev=>ev.preventDefault());
+    canvas.addEventListener("wheel",ev=>{
+      ev.preventDefault();
+      gcpView.zoom=Math.max(.4,Math.min(35,
+        gcpView.zoom*Math.exp(-ev.deltaY*.002)));
+      drawGcpCanvas();
+    },{passive:false});
+    link("raster-pick-map",()=>{
+      if(!gcpView.pending)return;
+      gcpView.waiting=true;
+      updateGcpUi("Teraz kliknij ten sam punkt na mapie. Rolka nadal pozwala przybliżać.");
+    });
+    link("raster-gcp-undo",()=>{
+      raster.gcps.pop();gcpView.waiting=false;gcpView.pending=null;
+      updateGcpUi("Usunięto ostatnią parę punktów.");
+    });
+    link("raster-gcp-apply",applyVisualGCP);
+    link("raster-gcp-fit",()=>{
+      gcpView.zoom=1;gcpView.panX=0;gcpView.panY=0;drawGcpCanvas();
+    });
+    link("raster-visual-close",closeVisualCalibration);
+  }
+  function drawGcpMapMarkers(){
+    if(!gcpView.open||!raster.gcps?.length)return;
+    ctx.save();
+    for(const [index,pt] of raster.gcps.entries()){
+      const p=worldToScreen(pt.y,-pt.x);
+      if(p.x<0||p.y<0||p.x>state.width||p.y>state.height)continue;
+      ctx.beginPath();ctx.arc(p.x,p.y,6,0,Math.PI*2);
+      ctx.fillStyle="#00b9a3";ctx.fill();
+      ctx.lineWidth=2;ctx.strokeStyle="#fff";ctx.stroke();
+      ctx.fillStyle="#17465b";ctx.font="bold 13px Arial";
+      ctx.fillText(String(index+1),p.x+9,p.y-7);
+    }
+    ctx.restore();
   }
   function paintRaster(){
     for(const item of [...raster.layers,...(raster.image?[rasterEntry()]:[])]){
@@ -3323,7 +3466,8 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
     snapshotContext.clearRect(0,0,canvas.width,canvas.height);
     snapshotContext.drawImage(canvas,0,0);
     state.geometrySnapshotValid=true;
-    renderScreenLabels(features);drawDraftPolygon();drawMagnetMarker();drawVertexTool();
+    renderScreenLabels(features);drawGcpMapMarkers();
+    drawDraftPolygon();drawMagnetMarker();drawVertexTool();
     updateScaleReadout();
     $("count-visible").textContent=display(features.length);
     $("render-hint").textContent=state.limited
@@ -4548,7 +4692,10 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
     openWorldFile(ev.target.files?.[0]);ev.target.value="";
   });
   link("raster-remove",removeRaster);
-  link("raster-calibrate",calibrateRasterGCP);
+  link("raster-calibrate",openVisualCalibration);
+  setupVisualCalibration();
+  // Capture paired map clicks BEFORE select/move/draw handlers.
+  canvas.addEventListener("pointerdown",pickGcpMapPoint,true);
   $("raster-opacity").addEventListener("input",ev=>{
     raster.opacity=Number(ev.target.value)/100;
     $("raster-opacity-value").textContent=ev.target.value+"%";
