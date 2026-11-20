@@ -19,6 +19,9 @@ from .data import (
     PreviewWorkspace, MAX_MAP_BYTES, MAX_STYLES_BYTES, MAX_RENDER_FEATURES,
 )
 from .underlay_wms import list_layers as wms_layers, map_png as wms_map_png
+from .underlay_raster import prepare_geotiff, fit_gcp_payload, MAX_RASTER_BYTES
+from starlette.concurrency import run_in_threadpool
+import json
 
 
 ROOT = Path(__file__).resolve().parent / "static"
@@ -198,6 +201,32 @@ def create_app(workspace: PreviewWorkspace | None = None) -> FastAPI:
         if not isinstance(payload, dict):
             raise HTTPException(400, "Oczekiwano obiektu JSON.")
         return payload
+
+    @app.post("/api/underlay/gcp")
+    async def underlay_calibrate_gcp(request: Request):
+        """Compute an affine image->MAP fit, without modifying MAP bytes."""
+        data=await edit_payload(request,64 * 1024)
+        try:
+            return fit_gcp_payload(data.get("points"))
+        except (ValueError,TypeError) as exc:
+            raise HTTPException(400,str(exc)) from exc
+
+    @app.post("/api/underlay/raster/prepare")
+    async def underlay_prepare_tiff(request: Request):
+        """Decode TIFF/GeoTIFF as PNG; return embedded CRS/affine when known."""
+        if not state.metadata().get("loaded"):
+            raise HTTPException(409,"Najpierw otwórz mapę MAP.")
+        payload=await receive(request,MAX_RASTER_BYTES)
+        try:
+            image,meta=await run_in_threadpool(prepare_geotiff,payload)
+        except ValueError as exc:
+            raise HTTPException(400,str(exc)) from exc
+        return Response(image,media_type="image/png",headers={
+            "X-Raster-EPSG":str(meta["epsg"] or ""),
+            "X-Raster-Affine":json.dumps(meta["coefficients"]),
+            "X-Raster-Width":str(meta["width"]),
+            "X-Raster-Height":str(meta["height"]),
+        })
 
     @app.post("/api/replace/preview")
     async def replace_phrase_preview(request: Request):
