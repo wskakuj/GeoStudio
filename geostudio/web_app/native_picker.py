@@ -262,7 +262,7 @@ class NativeMapPicker:
 
 
     def save_tiled_export(self, ticket: str) -> dict:
-        """Native Save As for large ZIP archives, streamed from temporary disk.
+        """Native Save As for large TIFF or ZIP, streamed from temporary disk.
 
         The browser never supplies a filesystem path and the source MAP
         remains untouched. This avoids the existing 120 MB in-memory export
