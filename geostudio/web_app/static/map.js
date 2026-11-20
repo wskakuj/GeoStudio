@@ -1994,7 +1994,7 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
     if(state.meta){state.previewActive=false;state.geometrySnapshotValid=false;requestDraw();}
   }
   function parseWorldFileText(source){
-    const rows=source.trim().split(/\\r?\\n/);
+    const rows=source.trim().split(/\r?\n/);
     if(rows.length!==6)throw Error("Plik world musi zawierać 6 wierszy.");
     const values=rows.map(row=>Number(row.trim()));
     if(values.some(v=>!Number.isFinite(v)))throw Error("Nieprawidłowe liczby w pliku world.");
@@ -2047,7 +2047,7 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
     try{
       const lower=file.name.toLowerCase();
       let imageBlob=file,affine=null,epsg=null;
-      if(/\\.tiff?$/i.test(lower)){
+      if(/\.tiff?$/i.test(lower)){
         const response=await fetch("/api/underlay/raster/prepare",{
           method:"POST",headers:{"X-GeoStudio-Token":token,
             "Content-Type":"application/octet-stream"},
@@ -2060,7 +2060,7 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
         affine=JSON.parse(response.headers.get("x-raster-affine")||"null");
         epsg=Number(response.headers.get("x-raster-epsg")||0)||null;
         imageBlob=await response.blob();
-      }else if(!/\\.(png|jpe?g|webp)$/i.test(lower)){
+      }else if(!/\.(png|jpe?g|webp)$/i.test(lower)){
         throw Error("Obsługiwane obrazy: PNG, JPG, WebP i TIFF.");
       }
       const decoded=await imageFromBlob(imageBlob);
@@ -2092,6 +2092,7 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
       raster.pendingWorld=coeff;
       if(raster.image){
         raster.affine=coeff;
+        raster.pendingWorld=null;
         showRasterIfCalibrated();
       }else{
         rasterInfo("Wczytano world. Wybierz teraz obraz rastra.");
@@ -2102,9 +2103,9 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
     if(!raster.image){inform("Najpierw wczytaj obraz rastra.",true);return;}
     if(!rasterGeoValid())return;
     try{
-      const lines=$("raster-gcp").value.trim().split(/\\r?\\n/).filter(Boolean);
+      const lines=$("raster-gcp").value.trim().split(/\r?\n/).filter(Boolean);
       const points=lines.map(line=>{
-        const values=line.trim().split(/[;,\\s]+/).map(Number);
+        const values=line.trim().split(/[;,\s]+/).map(Number);
         if(values.length!==4||values.some(v=>!Number.isFinite(v)))
           throw Error("Wpisz cztery liczby u v X Y w każdym wierszu.");
         return {u:values[0],v:values[1],x:values[2],y:values[3]};
@@ -2124,7 +2125,8 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
     }
   }
   function paintRaster(){
-    if(!raster.image||!raster.affine)return;
+    if(!raster.image||!raster.affine||
+       raster.epsg&&raster.epsg!==Number($("underlay-epsg").value))return;
     const [a,b,c,d,e,f]=raster.affine;
     const scale=state.scale;
     ctx.save();
