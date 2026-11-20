@@ -5811,6 +5811,19 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
       if(ev.key==="Enter"){ev.preventDefault();$(id).blur();}
     });
   link("btn-theme",toggleTheme);
+  $("map-background-color").addEventListener("input",ev=>
+    changeMapBackground(ev.target.value));
+  document.querySelectorAll("[data-map-bg]").forEach(button=>{
+    button.addEventListener("click",()=>{
+      changeMapBackground(button.dataset.mapBg);
+      $("map-background-menu").open=false;
+    });
+  });
+  document.addEventListener("pointerdown",ev=>{
+    if($("map-background-menu").open&&
+       !ev.target.closest("#map-background-menu"))
+      $("map-background-menu").open=false;
+  });
   link("btn-command",openCommands);
   link("layers-all",showAllLayers);
   function activateLayerTab(which){
@@ -5854,6 +5867,7 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
   new ResizeObserver(()=>{resizeCanvas();if(state.meta)scheduleViewport();}).observe(shell);
   new ResizeObserver(()=>{if(gcpView.open)drawGcpCanvas();})
     .observe($("raster-gcp-canvas"));
+  restoreAppearance();
   resizeCanvas();renderRasterLayers();
   api("/api/map").then(meta=>{
     if(meta.loaded){
