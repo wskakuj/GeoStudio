@@ -563,3 +563,23 @@ button:disabled { opacity:.38; cursor:not-allowed; filter:none !important; }
   .raster-visual-dialog{right:8px;top:92px;max-height:calc(100vh - 120px);}
   #raster-gcp-canvas{height:220px;}
 }
+
+/* Stage 13: read-only cartography catalog and editable calibration handles. */
+.gcp-pair-tag{cursor:pointer;}
+.gcp-pair-tag.selected{border-color:#e4ad46;background:#52442b;color:#ffedc7;}
+#raster-gcp-canvas{cursor:crosshair;}
+.carto-catalog-dialog{width:min(810px,calc(100vw - 28px));max-height:min(92vh,940px);overflow:auto;}
+.carto-catalog-dialog .select-content{gap:11px;}
+#carto-catalog-filter{width:100%;min-height:40px;}
+.carto-catalog-list{display:grid;gap:10px;max-height:min(58vh,590px);overflow:auto;padding:3px 5px 7px 0;}
+.carto-catalog-row{display:flex;align-items:center;gap:14px;padding:12px;
+  border:1px solid #3a5367;border-radius:10px;background:#152c40;min-width:0;}
+.carto-catalog-swatch{width:112px;height:56px;flex:none;border:1px solid #5d7989;
+  border-radius:7px;background:#f7fafb;}
+.carto-catalog-info{display:grid;min-width:0;gap:5px;color:#a6c3d1;font-size:11px;}
+.carto-catalog-info strong{font-size:13px;color:#e4f2f6;}
+.carto-catalog-warning{color:#f4c17d;}
+@media(max-width:560px){
+  .carto-catalog-row{gap:9px;padding:9px;}
+  .carto-catalog-swatch{width:76px;height:45px;object-fit:contain;}
+}
