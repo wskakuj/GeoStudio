@@ -15,7 +15,7 @@
     <header class="topbar">
       <div class="identity">
         <div class="mark" aria-hidden="true"><span></span><span></span><span></span></div>
-        <div><strong>GeoStudio</strong><span class="brand-version">2.0 <em>ETAP 10B · WYSZUKIWANIE — TEST</em></span></div>
+        <div><strong>GeoStudio</strong><span class="brand-version">2.0 <em>ETAP 11 · EKSPORT I WYDRUK — TEST</em></span></div>
       </div>
       <div class="header-center"><span class="top-kicker">OBSZAR ROBOCZY</span>
         <span id="document-title">Nowy projekt</span>
@@ -24,6 +24,7 @@
       <div class="header-actions">
         <button id="btn-command" class="top-icon" title="Polecenia (Ctrl+K)" aria-label="Wyszukaj polecenie">⌕ <kbd>⌘ K</kbd></button>
         <button id="btn-theme" class="top-icon" title="Przełącz jasny/ciemny wygląd">◐</button>
+        <button id="btn-layout" class="button ghost" disabled title="Eksport PNG, JPG, TIFF i DXF, skala, legenda i wydruk">▤ Eksport / druk</button>
         <button id="btn-export" class="button export" disabled title="Zapisz MAP z rzeczywistymi wycięciami automatycznie, z plikiem odtworzenia oryginału">↓ Pobierz MAP</button>
         <label id="btn-open-direct" class="button ghost direct-open" for="file-map"
           title="Zawsze dostępny wybór pliku, niezależny od pywebview">▱ Z dysku</label>
@@ -50,10 +51,11 @@
         <div class="tool-row">
           <button class="tool-button active" id="tool-select"><span class="tool-glyph">↖</span>Zaznacz <small>S</small></button>
           <button class="tool-button" id="tool-pan"><span class="tool-glyph">✥</span>Przesuń <small>H</small></button>
-          <button class="tool-button" id="tool-move" title="Przeciągaj wybrane poligony (M)"><span class="tool-glyph">✥</span>Obiekty <small>M</small></button>
+          <button class="tool-button" id="tool-move" title="Przeciągaj wybrane obiekty: punkty, linie i poligony (M)"><span class="tool-glyph">✥</span>Obiekty <small>M</small></button>
           <!-- Legacy numeric move retains the API but is intentionally not part of the UI. -->
           <button id="tool-move-offset" type="button" hidden style="display:none" aria-hidden="true" tabindex="-1">Δ X/Y</button>
           <button class="tool-button" id="tool-nodes" title="Edycja węzłów poligonu (P)"><span class="tool-glyph">⬡</span>Węzły <small>P</small></button>
+          <button class="tool-button" id="tool-clear-selection" title="Odznacz wszystkie obiekty z bloku (Esc)"><span class="tool-glyph">◌</span>Odznacz <small>Esc</small></button>
           <button class="tool-button" id="tool-advanced-select" title="Zaznacz według kodu i atrybutów (Ctrl+H)"><span class="tool-glyph">⌕</span>Filtruj <small>Ctrl+H</small></button>
           <button class="tool-button" id="tool-find" title="Wyszukaj po ID, kodzie lub dowolnej treści (F)"><span class="tool-glyph">⌕</span>Znajdź <small>F</small></button>
           <button class="tool-button" id="tool-replace-phrase" title="Znajdź i zamień fragment w wybranym polu, z podglądem i Ctrl+Z (Ctrl+F)"><span class="tool-glyph">⇄</span>Zamień <small>Ctrl+F</small></button>
@@ -125,7 +127,7 @@
         <div class="floating-tools" aria-label="Narzędzia mapy">
           <button id="float-select" class="floating active" title="Zaznacz (S)">↖</button>
           <button id="float-pan" class="floating" title="Przesuń (H)">✥</button>
-          <button id="float-move" class="floating" title="Przesuwanie poligonów (M)">✥</button>
+          <button id="float-move" class="floating" title="Przesuwanie punktów, linii i poligonów (M)">✥</button>
           <button id="float-nodes" class="floating" title="Edycja węzłów (P)">⬡</button>
           <span class="floating-line"></span>
           <button id="float-plus" class="floating" title="Przybliż">+</button>
@@ -535,6 +537,50 @@
       <div class="select-actions">
         <button id="replace-preview" type="button" class="button ghost">Sprawdź zmiany</button>
         <button id="replace-apply" type="submit" class="button primary" disabled>Zastosuj zamianę</button>
+      </div>
+    </form>
+  </dialog>
+  <dialog id="layout-dialog" class="advanced-select-dialog bulk-dialog layout-dialog">
+    <form id="layout-form">
+      <div class="select-head">
+        <div><div class="eyebrow">ETAP 11 · EKSPORT I WYDRUK</div>
+          <h2>Arkusz mapy</h2></div>
+        <button type="button" id="layout-close" class="select-close" aria-label="Zamknij">×</button>
+      </div>
+      <div class="select-content">
+        <p class="select-explain">Eksport nie zmienia MAP. Obrazy zachowują współrzędne mapy i zadany mianownik skali przy wskazanym DPI. DXF eksportuje całą geometrię w natywnych współrzędnych X/Y.</p>
+        <div class="select-grid">
+          <div><label for="layout-format">Format</label><select id="layout-format">
+            <option value="png">PNG — bezstratny</option>
+            <option value="jpeg">JPG — wysoka jakość</option>
+            <option value="tiff">TIFF — bez kompresji</option>
+            <option value="dxf">DXF — edytowalna geometria</option>
+          </select></div>
+          <div><label for="layout-scope">Zakres mapy</label><select id="layout-scope">
+            <option value="view">Aktualny widok</option>
+            <option value="all">Cała mapa</option>
+          </select></div>
+          <div><label for="layout-scale">Skala wydruku 1:N</label>
+            <input type="number" id="layout-scale" value="5000" min="10" max="100000000" step="1" required></div>
+          <div><label for="layout-dpi">Rozdzielczość</label><select id="layout-dpi">
+            <option value="96">96 DPI — podgląd</option>
+            <option value="150">150 DPI — dokument</option>
+            <option value="300" selected>300 DPI — druk</option>
+          </select></div>
+        </div>
+        <label for="layout-title">Tytuł arkusza</label>
+        <input type="text" id="layout-title" maxlength="100" value="Mapa GEO-MAP" placeholder="Tytuł opracowania">
+        <div class="layout-options">
+          <label><input id="layout-frame" type="checkbox" checked> Ramka</label>
+          <label><input id="layout-north" type="checkbox" checked> Strzałka północy</label>
+          <label><input id="layout-legend" type="checkbox" checked> Legenda</label>
+          <label><input id="layout-scalebar" type="checkbox" checked> Podziałka liniowa i skala</label>
+        </div>
+        <p id="layout-summary" class="select-preview" role="status">Wybierz format, zakres i skalę. Duże arkusze mogą wymagać mniejszego DPI lub większego mianownika skali.</p>
+      </div>
+      <div class="select-actions">
+        <button id="layout-print" type="button" class="button ghost">Drukuj mapę</button>
+        <button id="layout-export" type="submit" class="button primary">Eksportuj plik</button>
       </div>
     </form>
   </dialog>

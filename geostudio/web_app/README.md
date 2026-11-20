@@ -825,3 +825,49 @@ oraz płynność na mapach o kilku tysiącach obiektów.
 **Płynniejszy zoom** — w MAP do 12 tys. obiektów i 150 tys. wierzchołków cała geometria jest pobierana raz. Kolejne ruchy kółka i pan są wyłącznie lokalnym rysowaniem Canvas: bez pobierania i czekania na backend po każdej zmianie kadru. Edycje obiektów i zmiany stylów wciąż pobierają aktualne dane. Większe mapy zostają przy systemie indeksowanych kadrów. Płynność FPS zależy od liczby widocznych obiektów i możliwości komputera.
 
 **Sprawdź:** na MOKRA WIEŚ.MAP szybko przybliżaj/oddalaj, obserwuj wielkość A1/A2; wyszukaj 5310 i fragment A2; kliknij znaleziony obiekt. Użyj Ctrl+H, potem Ctrl+F, testowej zamiany A2 i Ctrl+Z, a na końcu zapisz nową kopię MAP i sprawdź w klasycznym GEO-MAP.
+
+
+## Etap 11 — eksport arkusza i wydruk (wersja testowa)
+
+Po wczytaniu MAP kliknij **Eksport / druk** (Ctrl+P). Dostępne są:
+
+- **PNG, JPG, TIFF:** wybór bieżącego widoku lub całej mapy, skali 1:N
+  i rozdzielczości 96/150/300 DPI. Arkusz może zawierać tytuł, ramkę,
+  strzałkę północy, legendę warstw widocznych na mapie i podziałkę liniową.
+  TIFF jest kodowany bez kompresji (RGB, jeden pasek).
+- **DXF:** natywne współrzędne X/Y z MAP; linie i obrysy jako edytowalne
+  LWPOLYLINE, punkty jako POINT, A1/A2 jako osobne TEXT. DXF obejmuje całą
+  mapę — nie jest rastrowym obrazem ani wierną kopią bibliotek SYM/LAY/CDF.
+- **Drukuj mapę:** otwiera systemowy dialog druku z przygotowanym arkuszem.
+  Aby zachować skalę, ustaw **100% bez automatycznego dopasowania** i dobierz
+  rozmiar papieru do wymiarów arkusza. Przeglądarka i sterownik drukarki
+  mogą mimo tego zastosować własne marginesy — wydruk kontrolny i
+  porównanie podziałki są wymagane.
+
+W natywnym oknie Windows eksport obrazów i DXF używa bezpiecznego
+**Zapisz jako**. W trybie `--browser` plik trafia do standardowych pobrań.
+Oryginalny MAP nie jest nadpisywany. Współrzędne traktowane są jako metry
+w skali 1:N; nie jest automatycznie wykrywane EPSG.
+
+Wydruk nie zastępuje jeszcze geodezyjnego składu arkuszy i nie gwarantuje
+zgodności kartografii 1:1 z GEO-MAP. Wyeksportowane pliki należy sprawdzić.
+
+### Dodatkowe poprawki interakcji
+
+- Etykiety A1/A2/TX zachowują tę samą **wielkość w pikselach na ekranie**
+  podczas zoomu. Płynny podgląd powiększa wyłącznie geometrię, a napisy
+  są nakładane ponownie. Skala opracowania może osobno zmieniać
+  rozmiar opisów zgodnie z ustawieniem użytkownika.
+- **B** dodaje/usuwa obiekt z bloku. **Esc**, pusty obszar mapy lub
+  **Odznacz** na wstążce odznacza całą grupę.
+- **M** przesuwa zaznaczone punkty, linie, wieloboki lub ich kombinacje.
+  Edycja zachowuje surowe rekordy P, identyfikatory, atrybuty, niezmienione
+  obiekty i historię Ctrl+Z.
+- Limit importu MAP zwiększono do 512 MiB. Do 50 tys. obiektów /
+  750 tys. wierzchołków używany jest lokalny bufor geometrii. Większe
+  mapy korzystają z indeksu przestrzennego i płynnego podglądu klatki.
+  Limit pojedynczego żądania widoku podniesiono do 100 tys. obiektów;
+  eksport odczytuje całą mapę **partiami**, bez ucinania do tej liczby.
+  Rzeczywista płynność zależy od rozmiaru mapy, złożoności symboli,
+  pamięci i wydajności komputera.
+

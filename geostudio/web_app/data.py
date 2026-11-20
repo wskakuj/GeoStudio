@@ -34,9 +34,9 @@ from geostudio.library_render import (native_fill_color,parse_cdf,
     parse_sym_line_patterns,object_sym_line_pattern,simple_point_segments,
     simple_point_circles)
 
-MAX_MAP_BYTES = 80 * 1024 * 1024
+MAX_MAP_BYTES = 512 * 1024 * 1024
 MAX_STYLES_BYTES = 2 * 1024 * 1024
-MAX_RENDER_FEATURES = 25000
+MAX_RENDER_FEATURES = 100000
 MAX_SELECTED_FEATURES = 50000
 MAX_BULK_EDIT_OBJECTS = 5000
 HEX = re.compile(r"^#[0-9A-Fa-f]{6}$")
@@ -134,10 +134,11 @@ class PreviewWorkspace:
         self._move_preview_key = ""
         self._objects_preview_key = ""
         self._geometry_preview_key = ""
+        self._generated_export = None
 
     def load_map(self, content: bytes, filename: str) -> dict:
         if not content or len(content) > MAX_MAP_BYTES:
-            raise ValueError("Plik MAP jest pusty lub przekracza limit 80 MB.")
+            raise ValueError("Plik MAP jest pusty lub przekracza limit 512 MB.")
         name = _display_name(filename)
         if not name.lower().endswith(".map"):
             raise ValueError("Wybierz plik z rozszerzeniem .MAP.")
@@ -148,6 +149,7 @@ class PreviewWorkspace:
             raise ValueError("Plik nie zawiera geometrii do wyświetlenia.")
 
         with self._lock:
+            self._generated_export = None
             self._revision = 0
             self._document_token = token_hex(16)
             self._bulk_preview_key = ""
@@ -1036,8 +1038,8 @@ class PreviewWorkspace:
         conflicts=[]
         overlaps=[]
         for obj in moving:
-            if len(obj.display_parts)>1:
-                continue  # compound rings are translated intact; P0 has no synthetic connector
+            if not obj.is_closed or len(obj.display_parts)>1:
+                continue  # open lines/points have no area topology; multipart moves intact
             old=ring_of(obj)
             new=ring_of(obj,dx,dy)
             # Spatial-index broad phase: no all-to-all scan over an entire MAP.
@@ -1075,7 +1077,7 @@ class PreviewWorkspace:
     def _move_polygon_plan(self, ids: list[str], dx: float, dy: float, *,
                            allow_detach: bool, document_token: str,
                            revision: int, snap_distance: float = 0) -> dict:
-        """Validate every selected polygon and preview the exact coordinate shift.
+        """Validate points, open lines and polygons for the exact coordinate shift.
 
         dx = native X (northing), dy = native Y (easting), in map units.
         """
@@ -1109,10 +1111,8 @@ class PreviewWorkspace:
             if (not obj.uid or self._uid_counts.get(obj.uid) != 1 or
                     self._doc.by_id.get(obj.uid) is not obj):
                 raise ValueError("Obiekt bez jednoznacznego :ID. Przerwano przesuwanie.")
-            if not obj.is_closed or len(obj.points) < 4:
-                raise ValueError(
-                    "Zaznaczenie zawiera linię lub punkt. Przesuwać można "
-                    "tylko zamknięte poligony (kod " + obj.code + ").")
+            if not obj.points:
+                raise ValueError("Zaznaczenie zawiera obiekt bez geometrii.")
             vertex_count += len(obj.points)
             if vertex_count > 100000:
                 raise ValueError("Zaznaczenie przekracza limit 100 000 węzłów.")
@@ -1124,8 +1124,8 @@ class PreviewWorkspace:
             selected_uids={o.uid for o in moving}
             near_fixed={}
             for obj in moving:
-                if len(obj.display_parts)>1:
-                    continue  # magnetic preview for multipart is handled by the Canvas
+                if not obj.is_closed or len(obj.display_parts)>1:
+                    continue  # magnet works only on polygon boundaries
                 r=ring_of(obj)
                 a,b=min(x for x,y in r),min(y for x,y in r)
                 c,d=max(x for x,y in r),max(y for x,y in r)
@@ -1144,14 +1144,13 @@ class PreviewWorkspace:
                 # Canvas magnetic nodes work per displayed part instead.
                 fixed=[]
             nx,ny,distance=nearest_boundary_snap(
-                moving, fixed, dx, dy, snap_distance)
+                [obj for obj in moving if obj.is_closed], fixed, dx, dy, snap_distance)
             if distance is not None:
                 dx,dy=nx,ny
                 snap_applied={"distance":round(distance,3)}
         for obj in moving:
             shifted={}
-            for index,point in enumerate(
-                    obj.points if len(obj.display_parts)>1 else obj.points[:-1]):
+            for index,point in enumerate(obj.points):
                 x,y=round(point.x+dx,3),round(point.y+dy,3)
                 if not (-1e9<x<1e9 and -1e9<y<1e9):
                     raise ValueError("Przesunięcie przekracza zakres współrzędnych.")
@@ -1238,10 +1237,10 @@ class PreviewWorkspace:
                         h.update(line)
             before = h.digest()
             with self._history.begin(
-                "Przesunięcie " + str(report["selected"]) + " poligonów",
+                "Przesunięcie " + str(report["selected"]) + " obiektów",
                 selection_before=tuple(plan["selectedUids"]),
             ):
-                self._doc.move_polygon_vertices(plan["changes"])
+                self._doc.translate_objects(plan["changes"])
                 self._raise_to_top([o.uid for o in self._doc.objects
                                     if o.uid in plan["selectedUids"]])
                 check = sha256()
@@ -1977,6 +1976,88 @@ class PreviewWorkspace:
                 self._revision += 1
             return {**self._editing_status(), "changed": item is not None}
 
+
+
+    def store_generated_export(self, document_token: str, revision: int,
+                               filename: str, extension: str,
+                               content: bytes) -> str:
+        """One-use, bounded browser-generated image buffer for native Save As."""
+        valid={"png","jpg","tif","dxf"}
+        if (extension not in valid or not isinstance(filename,str)
+                or len(filename)>140 or filename in {".",".."}
+                or any(ch in filename for ch in "/\\\0\r\n")
+                or not filename.lower().endswith("."+extension)):
+            raise ValueError("Nieprawidłowa nazwa lub format eksportu.")
+        if not isinstance(content,bytes) or not 0<len(content)<=120*1024*1024:
+            raise ValueError("Pusty lub zbyt duży eksport (maks. 120 MB).")
+        with self._lock:
+            if self._doc is None:
+                raise ValueError("Najpierw otwórz mapę.")
+            if document_token!=self._document_token or revision!=self._revision:
+                raise RuntimeError("Zmieniła się mapa podczas eksportu.")
+            ticket=token_hex(20)
+            self._generated_export=(ticket,filename,extension,content)
+            return ticket
+
+    def generated_export(self, ticket: str, *, consume: bool = False):
+        with self._lock:
+            item=self._generated_export
+            if (not isinstance(ticket,str) or not item or
+                    item[0]!=ticket):
+                raise LookupError("Eksport wygasł. Utwórz go ponownie.")
+            if consume:
+                self._generated_export=None
+            return item[1:]
+
+    def export_dxf(self, document_token: str) -> tuple[str, bytes]:
+        """Export all native geometries to an in-memory DXF (R2010).
+
+        Every displayed part becomes its own closed or open CAD polyline.
+        Native GEO-MAP X/Y coordinates are never reprojected or mirrored.
+        The DXF is a separate copy; nothing is written back to source MAP.
+        """
+        import io
+        import ezdxf
+        with self._lock:
+            if self._doc is None:
+                raise ValueError("Najpierw otwórz mapę.")
+            if document_token != self._document_token:
+                raise RuntimeError("Nieaktualny dokument.")
+            dxf = ezdxf.new("R2010")
+            model = dxf.modelspace()
+            for obj in self._doc.objects:
+                if not obj.points:
+                    continue
+                layer = "G" + obj.code
+                if layer not in dxf.layers:
+                    dxf.layers.new(name=layer)
+                for part in obj.display_parts:
+                    if not part:
+                        continue
+                    if len(part) == 1:
+                        model.add_point((part[0].x, part[0].y),
+                                        dxfattribs={"layer": layer})
+                        continue
+                    is_closed = (len(part) >= 4 and
+                                 part[0].x == part[-1].x and
+                                 part[0].y == part[-1].y)
+                    vertices = part[:-1] if is_closed else part
+                    model.add_lwpolyline(
+                        [(point.x, point.y) for point in vertices],
+                        close=is_closed, dxfattribs={"layer": layer})
+                for index, field in enumerate(("A1", "A2")):
+                    value = str(obj.fields.get(field, "")).strip()
+                    if value:
+                        model.add_text(
+                            value[:200], dxfattribs={
+                                "layer": layer, "height": 2.5,
+                                "insert": (obj.points[0].x,
+                                           obj.points[0].y - 3 * index)})
+            stream = io.StringIO()
+            dxf.write(stream)
+            name = _display_name(self._doc.filename)
+            return name[:-4] + "_GeoStudio2.dxf", stream.getvalue().encode("utf-8")
+
     def export_copy(self, document_token: str) -> tuple[str, bytes]:
         """Return a valid MAP download; never write it on the server."""
         with self._lock:
@@ -2324,12 +2405,14 @@ class PreviewWorkspace:
                 "reversibleCutout":mask_count>0}
 
     def viewport(self, bounds: tuple[float, float, float, float],
-                 limit: int = MAX_RENDER_FEATURES) -> dict:
+                 limit: int = MAX_RENDER_FEATURES, offset: int = 0) -> dict:
         """Query only the visible spatial region; never serialize all map data."""
         west, south, east, north = bounds
         if not all(isfinite(v) for v in bounds) or west > east or south > north:
             raise ValueError("Nieprawidłowy obszar widoku.")
         limit = max(1, min(MAX_RENDER_FEATURES, int(limit)))
+        if type(offset) is not int or offset < 0 or offset > 10000000:
+            raise ValueError("Nieprawidłowy indeks partii geometrii.")
         with self._lock:
             if self._index is None or self._bounds is None:
                 return {"features": [], "limited": False, "total": 0}
@@ -2344,8 +2427,7 @@ class PreviewWorkspace:
             # A complete-map request uses the already indexed list. Do not
             # approximate a wide rectangle with a centre/radius query:
             # that can omit narrow corners of a cadastral sheet.
-            full_map=(tuple(clipped)==tuple(area) and
-                      len(self._entries)<=limit)
+            full_map=(tuple(clipped)==tuple(area))
             if full_map:
                 visible=list(self._entries)
                 ids=set()
@@ -2381,8 +2463,8 @@ class PreviewWorkspace:
             return {
                 "features":[self._feature(entry,
                     overlay_by_code.get(entry.obj.code,()),rank)
-                    for entry in visible[:limit]],
-                "limited":total>limit,"total":total,
+                    for entry in visible[offset:offset + limit]],
+                "limited":total>offset+limit,"total":total,
             }
 
     def details(self, fid: str) -> dict:

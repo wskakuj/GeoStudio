@@ -214,10 +214,11 @@ def test_whole_map_viewport_returns_all_corners_without_further_spatial_requery(
 def test_fixed_size_font_and_no_http_on_subsequent_zoom_small_map():
     static=Path(__file__).resolve().parents[1]/"geostudio/web_app/static"
     src=(static/"map.js").read_text(encoding="utf-8")
-    assert "state.localMapCandidate=meta.objectCount<=12000" in src
-    assert "state.localMapReady)return;" in src
+    assert "state.localMapCandidate=meta.objectCount<=50000" in src
+    assert "if(state.localMapReady){" in src
     assert "let view=state.localMapCandidate?[...state.meta.bounds]" in src
-    assert "if(!state.localMapReady)beginNavigationPreview();" in src
+    assert "beginNavigationPreview();" in src
+    assert "renderLabels(state.features.filter" in src
     assert "function labelFontSize(feature,label,selected)" in src
     node=shutil.which("node")
     if not node:pytest.skip("Node is optional for JS zoom regression")
