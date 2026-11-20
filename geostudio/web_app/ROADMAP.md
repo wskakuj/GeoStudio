@@ -465,3 +465,52 @@ LAY; nie należy na tej podstawie deklarować zgodności kartograficznej
 
 Uwaga: wizualne style kodów zapisują się jako towarzyszący MAP
 sidecar, a nie jako stała preferencja globalna dla dowolnych innych map.
+
+
+## Etap 14A — wielkoformatowy PDF, edytowalna oprawa i pełniejszy DXF
+
+**PDF wektorowy A0–A4 / format automatyczny:** w oknie
+**Eksport → Arkusz / druk** wybierz PDF, skalę 1:N, obszar
+(bieżący kadr lub całą mapę) oraz format papieru i orientację.
+Zamiast tworzyć bitmapę o dziesiątkach milionów pikseli,
+serwer buduje stronę PDF z wektorowych linii, wypełnień
+i odrębnych napisów. Mianownik skali określa fizyczny rozmiar
+geometrii na stronie. Jeśli mapa nie mieści się na wybranym
+formacie, pojawia się błąd — **nie jest po cichu skalowana**.
+Format automatyczny dopasowuje papier do potrzebnej powierzchni,
+przy limicie 1700 mm. Drukuj gotowy PDF przy **100%** skali.
+
+**Edytowalna legenda i tabelka:** przed eksportem możesz wprowadzić
+i przestawić pozycje w polu `Nazwa | #RRGGBB`,
+a także pozycje metryki `Pole | wartość`. Ramka i obrys są
+regulowane kolorem oraz grubością od 0,1 do 2,5 mm.
+Zmiany dotyczą wygenerowanego PDF, a nie źródłowego MAP.
+PNG/JPG/TIFF zachowują dotychczasową procedurę eksportu;
+personalizowana oprawa PDF nie zmienia ich wyglądu.
+
+**DXF R2010:** nadal zachowuje współrzędne GEO-MAP w metrach,
+warstwy geometrii `G####` i edytowalne linie. Dodano
+odrębne warstwy napisów `G####_A1`, `G####_A2`, `G####_TX`,
+uwzględnianie ręcznie ustawionych pozycji napisów,
+prawdziwe kolory RGB i przybliżone grubości oraz jednolite
+wypełnienia dla prostych, jednoczęściowych poligonów.
+Zachowany jest identyfikator oryginału jako metadane XDATA.
+Nieznane wzory linii i złożone maskowania wieloobrysowe
+nie są jeszcze wiernie kodowane w DXF.
+
+**Kod GEO-MAP 5214:** w interfejsie warstwa nazywa się
+**Linia obrębu**, bez wypełnienia powierzchniowego.
+Można tworzyć i edytować ją jako linię oraz regulować jej
+obrys w Kartografii. DXF zapisuje ją na warstwie `G5214`
+jako polilinię.
+
+**Edycja:** w oknie „Nowy obiekt” pole **A1** automatycznie
+otrzymuje fokus po otwarciu. **Delete** usuwa wybrane
+obiekty od razu bez potwierdzenia, ale nadal przechodzi
+bezpieczny preflight i działa **Ctrl+Z**. W trybie węzłów
+Delete usuwa wybrany węzeł, a przy braku wskazanego węzła
+zaznaczony obiekt.
+
+**Pozostało na etap 14B:** wielostronicowe kafelkowanie A0/A1,
+ekranowy edytor rozmieszczenia elementów oprawy metodą przeciągnij
+i upuść, różne warianty kreskowań CAD oraz pełne makra symboli.
