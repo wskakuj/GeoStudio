@@ -476,6 +476,7 @@
     }
     const matched={CDF:0,LAY:0,SYM:0},applied={CDF:0,LAY:0,SYM:0};
     for(const feature of state.features){
+      if(!isVisible(feature))continue;
       for(const type of feature.style?.libraryMatches||[])
         if(Object.hasOwn(matched,type))matched[type]++;
       for(const type of feature.style?.libraryApplied||[])
@@ -2287,6 +2288,7 @@
     toggle.checked=state.visibleLayers.has(name);
     toggle.addEventListener("change",()=>{
       if(toggle.checked)state.visibleLayers.add(name);else state.visibleLayers.delete(name);
+      renderCartographyMatches();
       requestDraw();refreshInspectorVisibility();
     });
     const color=document.createElement("span");color.className="layer-swatch";
