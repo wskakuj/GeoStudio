@@ -19,6 +19,7 @@ from geostudio.wms_service import WMSBounds, capabilities_url, getmap_url, parse
 PRESETS = {
     "standard": ("Ortofotomapa standardowa", "https://mapy.geoportal.gov.pl/wss/service/PZGIK/ORTO/WMS/StandardResolution"),
     "high": ("Ortofotomapa wysoka rozdzielczość", "https://mapy.geoportal.gov.pl/wss/service/PZGIK/ORTO/WMS/HighResolution"),
+    "kieg": ("Działki ewidencyjne i numery — GUGiK", "https://integracja.gugik.gov.pl/cgi-bin/KrajowaIntegracjaEwidencjiGruntow"),
 }
 # An explicit user choice is mandatory; no inference from MAP coordinates.
 SUPPORTED_EPSG = frozenset((2180, 2176, 2177, 2178, 2179))
@@ -32,14 +33,14 @@ class NoRedirect(HTTPRedirectHandler):
 
 def _download(url: str, max_bytes: int) -> bytes:
     parsed = urlsplit(url)
-    if parsed.scheme != "https" or parsed.hostname != "mapy.geoportal.gov.pl" or parsed.port not in (None, 443):
+    if parsed.scheme != "https" or parsed.hostname not in {"mapy.geoportal.gov.pl", "integracja.gugik.gov.pl"} or parsed.port not in (None, 443):
         raise ValueError("Dozwolone są wyłącznie oficjalne usługi Geoportalu.")
     if parsed.username or parsed.password:
         raise ValueError("Nieprawidłowy adres usługi.")
     req = Request(url, headers={"User-Agent": "GeoStudio-2-WMS/12A", "Accept": "image/png, application/xml, text/xml"})
     try:
         with build_opener(NoRedirect).open(req, timeout=15) as reply:
-            if urlsplit(reply.geturl()).hostname != "mapy.geoportal.gov.pl":
+            if urlsplit(reply.geturl()).hostname != parsed.hostname:
                 raise ValueError("Usługa przekierowała na niezaufany adres.")
             content = reply.read(max_bytes + 1)
     except (HTTPError, URLError, TimeoutError, OSError) as exc:
@@ -55,7 +56,7 @@ def _preset(name: str) -> str:
     return PRESETS[name][1]
 
 
-@lru_cache(maxsize=2)
+@lru_cache(maxsize=3)
 def layers_for(preset: str) -> tuple:
     xml = _download(capabilities_url(_preset(preset)), 4_000_000)
     layers = parse_capabilities(xml)
