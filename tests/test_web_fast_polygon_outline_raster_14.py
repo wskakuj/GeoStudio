@@ -161,7 +161,8 @@ def test_code_wide_preset_editor_and_enter_shortcut_are_visible():
         assert 'id="'+name+'"' in html
     assert 'id="create-preview" type="button" class="button ghost" hidden' in html
     assert 'id="create-apply" type="submit" class="button primary"' in html
-    assert '$("create-a1").focus();' in js
+    assert '$("create-a1").focus({preventScroll:true});' in js
+    assert 'if($("create-dialog").open)$("create-a1").focus(' in js
     create=js[js.index('  async function quickCreatePolygon(ev){'):
               js.index('  async function applyObject(which,ev)')]
     for phrase in ['"/api/objects/preview"','"/api/objects/apply"',
