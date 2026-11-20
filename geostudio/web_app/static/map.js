@@ -2564,6 +2564,48 @@
     });
     return candidates.map(c=>c.fid);
   }
+  function pickLabelAt(screen) {
+    return state.labelHits.filter(hit=>
+      screen.x>=hit.rect[0]-5&&screen.x<=hit.rect[2]+5&&
+      screen.y>=hit.rect[1]-5&&screen.y<=hit.rect[3]+5
+    ).sort((a,b)=>{
+      const rank=item=>item.fid===state.active?0:1;
+      const cx=item=>(item.rect[0]+item.rect[2])/2;
+      const cy=item=>(item.rect[1]+item.rect[3])/2;
+      return rank(a)-rank(b)||
+        Math.hypot(screen.x-cx(a),screen.y-cy(a))-
+        Math.hypot(screen.x-cx(b),screen.y-cy(b));
+    })[0]||null;
+  }
+  async function commitLabelDrag(drag) {
+    if(!drag||state.editBusy)return;
+    const x=Math.round(-drag.label.y*1000)/1000;
+    const y=Math.round(drag.label.x*1000)/1000;
+    const body={...editRequestBody(),
+      fid:drag.fid,field:drag.field,x,y};
+    state.editBusy=true;updateEditState(state.edit);
+    try{
+      const result=await api("/api/labels/move",{
+        method:"POST",headers:{"Content-Type":"application/json"},
+        body:JSON.stringify(body)
+      });
+      updateEditState(result);
+      await refreshEditedDocument(drag.fid);
+      inform("Przeniesiono osobną etykietę "+drag.field+
+        " na X: "+x.toFixed(3)+", Y: "+y.toFixed(3)+
+        ". Ctrl+Z cofa. Zapisz MAP i towarzyszący JSON.");
+    }catch(error){
+      drag.label.x=drag.origin.x;drag.label.y=drag.origin.y;
+      drag.label.offset=drag.origin.offset;
+      drag.label.manuallyPlaced=drag.origin.manuallyPlaced;
+      inform("Etykieta nie została przeniesiona: "+error.message,true);
+      scheduleViewport(true);
+    }finally{
+      state.editBusy=false;updateEditState(state.edit);
+      requestDraw();
+    }
+  }
+
   function eventCoords(ev){
     const box=canvas.getBoundingClientRect();
     return {x:ev.clientX-box.left,y:ev.clientY-box.top};
@@ -2573,6 +2615,20 @@
     canvas.setPointerCapture(ev.pointerId);
     const p=eventCoords(ev);
     state.hoverInsert=null;
+    if(state.tool==="labels"&&ev.button===0&&!state.editBusy){
+      const hit=pickLabelAt(p);
+      if(!hit){inform("Kliknij i przeciągnij tekst A1, A2 lub TX.");return;}
+      const label=hit.label;
+      state.labelSelected={fid:hit.fid,field:hit.field};
+      state.labelDrag={
+        fid:hit.fid,field:hit.field,label,start:p,
+        origin:{x:label.x,y:label.y,offset:label.offset,
+                manuallyPlaced:label.manuallyPlaced}
+      };
+      state.drag={pointer:ev.pointerId,start:p,last:p,moved:false,label:true};
+      if(state.active!==hit.fid){state.pinned.clear();selectFeature(hit.fid);}
+      requestDraw();return;
+    }
     if(["draw","cut","line","line-edit"].includes(state.tool)&&
        ev.button===0&&!state.editBusy&&state.meta){
       state.drag={pointer:ev.pointerId,start:p,last:p,moved:false,draw:true};
@@ -2622,7 +2678,16 @@
     if(!state.drag||state.drag.pointer!==ev.pointerId)return;
     const d=state.drag;
     if(Math.hypot(p.x-d.start.x,p.y-d.start.y)>4)d.moved=true;
-    if(d.moveIds&&state.moveGhost){
+    if(d.label&&state.labelDrag){
+      const moving=state.labelDrag;
+      if(d.moved){
+        moving.label.x=moving.origin.x+(p.x-d.start.x)/state.scale;
+        moving.label.y=moving.origin.y+(p.y-d.start.y)/state.scale;
+        moving.label.offset=0;
+        moving.label.manuallyPlaced=true;
+        requestDraw();
+      }
+    }else if(d.moveIds&&state.moveGhost){
       let dx=Math.round((d.start.y-p.y)/state.scale*1000)/1000;
       let dy=Math.round((p.x-d.start.x)/state.scale*1000)/1000;
       const snap=magneticMove(d.moveIds,dx,dy);
@@ -2649,6 +2714,13 @@
   canvas.addEventListener("pointerup", ev=>{
     const d=state.drag;state.drag=null;shell.classList.remove("dragging");
     if(!d||ev.pointerId!==d.pointer)return;
+    if(d.label){
+      const moving=state.labelDrag;
+      state.labelDrag=null;
+      if(d.moved&&moving)commitLabelDrag(moving);
+      else requestDraw();
+      return;
+    }
     if(d.draw){
       if(!d.moved){
         const p=eventCoords(ev),world=screenToWorld(p.x,p.y);
@@ -2737,7 +2809,15 @@
       requestDraw();
     }
   });
-  canvas.addEventListener("pointercancel",()=>{state.drag=null;state.vertexDrag=null;state.moveGhost=null;shell.classList.remove("dragging");requestDraw();});
+  canvas.addEventListener("pointercancel",()=>{
+    if(state.labelDrag){
+      const moving=state.labelDrag;
+      Object.assign(moving.label,moving.origin);
+      state.labelDrag=null;
+    }
+    state.drag=null;state.vertexDrag=null;state.moveGhost=null;
+    shell.classList.remove("dragging");requestDraw();
+  });
   canvas.addEventListener("wheel",ev=>{
     if(!state.meta)return;
     ev.preventDefault();
