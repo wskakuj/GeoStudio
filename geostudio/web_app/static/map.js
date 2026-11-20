@@ -1890,6 +1890,7 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
   }
   async function readUnderlayPrj(file){
     if(!file||!state.meta)return;
+    const documentToken=state.edit?.documentToken;
     try{
       const response=await fetch("/api/underlay/crs/prj",{
         method:"POST",headers:{"X-GeoStudio-Token":token,
@@ -1901,6 +1902,8 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
         throw Error(err.detail||"Nie można zweryfikować pliku PRJ.");
       }
       const result=await response.json();
+      // A slow file read must not set the CRS of a newly opened MAP.
+      if(documentToken!==state.edit?.documentToken)return;
       const input=$("underlay-epsg");
       input.value=String(result.epsg);
       input.dispatchEvent(new Event("change"));
