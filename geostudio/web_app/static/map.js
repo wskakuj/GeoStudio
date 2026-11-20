@@ -33,6 +33,7 @@
     labelHits:[],labelDrag:null,labelSelected:null,
     drawMagnet:true,drawCursorWorld:null,copyIds:[],
     geometryPreview:null,cutIds:[],lineEditId:null,
+    auditReport:null, auditBusy:false, auditActiveIssue:null,
     snapEnabled: true, sharedNodes: false, vertexDrag: null,
     hoverInsert: null, selectedVertex: null, mapEPSG:""
   };
@@ -91,6 +92,8 @@
     {name:"Włącz / wyłącz siatkę", hint:"▦", run:toggleGrid},
     {name:"Pokaż wszystkie warstwy", hint:"Warstwy", run:showAllLayers},
     {name:"Przełącz jasny/ciemny motyw programu", hint:"◐", run:toggleTheme},
+    {name:"Kontrola poprawności topologii mapy",hint:"Kontrola",run:()=>openTopologyPanel(true)},
+    {name:"Pokaż wyniki kontroli geometrii",hint:"Kontrola",run:openTopologyPanel},
     {name:"Wybierz kolor tła mapy", hint:"Paleta", run:()=> $("map-background-menu").open=true}
   ];
   let toastTimer;
@@ -117,6 +120,18 @@
     if(state.edit&&state.edit.documentToken!==status.documentToken){
       state.exportAreaBounds=null;state.exportAreaPicking=false;
       state.exportAreaDrag=null;
+    }
+    if(state.auditReport&&(status.revision!==state.auditReport.revision||
+       status.documentToken!==state.auditReport.documentToken)){
+      state.auditReport=null;state.auditActiveIssue=null;
+      if(!$("topology-panel").hidden){
+        $("topology-status").textContent=
+          "Mapa zmieniona. Uruchom kontrolę ponownie, aby sprawdzić nowe obrysy.";
+        $("topology-action-hint").textContent="Raport nieaktualny. Kliknij ↻.";
+        $("topology-issues").replaceChildren();
+        $("topology-edit").disabled=true;
+        $("topology-delete-duplicate").hidden=true;
+      }
     }
     state.edit={
       dirty:!!status.dirty,
@@ -3984,7 +3999,8 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
     features.sort((a,b)=>(priorities[a.code]??3)-(priorities[b.code]??3));
     for(const feature of features) renderFill(feature);
     for(const feature of features) renderStroke(feature);
-    renderHighlights(features);drawMoveGhost(features);drawMoveMagnet();
+    renderHighlights(features);drawTopologyHighlight(features);
+    drawMoveGhost(features);drawMoveMagnet();
     // No bitmap snapshot or resampling is made during a wheel frame.
     // The map remains rendered in native screen-space vector precision.
     renderScreenLabels(features);drawGcpMapMarkers();
