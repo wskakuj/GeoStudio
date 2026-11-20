@@ -514,3 +514,13 @@ button:disabled { opacity:.38; cursor:not-allowed; filter:none !important; }
   .ribbon-group .tool-button{min-height:34px;padding:6px 8px;}
   .layer-source-dialog .select-grid{grid-template-columns:1fr;}
 }
+
+/* Dynamic top edge for inspector/layer drawers at wrapped ribbon widths. */
+@media(max-width:970px){
+  .right-panel{top:var(--geo-workspace-top,150px);}
+}
+@media(max-width:680px){
+  .left-panel{top:var(--geo-workspace-top,135px);}
+}
+.layer-source-dialog .select-actions{flex-wrap:wrap;}
+.layer-source-dialog .select-actions .button{flex:1 1 auto;}
