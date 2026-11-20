@@ -206,3 +206,39 @@ Kolejność po etapie 9, porównana z implementacją w geostudio/app.py:
 Bezpieczeństwo pozostaje wymaganiem w każdym etapie:
 kopie w pamięci, ochrona innych kodów, bezpieczny eksport, Ctrl+Z.
 Przed etapem 10A test magnetu i napisów na mapie użytkownika.
+
+
+## Etap 10A — interaktywne etykiety i skala (draft, do ręcznych testów)
+
+- [x] Usunięto widoczną opcję „Δ X/Y” i skrót Ctrl+Shift+M.
+  Przesuwanie M wielu zaznaczonych obiektów nadal jest domyślnie
+  bez okna z magnetycznym przyciąganiem.
+- [x] Dwa **niezależne** opisy A1 i A2 dla 5310:
+  bez wzajemnej kolizji, z rozdzielnymi hitboxami i przesuwaniem
+  narzędziem **Alt+L**, zapisywanym w Undo/Ponów bez zmian MAP P.
+- [x] **Ctrl+Alt+L**: edytor per-kod dla pojedynczego pola A1/A2/TX:
+  widoczność, wielkość, kolor i pogrubienie; zmiana A1
+  nie ukrywa A2.
+- [x] Skala widoku 1:N (Ctrl+M) i skala opracowania
+  1:N (Ctrl+F5), wykrywanie źródła z legendy przy braku
+  ustawienia 1:5000, współrzędne kursora X/Y GEO-MAP w metrach.
+- [x] Przesunięcia opisów i skala opracowania zachowywane
+  w oddzielnym, SHA256 związanym z nowym MAP pliku
+  .geostudio.json, automatyczny import w Windows,
+  przeglądarkowe pobieranie ZIP i testy odzyskiwania zmian.
+- [x] Poprawiona czytelność małych napisów przy normalnej
+  pracy, bez nadmiernie dużych etykiet przy oddalaniu.
+- [x] Przy rysowaniu Esc usuwa ostatni P. Magnes G przy
+  pierwszym punkcie po min. trzech punktach daje „DOMKNIJ”
+  i jedno kliknięcie kończy szkic z normalną walidacją.
+- [x] Canvas korzysta z przeskalowanej ostatniej
+  klatki w trakcie odświeżania widoku; zamiast białego
+  obszaru podczas każdego zoomu.
+- [ ] Ręczna weryfikacja klasycznego GEO-MAP + GeoStudio 2.0
+  po zapisaniu realnej mapy, umiejscowienie etykiet
+  A1/A2 na różnych skalach, zachowanie przy przybliżaniu
+  i cofanie szkicu w Windows WebView2.
+
+Dalszy etap po potwierdzeniu 10A: wyszukiwanie F,
+zamiana fraz Ctrl+F, dobieranie dowolnych kodów 4-cyfrowych,
+następnie eksport i druk PNG/TIFF/DXF, WMS/rastry i GCP.
