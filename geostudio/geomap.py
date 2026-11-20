@@ -321,7 +321,7 @@ class GeoMap:
                 deltas.add((round(x - point.x, 3), round(y - point.y, 3)))
             if len(deltas) != 1:
                 raise ValueError("Przesunięcie nie może zmieniać kształtu geometrii.")
-            if obj.is_closed:
+            if obj.is_closed and len(obj.display_parts) == 1:
                 if replacements[0] != replacements[len(obj.points) - 1]:
                     raise ValueError("Przesunięcie naruszyłoby zamknięcie poligonu.")
             records = [(i, POINT_RE.match(raw.rstrip(b"\r\n")))
