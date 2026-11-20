@@ -2206,9 +2206,9 @@
     // increases the apparent font size.
     const worldHeight=label.worldTextHeight!=null
       ?label.worldTextHeight
-      :feature.code==="5310"?1.35:
-       feature.code==="5216"?1.20:
-       feature.code==="5220"||feature.code==="5230"?1.25:1.45;
+      :feature.code==="5310"?2.25:
+       feature.code==="5216"?1.60:
+       feature.code==="5220"||feature.code==="5230"?1.75:1.85;
     let pixels=Math.min(label.size||16,worldHeight*state.scale);
     // A selected object is always inspectable even when its shape is tiny.
     // Other labels vanish below readable size instead of covering the map.
