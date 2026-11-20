@@ -102,16 +102,22 @@ const make=(scale,compilationScale=5000)=>
 const feature={code:'5310'};
 const a1={field:'A1',text:'l',x:10,y:20,size:16};
 const a2={field:'A2',text:'So120\nII-0.3',x:10,y:20,size:16};
-// Constant SCREEN size at all zoom levels, including whole-map overview.
-assert.equal(make(.01)(feature,a1,false),16);
-assert.equal(make(.2)(feature,a1,false),16);
-assert.equal(make(1)(feature,a1,false),16);
-assert.equal(make(5)(feature,a1,false),16);
-assert.equal(make(12)(feature,a1,false),16);
-assert.equal(make(.01)(feature,a1,true),16);
-// Compilation scale, unlike camera zoom, intentionally changes font size.
-assert.ok(make(.6,1000)(feature,a1,false)<16);
-assert.ok(make(.6,10000)(feature,a1,false)>16);
+// A1 and A2 are anchored in map metres: text changes in exactly
+// the same ratio as parcel and building geometry during wheel zoom.
+const scaleAt2500=96/(.0254*2500);
+assert.ok(Math.abs(make(scaleAt2500)(feature,a1,false)-16)<1e-9);
+for(const scale of [.01,.2,1,5,12]){
+  const expected=16*scale/scaleAt2500;
+  assert.ok(Math.abs(make(scale)(feature,a1,false)-expected)<1e-8);
+  assert.ok(Math.abs(make(scale)(feature,a2,false)-expected)<1e-8);
+  assert.ok(Math.abs(make(scale)(feature,a1,true)-expected)<1e-8);
+}
+assert.ok(make(.01)(feature,a1,false)<1); // No 8px screen minimum.
+// Compilation scale explicitly changes the size stored in map units.
+assert.ok(make(.6,1000)(feature,a1,false)<
+          make(.6,5000)(feature,a1,false));
+assert.ok(make(.6,10000)(feature,a1,false)>
+          make(.6,5000)(feature,a1,false));
 const main=src.slice(stop,src.indexOf('  function draw() {',stop));
 assert.ok(main.includes('for(const label of feature.labels)'));
 assert.ok(main.includes('item.fid!==feature.id'));
