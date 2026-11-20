@@ -1974,6 +1974,56 @@ class PreviewWorkspace:
                 self._revision += 1
             return {**self._editing_status(), "changed": item is not None}
 
+
+    def export_dxf(self, document_token: str) -> tuple[str, bytes]:
+        """Export all native geometries to an in-memory DXF (R2010).
+
+        Every displayed part becomes its own closed or open CAD polyline.
+        Native GEO-MAP X/Y coordinates are never reprojected or mirrored.
+        The DXF is a separate copy; nothing is written back to source MAP.
+        """
+        import io
+        import ezdxf
+        with self._lock:
+            if self._doc is None:
+                raise ValueError("Najpierw otwórz mapę.")
+            if document_token != self._document_token:
+                raise RuntimeError("Nieaktualny dokument.")
+            dxf = ezdxf.new("R2010")
+            model = dxf.modelspace()
+            for obj in self._doc.objects:
+                if not obj.points:
+                    continue
+                layer = "G" + obj.code
+                if layer not in dxf.layers:
+                    dxf.layers.new(name=layer)
+                for part in obj.display_parts:
+                    if not part:
+                        continue
+                    if len(part) == 1:
+                        model.add_point((part[0].x, part[0].y),
+                                        dxfattribs={"layer": layer})
+                        continue
+                    is_closed = (len(part) >= 4 and
+                                 part[0].x == part[-1].x and
+                                 part[0].y == part[-1].y)
+                    vertices = part[:-1] if is_closed else part
+                    model.add_lwpolyline(
+                        [(point.x, point.y) for point in vertices],
+                        close=is_closed, dxfattribs={"layer": layer})
+                for index, field in enumerate(("A1", "A2")):
+                    value = str(obj.fields.get(field, "")).strip()
+                    if value:
+                        model.add_text(
+                            value[:200], dxfattribs={
+                                "layer": layer, "height": 2.5,
+                                "insert": (obj.points[0].x,
+                                           obj.points[0].y - 3 * index)})
+            stream = io.StringIO()
+            dxf.write(stream)
+            name = _display_name(self._doc.filename)
+            return name[:-4] + "_GeoStudio2.dxf", stream.getvalue().encode("utf-8")
+
     def export_copy(self, document_token: str) -> tuple[str, bytes]:
         """Return a valid MAP download; never write it on the server."""
         with self._lock:
@@ -2321,12 +2371,14 @@ class PreviewWorkspace:
                 "reversibleCutout":mask_count>0}
 
     def viewport(self, bounds: tuple[float, float, float, float],
-                 limit: int = MAX_RENDER_FEATURES) -> dict:
+                 limit: int = MAX_RENDER_FEATURES, offset: int = 0) -> dict:
         """Query only the visible spatial region; never serialize all map data."""
         west, south, east, north = bounds
         if not all(isfinite(v) for v in bounds) or west > east or south > north:
             raise ValueError("Nieprawidłowy obszar widoku.")
         limit = max(1, min(MAX_RENDER_FEATURES, int(limit)))
+        if type(offset) is not int or offset < 0 or offset > 10000000:
+            raise ValueError("Nieprawidłowy indeks partii geometrii.")
         with self._lock:
             if self._index is None or self._bounds is None:
                 return {"features": [], "limited": False, "total": 0}
@@ -2341,8 +2393,7 @@ class PreviewWorkspace:
             # A complete-map request uses the already indexed list. Do not
             # approximate a wide rectangle with a centre/radius query:
             # that can omit narrow corners of a cadastral sheet.
-            full_map=(tuple(clipped)==tuple(area) and
-                      len(self._entries)<=limit)
+            full_map=(tuple(clipped)==tuple(area))
             if full_map:
                 visible=list(self._entries)
                 ids=set()
@@ -2378,8 +2429,8 @@ class PreviewWorkspace:
             return {
                 "features":[self._feature(entry,
                     overlay_by_code.get(entry.obj.code,()),rank)
-                    for entry in visible[:limit]],
-                "limited":total>limit,"total":total,
+                    for entry in visible[offset:offset + limit]],
+                "limited":total>offset+limit,"total":total,
             }
 
     def details(self, fid: str) -> dict:
