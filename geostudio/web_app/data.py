@@ -2038,7 +2038,7 @@ class PreviewWorkspace:
             base=_display_name(self._doc.filename)
             return base[:-4]+"_arkusz_wektorowy.pdf", data
 
-    def export_dxf(self, document_token: str) -> tuple[str, bytes]:
+    def export_dxf(self, document_token: str, bounds=None) -> tuple[str, bytes]:
         """Editable R2010 DXF with native X/Y, geometry/description layers.
 
         Preserve G#### geometry layers for backward compatibility. Label
@@ -2054,6 +2054,13 @@ class PreviewWorkspace:
                 raise ValueError("Najpierw otwórz mapę.")
             if document_token != self._document_token:
                 raise RuntimeError("Nieaktualny dokument.")
+            if bounds is not None:
+                if (not isinstance(bounds,(list,tuple)) or len(bounds)!=4 or
+                    any(type(x) not in (float,int) or not isfinite(x)
+                        for x in bounds) or
+                    bounds[2]<=bounds[0] or bounds[3]<=bounds[1]):
+                    raise ValueError("Niepoprawny prostokąt eksportu DXF.")
+                bounds=tuple(bounds)
             dxf=ezdxf.new("R2010")
             dxf.header["$INSUNITS"]=6  # metres
             dxf.header["$MEASUREMENT"]=1
@@ -2091,12 +2098,18 @@ class PreviewWorkspace:
                         (1000,"CODE:"+obj.code)])
             entries=self._entry_by_objid
 
+            def within_export(entry):
+                # Keep the entire native CAD object if it intersects the
+                # chosen region. Never corrupt its P topology by clipping.
+                return bounds is None or (
+                    entry is not None and _intersects(entry.bbox,bounds))
+
             # Solid hatches for supported single-ring filled polygons.
             # Multiple contours/holes remain geometry-only to avoid
             # fabricating topology that may be misread by CAD.
             for obj in self._doc.objects:
                 entry=entries.get(id(obj))
-                if not entry or not obj.points or not obj.is_closed:
+                if not entry or not obj.points or not obj.is_closed or not within_export(entry):
                     continue
                 style=self._style(entry)
                 parts=[part for part in obj.display_parts if len(part)>=4]
@@ -2121,6 +2134,8 @@ class PreviewWorkspace:
                 if not obj.points:
                     continue
                 entry=entries.get(id(obj))
+                if not within_export(entry):
+                    continue
                 style=self._style(entry) if entry else {}
                 base=layer("G"+obj.code,palette(style),stroke_weight(style))
                 rgb=palette(style)
