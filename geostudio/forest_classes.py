@@ -15,7 +15,10 @@ FILTER_KEY = "forest-class-visibility"
 
 def forest_class_value(obj) -> str | None:
     """Normalize Ls/roman-grade subclass while preserving useful display case."""
-    if obj.code != "5230":
+    # Both 5220 and 5230 can carry land-use records in imported MAPs.
+    # Forest grade belongs to the forest layer regardless of which
+    # of these codes contains the Ls/roman-class notation.
+    if obj.code not in {"5220", "5230"}:
         return None
     for field in ("A1", "A2"):
         value = re.sub(r"\s+", "", str(obj.fields.get(field, "") or ""))
