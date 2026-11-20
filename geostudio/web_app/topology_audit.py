@@ -149,8 +149,24 @@ def inspect_topology(entries, *, document_token: str, revision: int,
                             # attributes. Automatic deletion is permitted
                             # ONLY if ALL attributes match exactly.
                             duplicated = shape.equals(neighbor)
-                            safe_delete = duplicated and (
-                                entry.obj.fields == other.obj.fields)
+                            # :ID is the identity, not a semantic
+                            # cadastral attribute. Naturally two distinct
+                            # records cannot share the same :ID. Ignore
+                            # only that field, still compare every OTHER
+                            # attribute and the native symbol/pen style.
+                            fields_a = {
+                                key:value for key,value in entry.obj.fields.items()
+                                if str(key).upper() != "ID"
+                            }
+                            fields_b = {
+                                key:value for key,value in other.obj.fields.items()
+                                if str(key).upper() != "ID"
+                            }
+                            safe_delete = (
+                                duplicated and fields_a == fields_b and
+                                entry.obj.style == other.obj.style and
+                                bool(entry.obj.uid) and bool(other.obj.uid)
+                            )
                             center = common.representative_point()
                             append(
                                 "duplicate" if duplicated else "overlap",
