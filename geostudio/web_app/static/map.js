@@ -4471,6 +4471,153 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
     patched.set(bytes.subarray(insertAt),insertAt+chunk.length);
     return new Blob([patched],{type:"image/png"});
   }
+  function planRasterTiles(options){
+    // The full MAP is a single pixel coordinate grid, not the viewport.
+    // Partition that grid into balanced cells so adjacent sheets share
+    // exact boundaries and their physical DPI remains unchanged.
+    const landscape=options.orientation!=="portrait";
+    const sheetW=landscape?6500:5600;
+    const sheetH=landscape?5600:6500;
+    const maxW=sheetW-options.margin*2-options.legend;
+    const maxH=sheetH-options.head-options.foot;
+    if(maxW<100||maxH<100)throw Error("Za duża oprawa dla kafli eksportu.");
+    const columns=Math.max(1,Math.ceil(options.width/maxW));
+    const rows=Math.max(1,Math.ceil(options.height/maxH));
+    if(columns*rows>256)
+      throw Error("Mapa wymaga ponad 256 arkuszy. Wybierz mniejszy "+
+        "prostokąt lub niższe DPI. Nie zmniejszono jakości obrazu.");
+    const centerX=(options.bounds[0]+options.bounds[2])/2;
+    const centerY=(options.bounds[1]+options.bounds[3])/2;
+    const tiles=[];
+    for(let row=0;row<rows;row++)for(let col=0;col<columns;col++){
+      const x0=Math.floor(options.width*col/columns);
+      const x1=Math.floor(options.width*(col+1)/columns);
+      const y0=Math.floor(options.height*row/rows);
+      const y1=Math.floor(options.height*(row+1)/rows);
+      const width=x1-x0,height=y1-y0;
+      const px=options.pxPerUnit;
+      const bounds=[
+        centerX+(x0-options.width/2)/px,
+        centerY+(y0-options.height/2)/px,
+        centerX+(x1-options.width/2)/px,
+        centerY+(y1-options.height/2)/px
+      ];
+      const item={...options,bounds,width,height,
+        fullWidth:width+options.margin*2+options.legend,
+        fullHeight:height+options.head+options.foot,
+        tiled:false,partLabel:"Arkusz "+(tiles.length+1)+"/"+(rows*columns)};
+      if(item.fullWidth*item.fullHeight>40000000||
+         item.fullWidth>12000||item.fullHeight>12000)
+        throw Error("Wewnętrzny limit pojedynczego arkusza.");
+      tiles.push(item);
+    }
+    return {columns,rows,tiles};
+  }
+  function tiledExportManifest(options,plan){
+    const lines=[
+      "GeoStudio 2.0 — eksport dużej mapy",
+      "Mapę podzielono na arkusze bez obniżania rozdzielczości.",
+      "Kolejność: najpierw wiersze z góry na dół, potem kolumny od lewej.",
+      "Opracowanie 1:"+options.denominator+", "+
+        options.dpi+" DPI, format "+options.format.toUpperCase(),
+      "Łączny obraz mapy: "+options.width+" x "+options.height+" pikseli",
+      "Arkusze: "+plan.columns+" kolumn, "+plan.rows+" wierszy",
+      "Zakres (osie ekranu GEO-MAP): "+options.bounds.join(", "),
+      "Arkusze zawierają własne ramki, legendy i inne wybrane dodatki.",
+      "",
+      "Plik; xmin; ymin; xmax; ymax"
+    ];
+    const ext={jpeg:"jpg",tiff:"tif",png:"png"}[options.format];
+    for(let i=0;i<plan.tiles.length;i++){
+      const tile=plan.tiles[i];
+      const r=Math.floor(i/plan.columns)+1,c=i%plan.columns+1;
+      lines.push("mapa_r"+String(r).padStart(3,"0")+"_c"+
+        String(c).padStart(3,"0")+"."+ext+"; "+tile.bounds.join("; "));
+    }
+    return lines.join("\n");
+  }
+  async function encodeLayoutRaster(image,options){
+    const raw=options.format==="tiff"
+      ?makeRGBTiff(image,options.dpi)
+      :await canvasBlob(image,options.format==="jpeg"?"image/jpeg":"image/png",
+        options.format==="jpeg"?.96:undefined);
+    return options.format==="tiff"?raw:
+      withRasterDpi(raw,options.format==="jpeg"?"jpeg":"png",options.dpi);
+  }
+  async function saveTiledArchive(ticket,filename){
+    if(window.pywebview?.api?.save_tiled_export){
+      exportInfo("Wybierz miejsce zapisu dużej mapy ZIP…");
+      const result=await window.pywebview.api.save_tiled_export(ticket);
+      if(!result||result.cancelled)return false;
+      inform("Zapisano arkusze mapy: "+result.path+".");
+      return true;
+    }
+    const response=await fetch("/api/export/tiles/"+ticket+"/download",{
+      headers:{"X-GeoStudio-Token":token},cache:"no-store"
+    });
+    if(!response.ok){
+      const message=await response.json().catch(()=>({}));
+      throw Error(message.detail||"Nie można pobrać archiwum ZIP.");
+    }
+    if(window.showSaveFilePicker&&response.body){
+      const handle=await window.showSaveFilePicker({
+        suggestedName:filename,
+        types:[{description:"Archiwum ZIP",accept:{"application/zip":[".zip"]}}]
+      });
+      const file=await handle.createWritable();
+      try{
+        await response.body.pipeTo(file);
+      }catch(error){
+        await file.abort().catch(()=>{});
+        throw error;
+      }
+      return true;
+    }
+    const blob=await response.blob();
+    const url=URL.createObjectURL(blob);
+    const a=document.createElement("a");
+    a.href=url;a.download=filename;document.body.append(a);
+    a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),60000);
+    return true;
+  }
+  async function exportTiledLayout(options,basename){
+    const plan=planRasterTiles(options);
+    const session=await api("/api/export/tiles/start",{
+      method:"POST",headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({
+        documentToken:state.edit.documentToken,
+        revision:state.edit.revision,
+        filename:basename,format:options.format,
+        columns:plan.columns,rows:plan.rows,
+        manifest:tiledExportManifest(options,plan)
+      })
+    });
+    const ticket=session.ticket;
+    const tokenAtStart=state.edit.documentToken;
+    const revisionAtStart=state.edit.revision;
+    for(let i=0;i<plan.tiles.length;i++){
+      if(state.edit?.documentToken!==tokenAtStart||
+         state.edit?.revision!==revisionAtStart)
+        throw Error("Mapa zmieniła się podczas eksportu. Spróbuj ponownie.");
+      const tile=plan.tiles[i];
+      exportInfo("Arkusz "+(i+1)+"/"+plan.tiles.length+
+        " · "+tile.width+" × "+tile.height+" px · "+options.dpi+" DPI");
+      const raster=await renderLayoutCanvas(tile);
+      const blob=await encodeLayoutRaster(raster,options);
+      // Each upload is bounded to at most 120 MB; the ZIP is assembled
+      // on disk and never passed through the small-image Save As buffer.
+      await api("/api/export/tiles/"+ticket+"/"+i,{
+        method:"POST",body:blob
+      });
+      raster.width=0;raster.height=0;
+    }
+    const complete=await api("/api/export/tiles/"+ticket+"/finish",{
+      method:"POST"
+    });
+    exportInfo("Gotowe: "+complete.tiles+" arkuszy. Wybierz zapis ZIP.");
+    return saveTiledArchive(ticket,complete.filename);
+  }
+
   async function downloadLayoutFile(blob,filename){
     // WebView2 may silently ignore browser-only download links. Use the same
     // native Save As mechanism as MAP for a guaranteed chosen Windows path.
