@@ -4381,6 +4381,16 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
   $("select-form").addEventListener("submit",applyAdvancedSelection);
 
   setupRibbon();
+  const updateWorkspaceTop=()=>{
+    // The active ribbon can wrap onto two rows on smaller windows.
+    // Keep responsive dock panels below the actual toolbar height.
+    document.documentElement.style.setProperty("--geo-workspace-top",
+      Math.ceil($("main-ribbon").getBoundingClientRect().bottom)+"px");
+  };
+  const ribbonResizeObserver=new ResizeObserver(updateWorkspaceTop);
+  ribbonResizeObserver.observe($("main-ribbon"));
+  ribbonResizeObserver.observe(document.querySelector(".topbar"));
+  updateWorkspaceTop();
   link("tool-underlay",openUnderlayDialog);
   link("tool-raster",openRasterDialog);
   link("tool-crs",openCrsDialog);
