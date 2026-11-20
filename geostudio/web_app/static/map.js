@@ -2049,10 +2049,19 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
     for(const id of ["underlay-epsg","raster-epsg","crs-epsg"])
       $(id).value=chosen;
     if(!changed)return;
+    // A visually calibrated JPG/PNG or a .world raster is positioned in
+    // native MAP X/Y. Choosing an EPSG for WMS does not change these XY
+    // values, and must not make the already aligned picture disappear.
+    // GeoTIFF carrying its own EPSG is shown only if CRS really matches.
+    for(const item of [...raster.layers,raster]){
+      if(!item.image||!item.affine)continue;
+      if(!item.epsg||Number(chosen)===item.epsg)
+        item.boundEPSG=chosen;
+    }
     if(underlay.enabled)removeUnderlay();
     if(raster.image||raster.layers.length)
-      rasterInfo("Zmieniono EPSG mapy: wcześniejsze rastry wymagają "+
-        "ponownego potwierdzenia georeferencji i pozostają ukryte.");
+      rasterInfo("Zaktualizowano EPSG bieżącej mapy. Rastry z wizualną "+
+        "kalibracją XY pozostają widoczne; GeoTIFF wymaga zgodnego EPSG.");
     state.previewActive=false;state.geometrySnapshotValid=false;requestDraw();
   }
   const wmsPresetUrls={
