@@ -36,7 +36,7 @@ def test_large_map_zip_is_streamed_and_revision_bound():
         ticket = started.json()["ticket"]
         endpoint = f"/api/export/tiles/{ticket}"
         assert client.post(endpoint + "/finish", headers=header).status_code == 400
-        payload = b"II*\\x00" + b"x" * 1024
+        payload = b"II*\x00" + b"x" * 1024
         for index in range(2):
             response = client.post(f"{endpoint}/{index}", headers=header,
                                    content=payload)
