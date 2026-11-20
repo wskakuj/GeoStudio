@@ -587,6 +587,8 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
             finishOpeningMap(answer.metadata);
             if(answer.metadata.topologyWarning)
               inform(answer.metadata.topologyWarning,true);
+            if(answer.metadata.visualWarning)
+              inform(answer.metadata.visualWarning,true);
             if(answer.metadata.recoveryAvailable&&
                window.pywebview.api?.restore_recovery){
               const candidate=answer.metadata.recoveryAvailable;
