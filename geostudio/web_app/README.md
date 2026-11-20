@@ -968,3 +968,43 @@ i różnymi rodzajami pikseli. Pozostają osobnym zadaniem.
 
 Do testów używaj kopii MAP. Nie zakładaj, że poprawny rezultat
 testów API oznacza sprawdzoną zgodność terenową.
+
+
+## Etap 12 — odświeżanie WMS, zakładka Rastry, ostre wektory i wizualne GCP (20.11.2026)
+
+- **WMS**: po każdej zmianie kamery (zoom lub pan) planowany jest
+  nowy GetMap dla zasięgu nowego widoku; wcześniejsze żądania są
+  anulowane i nie nadpisują nowszych. Rozdzielczość żądanego obrazu
+  uwzględnia DPR ekranu (w granicach 2048 px na wymiar / 3 mln px).
+  Poprzedni obraz pozostaje **tymczasowo** jako podkład do chwili pobrania
+  nowego; zależność od czasu odpowiedzi serwera oznacza, że chwilowe
+  przeskalowanie starej ortofotomapy może wystąpić. Same wektory i
+  A1/A2 pozostają przez cały czas ostre.
+- **Ostrość i nawigacja**: usunięto skalowanie poprzedniego obrazu
+  Canvas podczas przybliżania. Każdy kadr wektorowy jest rysowany
+  ponownie w aktualnych współrzędnych ekranowych. Dla typowych MAP
+  wczytanych w całości nie ma kolejnych zapytań HTTP przy zoomie;
+  duże MAP korzystają z poszerzonego bufora i zachowywania wcześniej
+  pobranych obiektów. Na bardzo dużych mapach nowy obszar, którego
+  jeszcze nie pobrano, może pojawić się dopiero po odpowiedzi serwera.
+  Przyspieszono wykrywanie kolizji etykiet przez indeks komórkowy.
+- **Warstwy mapy → Rastry**: drugi panel obok Wektorów pokazuje źródło
+  WMS i kilka obrazów lokalnych (PNG, JPG, WebP, TIFF/GeoTIFF).
+  Można je indywidualnie ukrywać/pokazywać, zmieniać krycie, usuwać,
+  wybierać do kalibracji; podkłady nadal nie modyfikują MAP.
+- **Wizualna kalibracja GCP**: tak jak w Qt wybieramy najpierw punkt
+  na obrazku, potem klikamy odpowiadający mu punkt w głównym widoku
+  MAP. Okno jest niemodalne (mapę można w tym czasie przesuwać i
+  przybliżać), lista pokazuje numerowane pary. Wymagane minimum trzy
+  niewspółliniowe pary; dopasowanie afiniczne wylicza RMSE.
+  Na obrazie można przybliżać kółkiem i przesuwać prawym przyciskiem.
+  Ręczne wpisywanie X/Y usunięto z interfejsu. Zwykły JPG/PNG
+  kalibrowany do natywnych współrzędnych MAP nie wymaga wyboru EPSG.
+  GeoTIFF z automatyczną georeferencją wymaga potwierdzonego zgodnego
+  EPSG; alternatywnie można go skalibrować wizualnie.
+- **Ograniczenia testowe**: podkłady pozostają w pamięci bieżącej sesji.
+  Kalibracje i rastry nie trafiają jeszcze do wyeksportowanego arkusza
+  ani nie są zapisywane do projektu. Wysoki wynik RMSE lub złe
+  rozmieszczenie punktów wymaga poprawienia par przed pracą.
+  Ostateczną zgodność ortofotomapy i rastrów należy sprawdzić na
+  charakterystycznych punktach terenowych.
