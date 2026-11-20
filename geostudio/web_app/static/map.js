@@ -4024,7 +4024,7 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
         .join("\n");
     updateExportAreaControls();
     $("layout-summary").textContent="Skala opracowania: 1:"+
-      $("layout-scale").value+". Duże rastry: pełna jakość i ZIP z arkuszami.";
+      $("layout-scale").value+". Duży TIFF: jeden plik. Duże JPG/PNG: ZIP.";
     if(!$("layout-dialog").open)$("layout-dialog").showModal();
   }
   function beginExportAreaSelection(){
@@ -4815,8 +4815,8 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
       inform("Druk wymaga obrazu. Wybierz PNG, JPG, TIFF lub PDF.",true);return;
     }
     if(print&&options.tiled){
-      inform("Wielkoformatowy wydruk przygotuj z PDF wektorowego; "+
-        "JPG/PNG/TIFF o tym rozmiarze są zapisywane jako osobne arkusze ZIP.",true);
+      inform("Wielkoformatowy druk wykonaj z PDF wektorowego; "+
+        "w eksporcie TIFF otrzymasz jeden obraz, a JPG/PNG — arkusze ZIP.",true);
       return;
     }
     button.disabled=true;printButton.disabled=true;
