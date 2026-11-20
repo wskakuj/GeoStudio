@@ -48,7 +48,7 @@ def test_ribbon_contains_all_existing_tools_without_duplicate_ids():
     assert {"tool-raster","tool-crs","tool-layout-ribbon","tool-map-copy-ribbon"}<=set(ids)
     assert {"opt-snap","opt-shared","cartography-status"}<=set(ids)
 
-    expected={"start","select","edit","draw","cartography","underlay","export"}
+    expected={"start","select","edit","draw","cartography","underlay","export","topology"}
     tabs={attrs.get("data-ribbon-tab"):attrs for tag,attrs in records
           if tag=="button" and "data-ribbon-tab" in attrs}
     panels={attrs.get("data-ribbon-panel"):attrs for tag,attrs in records
