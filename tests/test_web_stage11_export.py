@@ -136,28 +136,29 @@ def test_dxf_http_auth_and_web_controls():
             "documentToken": "stale"}, headers=headers)
         assert bad.status_code == 409
 
-    headers_for_file = {
-        **headers,
-        "X-Export-Name": "GeoStudio_plansza.png",
-        "X-Export-Format": "png",
-        "X-Document-Token": params["documentToken"],
-        "X-Document-Revision": "0",
-    }
-    assert client.post("/api/export/buffer", headers={
-        k:v for k,v in headers_for_file.items()
-        if k!="X-GeoStudio-Token"}, content=b"IMG").status_code == 403
-    buffered = client.post("/api/export/buffer", headers=headers_for_file,
-                           content=b"IMG")
-    assert buffered.status_code == 200, buffered.text
-    ticket = buffered.json()["ticket"]
-    assert app.state.workspace.generated_export(ticket) == (
-        "GeoStudio_plansza.png","png",b"IMG")
-    assert app.state.workspace.generated_export(ticket,consume=True)[2] == b"IMG"
-    with pytest.raises(LookupError):
-        app.state.workspace.generated_export(ticket)
-    reject = client.post("/api/export/buffer", headers={
-        **headers_for_file, "X-Export-Name": "../bad.png"}, content=b"IMG")
-    assert reject.status_code == 400
+    with TestClient(app) as client:
+        headers_for_file = {
+            **headers,
+            "X-Export-Name": "GeoStudio_plansza.png",
+            "X-Export-Format": "png",
+            "X-Document-Token": params["documentToken"],
+            "X-Document-Revision": "0",
+        }
+        assert client.post("/api/export/buffer", headers={
+            k:v for k,v in headers_for_file.items()
+            if k!="X-GeoStudio-Token"}, content=b"IMG").status_code == 403
+        buffered = client.post("/api/export/buffer", headers=headers_for_file,
+                               content=b"IMG")
+        assert buffered.status_code == 200, buffered.text
+        ticket = buffered.json()["ticket"]
+        assert app.state.workspace.generated_export(ticket) == (
+            "GeoStudio_plansza.png","png",b"IMG")
+        assert app.state.workspace.generated_export(ticket,consume=True)[2] == b"IMG"
+        with pytest.raises(LookupError):
+            app.state.workspace.generated_export(ticket)
+        reject = client.post("/api/export/buffer", headers={
+            **headers_for_file, "X-Export-Name": "../bad.png"}, content=b"IMG")
+        assert reject.status_code == 400
 
     from pathlib import Path
     assets = Path(__file__).resolve().parents[1] / "geostudio/web_app/static"
