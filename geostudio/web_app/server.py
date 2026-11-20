@@ -19,7 +19,7 @@ from .data import (
     PreviewWorkspace, MAX_MAP_BYTES, MAX_STYLES_BYTES, MAX_RENDER_FEATURES,
 )
 from .underlay_wms import list_layers as wms_layers, map_png as wms_map_png
-from .underlay_raster import prepare_geotiff, fit_gcp_payload, MAX_RASTER_BYTES
+from .underlay_raster import prepare_raster, fit_gcp_payload, MAX_RASTER_BYTES
 from .underlay_crs import verified_prj_epsg, convert_point, MAX_PRJ
 from starlette.concurrency import run_in_threadpool
 import json
@@ -235,12 +235,12 @@ def create_app(workspace: PreviewWorkspace | None = None) -> FastAPI:
 
     @app.post("/api/underlay/raster/prepare")
     async def underlay_prepare_tiff(request: Request):
-        """Decode TIFF/GeoTIFF as PNG; return embedded CRS/affine when known."""
+        """Decode a raster into a bounded PNG preview without changing MAP."""
         if not state.metadata().get("loaded"):
             raise HTTPException(409,"Najpierw otwórz mapę MAP.")
         payload=await receive(request,MAX_RASTER_BYTES)
         try:
-            image,meta=await run_in_threadpool(prepare_geotiff,payload)
+            image,meta=await run_in_threadpool(prepare_raster,payload)
         except ValueError as exc:
             raise HTTPException(400,str(exc)) from exc
         return Response(image,media_type="image/png",headers={
@@ -248,6 +248,8 @@ def create_app(workspace: PreviewWorkspace | None = None) -> FastAPI:
             "X-Raster-Affine":json.dumps(meta["coefficients"]),
             "X-Raster-Width":str(meta["width"]),
             "X-Raster-Height":str(meta["height"]),
+            "X-Raster-Source-Width":str(meta["sourceWidth"]),
+            "X-Raster-Source-Height":str(meta["sourceHeight"]),
         })
 
     @app.post("/api/replace/preview")
