@@ -3256,16 +3256,20 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
   const hatchCache=new Map();
   function hatchPattern(style) {
     if(!style.hatch)return style.fill;
-    const key=style.fill+"|"+style.hatch;
+    const exportRatio=state.exporting&&state.exportDpi===600?2:1;
+    const key=style.fill+"|"+style.hatch+"|"+exportRatio;
     if(hatchCache.has(key))return hatchCache.get(key);
     // The old Qt renderer uses 8x8 QBrush patterns:
     // 1=Qt.Dense4 (50%), 2=Qt.Dense5 (37.5%), 3–8 directional hatches.
     // Match the grid density/orientation without guessing vendor IDs >8.
-    const size=8;
+    const size=8*exportRatio;
     const tile=document.createElement("canvas");
     tile.width=tile.height=size;
     const g=tile.getContext("2d");
-    g.clearRect(0,0,size,size);
+    // Preserve the 8x8 cartographic motif while giving 600 DPI exports
+    // twice as many physical pixels per hatch stroke.
+    g.setTransform(exportRatio,0,0,exportRatio,0,0);
+    g.clearRect(0,0,8,8);
     g.strokeStyle=style.fill;g.fillStyle=style.fill;g.lineWidth=1;
     const segment=(x1,y1,x2,y2)=>{
       g.beginPath();g.moveTo(x1,y1);g.lineTo(x2,y2);g.stroke();
