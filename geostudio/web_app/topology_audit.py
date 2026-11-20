@@ -10,6 +10,7 @@ from collections import defaultdict
 from math import hypot
 from shapely.geometry import Point, box
 from shapely.strtree import STRtree
+from shapely.errors import GEOSException
 from shapely.ops import polygonize, unary_union
 
 from geostudio.web_app.geometry_6a import geometry_of
@@ -99,7 +100,7 @@ def inspect_topology(entries, *, document_token: str, revision: int,
             continue
         try:
             shape = geometry_of(obj)
-        except (ValueError, TypeError, ArithmeticError):
+        except (ValueError, TypeError, ArithmeticError, GEOSException):
             append("invalid", "high", "Niepoprawny poligon",
                    "Obrys jest pusty, samoprzecinający się albo zawiera "
                    "nieprawidłowe pierścienie. Sprawdź węzły i części P.",
@@ -144,30 +145,30 @@ def inspect_topology(entries, *, document_token: str, revision: int,
                         common = shape.intersection(neighbor)
                         overlap = common.area if not common.is_empty else 0.
                         if overlap > MIN_OVERLAP_AREA:
-                            # Same geometry but DIFFERENT classification is
-                            # not deletable: an overlay might be intentional.
-                            same_fields = (
-                                str(entry.obj.fields.get("A1","")).casefold() ==
-                                str(other.obj.fields.get("A1","")).casefold() and
-                                str(entry.obj.fields.get("A2","")).casefold() ==
-                                str(other.obj.fields.get("A2","")).casefold()
-                            )
-                            duplicated = same_fields and shape.equals(neighbor)
+                            # Same geometry is suspicious even with distinct
+                            # attributes. Automatic deletion is permitted
+                            # ONLY if ALL attributes match exactly.
+                            duplicated = shape.equals(neighbor)
+                            safe_delete = duplicated and (
+                                entry.obj.fields == other.obj.fields)
                             center = common.representative_point()
                             append(
                                 "duplicate" if duplicated else "overlap",
                                 "high" if duplicated else "medium",
                                 "Powielony poligon" if duplicated else "Nakładające się poligony",
-                                ("Dwa obiekty o tym samym kodzie i klasyfikacji "
-                                 "mają identyczną geometrię. Drugi można usunąć "
-                                 "po sprawdzeniu atrybutów."
+                                ("Dwa obiekty o tym samym kodzie mają identyczną "
+                                 "geometrię. Atrybuty są jednakowe; sprawdź, "
+                                 "czy drugi obiekt jest zbędny."
+                                 if safe_delete else
+                                 "Poligony mają identyczną geometrię, ale "
+                                 "różnią się atrybutami — nie usuwaj automatycznie."
                                  if duplicated else
                                  "Części obiektów tego samego kodu zajmują "
                                  "ten sam obszar. Sprawdź, czy nakładka jest celowa."),
                                 entry, other,
                                 location=_point_location(center.x, center.y),
                                 area=overlap,
-                                can_delete_duplicate=duplicated,
+                                can_delete_duplicate=safe_delete,
                             )
                     else:
                         distance = shape.distance(neighbor)
@@ -215,7 +216,7 @@ def inspect_topology(entries, *, document_token: str, revision: int,
                                 entry, other,
                                 location=_point_location(*found),
                             )
-                except (ValueError, ArithmeticError):
+                except (ValueError, ArithmeticError, GEOSException):
                     # The invalid single-object geometry was already warned
                     # about above. One pair must not kill the entire scan.
                     continue
