@@ -428,3 +428,5 @@ To pierwsza część odtwarzania pełnej kartografii. Wciąż nie istnieje
 wierny interpreter dowolnych makr O/T/łuków SYM i wszystkich linii
 LAY; nie należy na tej podstawie deklarować zgodności kartograficznej
 1:1 z GEO-MAP. Import jest odczytowy, a źródłowy MAP nienaruszony.
+
+**Kartografia 13A — gęstość CDF:** desenie 1/2 wykorzystują siatkę 8×8 i pokrycie odpowiednio 50% (odpowiednik Qt.Dense4Pattern) oraz 37,5% (Qt.Dense5Pattern). Pozostałe obsługiwane desenie 3–8 wykorzystują siatkę 8 px zgodną z kierunkami kresek używanymi w klasycznym rendererze Qt. Indeksy CDF 9–16 pozostają oznaczone jako niewspierane, zamiast pokazywać niezweryfikowany wzór.
