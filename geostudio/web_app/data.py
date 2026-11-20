@@ -34,9 +34,9 @@ from geostudio.library_render import (native_fill_color,parse_cdf,
     parse_sym_line_patterns,object_sym_line_pattern,simple_point_segments,
     simple_point_circles)
 
-MAX_MAP_BYTES = 80 * 1024 * 1024
+MAX_MAP_BYTES = 512 * 1024 * 1024
 MAX_STYLES_BYTES = 2 * 1024 * 1024
-MAX_RENDER_FEATURES = 25000
+MAX_RENDER_FEATURES = 100000
 MAX_SELECTED_FEATURES = 50000
 MAX_BULK_EDIT_OBJECTS = 5000
 HEX = re.compile(r"^#[0-9A-Fa-f]{6}$")
@@ -137,7 +137,7 @@ class PreviewWorkspace:
 
     def load_map(self, content: bytes, filename: str) -> dict:
         if not content or len(content) > MAX_MAP_BYTES:
-            raise ValueError("Plik MAP jest pusty lub przekracza limit 80 MB.")
+            raise ValueError("Plik MAP jest pusty lub przekracza limit 512 MB.")
         name = _display_name(filename)
         if not name.lower().endswith(".map"):
             raise ValueError("Wybierz plik z rozszerzeniem .MAP.")
@@ -1036,8 +1036,8 @@ class PreviewWorkspace:
         conflicts=[]
         overlaps=[]
         for obj in moving:
-            if len(obj.display_parts)>1:
-                continue  # compound rings are translated intact; P0 has no synthetic connector
+            if not obj.is_closed or len(obj.display_parts)>1:
+                continue  # open lines/points have no area topology; multipart moves intact
             old=ring_of(obj)
             new=ring_of(obj,dx,dy)
             # Spatial-index broad phase: no all-to-all scan over an entire MAP.
@@ -1075,7 +1075,7 @@ class PreviewWorkspace:
     def _move_polygon_plan(self, ids: list[str], dx: float, dy: float, *,
                            allow_detach: bool, document_token: str,
                            revision: int, snap_distance: float = 0) -> dict:
-        """Validate every selected polygon and preview the exact coordinate shift.
+        """Validate points, open lines and polygons for the exact coordinate shift.
 
         dx = native X (northing), dy = native Y (easting), in map units.
         """
@@ -1109,10 +1109,8 @@ class PreviewWorkspace:
             if (not obj.uid or self._uid_counts.get(obj.uid) != 1 or
                     self._doc.by_id.get(obj.uid) is not obj):
                 raise ValueError("Obiekt bez jednoznacznego :ID. Przerwano przesuwanie.")
-            if not obj.is_closed or len(obj.points) < 4:
-                raise ValueError(
-                    "Zaznaczenie zawiera linię lub punkt. Przesuwać można "
-                    "tylko zamknięte poligony (kod " + obj.code + ").")
+            if not obj.points:
+                raise ValueError("Zaznaczenie zawiera obiekt bez geometrii.")
             vertex_count += len(obj.points)
             if vertex_count > 100000:
                 raise ValueError("Zaznaczenie przekracza limit 100 000 węzłów.")
@@ -1124,8 +1122,8 @@ class PreviewWorkspace:
             selected_uids={o.uid for o in moving}
             near_fixed={}
             for obj in moving:
-                if len(obj.display_parts)>1:
-                    continue  # magnetic preview for multipart is handled by the Canvas
+                if not obj.is_closed or len(obj.display_parts)>1:
+                    continue  # magnet works only on polygon boundaries
                 r=ring_of(obj)
                 a,b=min(x for x,y in r),min(y for x,y in r)
                 c,d=max(x for x,y in r),max(y for x,y in r)
@@ -1150,8 +1148,7 @@ class PreviewWorkspace:
                 snap_applied={"distance":round(distance,3)}
         for obj in moving:
             shifted={}
-            for index,point in enumerate(
-                    obj.points if len(obj.display_parts)>1 else obj.points[:-1]):
+            for index,point in enumerate(obj.points):
                 x,y=round(point.x+dx,3),round(point.y+dy,3)
                 if not (-1e9<x<1e9 and -1e9<y<1e9):
                     raise ValueError("Przesunięcie przekracza zakres współrzędnych.")
@@ -1238,10 +1235,10 @@ class PreviewWorkspace:
                         h.update(line)
             before = h.digest()
             with self._history.begin(
-                "Przesunięcie " + str(report["selected"]) + " poligonów",
+                "Przesunięcie " + str(report["selected"]) + " obiektów",
                 selection_before=tuple(plan["selectedUids"]),
             ):
-                self._doc.move_polygon_vertices(plan["changes"])
+                self._doc.translate_objects(plan["changes"])
                 self._raise_to_top([o.uid for o in self._doc.objects
                                     if o.uid in plan["selectedUids"]])
                 check = sha256()
