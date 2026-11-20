@@ -1,5 +1,38 @@
 # GeoStudio 2.0 — osobny prototyp HTML
 
+## Etap 12 — poprawa interfejsu: zakładki i oddzielne podkłady
+
+Po testach wersji 12 uproszczono nawigację zgodnie ze starszym
+GeoStudio 0.14. Górny pasek **nie przewija się poziomo**. Siedem
+zakładek dzieli funkcje na **Start / Zaznaczanie / Edycja /
+Rysowanie / Kartografia / Podkłady / Eksport**. Są obsługiwane myszą,
+a po ustawieniu fokusu również strzałkami Lewo/Prawo oraz Home/End.
+Narzędzia zawsze dostępne z poziomu mapy (zaznaczanie, przesuwanie,
+węzły i zoom) pozostają na pływającym pasku; skróty klawiaturowe
+i aktualne operacje edycji nie zostały usunięte. Przy mniejszej
+szerokości przyciski w grupach zawijają się zamiast przewijać.
+
+W zakładce **Podkłady** są trzy osobne przyciski, bez jednego
+obszernego wspólnego formularza:
+
+- **WMS Geoportalu**: niezależne okno wyboru źródła, odczytu
+  warstw GetCapabilities, układu MAP i krycia. Obejmuje ortofotomapę
+  standardową, wysoką rozdzielczość i **GUGiK KIEG — działki z
+  numerami** znane ze starego interfejsu. Adres serwera widoczny
+  jest do sprawdzenia; ze względów bezpieczeństwa testowy lokalny
+  proxy nie przyjmuje własnych URL-i.
+- **Raster**: osobne okno pliku PNG/JPG/TIFF/GeoTIFF, world,
+  krycia i opcjonalnej rozwijanej sekcji GCP.
+- **Układy EPSG**: wybór układu MAP, wczytywanie PRJ i read-only
+  przeliczanie środka mapy. Układ wybrany tutaj jest synchronizowany
+  z oknami WMS i Raster. Zmiana układu ukrywa podkłady ze starą
+  georeferencją zamiast błędnie nakładać je na MAP.
+
+Bezpieczeństwo i funkcje podkładów etapu 12 pozostają bez zmian:
+źródłowa MAP jest chroniona, EPSG nie jest zgadywany z wartości
+współrzędnych, a etykiety A1/A2 nadal skalują się z geometrią.
+
+
 Nowy interfejs testowy działa **równolegle** z obecnym GeoStudio/PySide6.
 
 ## Uruchomienie w Windows
