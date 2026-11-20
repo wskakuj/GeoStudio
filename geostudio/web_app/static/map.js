@@ -111,6 +111,10 @@
     if(state.edit&&(state.edit.revision!==status.revision||
        state.edit.documentToken!==status.documentToken))
       state.viewportFeatureCache.clear();
+    if(state.edit&&state.edit.documentToken!==status.documentToken){
+      state.exportAreaBounds=null;state.exportAreaPicking=false;
+      state.exportAreaDrag=null;
+    }
     state.edit={
       dirty:!!status.dirty,
       canUndo:!!status.canUndo,
@@ -3910,7 +3914,7 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
     renderHighlights(features);drawMoveGhost(features);drawMoveMagnet();
     // No bitmap snapshot or resampling is made during a wheel frame.
     // The map remains rendered in native screen-space vector precision.
-    renderScreenLabels(features);drawGcpMapMarkers();
+    renderScreenLabels(features);drawExportAreaOverlay();drawGcpMapMarkers();
     drawDraftPolygon();drawMagnetMarker();drawVertexTool();
     updateScaleReadout();
     $("count-visible").textContent=display(features.length);
@@ -4005,8 +4009,7 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
     $("layout-dialog").showModal();
   }
   function pdfLayoutOptions(){
-    const bounds=$("layout-scope").value==="all"
-      ?[...state.meta.bounds]:boundsFromViewport(0);
+    const bounds=selectedExportBounds();
     const denominator=Number($("layout-scale").value);
     if(!Number.isInteger(denominator)||denominator<10||denominator>100000000)
       throw Error("Nieprawidłowy mianownik skali PDF.");
@@ -4051,9 +4054,7 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
     };
   }
   function layoutOptions(){
-    const source=$("layout-scope").value==="all"
-      ?state.meta.bounds:boundsFromViewport(0);
-    const bounds=[...source];
+    const bounds=selectedExportBounds();
     if(bounds.some(value=>!Number.isFinite(value))||
        bounds[2]<=bounds[0]||bounds[3]<=bounds[1])
       throw Error("Nieprawidłowy obszar mapy.");
@@ -4074,14 +4075,13 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
     const legend=$("layout-legend").checked?mm(52):0;
     const fullWidth=width+margin*2+legend;
     const fullHeight=height+head+foot;
-    if(fullWidth>12000||fullHeight>12000||
-       fullWidth*fullHeight>40000000)
-      throw Error("Arkusz byłby zbyt duży ("+fullWidth+" × "+
-        fullHeight+" px). Zmniejsz DPI, zwiększ mianownik skali "+
-        "lub wybierz bieżący widok.");
+    // Large print sheets become full-resolution tiled archives.
+    const tiled=fullWidth>12000||fullHeight>12000||
+      fullWidth*fullHeight>40000000;
     return {
       bounds,denominator,dpi,pxPerUnit,width,height,margin,head,foot,
-      legend,fullWidth,fullHeight,
+      legend,fullWidth,fullHeight,tiled,
+      orientation:$("layout-orientation").value,
       title:$("layout-title").value.trim().slice(0,100)||"Mapa GEO-MAP",
       frame:$("layout-frame").checked,north:$("layout-north").checked,
       scaleBar:$("layout-scalebar").checked,
@@ -4949,6 +4949,10 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
   });
 
   document.addEventListener("keydown",ev=>{
+    if(state.exportAreaPicking&&ev.key==="Escape"){
+      ev.preventDefault();finishExportAreaSelection(true);return;
+    }
+    if(state.exportAreaPicking)return;
     const typing=ev.target.matches("input,textarea,[contenteditable]");
     if((ev.ctrlKey||ev.metaKey)&&ev.key.toLowerCase()==="k"){
       ev.preventDefault();openCommands();return;
@@ -5208,6 +5212,7 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
   link("raster-remove",removeRaster);
   link("raster-calibrate",openVisualCalibration);
   setupVisualCalibration();
+  installExportAreaCapture();
   // Visual calibration installs its own GCP capture handlers.
   $("raster-opacity").addEventListener("input",ev=>{
     raster.opacity=Number(ev.target.value)/100;
@@ -5237,6 +5242,13 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
   link("btn-export",downloadMapCopy);
   link("btn-layout",openLayoutDialog);
   link("layout-close",()=>$("layout-dialog").close());
+  link("layout-choose-area",beginExportAreaSelection);
+  $("layout-scope").addEventListener("change",()=>{
+    updateExportAreaControls();
+    if($("layout-scope").value==="rect"&&!state.exportAreaBounds)
+      beginExportAreaSelection();
+    else requestDraw();
+  });
   $("layout-form").addEventListener("submit",event=>{event.preventDefault();exportLayout(false);});
   link("layout-print",()=>exportLayout(true));
   link("tool-export-baked",downloadNativeCutouts);
