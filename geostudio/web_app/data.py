@@ -2113,6 +2113,55 @@ class PreviewWorkspace:
             return {"libraries":dict(self._carto_loaded),
                     "loaded":bool(self._carto_loaded)}
 
+    def cartography_catalog(self, limit: int = 150) -> dict:
+        """Report actual per-code rendering, not assumed GEO-MAP parity.
+
+        Library selectors can also depend on A1/A2: the representative
+        style is explicitly marked as a sample object, not a code-wide
+        override. This endpoint never mutates the map or its libraries.
+        """
+        limit = max(1, min(250, int(limit)))
+        with self._lock:
+            if self._doc is None:
+                raise ValueError("Najpierw otwórz mapę.")
+            counts: Counter[str] = Counter()
+            samples: dict[str, _Entry] = {}
+            for entry in self._entries:
+                code = entry.obj.code
+                counts[code] += 1
+                samples.setdefault(code, entry)
+            items = []
+            for code in sorted(samples, key=lambda key: (-counts[key], key))[:limit]:
+                entry = samples[code]
+                obj = entry.obj
+                style = self._style(entry)
+                notes = []
+                if style["hatch"] > 8:
+                    notes.append("CDF: wzór kreskowania poza obsługiwanym zakresem 0–8")
+                primitives = self._carto_sym.get(code, ())
+                unknown = sorted({p.kind for p in primitives if p.kind not in {"L", "A"}})
+                if unknown:
+                    notes.append("SYM: nierenderowane instrukcje " + ", ".join(unknown))
+                if any(p.kind == "A" for p in primitives) and not style["symbolCircles"]:
+                    notes.append("SYM: łuk nie jest pełnym okręgiem i wymaga weryfikacji")
+                lay = lay_for_code(self._carto_lay, code)
+                if lay and (lay.line_id not in {"2.008"} and
+                            not style["dash"]):
+                    notes.append("LAY: wzór " + lay.line_id + " wymaga interpretacji")
+                items.append({
+                    "code": code, "layer": entry.layer, "count": counts[code],
+                    "a1": obj.fields.get("A1", "")[:80],
+                    "a2": obj.fields.get("A2", "")[:80],
+                    "style": style, "notes": notes,
+                })
+            return {
+                "libraries": dict(self._carto_loaded),
+                "totalCodes": len(samples),
+                "totalObjects": len(self._entries),
+                "items": items,
+                "sampleOnly": True,
+            }
+
     def set_visual_sidecar(self, content: bytes) -> dict:
         """Accept a user-selected GeoStudio JSON as read-only visual input."""
         if not content or len(content) > MAX_STYLES_BYTES:
