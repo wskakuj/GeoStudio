@@ -1,8 +1,7 @@
-"""Bounded, on-disk ZIP assembly for large full-resolution map exports.
+"""Bounded, on-disk ZIP and continuous TIFF exports for large maps.
 
-A tile arrives as an individually rendered PNG/JPG/TIFF. The archive is
-assembled incrementally so the browser and native bridge never buffer a
-hundreds-of-megapixels image or a multi-gigabyte ZIP in RAM.
+ZIP exports preserve standalone rendered tiles. TIFF exports stitch RGB tiles
+into one seamless page using disk offsets; neither path needs a giant Canvas.
 """
 from __future__ import annotations
 
