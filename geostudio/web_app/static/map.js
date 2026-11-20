@@ -1541,7 +1541,55 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
       inform(error.message,true);
     }finally{$(which+"-preview").disabled=false;}
   }
+  async function quickCreatePolygon(ev){
+    ev.preventDefault();
+    if(state.editBusy||state.tool!=="draw")return;
+    if(state.drawPoints.length<3){
+      $("create-summary").textContent="Potrzebne są co najmniej 3 różne węzły.";
+      return;
+    }
+    let request;
+    try{request={...editRequestBody(),operation:objectOperation("create")};}
+    catch(error){$("create-summary").textContent=error.message;return;}
+    state.editBusy=true;updateEditState(state.edit);
+    $("create-apply").disabled=true;
+    $("create-summary").textContent="Tworzę poligon i sprawdzam topologię…";
+    try{
+      // Preserve the server-side safety preview+apply transaction. From
+      // the user's perspective it is just A1 + Enter, not two clicks.
+      const report=await api("/api/objects/preview",{
+        method:"POST",headers:{"Content-Type":"application/json"},
+        body:JSON.stringify(request)
+      });
+      if(!report.canApply||!report.previewKey)
+        throw Error(report.message||report.reason||"Nieprawidłowy obrys.");
+      const result=await api("/api/objects/apply",{
+        method:"POST",headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({...request,previewKey:report.previewKey})
+      });
+      updateEditState(result);
+      $("create-dialog").close();
+      state.objectPreview=null;
+      state.drawPoints=[];state.drawHover=null;state.drawSnap=null;
+      state.pinned.clear();state.active=null;state.detail=null;
+      $("create-a1").value="";$("create-a2").value="";
+      state.editBusy=false;updateEditState(state.edit);
+      // A drawing session continues until the user explicitly presses S,
+      // Escape (when no nodes are left), or chooses another tool.
+      setTool("draw");
+      await refreshEditedDocument(null);
+      updateSelectionCount();
+      inform("Poligon utworzony. Rysuj następny — tryb N nadal aktywny.");
+    }catch(error){
+      $("create-summary").textContent="Nie utworzono: "+error.message;
+      inform("Błąd tworzenia poligonu: "+error.message,true);
+    }finally{
+      state.editBusy=false;updateEditState(state.edit);
+      $("create-apply").disabled=false;
+    }
+  }
   async function applyObject(which,ev) {
+    if(which==="create")return quickCreatePolygon(ev);
     ev.preventDefault();
     if(state.editBusy||!state.objectPreview||
        state.objectPreview.which!==which)return;
@@ -1626,11 +1674,14 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
       inform("Poligon wymaga minimum trzech różnych punktów.",true);return;
     }
     $("create-selection-description").textContent=
-      "Obrys: "+display(state.drawPoints.length)+
-      " węzłów. Wybierz kod i atrybuty, a potem sprawdź.";
-    invalidateObjectPreview("create");
+      "Obrys z "+display(state.drawPoints.length)+
+      " węzłów. Wpisz A1 i naciśnij Enter, aby utworzyć poligon.";
+    state.objectPreview=null;
+    $("create-apply").disabled=false;
+    $("create-summary").textContent="Enter — utwórz poligon. "+
+      "Sprawdzanie poprawności nastąpi automatycznie.";
     $("create-dialog").showModal();
-    $("create-code").focus();
+    $("create-a1").focus();
   }
   function finishGeometryDrawing() {
     if(state.tool==="draw"){finishDrawPolygon();return;}
@@ -4933,7 +4984,10 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
   for(const id of ["copy-dx","copy-dy"])
     $(id).addEventListener("input",()=>invalidateObjectPreview("copy"));
   for(const id of ["create-code","create-a1","create-a2"])
-    $(id).addEventListener("input",()=>invalidateObjectPreview("create"));
+    $(id).addEventListener("input",()=>{
+      state.objectPreview=null;
+      $("create-apply").disabled=false;
+    });
   link("float-move",()=>setTool("move"));
   link("tool-move-offset",()=>openMoveEditor());
   link("move-close",()=>$("move-dialog").close());
