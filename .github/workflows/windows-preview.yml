@@ -1,0 +1,56 @@
+name: Windows GeoStudio2 preview installer
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - "tools/windows/**"
+      - "geostudio/web_app/**"
+      - "geostudio/geomap.py"
+      - "pyproject.toml"
+      - ".github/workflows/windows-preview.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  installer:
+    runs-on: windows-latest
+    timeout-minutes: 50
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install Inno Setup 6 only if missing
+        shell: pwsh
+        run: |
+          $iscc = Join-Path ([Environment]::GetFolderPath("ProgramFilesX86")) "Inno Setup 6/ISCC.exe"
+          if (!(Test-Path $iscc)) {
+            choco install innosetup -y --no-progress
+            if ($LASTEXITCODE -ne 0) { throw "Inno Setup installation failed." }
+          }
+      - name: Build Windows EXE and per-user installer
+        shell: pwsh
+        run: ./tools/windows/build.ps1
+      - name: Check installer output
+        shell: pwsh
+        run: |
+          $exe = "dist/installer/GeoStudio2-Setup-preview8-x64.exe"
+          if (!(Test-Path $exe)) { throw "Missing installer EXE" }
+          if ((Get-Item $exe).Length -lt 1000000) {
+            throw "Installer unexpectedly small"
+          }
+          Write-Host "Installer created: $exe"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: GeoStudio2-Setup-preview8-x64
+          path: dist/installer/GeoStudio2-Setup-preview8-x64.exe
+          if-no-files-found: error
+          retention-days: 14
+      - uses: actions/upload-artifact@v4
+        with:
+          name: GeoStudio2-portable-preview8-x64
+          path: dist/GeoStudio2/
+          if-no-files-found: error
+          retention-days: 14
