@@ -1667,6 +1667,7 @@
     shell.classList.toggle("drawing-objects",tool==="draw");
     if(!["draw","cut","line","line-edit"].includes(tool)){
       state.drawPoints=[];state.drawHover=null;
+      state.drawSnap=null;state.drawCursorWorld=null;
     }
     $("geometry-help").hidden=tool!=="nodes"||!state.meta;
     updateGeometryHelp();
@@ -1682,7 +1683,9 @@
     else if(tool==="nodes")
       inform("Tryb P: przeciągnij jeden z węzłów. Ctrl+Z cofa zmianę.");
     else if(["draw","cut","line","line-edit"].includes(tool))
-      inform("Klikaj punkty; Enter lub dwuklik kończy rysowanie, Esc anuluje.");
+      inform("Klikaj punkty; Enter/dwuklik kończy. Magnes G: "+
+        (state.drawMagnet?"włączony":"wyłączony")+
+        "; Alt stawia punkt obok linii bez przyciągania.");
     else if(tool==="move")inform("Tryb M: przeciągnij wybrany poligon lub całą grupę, potem potwierdź podgląd.");
     else inform(tool==="select"
       ?"Tryb zaznaczania obiektów (S).":"Tryb przesuwania mapy (H).");
@@ -2552,7 +2555,7 @@
     $("cursor-coords").textContent="X: "+(-world.y).toFixed(3)+
                                    "   Y: "+world.x.toFixed(3);
     if(["draw","cut","line","line-edit"].includes(state.tool)&&!state.editBusy){
-      state.drawHover={x:-world.y,y:world.x};requestDraw();
+      updateDrawingHover(world,ev.altKey);
     }
     if(!state.drag&&state.tool==="nodes"&&!state.editBusy){
       state.hoverInsert=closestEditableSegment(p);
@@ -2591,8 +2594,12 @@
     if(d.draw){
       if(!d.moved){
         const p=eventCoords(ev),world=screenToWorld(p.x,p.y);
-        const next=[Math.round(-world.y*1000)/1000,
-                    Math.round(world.x*1000)/1000];
+        // The actual click is authoritative, not a stale hover target.
+        // Alt always bypasses the magnet for the clicked point.
+        const snapped=drawingSnapAt(world,ev.altKey);
+        const next=[Math.round(-snapped.point.y*1000)/1000,
+                    Math.round(snapped.point.x*1000)/1000];
+        state.drawSnap=snapped.kind?snapped:null;
         const last=state.drawPoints[state.drawPoints.length-1];
         if(!last||Math.hypot(next[0]-last[0],next[1]-last[1])>0.003){
           if(state.drawPoints.length<500)state.drawPoints.push(next);
@@ -2667,7 +2674,10 @@
   });
   canvas.addEventListener("pointerleave",()=>{
     if(state.hoverInsert){state.hoverInsert=null;requestDraw();}
-    if(state.drawHover){state.drawHover=null;requestDraw();}
+    if(state.drawHover){
+      state.drawHover=null;state.drawSnap=null;state.drawCursorWorld=null;
+      requestDraw();
+    }
   });
   canvas.addEventListener("pointercancel",()=>{state.drag=null;state.vertexDrag=null;state.moveGhost=null;shell.classList.remove("dragging");requestDraw();});
   canvas.addEventListener("wheel",ev=>{
@@ -2769,6 +2779,11 @@
       }else selectFeature(null);
       return;
     }
+    if(!ev.ctrlKey&&!ev.metaKey&&!ev.altKey&&
+       ev.key.toLowerCase()==="g"&&
+       ["draw","cut","line","line-edit"].includes(state.tool)){
+      ev.preventDefault();toggleDrawMagnet();return;
+    }
     if(ev.key.toLowerCase()==="s")setTool("select");
     if(ev.key.toLowerCase()==="m")setTool("move");
     if(ev.key.toLowerCase()==="n")setTool("draw");
@@ -2797,6 +2812,7 @@
   link("tool-bulk-edit",openBulkEditor);
   link("tool-move",()=>setTool("move"));
   link("tool-new-polygon",()=>setTool("draw"));
+  link("tool-draw-snap",toggleDrawMagnet);
   link("tool-merge",mergePolygons);
   link("tool-split",startSplit);
   link("tool-winding",repairWinding);
