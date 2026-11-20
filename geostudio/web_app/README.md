@@ -812,3 +812,16 @@ przeskalowany podgląd, który może być chwilowo nieostry.
 i 1:1000, pozycja po Zapisz jako i ponownym otwarciu MAP+JSON,
 cofanie Ctrl+Z, przyciąganie pierwszego węzła/Alt, Esc,
 oraz płynność na mapach o kilku tysiącach obiektów.
+
+
+## Etap 10B — F, Ctrl+F i płynne mapy lokalne (draft)
+
+**Znajdź (F)** — wpisz samo czterocyfrowe oznaczenie kodu, ID obiektu lub fragment tekstu w A1/A2/A3–A6/TX/MP/KR. Możesz przeszukać wszystkie atrybuty i ID jednocześnie. Wyniki dotyczą całej mapy, nie tylko ekranu. Kliknij wynik, aby ustawić obiekt w centrum mapy i go zaznaczyć. Przy ponad 120 wynikach lista jest celowo skrócona, a licznik to pokazuje. Zawęź kod/tekst lub użyj Ctrl+H do masowego filtrowania.
+
+**Zamień (Ctrl+F)** — wybierz pole atrybutu, fragment do wyszukania i zamiennik, także pusty. Możesz włączyć rozróżnianie wielkości liter oraz zawęzić kod. Zakres domyślny to zaznaczone obiekty, a cała mapa wymaga świadomego wyboru. Zanim zatwierdzisz, kliknij Sprawdź zmiany; dostaniesz sumę wystąpień, obiektów i pierwszych 16 par przed / po. Jedno Ctrl+Z cofa wszystkie zmiany; Ctrl+Y przywraca. Oryginalny MAP nie jest nadpisywany. Walidacja chroni CP1250, 512 bajtów, unikalne ID, pola istniejące i maksymalnie 5000 modyfikowanych obiektów.
+
+**Stała wielkość opisów** — A1, A2 i TX mają tę samą wielkość w pikselach CSS przy różnych poziomach przybliżenia. Ich rozmiar można świadomie zmieniać w stylach i osobnej skali opracowania. Bardzo odległe etykiety mogą znikać, żeby nie przesłaniać całej mapy, ale nie zmieniają wielkości podczas zoomu. A1 i A2 pozostają osobnymi napisami z osobnym przeciąganiem.
+
+**Płynniejszy zoom** — w MAP do 12 tys. obiektów i 150 tys. wierzchołków cała geometria jest pobierana raz. Kolejne ruchy kółka i pan są wyłącznie lokalnym rysowaniem Canvas: bez pobierania i czekania na backend po każdej zmianie kadru. Edycje obiektów i zmiany stylów wciąż pobierają aktualne dane. Większe mapy zostają przy systemie indeksowanych kadrów. Płynność FPS zależy od liczby widocznych obiektów i możliwości komputera.
+
+**Sprawdź:** na MOKRA WIEŚ.MAP szybko przybliżaj/oddalaj, obserwuj wielkość A1/A2; wyszukaj 5310 i fragment A2; kliknij znaleziony obiekt. Użyj Ctrl+H, potem Ctrl+F, testowej zamiany A2 i Ctrl+Z, a na końcu zapisz nową kopię MAP i sprawdź w klasycznym GEO-MAP.
