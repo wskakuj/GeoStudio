@@ -34,6 +34,8 @@
   const commands = [
     {name:"Otwórz plik GEO-MAP", hint:"Ctrl+O", run:chooseMap},
     {name:"Wybierz obiekty według kodu, A1, A2", hint:"Ctrl+H", run:openAdvancedSelection},
+    {name:"Znajdź obiekt po ID, kodzie lub treści", hint:"F", run:openFindDialog},
+    {name:"Zamień fragment w atrybutach z podglądem", hint:"Ctrl+F", run:openReplaceDialog},
     {name:"Edytuj zbiorowo pola A1/A2", hint:"Ctrl+Shift+E", run:openBulkEditor},
     {name:"Przeciągaj wybrane poligony", hint:"M", run:()=>setTool("move")},
     {name:"Kopiuj obok i przesuń myszą", hint:"Ctrl+D", run:quickDuplicate},
@@ -3276,8 +3278,16 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
     if($("line-dialog").open||$("split-dialog").open||
        $("copy-dialog").open||$("create-dialog").open||$("move-dialog").open||
        $("bulk-dialog").open||$("select-dialog").open||
-       $("label-settings-dialog").open)return;
+       $("label-settings-dialog").open||
+       $("find-dialog").open||$("replace-dialog").open)return;
+    if((ev.ctrlKey||ev.metaKey)&&!ev.shiftKey&&!ev.altKey&&
+       ev.key.toLowerCase()==="f"){
+      ev.preventDefault();openReplaceDialog();return;
+    }
     if(typing)return;
+    if(!ev.ctrlKey&&!ev.metaKey&&!ev.altKey&&ev.key.toLowerCase()==="f"){
+      ev.preventDefault();openFindDialog();return;
+    }
     if((ev.ctrlKey||ev.metaKey)&&ev.shiftKey&&ev.key.toLowerCase()==="g"){
       ev.preventDefault();mergePolygons();return;
     }
@@ -3367,6 +3377,24 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
   link("tool-open",chooseMap);
   link("empty-open",chooseMap);
   link("tool-advanced-select",openAdvancedSelection);
+  link("tool-find",openFindDialog);
+  link("tool-replace-phrase",openReplaceDialog);
+  link("find-close",()=>$("find-dialog").close());
+  link("find-select-all",selectFindResults);
+  $("find-form").addEventListener("submit",submitFind);
+  for(const id of ["find-code","find-field","find-value","find-match"])
+    $(id).addEventListener("input",()=>{
+      findList=[];
+      $("find-select-all").disabled=true;
+      $("find-results").replaceChildren();
+      $("find-summary").textContent="Kryteria zmienione. Kliknij Szukaj.";
+    });
+  link("replace-close",()=>$("replace-dialog").close());
+  link("replace-preview",previewReplacePhrase);
+  $("replace-form").addEventListener("submit",applyReplacePhrase);
+  for(const id of ["replace-field","replace-scope","replace-needle",
+                   "replace-replacement","replace-code","replace-case"])
+    $(id).addEventListener("input",invalidateReplacePreview);
   link("tool-bulk-edit",openBulkEditor);
   link("tool-move",()=>setTool("move"));
   link("tool-label-move",()=>setTool("labels"));
