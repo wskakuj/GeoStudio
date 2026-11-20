@@ -1,4 +1,4 @@
-"""Screen-space A1/A2 regression: mouse wheel must not resize captions."""
+"""Map-space A1/A2 regression: glyph size follows camera zoom."""
 from __future__ import annotations
 
 from pathlib import Path
@@ -24,7 +24,7 @@ def test_labels_are_separate_screen_space_overlay():
     assert "if(pass===\"labels\")renderLabels(visible,collisions);" in js
 
 
-def test_zoom_changes_label_position_but_not_onscreen_glyph_size():
+def test_zoom_changes_label_position_and_glyph_size_proportionally():
     node=shutil.which("node")
     if node is None:
         pytest.skip("Node.js needed for offline JavaScript regression")
@@ -66,19 +66,26 @@ const feature={
    {field:'A2',text:'So120',size:16,x:120,y:110,color:'#CC202C'}
  ]
 };
-const xPositions=[];
+const xPositions=[],fontSizes=[];
 for(const zoom of [.5,1,2,4]){
  state.scale=zoom;
  labelPaints.length=0;
  view.renderScreenLabels([feature]);
  assert.deepEqual(labelPaints.map(p=>p.text),['b','So120']);
- assert.ok(labelPaints.every(p=>p.font.includes('16px')),JSON.stringify(labelPaints));
+ // The font size is proportional to zoom, not fixed at 16 CSS pixels.
+ const actual=parseFloat(labelPaints[0].font.match(/([0-9.]+)px/)[1]);
+ assert.ok(Math.abs(actual-16*2500*.0254/96*zoom)<1e-9,actual);
+ assert.equal(labelPaints[1].font.match(/([0-9.]+)px/)[1],
+              labelPaints[0].font.match(/([0-9.]+)px/)[1]);
  assert.equal(view.currentCtx(),sceneCtx);
  assert.equal(state.labelHits.length,2);
  xPositions.push(labelPaints[0].x);
+ fontSizes.push(actual);
 }
 assert.ok(xPositions[0]<xPositions[1]&&xPositions[1]<xPositions[2]&&
           xPositions[2]<xPositions[3]);
+for(let i=1;i<fontSizes.length;i++)
+ assert.ok(Math.abs(fontSizes[i]/fontSizes[i-1]-2)<1e-9);
 assert.deepEqual(scenePaints,[]);
 assert.ok(transforms.every(args=>args[0]===2&&args[3]===2));
 """
