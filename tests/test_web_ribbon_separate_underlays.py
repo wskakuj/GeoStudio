@@ -82,8 +82,9 @@ def test_wms_raster_crs_have_independent_task_dialogs():
     assert 'id="underlay-raster-file"' in raster_block
     assert 'id="underlay-world-file"' in raster_block
     assert 'id="raster-opacity"' in raster_block
-    assert 'id="raster-gcp"' in raster_block
-    assert '<details class="raster-gcp-details">' in raster_block
+    assert 'id="raster-gcp-canvas"' in raster_block
+    assert 'id="raster-gcp-apply"' in raster_block
+    assert '<textarea id="raster-gcp"' not in raster_block
     assert 'id="underlay-crs-target"' in crs_block
     assert 'id="underlay-prj-file"' in crs_block
     assert 'id="underlay-crs-convert"' in crs_block
