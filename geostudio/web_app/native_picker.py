@@ -274,6 +274,10 @@ class NativeMapPicker:
         from tkinter import filedialog
         import shutil
         suggested, source = self._tile_exports.archive(ticket)
+        extension=Path(suggested).suffix.lower()
+        if extension not in (".tif", ".zip"):
+            raise ValueError("Niedozwolony format dużego eksportu.")
+        label="TIFF" if extension==".tif" else "ZIP"
         root = tk.Tk()
         try:
             root.withdraw()
@@ -285,17 +289,17 @@ class NativeMapPicker:
             chosen_name = filedialog.asksaveasfilename(
                 parent=root, initialdir=str(directory),
                 initialfile=suggested,
-                title="GeoStudio 2.0 — Zapisz pełną mapę w ZIP",
-                defaultextension=".zip",
-                filetypes=(("Archiwum ZIP", "*.zip"),),
+                title="GeoStudio 2.0 — Zapisz mapę "+label,
+                defaultextension=extension,
+                filetypes=((label, "*"+extension),),
                 confirmoverwrite=True)
         finally:
             root.destroy()
         if not chosen_name:
             return {"cancelled": True}
         chosen=Path(chosen_name)
-        if chosen.suffix.lower() != ".zip":
-            raise ValueError("Wybierz plik .zip.")
+        if chosen.suffix.lower() != extension:
+            raise ValueError("Wybierz plik "+extension+".")
         if self._source_path and chosen.resolve() == self._source_path:
             raise ValueError("Nie wolno nadpisać pliku MAP.")
         fd, temporary = tempfile.mkstemp(
