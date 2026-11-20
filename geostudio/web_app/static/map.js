@@ -3296,6 +3296,36 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
   function renderLabels(features,collisions=[]) {
     state.labelHits=[];
     if(!state.labels)return;
+    // Screen-space spatial hash, preserving export's cross-batch collision
+    // ledger. Checking every prior caption on every wheel frame was O(n²).
+    const cell=64,cellIndex=new Map();
+    function captionCells(rect){
+      const x0=Math.max(0,Math.floor(rect[0]/cell));
+      const x1=Math.min(Math.ceil(state.width/cell),Math.floor(rect[2]/cell));
+      const y0=Math.max(0,Math.floor(rect[1]/cell));
+      const y1=Math.min(Math.ceil(state.height/cell),Math.floor(rect[3]/cell));
+      const keys=[];
+      for(let x=x0;x<=x1;x++)for(let y=y0;y<=y1;y++)keys.push(x+":"+y);
+      return keys;
+    }
+    function indexCollision(item){
+      for(const key of captionCells(item.rect)){
+        if(!cellIndex.has(key))cellIndex.set(key,[]);
+        cellIndex.get(key).push(item);
+      }
+    }
+    for(const item of collisions)indexCollision(item);
+    function overlapsAnother(fid,rect){
+      const checked=new Set();
+      for(const key of captionCells(rect))for(const item of cellIndex.get(key)||[]){
+        if(checked.has(item))continue;
+        checked.add(item);
+        if(item.fid!==fid&&item.rect[0]<rect[2]&&
+           item.rect[2]>rect[0]&&item.rect[1]<rect[3]&&
+           item.rect[3]>rect[1])return true;
+      }
+      return false;
+    }
     let painted=0;
     const ordered=[...features].sort((a,b)=>{
       const priority=f=>f.id===state.active?-2:
@@ -3359,11 +3389,9 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
         // Keep A1 and A2 of the SAME feature together, but never let
         // descriptions of DIFFERENT features overwrite one another.
         // Culling is essential for dense 5310 areas and for export.
-        if(!selected&&collisions.some(item=>
-           item.fid!==feature.id&&item.rect[0]<rect[2]&&
-           item.rect[2]>rect[0]&&item.rect[1]<rect[3]&&
-           item.rect[3]>rect[1]))continue;
-        collisions.push({fid:feature.id,rect});
+        if(!selected&&overlapsAnother(feature.id,rect))continue;
+        const collision={fid:feature.id,rect};
+        collisions.push(collision);indexCollision(collision);
         if(!state.exporting&&(selected||state.tool==="labels")&&
            (label.field==="A1"||label.field==="A2"||
             state.labelSelected?.field===label.field&&
