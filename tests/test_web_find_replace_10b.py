@@ -217,8 +217,8 @@ def test_map_anchored_font_and_no_http_on_subsequent_zoom_small_map():
     assert "state.localMapCandidate=meta.objectCount<=50000" in src
     assert "if(state.localMapReady){" in src
     assert "let view=state.localMapCandidate?[...state.meta.bounds]" in src
-    assert "beginNavigationPreview();" in src
-    assert "renderScreenLabels(state.features.filter" in src
+    assert "requestDraw();return;" in src
+    assert "renderScreenLabels(features);drawGcpMapMarkers();" in src
     assert "function labelFontSize(feature,label,selected)" in src
     node=shutil.which("node")
     if not node:pytest.skip("Node is optional for JS zoom regression")
