@@ -85,6 +85,9 @@ def test_dynamic_class_visibility_and_theme_are_independent():
     assert 'document.body.dataset.theme=state.appTheme;' in js
     assert 'function buildLayer(name,count,filter="")' in js
     assert 'KLASY BONITACYJNE A2' in js
+    assert '--ui-edge:#b4c6d6' in css
+    assert 'body[data-theme="light"] .panel-head' in css
+    assert 'body[data-theme="light"] .ribbon-tab.active' in css
     assert 'state.hiddenLandUses.has(feature.landUse||"")' in js
 
     node=shutil.which("node")
@@ -107,7 +110,7 @@ assert.equal(visible({layer:'Użytki',landUse:'psiv',grade:null}),true);
 assert.equal(visible({layer:'Użytki Leśne',grade:'LsV'}),false);
 assert.equal(visible({layer:'Użytki Leśne',grade:'LsVI'}),true);
 state.hiddenLandUses.clear();
-assert.equal(visible({layer:'Użytki',landUse:'r',grade:null}),true);
+assert.equal(visible({layer:'Użytki',landUse:'rv',grade:null}),true);
 state.visibleLayers.delete('Użytki');
 assert.equal(visible({layer:'Użytki',landUse:'r',grade:null}),false);
 """
