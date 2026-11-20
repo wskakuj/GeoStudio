@@ -4227,12 +4227,13 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
       exportDpi:state.exportDpi
     };
     ctx=g;
+    const full=options.virtualLayout?.full||options;
     state.center={
-      x:(options.bounds[0]+options.bounds[2])/2,
-      y:(options.bounds[1]+options.bounds[3])/2
+      x:(full.bounds[0]+full.bounds[2])/2,
+      y:(full.bounds[1]+full.bounds[3])/2
     };
-    state.scale=options.pxPerUnit;
-    state.width=options.width;state.height=options.height;
+    state.scale=full.pxPerUnit;
+    state.width=full.width;state.height=full.height;
     state.pixelRatio=1;
     // The PNG/JPG/TIFF bitmap has its own pixel dimensions.
     // Do NOT scale text by DPI a second time.
@@ -4240,8 +4241,9 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
     state.exportDpi=options.dpi;
     g.save();
     try{
-      g.translate(options.margin,options.head);
-      g.beginPath();g.rect(0,0,options.width,options.height);g.clip();
+      g.translate(full.margin-(options.virtualLayout?.x||0),
+                  full.head-(options.virtualLayout?.y||0));
+      g.beginPath();g.rect(0,0,full.width,full.height);g.clip();
       const visible=features.filter(isVisible);
       const priority={"5216":0,"5220":1,"5230":2,"5310":3,"1246":4};
       visible.sort((a,b)=>(priority[a.code]??3)-(priority[b.code]??3));
@@ -4352,13 +4354,18 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
       ["fills","wypełnienia"],["strokes","linie"],["labels","etykiety"]
     ]){
       exportInfo("Eksport: "+label+"…");
-      await forEachExportPage(options.bounds,part=>
+      await forEachExportPage(options.queryBounds||options.bounds,part=>
         renderExportBatch(g,options,part,pass,exportLabelCollisions));
       if(state.edit?.revision!==revision||
          state.edit?.documentToken!==documentToken)
         throw Error("Mapa została zmieniona podczas przygotowania eksportu.");
     }
-    paintLayoutFurniture(g,options);
+    if(options.virtualLayout){
+      g.save();
+      g.translate(-options.virtualLayout.x,-options.virtualLayout.y);
+      paintLayoutFurniture(g,options.virtualLayout.full);
+      g.restore();
+    }else paintLayoutFurniture(g,options);
     return target;
   }
   function makeRGBTiff(target,dpi){
