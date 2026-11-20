@@ -2533,7 +2533,9 @@
     // index scans when a user zooms far out or pans away from their map.
     const map=state.meta.bounds;
     if(view[2]<map[0]||view[0]>map[2]||view[3]<map[1]||view[1]>map[3]){
-      state.features=[];state.limited=false;requestDraw();return;
+      state.features=[];state.limited=false;
+      state.previewActive=false;state.previewCamera=null;
+      requestDraw();return;
     }
     view=[Math.max(view[0],map[0]),Math.max(view[1],map[1]),
           Math.min(view[2],map[2]),Math.min(view[3],map[3])];
@@ -2545,16 +2547,20 @@
       if(ticket!==state.queryCounter)return;
       state.features=res.features;
       state.limited=res.limited;
+      state.previewActive=false;state.previewCamera=null;
       renderCartographyMatches();
       requestDraw();
     }catch(err){
-      if(err.name!=="AbortError")inform("Nie udało się narysować mapy: "+err.message,true);
+      if(err.name!=="AbortError"){
+        state.previewActive=false;state.previewCamera=null;requestDraw();
+        inform("Nie udało się narysować mapy: "+err.message,true);
+      }
     }
   }
   function scheduleViewport(now=false) {
     clearTimeout(state.refreshTimer);
     if(now)refreshViewport();
-    else state.refreshTimer=setTimeout(refreshViewport,150);
+    else state.refreshTimer=setTimeout(refreshViewport,100);
   }
   function buildLayer(name,count) {
     const item=document.createElement("div");item.className="layer-item";
