@@ -4727,7 +4727,8 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
       }else if(!print&&options.format==="dxf"){
         exportInfo("Generowanie edytowalnego DXF…");
         const query=new URLSearchParams({
-          documentToken:state.edit.documentToken});
+          documentToken:state.edit.documentToken,
+          bounds:JSON.stringify(selectedExportBounds())});
         const response=await fetch("/api/export/dxf?"+query.toString(),{
           headers:{"X-GeoStudio-Token":token},cache:"no-store"});
         if(!response.ok){
