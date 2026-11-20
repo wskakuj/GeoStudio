@@ -840,6 +840,23 @@ class PreviewWorkspace:
         with self._lock:
             return self._editing_status()
 
+    def topology_audit(self, document_token: str, revision: int,
+                       limit: int = 600) -> dict:
+        """Read-only, revision-bound audit of the current working MAP."""
+        from .topology_audit import inspect_topology
+        with self._lock:
+            if self._doc is None:
+                raise ValueError("Najpierw otwórz mapę.")
+            if document_token != self._document_token or (
+                    type(revision) is not int or revision != self._revision):
+                raise RuntimeError("Mapa zmieniła się. Uruchom analizę ponownie.")
+            # All geometries belong to the same snapshot; no routine here
+            # can mutate native P coordinates, styles or history.
+            return inspect_topology(
+                self._entries, document_token=self._document_token,
+                revision=self._revision, limit=limit)
+
+
     def edit_fields(self, fid: str, changes: dict, *,
                     document_token: str, revision: int) -> dict:
         """Edit existing fields only. Preserve all unrelated MAP source bytes."""
