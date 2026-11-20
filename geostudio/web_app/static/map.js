@@ -1941,10 +1941,71 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
       $("underlay-crs-result").textContent="Nie udało się przeliczyć: "+error.message;
     }
   }
+  function setMapEPSG(value){
+    // Each dialog changes the SAME per-map CRS; never reuse the EPSG of
+    // a different MAP. All calibrated backgrounds must match its axes.
+    const chosen=String(value||"");
+    if(!["","2180","2176","2177","2178","2179"].includes(chosen))return;
+    const changed=chosen!==state.mapEPSG;
+    state.mapEPSG=chosen;
+    for(const id of ["underlay-epsg","raster-epsg","crs-epsg"])
+      $(id).value=chosen;
+    if(!changed)return;
+    if(underlay.enabled)removeUnderlay();
+    if(raster.image&&raster.affine)
+      rasterInfo("Zmieniono EPSG mapy: raster wymaga ponownego "+
+        "potwierdzenia georeferencji i pozostaje ukryty.");
+    state.previewActive=false;state.geometrySnapshotValid=false;requestDraw();
+  }
+  const geoportalWmsUrls={
+    standard:"https://mapy.geoportal.gov.pl/wss/service/PZGIK/ORTO/WMS/StandardResolution",
+    high:"https://mapy.geoportal.gov.pl/wss/service/PZGIK/ORTO/WMS/HighResolution"
+  };
+  function showWmsPresetAddress(){
+    $("underlay-url").value=geoportalWmsUrls[$("underlay-preset").value]||"";
+  }
   function openUnderlayDialog(){
     if(!state.meta){inform("Najpierw otwórz mapę MAP.");return;}
+    showWmsPresetAddress();
     $("underlay-dialog").showModal();
     if($("underlay-layer").options.length<=1)loadUnderlayLayers();
+  }
+  function openRasterDialog(){
+    if(!state.meta){inform("Najpierw otwórz mapę MAP.");return;}
+    $("raster-dialog").showModal();
+  }
+  function openCrsDialog(){
+    if(!state.meta){inform("Najpierw otwórz mapę MAP.");return;}
+    $("crs-dialog").showModal();
+  }
+  function activateRibbonTab(id,focus=false){
+    const tab=$("ribbon-tab-"+id),panel=$("ribbon-panel-"+id);
+    if(!tab||!panel)return;
+    document.querySelectorAll("[data-ribbon-tab]").forEach(item=>{
+      const active=item===tab;
+      item.classList.toggle("active",active);
+      item.setAttribute("aria-selected",String(active));
+      item.tabIndex=active?0:-1;
+    });
+    document.querySelectorAll("[data-ribbon-panel]").forEach(item=>{
+      item.hidden=item!==panel;
+      item.classList.toggle("active",item===panel);
+    });
+    if(focus)tab.focus({preventScroll:true});
+  }
+  function setupRibbon(){
+    const tabs=[...document.querySelectorAll("[data-ribbon-tab]")];
+    for(const tab of tabs){
+      tab.addEventListener("click",()=>activateRibbonTab(tab.dataset.ribbonTab));
+      tab.addEventListener("keydown",event=>{
+        if(!["ArrowLeft","ArrowRight","Home","End"].includes(event.key))return;
+        event.preventDefault();
+        const index=tabs.indexOf(tab);
+        const next=event.key==="Home"?0:event.key==="End"?tabs.length-1:
+          (index+(event.key==="ArrowRight"?1:-1)+tabs.length)%tabs.length;
+        activateRibbonTab(tabs[next].dataset.ribbonTab,true);
+      });
+    }
   }
   function underlayRequestDimensions(bounds){
     const aspect=(bounds[2]-bounds[0])/(bounds[3]-bounds[1]);
@@ -4318,8 +4379,17 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
   link("select-clear",clearAdvancedSelection);
   $("select-form").addEventListener("submit",applyAdvancedSelection);
 
+  setupRibbon();
   link("tool-underlay",openUnderlayDialog);
+  link("tool-raster",openRasterDialog);
+  link("tool-crs",openCrsDialog);
+  link("tool-layout-ribbon",openLayoutDialog);
+  link("tool-map-copy-ribbon",downloadMapCopy);
   link("underlay-close",()=>$("underlay-dialog").close());
+  link("raster-close",()=>$("raster-dialog").close());
+  link("raster-close-bottom",()=>$("raster-dialog").close());
+  link("crs-close",()=>$("crs-dialog").close());
+  link("crs-close-bottom",()=>$("crs-dialog").close());
   link("underlay-layers",loadUnderlayLayers);
   link("underlay-crs-convert",convertUnderlayCenter);
   $("underlay-prj-file").addEventListener("change",ev=>{
@@ -4328,16 +4398,10 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
   link("underlay-show",applyUnderlay);
   link("underlay-remove",removeUnderlay);
   $("underlay-preset").addEventListener("change",()=>{
-    removeUnderlay();loadUnderlayLayers();
+    removeUnderlay();showWmsPresetAddress();loadUnderlayLayers();
   });
-  $("underlay-epsg").addEventListener("change",()=>{
-    if(underlay.enabled)removeUnderlay();
-    if(raster.image&&raster.affine){
-      rasterInfo("Zmiana EPSG ukryła poprzedni raster. Wczytaj ponownie " +
-        "właściwy world/GeoTIFF lub przelicz punkty GCP.");
-    }
-    state.previewActive=false;state.geometrySnapshotValid=false;requestDraw();
-  });
+  for(const id of ["underlay-epsg","raster-epsg","crs-epsg"])
+    $(id).addEventListener("change",ev=>setMapEPSG(ev.target.value));
   $("underlay-raster-file").addEventListener("change",ev=>{
     openRasterFile(ev.target.files?.[0]);ev.target.value="";
   });
