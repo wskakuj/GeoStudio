@@ -159,7 +159,7 @@ def test_pywebview_js_bridge_has_no_native_window_or_workspace(tmp_path):
     exposed = [name for name in dir(picker) if not name.startswith("_")]
     assert exposed == ["open_libraries", "open_map", "restore_recovery",
                        "save_baked_map", "save_base_map", "save_generated_export", "save_map",
-                       "save_recovery"]
+                       "save_recovery", "save_tiled_export"]
     assert callable(picker.open_map)
     assert picker._workspace is workspace
     assert not hasattr(picker, "_window")
