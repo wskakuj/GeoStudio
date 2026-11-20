@@ -36,8 +36,14 @@
     snapEnabled: true, sharedNodes: false, vertexDrag: null,
     hoverInsert: null, selectedVertex: null
   };
+  // WMS is a read-only background; never part of MAP, geometry or export.
+  const underlay = {
+    enabled:false, image:null, bounds:null, opacity:.75, preset:"standard",
+    layer:"", epsg:null, ticket:0, timer:null, abort:null
+  };
   const commands = [
     {name:"Otwórz plik GEO-MAP", hint:"Ctrl+O", run:chooseMap},
+    {name:"Podkład ortofotomapy WMS (Geoportal)", hint:"Etap 12A", run:openUnderlayDialog},
     {name:"Wybierz obiekty według kodu, A1, A2", hint:"Ctrl+H", run:openAdvancedSelection},
     {name:"Znajdź obiekt po ID, kodzie lub treści", hint:"F", run:openFindDialog},
     {name:"Zamień fragment w atrybutach z podglądem", hint:"Ctrl+F", run:openReplaceDialog},
@@ -400,6 +406,10 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
   }
 
   function finishOpeningMap(meta) {
+    removeUnderlay();
+    // An EPSG choice belongs to the previously opened map and must
+    // NEVER be silently reused for unrelated GEO-MAP coordinates.
+    $("underlay-epsg").value="";
     state.meta = meta;
     updateEditState(meta);
     state.active = null; state.detail = null; state.pinned.clear();
@@ -1835,6 +1845,138 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
     ctx.fillText("MAGNES: "+snap.kind,p.x+15,p.y-12);
     ctx.restore();
   }
+  function updateUnderlayStatus(message) {
+    $("underlay-summary").textContent=message;
+    $("underlay-chip").textContent=underlay.enabled
+      ?("Ortofotomapa WMS · EPSG:"+underlay.epsg):"Bez podkładu";
+  }
+  function removeUnderlay(){
+    underlay.ticket++;
+    clearTimeout(underlay.timer);
+    if(underlay.abort)underlay.abort.abort();
+    underlay.abort=null;underlay.enabled=false;
+    underlay.image=null;underlay.bounds=null;underlay.layer="";
+    underlay.epsg=null;
+    if($("underlay-summary"))updateUnderlayStatus("Podkład usunięty. MAP pozostaje niezmieniony.");
+    if(state.meta){state.previewActive=false;state.geometrySnapshotValid=false;requestDraw();}
+  }
+  async function loadUnderlayLayers(){
+    const preset=$("underlay-preset").value;
+    const options=$("underlay-layer");
+    options.replaceChildren(new Option("Wczytywanie warstw Geoportalu…",""));
+    $("underlay-summary").textContent="Pobieranie listy warstw WMS…";
+    try{
+      const response=await api("/api/underlay/wms/layers?preset="+encodeURIComponent(preset));
+      if($("underlay-preset").value!==preset)return;
+      options.replaceChildren();
+      for(const entry of response.layers){
+        const choice=new Option(entry.title+" ("+entry.id+")",entry.id);
+        choice.dataset.epsg=entry.epsg.join(",");
+        options.add(choice);
+      }
+      if(!options.options.length)throw Error("Brak warstw obsługujących polskie EPSG.");
+      $("underlay-summary").textContent=
+        "Wybierz rzeczywisty EPSG otwartej MAP, a następnie włącz podkład.";
+    }catch(error){
+      options.replaceChildren(new Option("Nie udało się pobrać warstw",""));
+      $("underlay-summary").textContent=error.message;
+      inform("Błąd WMS: "+error.message,true);
+    }
+  }
+  function openUnderlayDialog(){
+    if(!state.meta){inform("Najpierw otwórz mapę MAP.");return;}
+    $("underlay-dialog").showModal();
+    if($("underlay-layer").options.length<=1)loadUnderlayLayers();
+  }
+  function underlayRequestDimensions(bounds){
+    const aspect=(bounds[2]-bounds[0])/(bounds[3]-bounds[1]);
+    let width=Math.max(128,Math.min(2048,Math.round(state.width*1.15)));
+    let height=Math.round(width/aspect);
+    if(height>2048){height=2048;width=Math.round(height*aspect);}
+    return {width:Math.max(128,Math.min(2048,width)),
+            height:Math.max(128,Math.min(2048,height))};
+  }
+  function scheduleUnderlayRefresh(immediate=false){
+    if(!underlay.enabled||!state.meta)return;
+    clearTimeout(underlay.timer);
+    underlay.timer=setTimeout(refreshUnderlay,immediate?0:420);
+  }
+  async function refreshUnderlay(){
+    if(!underlay.enabled||!state.meta)return;
+    const id=++underlay.ticket;
+    if(underlay.abort)underlay.abort.abort();
+    const controller=new AbortController();underlay.abort=controller;
+    const bounds=boundsFromViewport(.15);
+    const size=underlayRequestDimensions(bounds);
+    const params=new URLSearchParams({
+      preset:underlay.preset,layer:underlay.layer,epsg:String(underlay.epsg),
+      xmin:String(bounds[0]),ymin:String(bounds[1]),
+      xmax:String(bounds[2]),ymax:String(bounds[3]),
+      width:String(size.width),height:String(size.height)
+    });
+    const documentToken=state.edit?.documentToken;
+    try{
+      const response=await fetch("/api/underlay/wms/map?"+params,{
+        headers:{"X-GeoStudio-Token":token},cache:"no-store",signal:controller.signal
+      });
+      if(!response.ok){
+        const err=await response.json().catch(()=>({}));
+        throw Error(err.detail||"Geoportal nie zwrócił obrazu.");
+      }
+      const blob=await response.blob();
+      const url=URL.createObjectURL(blob);
+      let image;
+      try{
+        image=await new Promise((resolve,reject)=>{
+          const bitmap=new Image();
+          bitmap.onload=()=>resolve(bitmap);
+          bitmap.onerror=()=>reject(Error("Nie można odczytać obrazu Geoportalu."));
+          bitmap.src=url;
+        });
+      }finally{URL.revokeObjectURL(url);}
+      if(!underlay.enabled||id!==underlay.ticket||
+         documentToken!==state.edit?.documentToken)return;
+      underlay.image=image;underlay.bounds=bounds;
+      state.previewActive=false;state.previewCamera=null;
+      state.geometrySnapshotValid=false;requestDraw();
+      updateUnderlayStatus("WMS wczytany. Podkład dopasowany do aktualnego kadru.");
+    }catch(error){
+      if(error.name==="AbortError"||id!==underlay.ticket)return;
+      // Retain the previous valid image while reporting the failure.
+      updateUnderlayStatus("WMS nie został odświeżony: "+error.message);
+    }finally{
+      if(underlay.abort===controller)underlay.abort=null;
+    }
+  }
+  function applyUnderlay(){
+    if(!state.meta){inform("Najpierw otwórz mapę.");return;}
+    const epsg=Number($("underlay-epsg").value);
+    const option=$("underlay-layer").selectedOptions[0];
+    const layer=option?.value||"";
+    const supported=(option?.dataset.epsg||"").split(",");
+    if(![2180,2176,2177,2178,2179].includes(epsg)||
+       !supported.includes(String(epsg))||!layer){
+      inform("Wybierz układ EPSG, który jest zgodny z MAP i warstwą WMS.",true);
+      return;
+    }
+    // No automatic CRS guessing: user explicitly chooses it per MAP.
+    underlay.enabled=true;
+    underlay.preset=$("underlay-preset").value;
+    underlay.layer=layer;underlay.epsg=epsg;
+    underlay.image=null;underlay.bounds=null;
+    updateUnderlayStatus("Pobieranie obrazu dla EPSG:"+epsg+"…");
+    scheduleUnderlayRefresh(true);
+  }
+  function paintUnderlay(){
+    if(!underlay.enabled||!underlay.image||!underlay.bounds)return;
+    const bounds=underlay.bounds;
+    const top=worldToScreen(bounds[0],bounds[1]);
+    const bottom=worldToScreen(bounds[2],bounds[3]);
+    ctx.save();ctx.globalAlpha=underlay.opacity;
+    ctx.drawImage(underlay.image,top.x,top.y,
+                  bottom.x-top.x,bottom.y-top.y);
+    ctx.restore();
+  }
   function resizeCanvas() {
     const rect = shell.getBoundingClientRect();
     state.width = Math.max(1, rect.width); state.height = Math.max(1, rect.height);
@@ -1849,6 +1991,7 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
       state.geometrySnapshotValid=false;
     }
     requestDraw();
+    scheduleUnderlayRefresh();
   }
   function worldToScreen(x,y) {
     return {x:(x-state.center.x)*state.scale + state.width/2,
@@ -2196,7 +2339,8 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
     if(!feature.closed||!style.hasFill||style.opacity<=0)return;
     addPath(feature.geometry);
     ctx.fillStyle=hatchPattern(style);
-    ctx.globalAlpha=Math.min(1,Math.max(0,style.opacity));
+    ctx.globalAlpha=Math.min(underlay.enabled&&underlay.image&&!state.exporting?.40:1,
+                             Math.max(0,style.opacity));
     ctx.fill("evenodd");
     ctx.globalAlpha=1;
   }
@@ -2741,7 +2885,7 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
     ctx.clearRect(0,0,state.width,state.height);
     ctx.fillStyle=isDark?"#17283b":"#FAFCFD";
     ctx.fillRect(0,0,state.width,state.height);
-    drawGrid();
+    paintUnderlay();drawGrid();
     if(!state.meta){renderScreenLabels([]);return;}
     // Keep the last verified viewport visible while the spatial request
     // catches up to the new camera, avoiding blank flashes on zoom.
@@ -2819,6 +2963,7 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
     }
   }
   function scheduleViewport(now=false) {
+    scheduleUnderlayRefresh();
     clearTimeout(state.refreshTimer);
     if(state.localMapReady){
       state.refreshTimer=setTimeout(()=>{
@@ -3953,6 +4098,22 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
   link("select-clear",clearAdvancedSelection);
   $("select-form").addEventListener("submit",applyAdvancedSelection);
 
+  link("tool-underlay",openUnderlayDialog);
+  link("underlay-close",()=>$("underlay-dialog").close());
+  link("underlay-layers",loadUnderlayLayers);
+  link("underlay-show",applyUnderlay);
+  link("underlay-remove",removeUnderlay);
+  $("underlay-preset").addEventListener("change",()=>{
+    removeUnderlay();loadUnderlayLayers();
+  });
+  $("underlay-epsg").addEventListener("change",()=>{
+    if(underlay.enabled)removeUnderlay();
+  });
+  $("underlay-opacity").addEventListener("input",ev=>{
+    underlay.opacity=Number(ev.target.value)/100;
+    $("underlay-opacity-value").textContent=ev.target.value+"%";
+    state.previewActive=false;state.geometrySnapshotValid=false;requestDraw();
+  });
   link("tool-sidecar",()=> $("file-sidecar").click());
   link("tool-cartography",chooseCartographicLibraries);
   link("tool-topology",()=> $("file-topology").click());
