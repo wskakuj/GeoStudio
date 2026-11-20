@@ -8,12 +8,15 @@
   const $ = id => document.getElementById(id);
   const token = document.querySelector('meta[name="api-token"]').content;
   const canvas = $("map-canvas"), shell = $("canvas-shell"), ctx = canvas.getContext("2d");
+  const viewportSnapshot=document.createElement("canvas");
+  const snapshotContext=viewportSnapshot.getContext("2d");
   const formatter = new Intl.NumberFormat("pl-PL");
   const state = {
     meta: null, features: [], visibleLayers: new Set(), hiddenGrades: new Set(),
     center: {x: 0, y: 0}, scale: 1, tool: "select",
     labels: true, grid: false, active: null, detail: null, pinned: new Set(),
     cartoLibraries: {},
+    previewActive:false,previewCamera:null,
     width: 1, height: 1, pixelRatio: 1, isDragging: false, drag: null,
     lastPick: null, scheduled: false, refreshTimer: null, queryCounter: 0,
     queryAbort: null, selectionRequest: 0, limited: false,
@@ -389,6 +392,7 @@
     populateSelectCodes();
     state.vertexDrag=null;state.moveGhost=null;state.movePreview=null;
     state.labelDrag=null;state.labelSelected=null;state.labelHits=[];
+    state.previewActive=false;state.previewCamera=null;
     state.moveIds=[];state.copyIds=[];state.drawPoints=[];
     state.cutIds=[];state.lineEditId=null;state.geometryPreview=null;
     state.drawHover=null;state.drawSnap=null;state.drawCursorWorld=null;
@@ -1618,7 +1622,10 @@
     state.pixelRatio = Math.min(2, window.devicePixelRatio || 1);
     const w = Math.round(state.width * state.pixelRatio);
     const h = Math.round(state.height * state.pixelRatio);
-    if (canvas.width !== w || canvas.height !== h) { canvas.width=w; canvas.height=h; }
+    if (canvas.width !== w || canvas.height !== h) {
+      canvas.width=w;canvas.height=h;
+      state.previewActive=false;state.previewCamera=null;
+    }
     requestDraw();
   }
   function worldToScreen(x,y) {
@@ -1644,9 +1651,35 @@
     state.scale=Math.max(.000001,Math.min(3500,state.scale));
     requestDraw(); scheduleViewport(true);
   }
+  function beginNavigationPreview() {
+    if(state.previewActive||!state.meta||!canvas.width||!canvas.height)return;
+    viewportSnapshot.width=canvas.width;
+    viewportSnapshot.height=canvas.height;
+    snapshotContext.setTransform(1,0,0,1,0,0);
+    snapshotContext.clearRect(0,0,canvas.width,canvas.height);
+    snapshotContext.drawImage(canvas,0,0);
+    state.previewCamera={
+      center:{...state.center},scale:state.scale,
+      width:state.width,height:state.height
+    };
+    state.previewActive=true;
+  }
+  function drawNavigationPreview() {
+    const c=state.previewCamera;
+    if(!state.previewActive||!c||!viewportSnapshot.width)return false;
+    const factor=state.scale/c.scale;
+    const dx=state.width/2-c.width/2*factor+
+      (c.center.x-state.center.x)*state.scale;
+    const dy=state.height/2-c.height/2*factor+
+      (c.center.y-state.center.y)*state.scale;
+    ctx.drawImage(viewportSnapshot,dx,dy,c.width*factor,c.height*factor);
+    updateScaleReadout();
+    return true;
+  }
   function zoomAt(factor, px, py) {
     if (!state.meta) return;
     const origin=screenToWorld(px,py);
+    beginNavigationPreview();
     state.scale=Math.max(.000001,Math.min(3500,state.scale*factor));
     state.center={
       x:origin.x-(px-state.width/2)/state.scale,
@@ -2467,7 +2500,10 @@
     ctx.fillStyle=isDark?"#17283b":"#FAFCFD";
     ctx.fillRect(0,0,state.width,state.height);
     drawGrid();
-    if(!state.meta) return;
+    if(!state.meta)return;
+    // Keep the last verified viewport visible while the spatial request
+    // catches up to the new camera, avoiding blank flashes on zoom.
+    if(drawNavigationPreview())return;
     const box=boundsFromViewport(.05);
     const features=state.features.filter(f=>isVisible(f)&&isInView(f.bbox,box));
     // Match the classic QGraphicsScene: paint fills below ALL outlines.
@@ -2479,7 +2515,7 @@
     for(const feature of features) renderStroke(feature);
     renderHighlights(features);drawMoveGhost(features);drawMoveMagnet();
     renderLabels(features);drawDraftPolygon();drawMagnetMarker();drawVertexTool();
-    $("scale-label").textContent="Podgląd: "+state.scale.toFixed(state.scale<1?3:1)+" px / jedn.";
+    updateScaleReadout();
     $("count-visible").textContent=display(features.length);
     $("render-hint").textContent=state.limited
       ?"Zbyt wiele obiektów · przybliż mapę":"HTML Canvas · "+display(features.length)+" obiektów";
@@ -2831,6 +2867,7 @@
       }
     }else if(d.moved){
       if(d.pan||state.tool==="select"){
+        beginNavigationPreview();
         state.center.x-=(p.x-d.last.x)/state.scale;
         state.center.y-=(p.y-d.last.y)/state.scale;
         shell.classList.add("dragging");requestDraw();
