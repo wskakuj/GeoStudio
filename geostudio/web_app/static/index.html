@@ -32,68 +32,70 @@
       </div>
     </header>
 
-    <div class="toolbar">
-      <div class="tool-section">
-        <span class="section-label">PROJEKT</span>
-        <div class="tool-row">
-          <button class="tool-button" id="tool-open"><span class="tool-glyph">▱</span>Otwórz</button>
-          <button class="tool-button" id="tool-sidecar"><span class="tool-glyph">◈</span>Style JSON</button>
-          <button class="tool-button" id="tool-cartography" title="Wczytaj oryginalne biblioteki kartograficzne LAY, CDF i SYM"><span class="tool-glyph">▤</span>LAY/CDF/SYM</button>
-          <button class="tool-button" id="tool-topology" title="Po otwarciu wyciętej mapy MAP w przeglądarce wczytaj jej JSON z odwracalną topologią"><span class="tool-glyph">◇</span>Odtwórz kontury</button>
-          <button class="tool-button" id="tool-undo" disabled title="Cofnij (Ctrl+Z)"><span class="tool-glyph">↶</span>Cofnij</button>
-          <button class="tool-button" id="tool-redo" disabled title="Ponów (Ctrl+Y)"><span class="tool-glyph">↷</span>Ponów</button>
-          <button class="tool-button" id="tool-export-baked" disabled title="Eksperymentalny: zapisz rzeczywiste wycięcia do MAP wraz z plikiem do ich odtworzenia"><span class="tool-glyph">▧</span>Zapisz wycięcia <small>6B</small></button>
-        </div>
+    <div class="toolbar" id="main-ribbon" aria-label="Narzędzia GeoStudio">
+      <div class="ribbon-tabs" role="tablist" aria-label="Zakładki narzędzi" aria-orientation="horizontal">
+<button type="button" role="tab" id="ribbon-tab-start" data-ribbon-tab="start" aria-controls="ribbon-panel-start" aria-selected="true" tabindex="0" class="ribbon-tab active" title="Mapa i historia">Start</button>
+<button type="button" role="tab" id="ribbon-tab-select" data-ribbon-tab="select" aria-controls="ribbon-panel-select" aria-selected="false" tabindex="-1" class="ribbon-tab" title="Wybór i wyszukiwanie">Zaznaczanie</button>
+<button type="button" role="tab" id="ribbon-tab-edit" data-ribbon-tab="edit" aria-controls="ribbon-panel-edit" aria-selected="false" tabindex="-1" class="ribbon-tab" title="Zmiany i atrybuty">Edycja</button>
+<button type="button" role="tab" id="ribbon-tab-draw" data-ribbon-tab="draw" aria-controls="ribbon-panel-draw" aria-selected="false" tabindex="-1" class="ribbon-tab" title="Tworzenie i operacje">Rysowanie</button>
+<button type="button" role="tab" id="ribbon-tab-cartography" data-ribbon-tab="cartography" aria-controls="ribbon-panel-cartography" aria-selected="false" tabindex="-1" class="ribbon-tab" title="Opisy i style mapy">Kartografia</button>
+<button type="button" role="tab" id="ribbon-tab-underlay" data-ribbon-tab="underlay" aria-controls="ribbon-panel-underlay" aria-selected="false" tabindex="-1" class="ribbon-tab" title="WMS, raster i układy">Podkłady</button>
+<button type="button" role="tab" id="ribbon-tab-export" data-ribbon-tab="export" aria-controls="ribbon-panel-export" aria-selected="false" tabindex="-1" class="ribbon-tab" title="Wydruk i kopie">Eksport</button>
       </div>
-      <span class="tool-divider"></span>
-      <div class="tool-section">
-        <span class="section-label">NAWIGACJA</span>
-        <div class="tool-row">
-          <button class="tool-button active" id="tool-select"><span class="tool-glyph">↖</span>Zaznacz <small>S</small></button>
-          <button class="tool-button" id="tool-pan"><span class="tool-glyph">✥</span>Przesuń <small>H</small></button>
-          <button class="tool-button" id="tool-move" title="Przeciągaj wybrane obiekty: punkty, linie i poligony (M)"><span class="tool-glyph">✥</span>Obiekty <small>M</small></button>
-          <!-- Legacy numeric move retains the API but is intentionally not part of the UI. -->
-          <button id="tool-move-offset" type="button" hidden style="display:none" aria-hidden="true" tabindex="-1">Δ X/Y</button>
-          <button class="tool-button" id="tool-nodes" title="Edycja węzłów poligonu (P)"><span class="tool-glyph">⬡</span>Węzły <small>P</small></button>
-          <button class="tool-button" id="tool-clear-selection" title="Odznacz wszystkie obiekty z bloku (Esc)"><span class="tool-glyph">◌</span>Odznacz <small>Esc</small></button>
-          <button class="tool-button" id="tool-advanced-select" title="Zaznacz według kodu i atrybutów (Ctrl+H)"><span class="tool-glyph">⌕</span>Filtruj <small>Ctrl+H</small></button>
-          <button class="tool-button" id="tool-find" title="Wyszukaj po ID, kodzie lub dowolnej treści (F)"><span class="tool-glyph">⌕</span>Znajdź <small>F</small></button>
-          <button class="tool-button" id="tool-replace-phrase" title="Znajdź i zamień fragment w wybranym polu, z podglądem i Ctrl+Z (Ctrl+F)"><span class="tool-glyph">⇄</span>Zamień <small>Ctrl+F</small></button>
-          <button class="tool-button" id="tool-bulk-edit" disabled title="Zmień A1/A2 wielu zaznaczonych obiektów"><span class="tool-glyph">✎</span>Zbiorowo <small>A1/A2</small></button>
-          <button class="tool-button" id="tool-delete-node" disabled title="Zaznacz węzeł i usuń go (Delete)"><span class="tool-glyph">⊖</span>Usuń węzeł <small>Del</small></button>
-          <button class="tool-button" id="tool-copy" title="Kopiuj zaznaczone poligony (Ctrl+D)"><span class="tool-glyph">⧉</span>Kopiuj obok <small>Ctrl+D</small></button>
-          <button class="tool-button" id="tool-delete-objects" title="Usuń wybrane obiekty (Ctrl+Delete)"><span class="tool-glyph">×</span>Usuń obiekty</button>
-          <button class="tool-button" id="tool-new-polygon" title="Narysuj nowy poligon (N)"><span class="tool-glyph">⬟</span>Nowy poligon <small>N</small></button>
-          <button class="tool-button active draw-magnet-control" id="tool-draw-snap" aria-pressed="true" title="Magnes przy rysowaniu: przyciąga tylko do bardzo bliskich węzłów i linii (G w trybie rysowania). Przytrzymaj Alt, aby chwilowo wyłączyć."><span class="tool-glyph">⌾</span>Magnes <small>G</small></button>
-          <button class="tool-button" id="tool-merge" title="Scal wybrane poligony tego samego kodu (Ctrl+Shift+G)"><span class="tool-glyph">⧉</span>Scal</button>
-          <button class="tool-button" id="tool-split" title="Narysuj linię podziału jednego poligonu (Ctrl+Shift+X)"><span class="tool-glyph">⌁</span>Podziel</button>
-          <button class="tool-button" id="tool-winding" title="Ręczna naprawa starych rekordów; podczas Zapisz jako wszystkie proste poligony otrzymują dodatni obrys automatycznie"><span class="tool-glyph">⊕</span>Pole + (stare)</button>
-          <button class="tool-button" id="tool-line" title="Narysuj linię (L), edytuj istniejącą (Shift+L)"><span class="tool-glyph">╱</span>Linia</button>
-          <button class="tool-button" id="tool-fit"><span class="tool-glyph">⛶</span>Dopasuj</button>
-        </div>
-      </div>
-      <span class="tool-divider"></span>
-      <div class="tool-section">
-        <span class="section-label">KARTOGRAFIA · WIDOK</span>
-        <div class="tool-row">
-          <span id="cartography-status" class="section-label" title="Załadowane biblioteki kartograficzne">Brak bibliotek</span>
-          <button class="tool-button active" id="tool-labels"><span class="tool-glyph">Aa</span>Etykiety</button>
-          <button class="tool-button" id="tool-label-move" title="Przesuwanie pojedynczych opisów A1/A2/TX myszą (tryb L)"><span class="tool-glyph">↗</span>Przesuń napisy <small>L</small></button>
-          <button class="tool-button" id="tool-label-config" title="Ustaw widoczność, rozmiar i kolor osobno dla A1/A2 według kodu (Ctrl+Alt+L)"><span class="tool-glyph">Aa</span>Styl opisów</button>
-          <button class="tool-button" id="tool-grid"><span class="tool-glyph">▦</span>Siatka</button>
-          <button class="tool-button" id="tool-underlay" title="Ortofotomapy WMS, raster, GCP i EPSG (etap 12)"><span class="tool-glyph">▧</span>Podkłady</button>
-        </div>
-      </div>
-      <span class="tool-divider"></span>
-      <div class="tool-section geometry-options">
-        <span class="section-label">EDYCJA WĘZŁÓW</span>
-        <div class="tool-row">
-          <label class="toolbar-checkbox" title="Przyciągaj do wszystkich linii i graniczników mapy"><input type="checkbox" id="opt-snap" checked> Przyciąganie</label>
-          <label class="toolbar-checkbox" title="Przemieszczaj wspólne węzły WYŁĄCZNIE obiektów o tym samym kodzie"><input type="checkbox" id="opt-shared"> Wspólne węzły (ten sam kod)</label>
-        </div>
-      </div>
-      <div class="toolbar-fill"></div>
-      <div class="safe-state"><span class="state-dot"></span> ORYGINAŁ CHRONIONY · EDYCJA W PAMIĘCI</div>
+      <div class="ribbon-panels"><div id="ribbon-panel-start" class="ribbon-panel active" data-ribbon-panel="start" role="tabpanel" aria-labelledby="ribbon-tab-start" >
+<section class="ribbon-group" aria-label="PLIKI"><span class="section-label">PLIKI</span><div class="tool-row"><button class="tool-button" id="tool-open"><span class="tool-glyph">▱</span>Otwórz</button>
+<button class="tool-button" id="tool-sidecar"><span class="tool-glyph">◈</span>Style JSON</button>
+<button class="tool-button" id="tool-topology" title="Po otwarciu wyciętej mapy MAP w przeglądarce wczytaj jej JSON z odwracalną topologią"><span class="tool-glyph">◇</span>Odtwórz kontury</button></div></section>
+<section class="ribbon-group" aria-label="HISTORIA"><span class="section-label">HISTORIA</span><div class="tool-row"><button class="tool-button" id="tool-undo" disabled title="Cofnij (Ctrl+Z)"><span class="tool-glyph">↶</span>Cofnij</button>
+<button class="tool-button" id="tool-redo" disabled title="Ponów (Ctrl+Y)"><span class="tool-glyph">↷</span>Ponów</button></div></section>
+<section class="ribbon-group" aria-label="WIDOK"><span class="section-label">WIDOK</span><div class="tool-row"><button class="tool-button" id="tool-fit"><span class="tool-glyph">⛶</span>Dopasuj</button>
+<button class="tool-button" id="tool-grid"><span class="tool-glyph">▦</span>Siatka</button></div></section>
+</div>
+<div id="ribbon-panel-select" class="ribbon-panel" data-ribbon-panel="select" role="tabpanel" aria-labelledby="ribbon-tab-select" hidden>
+<section class="ribbon-group" aria-label="NAWIGACJA"><span class="section-label">NAWIGACJA</span><div class="tool-row"><button class="tool-button active" id="tool-select"><span class="tool-glyph">↖</span>Zaznacz <small>S</small></button>
+<button class="tool-button" id="tool-pan"><span class="tool-glyph">✥</span>Przesuń <small>H</small></button></div></section>
+<section class="ribbon-group" aria-label="WYSZUKIWANIE"><span class="section-label">WYSZUKIWANIE</span><div class="tool-row"><button class="tool-button" id="tool-find" title="Wyszukaj po ID, kodzie lub dowolnej treści (F)"><span class="tool-glyph">⌕</span>Znajdź <small>F</small></button>
+<button class="tool-button" id="tool-advanced-select" title="Zaznacz według kodu i atrybutów (Ctrl+H)"><span class="tool-glyph">⌕</span>Filtruj <small>Ctrl+H</small></button>
+<button class="tool-button" id="tool-clear-selection" title="Odznacz wszystkie obiekty z bloku (Esc)"><span class="tool-glyph">◌</span>Odznacz <small>Esc</small></button></div></section>
+</div>
+<div id="ribbon-panel-edit" class="ribbon-panel" data-ribbon-panel="edit" role="tabpanel" aria-labelledby="ribbon-tab-edit" hidden>
+<section class="ribbon-group" aria-label="PRZESUWANIE"><span class="section-label">PRZESUWANIE</span><div class="tool-row"><button class="tool-button" id="tool-move" title="Przeciągaj wybrane obiekty: punkty, linie i poligony (M)"><span class="tool-glyph">✥</span>Obiekty <small>M</small></button>
+<button class="tool-button" id="tool-nodes" title="Edycja węzłów poligonu (P)"><span class="tool-glyph">⬡</span>Węzły <small>P</small></button>
+<button class="tool-button" id="tool-delete-node" disabled title="Zaznacz węzeł i usuń go (Delete)"><span class="tool-glyph">⊖</span>Usuń węzeł <small>Del</small></button><button id="tool-move-offset" type="button" hidden style="display:none" aria-hidden="true" tabindex="-1">Δ X/Y</button></div></section>
+<section class="ribbon-group" aria-label="ATRYBUTY"><span class="section-label">ATRYBUTY</span><div class="tool-row"><button class="tool-button" id="tool-replace-phrase" title="Znajdź i zamień fragment w wybranym polu, z podglądem i Ctrl+Z (Ctrl+F)"><span class="tool-glyph">⇄</span>Zamień <small>Ctrl+F</small></button>
+<button class="tool-button" id="tool-bulk-edit" disabled title="Zmień A1/A2 wielu zaznaczonych obiektów"><span class="tool-glyph">✎</span>Zbiorowo <small>A1/A2</small></button></div></section>
+<section class="ribbon-group" aria-label="OBIEKTY"><span class="section-label">OBIEKTY</span><div class="tool-row"><button class="tool-button" id="tool-copy" title="Kopiuj zaznaczone poligony (Ctrl+D)"><span class="tool-glyph">⧉</span>Kopiuj obok <small>Ctrl+D</small></button>
+<button class="tool-button" id="tool-delete-objects" title="Usuń wybrane obiekty (Ctrl+Delete)"><span class="tool-glyph">×</span>Usuń obiekty</button></div></section>
+<section class="ribbon-group geometry-options" aria-label="Opcje węzłów"><span class="section-label">PRZYCIĄGANIE WĘZŁÓW</span><div class="tool-row"><label class="toolbar-checkbox" title="Przyciągaj do wszystkich linii i graniczników mapy"><input type="checkbox" id="opt-snap" checked> Przyciąganie</label><label class="toolbar-checkbox" title="Przemieszczaj wspólne węzły WYŁĄCZNIE obiektów o tym samym kodzie"><input type="checkbox" id="opt-shared"> Wspólne węzły (ten sam kod)</label></div></section>
+</div>
+<div id="ribbon-panel-draw" class="ribbon-panel" data-ribbon-panel="draw" role="tabpanel" aria-labelledby="ribbon-tab-draw" hidden>
+<section class="ribbon-group" aria-label="TWORZENIE"><span class="section-label">TWORZENIE</span><div class="tool-row"><button class="tool-button" id="tool-new-polygon" title="Narysuj nowy poligon (N)"><span class="tool-glyph">⬟</span>Nowy poligon <small>N</small></button>
+<button class="tool-button" id="tool-line" title="Narysuj linię (L), edytuj istniejącą (Shift+L)"><span class="tool-glyph">╱</span>Linia</button>
+<button class="tool-button active draw-magnet-control" id="tool-draw-snap" aria-pressed="true" title="Magnes przy rysowaniu: przyciąga tylko do bardzo bliskich węzłów i linii (G w trybie rysowania). Przytrzymaj Alt, aby chwilowo wyłączyć."><span class="tool-glyph">⌾</span>Magnes <small>G</small></button></div></section>
+<section class="ribbon-group" aria-label="POLIGONY"><span class="section-label">POLIGONY</span><div class="tool-row"><button class="tool-button" id="tool-merge" title="Scal wybrane poligony tego samego kodu (Ctrl+Shift+G)"><span class="tool-glyph">⧉</span>Scal</button>
+<button class="tool-button" id="tool-split" title="Narysuj linię podziału jednego poligonu (Ctrl+Shift+X)"><span class="tool-glyph">⌁</span>Podziel</button>
+<button class="tool-button" id="tool-winding" title="Ręczna naprawa starych rekordów; podczas Zapisz jako wszystkie proste poligony otrzymują dodatni obrys automatycznie"><span class="tool-glyph">⊕</span>Pole + (stare)</button></div></section>
+</div>
+<div id="ribbon-panel-cartography" class="ribbon-panel" data-ribbon-panel="cartography" role="tabpanel" aria-labelledby="ribbon-tab-cartography" hidden>
+<section class="ribbon-group" aria-label="ETYKIETY"><span class="section-label">ETYKIETY</span><div class="tool-row"><button class="tool-button active" id="tool-labels"><span class="tool-glyph">Aa</span>Etykiety</button>
+<button class="tool-button" id="tool-label-move" title="Przesuwanie pojedynczych opisów A1/A2/TX myszą (tryb L)"><span class="tool-glyph">↗</span>Przesuń napisy <small>L</small></button>
+<button class="tool-button" id="tool-label-config" title="Ustaw widoczność, rozmiar i kolor osobno dla A1/A2 według kodu (Ctrl+Alt+L)"><span class="tool-glyph">Aa</span>Styl opisów</button></div></section>
+<section class="ribbon-group" aria-label="Biblioteki kartograficzne"><span class="section-label">BIBLIOTEKI</span><div class="tool-row"><button class="tool-button" id="tool-cartography" title="Wczytaj oryginalne biblioteki kartograficzne LAY, CDF i SYM"><span class="tool-glyph">▤</span>LAY/CDF/SYM</button><span id="cartography-status" class="ribbon-status" title="Załadowane biblioteki kartograficzne">Brak bibliotek</span></div></section>
+</div>
+<div id="ribbon-panel-underlay" class="ribbon-panel" data-ribbon-panel="underlay" role="tabpanel" aria-labelledby="ribbon-tab-underlay" hidden>
+<section class="ribbon-group" aria-label="Podkłady mapowe"><span class="section-label">ŹRÓDŁA PODKŁADU</span><div class="tool-row">
+<button class="tool-button" id="tool-underlay" title="Otwórz niezależne okno WMS"><span class="tool-glyph">▧</span>WMS Geoportalu</button>
+<button class="tool-button" id="tool-raster" title="Dodaj raster PNG, JPG, TIFF lub GeoTIFF"><span class="tool-glyph">▣</span>Raster</button>
+<button class="tool-button" id="tool-crs" title="Sprawdź układ mapy z PRJ albo przelicz punkt"><span class="tool-glyph">◎</span>Układy EPSG</button>
+</div></section>
+<p class="ribbon-help">Podkłady rysowane są pod geometrią i nie zmieniają pliku MAP.</p>
+</div>
+<div id="ribbon-panel-export" class="ribbon-panel" data-ribbon-panel="export" role="tabpanel" aria-labelledby="ribbon-tab-export" hidden>
+<section class="ribbon-group" aria-label="WYCIĘCIA GEO-MAP"><span class="section-label">WYCIĘCIA GEO-MAP</span><div class="tool-row"><button class="tool-button" id="tool-export-baked" disabled title="Eksperymentalny: zapisz rzeczywiste wycięcia do MAP wraz z plikiem do ich odtworzenia"><span class="tool-glyph">▧</span>Zapisz wycięcia <small>6B</small></button></div></section>
+<section class="ribbon-group" aria-label="Formaty wyjściowe"><span class="section-label">PLIKI WYNIKOWE</span><div class="tool-row">
+<button class="tool-button" id="tool-layout-ribbon"><span class="tool-glyph">▤</span>Arkusz / druk</button>
+<button class="tool-button" id="tool-map-copy-ribbon"><span class="tool-glyph">↓</span>Pobierz MAP</button></div></section>
+</div></div>
     </div>
 
     <div class="workspace">
