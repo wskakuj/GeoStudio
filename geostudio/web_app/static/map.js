@@ -1833,9 +1833,39 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
       if(Math.hypot(world.x-point.x,world.y-point.y)*state.scale<=10)
         return {point,kind:"start",code:null,targetId:null};
     }
-    return helper.snapPoint(world,
-      state.features.filter(isVisible),{scale:state.scale,
-        enabled:true,bypass:altPressed,vertexPixels:7,edgePixels:5});
+    // Avoid scanning every segment of the entire loaded MAP for every
+    // pointermove. A 12px padded bbox contains all 7px vertex / 5px
+    // segment snap targets, even at the smallest zoom.
+    const pad=12/Math.max(.000001,state.scale);
+    const candidates=state.features.filter(f=>isVisible(f)&&
+      f.bbox[0]<=world.x+pad&&f.bbox[2]>=world.x-pad&&
+      f.bbox[1]<=world.y+pad&&f.bbox[3]>=world.y-pad);
+    return helper.snapPoint(world,candidates,{scale:state.scale,
+      enabled:true,bypass:altPressed,vertexPixels:7,edgePixels:5});
+  }
+  function appendDrawingPoint(ev,p){
+    if(!state.meta||state.editBusy)return;
+    const world=screenToWorld(p.x,p.y);
+    const snapped=drawingSnapAt(world,ev.altKey);
+    if(state.tool==="draw"&&snapped.kind==="start"&&
+       state.drawPoints.length>=3){
+      state.drawSnap=null;state.drawHover=null;
+      finishDrawPolygon();
+      requestDraw();return;
+    }
+    const next=[Math.round(-snapped.point.y*1000)/1000,
+                Math.round(snapped.point.x*1000)/1000];
+    const last=state.drawPoints[state.drawPoints.length-1];
+    if(!last||Math.hypot(next[0]-last[0],next[1]-last[1])>0.003){
+      if(state.drawPoints.length<500)state.drawPoints.push(next);
+      else inform("Osiągnięto limit 500 węzłów.",true);
+    }
+    state.drawSnap=snapped.kind?snapped:null;
+    // No blocking toast or deferred pointerup: a vertex appears on the
+    // same mouse-down frame and rapid click sequences are not dropped.
+    $("status-message").textContent="Rysowanie: "+
+      state.drawPoints.length+" punktów · Enter albo pierwszy punkt kończy.";
+    requestDraw();
   }
   function updateDrawingHover(world,altPressed=false) {
     state.drawCursorWorld=world;
@@ -4498,7 +4528,6 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
   }
   canvas.addEventListener("pointerdown", ev=>{
     if(ev.button!==0&&ev.button!==1)return;
-    canvas.setPointerCapture(ev.pointerId);
     const p=eventCoords(ev);
     state.hoverInsert=null;
     if(state.tool==="labels"&&ev.button===0&&!state.editBusy){
@@ -4517,9 +4546,10 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
     }
     if(["draw","cut","line","line-edit"].includes(state.tool)&&
        ev.button===0&&!state.editBusy&&state.meta){
-      state.drag={pointer:ev.pointerId,start:p,last:p,moved:false,draw:true};
+      appendDrawingPoint(ev,p);
       return;
     }
+    canvas.setPointerCapture(ev.pointerId);
     if(state.tool==="move"&&ev.button===0&&!state.editBusy){
       const world=screenToWorld(p.x,p.y);
       const hits=pick(world),selected=selectedObjectIds();
@@ -4605,36 +4635,6 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
       state.labelDrag=null;
       if(d.moved&&moving)commitLabelDrag(moving);
       else requestDraw();
-      return;
-    }
-    if(d.draw){
-      if(!d.moved){
-        const p=eventCoords(ev),world=screenToWorld(p.x,p.y);
-        // The actual click is authoritative, not a stale hover target.
-        // Alt always bypasses the magnet for the clicked point.
-        const snapped=drawingSnapAt(world,ev.altKey);
-        if(state.tool==="draw"&&snapped.kind==="start"&&
-           state.drawPoints.length>=3){
-          state.drawSnap=null;state.drawHover=null;
-          finishDrawPolygon();
-          // One click on the first corner completes the sketch and runs
-          // its normal topology preview; code/A1/A2 still require approval.
-          previewObject("create");
-          requestDraw();
-          return;
-        }
-        const next=[Math.round(-snapped.point.y*1000)/1000,
-                    Math.round(snapped.point.x*1000)/1000];
-        state.drawSnap=snapped.kind?snapped:null;
-        const last=state.drawPoints[state.drawPoints.length-1];
-        if(!last||Math.hypot(next[0]-last[0],next[1]-last[1])>0.003){
-          if(state.drawPoints.length<500)state.drawPoints.push(next);
-          else inform("Osiągnięto limit 500 węzłów.",true);
-        }
-        requestDraw();
-        inform("Rysowanie: "+state.drawPoints.length+
-          " punktów. Esc — cofnij ostatni; kliknij pierwszy punkt — domknij.");
-      }
       return;
     }
     if(d.moveIds){
