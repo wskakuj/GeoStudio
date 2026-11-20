@@ -583,3 +583,11 @@ button:disabled { opacity:.38; cursor:not-allowed; filter:none !important; }
   .carto-catalog-row{gap:9px;padding:9px;}
   .carto-catalog-swatch{width:76px;height:45px;object-fit:contain;}
 }
+
+/* Quick polygon workflow and code-wide outline presets. */
+#outline-style-dialog input[type="color"]{
+  width:100%;min-height:42px;padding:4px;border:1px solid #426070;
+  border-radius:8px;background:#182d41;cursor:pointer;
+}
+#outline-style-dialog input[type="number"]{width:100%;min-height:42px;}
+#create-dialog #create-a1:focus{outline:2px solid #41c5b6;outline-offset:2px;}
