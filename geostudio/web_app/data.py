@@ -134,6 +134,7 @@ class PreviewWorkspace:
         self._move_preview_key = ""
         self._objects_preview_key = ""
         self._geometry_preview_key = ""
+        self._generated_export = None
 
     def load_map(self, content: bytes, filename: str) -> dict:
         if not content or len(content) > MAX_MAP_BYTES:
@@ -148,6 +149,7 @@ class PreviewWorkspace:
             raise ValueError("Plik nie zawiera geometrii do wyświetlenia.")
 
         with self._lock:
+            self._generated_export = None
             self._revision = 0
             self._document_token = token_hex(16)
             self._bulk_preview_key = ""
@@ -1974,6 +1976,38 @@ class PreviewWorkspace:
                 self._revision += 1
             return {**self._editing_status(), "changed": item is not None}
 
+
+
+    def store_generated_export(self, document_token: str, revision: int,
+                               filename: str, extension: str,
+                               content: bytes) -> str:
+        """One-use, bounded browser-generated image buffer for native Save As."""
+        valid={"png","jpg","tif","dxf"}
+        if (extension not in valid or not isinstance(filename,str)
+                or len(filename)>140 or filename in {".",".."}
+                or any(ch in filename for ch in "/\\\0\r\n")
+                or not filename.lower().endswith("."+extension)):
+            raise ValueError("Nieprawidłowa nazwa lub format eksportu.")
+        if not isinstance(content,bytes) or not 0<len(content)<=120*1024*1024:
+            raise ValueError("Pusty lub zbyt duży eksport (maks. 120 MB).")
+        with self._lock:
+            if self._doc is None:
+                raise ValueError("Najpierw otwórz mapę.")
+            if document_token!=self._document_token or revision!=self._revision:
+                raise RuntimeError("Zmieniła się mapa podczas eksportu.")
+            ticket=token_hex(20)
+            self._generated_export=(ticket,filename,extension,content)
+            return ticket
+
+    def generated_export(self, ticket: str, *, consume: bool = False):
+        with self._lock:
+            item=self._generated_export
+            if (not isinstance(ticket,str) or not item or
+                    item[0]!=ticket):
+                raise LookupError("Eksport wygasł. Utwórz go ponownie.")
+            if consume:
+                self._generated_export=None
+            return item[1:]
 
     def export_dxf(self, document_token: str) -> tuple[str, bytes]:
         """Export all native geometries to an in-memory DXF (R2010).
