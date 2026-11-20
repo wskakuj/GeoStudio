@@ -3990,23 +3990,129 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
     else state.refreshTimer=setTimeout(refreshViewport,85);
   }
 
-  // Stage 11: screen layout uses its own physical print scale, independent
-  // of the editing camera. Work with bounded viewport pages even on big MAPs.
-  function openLayoutDialog(){
+  // Export bounds are independent of screen zoom and pan.
+  function selectedExportBounds(){
+    if($("layout-scope").value==="all")return [...state.meta.bounds];
+    if($("layout-scope").value==="rect"&&state.exportAreaBounds)
+      return [...state.exportAreaBounds];
+    throw Error("Najpierw zaznacz prostokąt na mapie.");
+  }
+  function updateExportAreaControls(){
+    const rectangle=$("layout-scope").value==="rect";
+    $("layout-rectangle-tools").hidden=!rectangle;
+    const b=state.exportAreaBounds;
+    $("layout-area-status").textContent=b
+      ?"Wybrano obszar "+(b[2]-b[0]).toFixed(1)+" × "+
+         (b[3]-b[1]).toFixed(1)+" m. Możesz zaznaczyć go ponownie."
+      :"Nie wybrano obszaru. Przeciągnij prostokąt na mapie.";
+    $("layout-choose-area").textContent=b
+      ?"▧ Zmień prostokąt":"▧ Zaznacz prostokąt na mapie";
+  }
+  function openLayoutDialog(resume=false){
     if(!state.meta||!state.edit)return;
-    $("layout-title").value=state.meta.name.replace(/\.map$/i,"");
-    const denominator=Math.round(cssPixelsPerGroundMetre/state.scale);
-    if(Number.isFinite(denominator)&&denominator>=10&&denominator<=100000000)
-      $("layout-scale").value=denominator;
+    if(resume!==true){
+      $("layout-title").value=state.meta.name.replace(/\\.map$/i,"");
+      // Do not derive export scale from state.scale (current zoom).
+      $("layout-scale").value=String(state.edit.compilationScale||5000);
+    }
     if(!$("layout-legend-rows").value.trim())
       $("layout-legend-rows").value=(state.meta.layers||[])
         .filter(layer=>state.visibleLayers.has(layer.name))
         .slice(0,40).map(layer=>layer.name+" | "+colorForLayer(layer.name))
         .join("\n");
-    $("layout-summary").textContent=
-      "PDF wektorowy obsługuje A0–A4 niezależnie od DPI. " +
-      "Drukuj w skali 100%, bez dopasowywania do strony.";
-    $("layout-dialog").showModal();
+    updateExportAreaControls();
+    $("layout-summary").textContent="Skala opracowania: 1:"+
+      $("layout-scale").value+". Duże rastry: pełna jakość i ZIP z arkuszami.";
+    if(!$("layout-dialog").open)$("layout-dialog").showModal();
+  }
+  function beginExportAreaSelection(){
+    if(!state.meta||state.editBusy)return;
+    if($("layout-dialog").open)$("layout-dialog").close();
+    state.exportAreaPicking=true;
+    state.exportAreaDrag=null;
+    canvas.style.cursor="crosshair";
+    inform("Przytrzymaj mysz i narysuj prostokąt eksportu. Esc — anuluj.");
+    requestDraw();
+  }
+  function finishExportAreaSelection(cancel=false){
+    state.exportAreaPicking=false;
+    state.exportAreaDrag=null;
+    canvas.style.cursor="";
+    if(cancel)inform("Anulowano wybieranie prostokąta.");
+    openLayoutDialog(true);
+    requestDraw();
+  }
+  function drawExportAreaOverlay(){
+    if(!state.meta)return;
+    let b=state.exportAreaBounds;
+    if(state.exportAreaPicking&&state.exportAreaDrag){
+      const d=state.exportAreaDrag;
+      b=[Math.min(d.start.x,d.end.x),Math.min(d.start.y,d.end.y),
+         Math.max(d.start.x,d.end.x),Math.max(d.start.y,d.end.y)];
+    }
+    if(!b||($("layout-scope").value!=="rect"&&!state.exportAreaPicking))return;
+    const a=worldToScreen(b[0],b[1]),z=worldToScreen(b[2],b[3]);
+    const x=Math.min(a.x,z.x),y=Math.min(a.y,z.y);
+    const w=Math.abs(z.x-a.x),h=Math.abs(z.y-a.y);
+    labelCtx.save();
+    labelCtx.fillStyle="rgba(0,165,151,.10)";
+    labelCtx.fillRect(x,y,w,h);
+    labelCtx.lineWidth=2.2;
+    labelCtx.strokeStyle="#008c80";
+    labelCtx.setLineDash([8,5]);labelCtx.strokeRect(x,y,w,h);
+    labelCtx.restore();
+  }
+  function installExportAreaCapture(){
+    const map=$("map-canvas");
+    map.addEventListener("pointerdown",ev=>{
+      if(!state.exportAreaPicking||ev.button!==0)return;
+      ev.preventDefault();ev.stopImmediatePropagation();
+      const p=eventCoords(ev),w=screenToWorld(p.x,p.y);
+      state.exportAreaDrag={id:ev.pointerId,start:w,end:w,startPx:p};
+      map.setPointerCapture(ev.pointerId);requestDraw();
+    },true);
+    map.addEventListener("pointermove",ev=>{
+      if(!state.exportAreaPicking)return;
+      ev.preventDefault();ev.stopImmediatePropagation();
+      const drag=state.exportAreaDrag;
+      if(!drag||drag.id!==ev.pointerId)return;
+      const p=eventCoords(ev);
+      drag.end=screenToWorld(p.x,p.y);requestDraw();
+    },true);
+    map.addEventListener("pointerup",ev=>{
+      if(!state.exportAreaPicking)return;
+      ev.preventDefault();ev.stopImmediatePropagation();
+      const drag=state.exportAreaDrag;
+      if(!drag||drag.id!==ev.pointerId)return;
+      if(map.hasPointerCapture?.(ev.pointerId))
+        map.releasePointerCapture(ev.pointerId);
+      const p=eventCoords(ev),end=screenToWorld(p.x,p.y);
+      if(Math.abs(p.x-drag.startPx.x)<8||
+         Math.abs(p.y-drag.startPx.y)<8){
+        state.exportAreaDrag=null;
+        inform("Prostokąt jest za mały. Spróbuj ponownie.",true);
+        requestDraw();return;
+      }
+      const bounds=state.meta.bounds;
+      const rect=[
+        Math.max(bounds[0],Math.min(drag.start.x,end.x)),
+        Math.max(bounds[1],Math.min(drag.start.y,end.y)),
+        Math.min(bounds[2],Math.max(drag.start.x,end.x)),
+        Math.min(bounds[3],Math.max(drag.start.y,end.y))
+      ];
+      if(rect[2]<=rect[0]||rect[3]<=rect[1]){
+        state.exportAreaDrag=null;
+        inform("Zaznacz obszar wewnątrz mapy.",true);requestDraw();return;
+      }
+      state.exportAreaBounds=rect;
+      $("layout-scope").value="rect";
+      finishExportAreaSelection();
+    },true);
+    map.addEventListener("pointercancel",ev=>{
+      if(!state.exportAreaPicking)return;
+      ev.preventDefault();ev.stopImmediatePropagation();
+      finishExportAreaSelection(true);
+    },true);
   }
   function pdfLayoutOptions(){
     const bounds=selectedExportBounds();
