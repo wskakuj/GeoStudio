@@ -2196,7 +2196,7 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
     // native MAP X/Y. Choosing an EPSG for WMS does not change these XY
     // values, and must not make the already aligned picture disappear.
     // GeoTIFF carrying its own EPSG is shown only if CRS really matches.
-    for(const item of [...raster.layers,raster]){
+    for(const item of [...(raster.layers||[]),raster]){
       if(!item.image||!item.affine)continue;
       if(!item.epsg||Number(chosen)===item.epsg)
         item.boundEPSG=chosen;
