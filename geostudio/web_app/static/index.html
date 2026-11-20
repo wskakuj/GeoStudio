@@ -15,7 +15,7 @@
     <header class="topbar">
       <div class="identity">
         <div class="mark" aria-hidden="true"><span></span><span></span><span></span></div>
-        <div><strong>GeoStudio</strong><span class="brand-version">2.0 <em>ETAP 10A · OPISY I SKALA — TEST</em></span></div>
+        <div><strong>GeoStudio</strong><span class="brand-version">2.0 <em>ETAP 10B · WYSZUKIWANIE — TEST</em></span></div>
       </div>
       <div class="header-center"><span class="top-kicker">OBSZAR ROBOCZY</span>
         <span id="document-title">Nowy projekt</span>
@@ -55,6 +55,8 @@
           <button id="tool-move-offset" type="button" hidden style="display:none" aria-hidden="true" tabindex="-1">Δ X/Y</button>
           <button class="tool-button" id="tool-nodes" title="Edycja węzłów poligonu (P)"><span class="tool-glyph">⬡</span>Węzły <small>P</small></button>
           <button class="tool-button" id="tool-advanced-select" title="Zaznacz według kodu i atrybutów (Ctrl+H)"><span class="tool-glyph">⌕</span>Filtruj <small>Ctrl+H</small></button>
+          <button class="tool-button" id="tool-find" title="Wyszukaj po ID, kodzie lub dowolnej treści (F)"><span class="tool-glyph">⌕</span>Znajdź <small>F</small></button>
+          <button class="tool-button" id="tool-replace-phrase" title="Znajdź i zamień fragment w wybranym polu, z podglądem i Ctrl+Z (Ctrl+F)"><span class="tool-glyph">⇄</span>Zamień <small>Ctrl+F</small></button>
           <button class="tool-button" id="tool-bulk-edit" disabled title="Zmień A1/A2 wielu zaznaczonych obiektów"><span class="tool-glyph">✎</span>Zbiorowo <small>A1/A2</small></button>
           <button class="tool-button" id="tool-delete-node" disabled title="Zaznacz węzeł i usuń go (Delete)"><span class="tool-glyph">⊖</span>Usuń węzeł <small>Del</small></button>
           <button class="tool-button" id="tool-copy" title="Kopiuj zaznaczone poligony (Ctrl+D)"><span class="tool-glyph">⧉</span>Kopiuj obok <small>Ctrl+D</small></button>
@@ -459,6 +461,80 @@
       <div class="select-actions">
         <button id="label-settings-cancel" type="button" class="button ghost">Anuluj</button>
         <button id="label-settings-save" type="submit" class="button primary">Zastosuj styl</button>
+      </div>
+    </form>
+  </dialog>
+  <dialog id="find-dialog" class="advanced-select-dialog bulk-dialog">
+    <form id="find-form" autocomplete="off">
+      <div class="select-head">
+        <div><div class="eyebrow">ETAP 10B · WYSZUKIWANIE</div><h2>Znajdź obiekt na mapie</h2></div>
+        <button id="find-close" type="button" class="select-close" aria-label="Zamknij">×</button>
+      </div>
+      <div class="select-content">
+        <p class="select-explain">Przeszukuje całą mapę, nie tylko widoczny fragment. Kliknij wynik, aby wskazać i przybliżyć obiekt.</p>
+        <div class="select-grid">
+          <div><label for="find-code">Kod GEO-MAP (opcjonalnie)</label>
+            <input id="find-code" maxlength="4" pattern="[0-9]{4}" inputmode="numeric" placeholder="Np. 5310"></div>
+          <div><label for="find-field">Szukaj w polu</label>
+            <select id="find-field"><option value="*">Wszystkie pola i ID</option>
+              <option value="ID">ID obiektu</option>
+              <option value="A1">A1</option><option value="A2">A2</option>
+              <option value="A3">A3</option><option value="A4">A4</option>
+              <option value="A5">A5</option><option value="A6">A6</option>
+              <option value="TX">TX</option><option value="MP">MP</option>
+              <option value="KR">KR</option>
+            </select></div>
+        </div>
+        <label for="find-value">ID, oznaczenie lub fragment opisu</label>
+        <input id="find-value" maxlength="160" placeholder="Np. So120, B-01, dr…">
+        <label for="find-match">Dopasowanie</label>
+        <select id="find-match">
+          <option value="contains">Zawiera tekst (bez rozróżniania wielkości liter)</option>
+          <option value="exact">Dokładna wartość</option>
+        </select>
+        <p id="find-summary" class="select-preview" role="status">Wpisz wartość albo sam kod i wybierz Szukaj.</p>
+        <div class="geostudio-find-results" id="find-results" role="list" aria-label="Wyniki wyszukiwania"></div>
+      </div>
+      <div class="select-actions">
+        <button id="find-select-all" type="button" class="button ghost" disabled>Zaznacz pokazane</button>
+        <button id="find-submit" type="submit" class="button primary">Szukaj</button>
+      </div>
+    </form>
+  </dialog>
+  <dialog id="replace-dialog" class="advanced-select-dialog bulk-dialog">
+    <form id="replace-form" autocomplete="off">
+      <div class="select-head">
+        <div><div class="eyebrow">ETAP 10B · MASOWA EDYCJA</div><h2>Znajdź i zamień frazę</h2></div>
+        <button id="replace-close" type="button" class="select-close" aria-label="Zamknij">×</button>
+      </div>
+      <div class="select-content">
+        <p class="select-explain">Zmienia tylko istniejące pole wskazanych obiektów. Najpierw zobaczysz przykłady „przed → po”, a całą operację cofniesz jednym Ctrl+Z. MAP źródłowa jest chroniona.</p>
+        <div class="select-grid">
+          <div><label for="replace-field">Pole do zamiany</label>
+            <select id="replace-field"><option value="A1">A1</option>
+              <option value="A2" selected>A2</option><option value="A3">A3</option>
+              <option value="A4">A4</option><option value="A5">A5</option>
+              <option value="A6">A6</option><option value="TX">TX</option>
+              <option value="MP">MP</option><option value="KR">KR</option></select></div>
+          <div><label for="replace-scope">Zakres</label>
+            <select id="replace-scope"><option value="selection" selected>Tylko zaznaczone obiekty</option>
+              <option value="all">Cała mapa (świadomy wybór)</option></select></div>
+        </div>
+        <div class="select-grid">
+          <div><label for="replace-needle">Znajdź fragment</label>
+            <input id="replace-needle" required maxlength="160" placeholder="Np. So120"></div>
+          <div><label for="replace-replacement">Zamień na</label>
+            <input id="replace-replacement" maxlength="512" placeholder="Nowa wartość (może być pusta)"></div>
+        </div>
+        <label for="replace-code">Ogranicz do kodu (opcjonalnie)</label>
+        <input id="replace-code" maxlength="4" pattern="[0-9]{4}" inputmode="numeric" placeholder="Np. 5310">
+        <label class="bulk-checkbox-line"><input id="replace-case" type="checkbox"> Rozróżniaj wielkość liter</label>
+        <p id="replace-summary" class="select-preview" role="status">Podgląd jest wymagany przed każdą zamianą.</p>
+        <div id="replace-examples" class="geostudio-find-results" role="list" aria-label="Przykłady zamiany"></div>
+      </div>
+      <div class="select-actions">
+        <button id="replace-preview" type="button" class="button ghost">Sprawdź zmiany</button>
+        <button id="replace-apply" type="submit" class="button primary" disabled>Zastosuj zamianę</button>
       </div>
     </form>
   </dialog>
