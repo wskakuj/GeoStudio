@@ -7,7 +7,8 @@
   "use strict";
   const $ = id => document.getElementById(id);
   const token = document.querySelector('meta[name="api-token"]').content;
-  const canvas = $("map-canvas"), shell = $("canvas-shell"), ctx = canvas.getContext("2d");
+  const canvas = $("map-canvas"), shell = $("canvas-shell");
+  let ctx = canvas.getContext("2d");
   const viewportSnapshot=document.createElement("canvas");
   const snapshotContext=viewportSnapshot.getContext("2d");
   const formatter = new Intl.NumberFormat("pl-PL");
@@ -56,6 +57,7 @@
     {name:"Cofnij ostatnią zmianę", hint:"Ctrl+Z", run:()=>historyStep("undo")},
     {name:"Ponów zmianę", hint:"Ctrl+Y", run:()=>historyStep("redo")},
     {name:"Pobierz osobną kopię MAP", hint:"Ctrl+Shift+S", run:downloadMapCopy},
+    {name:"Eksportuj PNG/JPG/TIFF/DXF lub drukuj mapę", hint:"Ctrl+P", run:openLayoutDialog},
     {name:"Awaryjna kopia MAP bez wycięć", hint:"Baza", run:downloadBaseMapCopy},
     {name:"Zapisz natywne wycięcia MAP i kopię konturów", hint:"6B", run:downloadNativeCutouts},
     {name:"Zaznaczanie obiektów", hint:"S", run:()=>setTool("select")},
@@ -109,6 +111,7 @@
     $("tool-delete-objects").disabled=state.editBusy||!state.meta||!selectedObjectIds().length;
     $("tool-new-polygon").disabled=state.editBusy||!state.meta;
     $("btn-export").disabled=state.editBusy||!state.meta;
+    $("btn-layout").disabled=state.editBusy||!state.meta;
     $("tool-export-baked").disabled=state.editBusy||!state.meta;
     $("btn-export").textContent=(
       state.edit.hasReversibleMasks||state.edit.hasVisualStyles)
@@ -2076,7 +2079,7 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
     else if(tool==="labels")
       inform("Tryb opisów: przeciągnij osobno A1, A2 lub TX. Esc — zaznaczanie; Ctrl+Z — cofnij.");
     else if(tool==="move")
-      inform("Tryb M: przeciągnij wybrany poligon albo całą grupę. Zapis automatyczny i Ctrl+Z.");
+      inform("Tryb M: przeciągnij punkt, linię, poligon albo całą grupę. Cofnij: Ctrl+Z.");
     else inform(tool==="select"
       ?"Tryb zaznaczania obiektów (S).":"Tryb przesuwania mapy (H).");
     requestDraw();
@@ -2599,7 +2602,8 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
     const compilation=state.edit?.compilationScale||source;
     const ratio=Math.max(.1,Math.min(10,compilation/source));
     const base=Math.max(8,Math.min(36,Number(label.size)||16));
-    return Math.round(Math.max(8,Math.min(40,base*ratio))*10)/10;
+    return (Math.round(Math.max(8,Math.min(40,base*ratio))*10)/10)*
+      (state.exportFontRatio||1);
   }
   function labelTextRows(label,size) {
     const lines=String(label.text||"").split("\n").slice(0,6);
@@ -2646,7 +2650,7 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
         stackHeight+=height;
       }
       for(const label of feature.labels){
-        if(painted>=1400){ctx.restore();return;}
+        if(painted>=(state.exportFontRatio?8000:1400)){ctx.restore();return;}
         const size=labelFontSize(feature,label,selected);
         if(!size)continue;
         const font=(label.bold?"700":"400")+" "+size+"px '"+
@@ -2765,6 +2769,7 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
     if(view[2]<map[0]||view[0]>map[2]||view[3]<map[1]||view[1]>map[3]){
       state.features=[];state.limited=false;
       state.previewActive=false;state.previewCamera=null;
+      state.geometrySnapshotValid=false;
       requestDraw();return;
     }
     view=[Math.max(view[0],map[0]),Math.max(view[1],map[1]),
@@ -3277,6 +3282,9 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
     if((ev.ctrlKey||ev.metaKey)&&ev.key.toLowerCase()==="o"){
       ev.preventDefault();chooseMap();return;
     }
+    if((ev.ctrlKey||ev.metaKey)&&!ev.shiftKey&&ev.key.toLowerCase()==="p"){
+      ev.preventDefault();openLayoutDialog();return;
+    }
     if((ev.ctrlKey||ev.metaKey)&&ev.key.toLowerCase()==="h"){
       ev.preventDefault();openAdvancedSelection();return;
     }
@@ -3481,6 +3489,10 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
   link("tool-undo",()=>historyStep("undo"));
   link("tool-redo",()=>historyStep("redo"));
   link("btn-export",downloadMapCopy);
+  link("btn-layout",openLayoutDialog);
+  link("layout-close",()=>$("layout-dialog").close());
+  $("layout-form").addEventListener("submit",event=>{event.preventDefault();exportLayout(false);});
+  link("layout-print",()=>exportLayout(true));
   link("tool-export-baked",downloadNativeCutouts);
   link("inspector-edit-toggle",()=>{
     toggleInspectorEdit($("inspector-edit").hidden);
