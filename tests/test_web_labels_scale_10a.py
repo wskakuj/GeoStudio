@@ -209,11 +209,12 @@ def test_stale_frame_is_retained_during_zoom_and_pan():
     for source in (
         "function beginNavigationPreview()",
         "function drawNavigationPreview()",
-        "if(drawNavigationPreview()){",
         "state.geometrySnapshotValid=true;",
-        "renderScreenLabels(state.features.filter",
+        "renderScreenLabels(features);drawGcpMapMarkers();",
         "snapshotContext.drawImage(canvas,0,0);",
-        "state.previewActive=false;state.previewCamera=null;"
+        "state.previewActive=false;state.previewCamera=null;",
+        "// Render current vector coordinates at the current camera on EVERY"
+
     ):
         assert source in ui
 
