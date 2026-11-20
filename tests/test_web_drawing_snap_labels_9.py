@@ -78,7 +78,8 @@ def test_magnet_applies_to_all_draw_tools_uses_actual_clicked_point_and_alt():
     assert 'link("tool-draw-snap",toggleDrawMagnet)' in src
     assert 'window.GeoStudioDrawingSnap' in src
     assert "vertexPixels:7,edgePixels:5" in src
-    assert "state.features.filter(isVisible)" in src
+    assert "const candidates=state.features.filter(f=>isVisible(f)&&" in src
+    assert "const pad=12/Math.max(.000001,state.scale);" in src
     assert "drawingSnapAt(world,ev.altKey)" in src
     assert '["draw","cut","line","line-edit"]' in src
     assert "renderScreenLabels(features);drawGcpMapMarkers();" in src
