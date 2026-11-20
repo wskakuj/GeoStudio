@@ -253,3 +253,38 @@ def test_recovery_exposes_only_local_native_bridge_and_no_source_overwrite():
     assert 'self._settings.parent/"recovery"' in source
     assert 'self._workspace.mark_recovered_unsaved()' in source
     assert 'if sha256(path.read_bytes()).hexdigest()!=identity:' in source
+
+
+
+def test_local_viewport_uses_candidate_index_without_scanning_all_objects():
+    from conftest import MapBuilder
+    builder=MapBuilder()
+    for i in range(210):
+        x=i*30.
+        builder.object("5310",f"POLY-{i:04d}",{"A1":"l","A2":"So120|II-0.3"},
+                       [(x,0),(x,10),(x+10,10),(x+10,0)])
+    ws=PreviewWorkspace()
+    ws.load_map(builder.build(),"huge.MAP")
+    bounds=(-5.,-50.,15.,5.)
+    expected=[entry.fid for entry in ws._entries
+              if (entry.bbox[0]<=bounds[2] and
+                  entry.bbox[2]>=bounds[0] and
+                  entry.bbox[1]<=bounds[3] and
+                  entry.bbox[3]>=bounds[1])]
+    assert len(expected)==1
+    seen=ws.viewport(bounds)
+    assert [f["id"] for f in seen["features"]]==expected
+    assert len(ws._entry_by_objid)==len(ws._entries)
+    assert not seen["limited"]
+
+
+def test_render_cartography_shows_applied_vs_matched_and_hidden_symbols():
+    root=(Path(__file__).resolve().parents[1]/
+          "geostudio/web_app/static")
+    js=(root/"map.js").read_text(encoding="utf-8")
+    assert "function renderCartographyMatches()" in js
+    assert "libraryMatches" in js and "libraryApplied" in js
+    assert "Graniczniki" in js
+    assert 'renderCartographyMatches();' in js
+    html=(root/"index.html").read_text(encoding="utf-8")
+    assert 'id="cartography-status"' in html
