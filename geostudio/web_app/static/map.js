@@ -3051,11 +3051,38 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
       blob=>blob?resolve(blob):reject(Error("Nie można zakodować obrazu.")),
       mime,quality));
   }
-  function downloadLayoutFile(blob,filename){
+  async function downloadLayoutFile(blob,filename){
+    // WebView2 may silently ignore browser-only download links. Use the same
+    // native Save As mechanism as MAP for a guaranteed chosen Windows path.
+    if(window.pywebview?.api?.save_generated_export){
+      exportInfo("Wybierz miejsce zapisu w oknie systemu Windows…");
+      const extension=filename.split(".").pop().toLowerCase();
+      const response=await fetch("/api/export/buffer",{
+        method:"POST",
+        headers:{
+          "X-GeoStudio-Token":token,
+          "X-Export-Name":encodeURIComponent(filename),
+          "X-Export-Format":extension,
+          "X-Document-Token":state.edit.documentToken,
+          "X-Document-Revision":String(state.edit.revision)
+        },
+        body:blob,cache:"no-store"
+      });
+      if(!response.ok){
+        const problem=await response.json().catch(()=>({}));
+        throw Error(problem.detail||"Nie udało się przygotować zapisu.");
+      }
+      const {ticket}=await response.json();
+      const saved=await window.pywebview.api.save_generated_export(ticket);
+      if(!saved||saved.cancelled)return false;
+      inform("Zapisano eksport: "+saved.path+" ("+display(saved.bytes)+" B).");
+      return true;
+    }
     const uri=URL.createObjectURL(blob),a=document.createElement("a");
     a.href=uri;a.download=filename;document.body.append(a);
     a.click();a.remove();
     setTimeout(()=>URL.revokeObjectURL(uri),60000);
+    return true;
   }
   async function printLayoutImage(blob,options){
     // A print iframe is separate from map Canvas; the map stays editable.
@@ -3113,7 +3140,9 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
           const data=await response.json().catch(()=>({}));
           throw Error(data.detail||"Nie udało się wyeksportować DXF.");
         }
-        downloadLayoutFile(await response.blob(),basename+".dxf");
+        if(!await downloadLayoutFile(await response.blob(),basename+".dxf")){
+          exportInfo("Anulowano zapis DXF.");return;
+        }
       }else{
         const raster=await renderLayoutCanvas(options);
         const blob=(print||options.format==="png")
@@ -3122,8 +3151,10 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
             ?await canvasBlob(raster,"image/jpeg",.96)
             :makeRGBTiff(raster,options.dpi);
         if(print)await printLayoutImage(blob,options);
-        else downloadLayoutFile(blob,basename+"."+
-          (options.format==="jpeg"?"jpg":options.format==="tiff"?"tif":"png"));
+        else if(!await downloadLayoutFile(blob,basename+"."+
+          (options.format==="jpeg"?"jpg":options.format==="tiff"?"tif":"png"))){
+          exportInfo("Anulowano zapis obrazu.");return;
+        }
       }
       exportInfo(print
         ?"Przekazano arkusz do okna drukowania. Wybierz skalowanie 100%."
