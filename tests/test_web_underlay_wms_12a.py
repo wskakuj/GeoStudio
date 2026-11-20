@@ -112,3 +112,14 @@ def test_underlay_is_behind_vectors_and_not_in_export():
     assert 'state.exporting=true;' in js
     assert '!state.exporting ? .40 : 1' in js
     assert '"X-GeoStudio-Token":token' in js
+
+
+def test_kieg_classic_source_preset_is_explicitly_allowlisted(stubbed_wms):
+    """Classic WMS dialog also offered GUGiK KIEG parcel boundaries/numbers."""
+    data=underlay_wms.list_layers("kieg")
+    assert data["layers"][0]["id"]=="ortho"  # Fixture simulates capabilities.
+    url=stubbed_wms[-1][0]
+    assert urlsplit(url).hostname=="integracja.gugik.gov.pl"
+    assert "/cgi-bin/KrajowaIntegracjaEwidencjiGruntow" in url
+    assert "kieg" in underlay_wms.PRESETS
+    assert underlay_wms.PRESETS["kieg"][0].startswith("Działki")
