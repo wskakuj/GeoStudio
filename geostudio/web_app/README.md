@@ -635,6 +635,8 @@ limituje liczbę geometrii przesyłanych jednorazowo.
 
 Po wybraniu bibliotek, przy kartografii pojawia się informacja
 \`CDF: zastosowania/dopasowania\`, analogicznie dla LAY i SYM.
+Wczytane LAY może teraz wpływać także na kolor linii z zapisu
+Windows COLORREF (BGR); jawny obrys CDF ma pierwszeństwo.
 Zera oznaczają, że aktualnie widoczna część mapy nie zawiera
 rozpoznanych kodów lub ich reguł renderer nie stosuje — nie
 oznacza to błędnego importu. **Graniczniki domyślnie są ukryte**,
