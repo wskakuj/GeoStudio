@@ -211,7 +211,7 @@ def test_whole_map_viewport_returns_all_corners_without_further_spatial_requery(
     assert not data["limited"]
 
 
-def test_fixed_size_font_and_no_http_on_subsequent_zoom_small_map():
+def test_map_anchored_font_and_no_http_on_subsequent_zoom_small_map():
     static=Path(__file__).resolve().parents[1]/"geostudio/web_app/static"
     src=(static/"map.js").read_text(encoding="utf-8")
     assert "state.localMapCandidate=meta.objectCount<=50000" in src
@@ -233,10 +233,16 @@ const label={size:16,field:'A1'};
 for(const scale of [.0001,.002,.2,1,10,100,3000]){
   const fn=font({scale,edit:{sourceCompilationScale:5000,
                               compilationScale:5000}});
-  assert.equal(fn({code:'5310'},label,false),16);
+  const actual=fn({code:'5310'},label,false);
+  assert.ok(Math.abs(actual-16*2500*.0254/96*scale)<1e-8,actual);
+  // Existing PNG export glyph size stays unchanged by viewport zoom.
+  const exported=font({scale,exporting:true,
+    edit:{sourceCompilationScale:5000,compilationScale:5000}});
+  assert.equal(exported({code:'5310'},label,false),16);
 }
-assert.equal(font({scale:1,edit:{sourceCompilationScale:5000,
-         compilationScale:10000}})({code:'5310'},label,false),32);
+const compilationSize=font({scale:1,edit:{sourceCompilationScale:5000,
+         compilationScale:10000}})({code:'5310'},label,false);
+assert.ok(Math.abs(compilationSize-32*2500*.0254/96)<1e-8);
 """
     result=subprocess.run([node,"-e",js],cwd=static,
                           capture_output=True,text=True,timeout=15)
