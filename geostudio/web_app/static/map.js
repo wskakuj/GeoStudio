@@ -3051,6 +3051,81 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
       blob=>blob?resolve(blob):reject(Error("Nie można zakodować obrazu.")),
       mime,quality));
   }
+
+  async function withRasterDpi(blob,format,dpi){
+    // Canvas encoders normally write 96 DPI even when the requested sheet
+    // is 300 DPI. Fix image resolution metadata to preserve print scale in
+    // external editors, not just inside GeoStudio's own print dialog.
+    const bytes=new Uint8Array(await blob.arrayBuffer());
+    if(format==="jpeg"){
+      if(bytes[0]!==255||bytes[1]!==216)throw Error("Niepoprawny JPG.");
+      let index=2,found=false;
+      while(index+4<bytes.length&&bytes[index]===255){
+        const marker=bytes[index+1];
+        if(marker===218||marker===217)break;
+        const size=(bytes[index+2]<<8)|bytes[index+3];
+        if(size<2||index+size+2>bytes.length)break;
+        if(marker===224&&size>=16&&bytes[index+4]===74&&
+           bytes[index+5]===70&&bytes[index+6]===73&&
+           bytes[index+7]===70&&bytes[index+8]===0){
+          bytes[index+11]=1;
+          bytes[index+12]=(dpi>>8)&255;bytes[index+13]=dpi&255;
+          bytes[index+14]=(dpi>>8)&255;bytes[index+15]=dpi&255;
+          found=true;break;
+        }
+        index+=size+2;
+      }
+      if(found)return new Blob([bytes],{type:"image/jpeg"});
+      const jfif=new Uint8Array([
+        255,224,0,16,74,70,73,70,0,1,2,1,
+        (dpi>>8)&255,dpi&255,(dpi>>8)&255,dpi&255,0,0
+      ]);
+      const patched=new Uint8Array(bytes.length+jfif.length);
+      patched.set(bytes.subarray(0,2));patched.set(jfif,2);
+      patched.set(bytes.subarray(2),2+jfif.length);
+      return new Blob([patched],{type:"image/jpeg"});
+    }
+    if(format!=="png")return blob;
+    const signature=[137,80,78,71,13,10,26,10];
+    if(signature.some((value,index)=>bytes[index]!==value))
+      throw Error("Niepoprawny PNG.");
+    const read32=(buffer,at)=>new DataView(
+      buffer.buffer,buffer.byteOffset,buffer.byteLength).getUint32(at,false);
+    const write32=(buffer,at,value)=>new DataView(
+      buffer.buffer,buffer.byteOffset,buffer.byteLength).setUint32(at,value,false);
+    const ppm=Math.round(dpi/.0254);
+    const chunk=new Uint8Array(21);
+    write32(chunk,0,9);
+    chunk.set([112,72,89,115],4); // "pHYs"
+    write32(chunk,8,ppm);write32(chunk,12,ppm);chunk[16]=1;
+    let crc=0xffffffff;
+    for(let i=4;i<17;i++){
+      crc^=chunk[i];
+      for(let bit=0;bit<8;bit++)
+        crc=crc&1?(crc>>>1)^0xedb88320:crc>>>1;
+    }
+    write32(chunk,17,(crc^0xffffffff)>>>0);
+    let offset=8,insertAt=0;
+    while(offset+12<=bytes.length){
+      const length=read32(bytes,offset);
+      if(offset+12+length>bytes.length)break;
+      const name=String.fromCharCode(...bytes.subarray(offset+4,offset+8));
+      if(name==="IHDR")insertAt=offset+12+length;
+      if(name==="pHYs"){
+        if(length!==9)throw Error("Nieznany blok rozdzielczości PNG.");
+        bytes.set(chunk.subarray(8),offset+8);
+        return new Blob([bytes],{type:"image/png"});
+      }
+      if(name==="IDAT")break;
+      offset+=length+12;
+    }
+    if(!insertAt)throw Error("Niepoprawny nagłówek PNG.");
+    const patched=new Uint8Array(bytes.length+chunk.length);
+    patched.set(bytes.subarray(0,insertAt),0);
+    patched.set(chunk,insertAt);
+    patched.set(bytes.subarray(insertAt),insertAt+chunk.length);
+    return new Blob([patched],{type:"image/png"});
+  }
   async function downloadLayoutFile(blob,filename){
     // WebView2 may silently ignore browser-only download links. Use the same
     // native Save As mechanism as MAP for a guaranteed chosen Windows path.
@@ -3145,11 +3220,15 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
         }
       }else{
         const raster=await renderLayoutCanvas(options);
-        const blob=(print||options.format==="png")
+        const raw=(print||options.format==="png")
           ?await canvasBlob(raster,"image/png")
           :options.format==="jpeg"
             ?await canvasBlob(raster,"image/jpeg",.96)
             :makeRGBTiff(raster,options.dpi);
+        const blob=(print||options.format==="png")
+          ?await withRasterDpi(raw,"png",options.dpi)
+          :options.format==="jpeg"
+            ?await withRasterDpi(raw,"jpeg",options.dpi):raw;
         if(print)await printLayoutImage(blob,options);
         else if(!await downloadLayoutFile(blob,basename+"."+
           (options.format==="jpeg"?"jpg":options.format==="tiff"?"tif":"png"))){
