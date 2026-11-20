@@ -335,14 +335,17 @@
                  " ("+display(saved.bytes)+" bajtów).");
           window.alert("Kopia GEO-MAP została zapisana w:\n"+saved.path+
             (saved.topologyPath?"\n\nPlik odwracalnej topologii:\n"+
-            saved.topologyPath+"\nZachowaj oba pliki razem.":""));
+            saved.topologyPath+"\nZachowaj oba pliki razem.":"")+
+(saved.visualPath?"\n\nUstawienia opisów i skali:\n"+
+saved.visualPath+"\nZachowaj obok MAP.":""));
         }
         return;
       }
       const hasMasks=!!state.edit.hasReversibleMasks;
+      const needsPackage=hasMasks||!!state.edit.hasVisualStyles;
       const params=new URLSearchParams({documentToken:state.edit.documentToken,
         normalizePositive:"true"});
-      const response=await fetch((hasMasks?"/api/export/package":"/api/export/map")+
+      const response=await fetch((needsPackage?"/api/export/package":"/api/export/map")+
         "?"+params.toString(),{
         headers:{"X-GeoStudio-Token":token},cache:"no-store"
       });
@@ -353,14 +356,14 @@
       const blob=await response.blob();
       const original=state.meta.name.replace(/\\/g,"/").split("/").pop();
       const filename=original.replace(/\.map$/i,"")+
-        (hasMasks?"_GeoStudio2_wyciecia.zip":"_GeoStudio2_kopia.MAP");
+        (needsPackage?"_GeoStudio2_z_etykietami.zip":"_GeoStudio2_kopia.MAP");
       const url=URL.createObjectURL(blob);
       const anchor=document.createElement("a");
       anchor.href=url;anchor.download=filename;
       document.body.append(anchor);anchor.click();anchor.remove();
       setTimeout(()=>URL.revokeObjectURL(url),60000);
-      inform(hasMasks
-        ?"Zapisano ZIP zawierający rzeczywiście wycięty MAP oraz plik JSON do odtworzenia. Rozpakuj oba razem."
+      inform(needsPackage
+        ?"Pobrano ZIP z MAP i ustawieniami etykiet oraz topologii. Zachowaj pliki JSON obok MAP."
         :"Wysłano "+filename+" do pobrania; sprawdź Pobrane (Ctrl+J).");
     }catch(error){inform("Nie udało się zapisać kopii: "+error.message,true);}
   }
@@ -447,7 +450,10 @@
       const result = await api("/api/styles", {
         method:"POST", headers:{"Content-Type":"application/json"}, body:file
       });
-      inform("Wczytano " + result.styleCount + " ustawień stylu (tylko podgląd).");
+      const meta=await api("/api/map");
+      updateEditState(meta);
+      inform("Wczytano "+result.labelPositions+" pozycji opisów, "+
+        result.styleCount+" stylów. Skala opracowania 1:"+result.compilationScale+".");
       await refreshViewport();
     } catch (error) {
       inform("Nie udało się wczytać JSON: " + error.message, true);
