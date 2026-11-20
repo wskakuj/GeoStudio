@@ -105,7 +105,7 @@ def test_underlay_is_behind_vectors_and_not_in_export():
     assert 'id="tool-underlay"' in html
     assert 'id="underlay-epsg"' in html
     assert 'id="underlay-opacity"' in html
-    assert 'paintUnderlay();drawGrid();' in js
+    assert 'paintUnderlay();paintRaster();drawGrid();' in js
     assert 'ctx.drawImage(underlay.image,top.x,top.y' in js
     assert 'scheduleUnderlayRefresh();' in js
     assert 'if(pass==="fills")for(const item of visible)renderFill(item);' in js
