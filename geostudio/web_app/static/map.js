@@ -4996,7 +4996,8 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
     if(["draw","cut","line","line-edit"].includes(state.tool)&&ev.key==="Enter"){
       ev.preventDefault();finishGeometryDrawing();return;
     }
-    if(state.tool==="nodes"&&state.detail&&!ev.ctrlKey&&!ev.metaKey&&!ev.altKey&&
+    if(state.tool==="nodes"&&state.detail&&state.selectedVertex!==null&&
+       !ev.ctrlKey&&!ev.metaKey&&!ev.altKey&&
        (ev.key==="Delete"||ev.key==="Backspace")){
       ev.preventDefault();deleteSelectedVertex();return;
     }
