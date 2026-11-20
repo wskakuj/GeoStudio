@@ -22,7 +22,7 @@ def test_world_file_preserves_half_pixel_and_geodetic_axis_order():
     assert values == (0,-2,500002,2,0,700000)
     # Northing X (vertical), easting Y (horizontal).
     a,b,c,d,e,f=values
-    assert (a*50+b*100+c,d*50+e*100+f)==(500302,700100)
+    assert (a*50+b*100+c,d*50+e*100+f)==(499802,700100)
     with pytest.raises(ValueError,match="sześciu"):
         parse_world_text("1\n2\n3")
 
