@@ -617,6 +617,68 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
     $("cartography-catalog-dialog").showModal();
     loadCartographyCatalog();
   }
+  async function refreshOutlineStyleEditor(){
+    const code=$("outline-style-code").value;
+    if(!code)return;
+    try{
+      const setting=await api("/api/cartography/outline?code="+
+        encodeURIComponent(code));
+      if($("outline-style-code").value!==code)return;
+      $("outline-style-color").value=setting.stroke;
+      $("outline-style-width").value=String(setting.strokeWidth);
+      $("outline-style-summary").textContent=
+        (setting.custom?"Własny styl kodu ":"Styl domyślny kodu ")+code+
+        " · "+setting.stroke+" · "+setting.strokeWidth+" px.";
+    }catch(error){
+      $("outline-style-summary").textContent="Nie można odczytać: "+error.message;
+    }
+  }
+  function openOutlineStyleEditor(){
+    if(!state.meta){inform("Najpierw otwórz mapę.",true);return;}
+    const select=$("outline-style-code");
+    const last=select.value;
+    select.replaceChildren();
+    for(const code of Object.keys(state.meta.codes||{}).sort())
+      select.add(new Option(code+" · "+display(state.meta.codes[code])+" ob.",code));
+    const preferred=state.detail?.code||last||"5310";
+    if([...select.options].some(opt=>opt.value===preferred))
+      select.value=preferred;
+    else if([...select.options].some(opt=>opt.value==="5310"))
+      select.value="5310";
+    $("outline-style-dialog").showModal();
+    refreshOutlineStyleEditor();
+  }
+  async function saveOutlineStyle(ev,reset=false){
+    ev.preventDefault();
+    if(state.editBusy||!state.meta)return;
+    const code=$("outline-style-code").value;
+    const stroke=$("outline-style-color").value;
+    const strokeWidth=Number($("outline-style-width").value);
+    state.editBusy=true;updateEditState(state.edit);
+    $("outline-style-apply").disabled=true;
+    $("outline-style-reset").disabled=true;
+    try{
+      const result=await api("/api/cartography/outline",{
+        method:"POST",headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({...editRequestBody(),code,stroke,strokeWidth,reset})
+      });
+      updateEditState(result);
+      if(result.changed)await refreshViewport();
+      if(reset)await refreshOutlineStyleEditor();
+      $("outline-style-summary").textContent=reset
+        ?"Przywrócono obrys wynikający z MAP / LAY / CDF."
+        :"Zapisano obrys kodu "+code+": "+stroke+", "+strokeWidth+
+          " px. Dotyczy także nowych poligonów.";
+      requestDraw();
+    }catch(error){
+      $("outline-style-summary").textContent="Nie zapisano: "+error.message;
+      inform("Błąd obrysu: "+error.message,true);
+    }finally{
+      state.editBusy=false;updateEditState(state.edit);
+      $("outline-style-apply").disabled=false;
+      $("outline-style-reset").disabled=false;
+    }
+  }
   function cartographyMessage(payload) {
     state.cartoLibraries=payload?.libraries||{};
     cartographyCatalog=null;
@@ -5068,6 +5130,11 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
   link("tool-sidecar",()=> $("file-sidecar").click());
   link("tool-cartography",chooseCartographicLibraries);
   link("tool-carto-catalog",openCartographyCatalog);
+  link("tool-outline-style",openOutlineStyleEditor);
+  link("outline-style-close",()=>$("outline-style-dialog").close());
+  link("outline-style-reset",ev=>saveOutlineStyle(ev,true));
+  $("outline-style-code").addEventListener("change",refreshOutlineStyleEditor);
+  $("outline-style-form").addEventListener("submit",ev=>saveOutlineStyle(ev,false));
   link("carto-catalog-refresh",loadCartographyCatalog);
   link("carto-catalog-close",()=>$("cartography-catalog-dialog").close());
   link("carto-catalog-close-bottom",()=>$("cartography-catalog-dialog").close());
