@@ -1142,7 +1142,7 @@ class PreviewWorkspace:
                 # Canvas magnetic nodes work per displayed part instead.
                 fixed=[]
             nx,ny,distance=nearest_boundary_snap(
-                moving, fixed, dx, dy, snap_distance)
+                [obj for obj in moving if obj.is_closed], fixed, dx, dy, snap_distance)
             if distance is not None:
                 dx,dy=nx,ny
                 snap_applied={"distance":round(distance,3)}
