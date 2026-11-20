@@ -313,25 +313,9 @@ button:disabled { opacity:.38; cursor:not-allowed; filter:none !important; }
 .bulk-dialog #bulk-summary, .bulk-dialog #move-summary { white-space:pre-line; }
 .toolbar #tool-bulk-edit small { color:inherit; }
 
-/* Narrow desktop / WebView2 window: every editing section remains available. */
-.toolbar {
-  overflow-x:auto;
-  overflow-y:hidden;
-  scrollbar-width:thin;
-  scrollbar-color:#57b7b0 #182536;
-  scroll-behavior:smooth;
-  flex-shrink:0;
-}
-.toolbar .tool-section { flex:0 0 auto; }
-.toolbar .tool-divider { flex:0 0 1px; }
-.toolbar .toolbar-fill { min-width:12px; }
-@media (max-width:970px) {
-  .toolbar .tool-section:last-of-type { display:flex; }
-}
-@media (max-width:680px) {
-  .toolbar .tool-section:nth-of-type(3),
-  .toolbar .tool-divider:nth-of-type(2) { display:flex; }
-}
+/* Stage 12 ribbon: commands are grouped by task, never horizontally scrolled. */
+.toolbar { flex-shrink:0; overflow:visible; }
+
 
 /* Drawing magnet is a separate, discoverable switch, not a hidden P-mode option.
    The inactive state remains visible in the horizontally scrollable toolbar. */
@@ -451,3 +435,82 @@ button:disabled { opacity:.38; cursor:not-allowed; filter:none !important; }
 #underlay-dialog .underlay-crs-tools{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px;margin:13px 0}
 #underlay-dialog .underlay-crs-tools input[type=file]{max-width:100%}
 @media(max-width:620px){#underlay-dialog .underlay-crs-tools{grid-template-columns:1fr}}
+
+/* Separate WMS / raster / CRS windows and accessible non-scrolling ribbon. */
+#main-ribbon.toolbar {
+  display:flex;flex-direction:column;align-items:stretch;
+  gap:0;min-height:0;padding:0 16px;
+  overflow-x:visible;overflow-y:visible;
+  background:#122238;
+}
+.ribbon-tabs {
+  display:flex;flex-wrap:wrap;align-items:center;gap:3px;
+  min-width:0;min-height:42px;padding:5px 0 0;
+  border-bottom:1px solid #35495d;
+}
+.ribbon-tab {
+  appearance:none;background:transparent;color:#a5bacc;
+  border:1px solid transparent;border-bottom:2px solid transparent;
+  border-radius:7px 7px 0 0;white-space:nowrap;cursor:pointer;
+  min-height:34px;padding:8px 16px;font:650 12px "Segoe UI",sans-serif;
+}
+.ribbon-tab:hover { background:#22394c;color:#ebf9ff; }
+.ribbon-tab.active,
+.ribbon-tab[aria-selected="true"] {
+  background:#1b3a48;color:#80e9d8;
+  border-color:#306475;border-bottom-color:#55cdbd;
+}
+.ribbon-tab:focus-visible {outline:2px solid #5ee0cd;outline-offset:-2px;}
+.ribbon-panels {min-width:0;width:100%;}
+.ribbon-panel {
+  display:flex;flex-wrap:wrap;align-items:center;gap:12px 22px;
+  min-height:67px;padding:10px 0;
+}
+.ribbon-panel[hidden] {display:none!important;}
+.ribbon-group {
+  display:flex;flex-direction:column;align-items:flex-start;justify-content:center;
+  flex:0 1 auto;gap:5px;min-width:0;
+}
+.ribbon-group .section-label {font-size:9px;letter-spacing:.12em;}
+.ribbon-group .tool-row {display:flex;flex-wrap:wrap;align-items:center;gap:5px;}
+.ribbon-group .tool-button {
+  border:1px solid #304c60;background:#182f42;min-width:0;
+  padding:7px 11px;min-height:38px;height:auto;color:#dcebf5;
+  font-size:11px;line-height:1.25;white-space:normal;
+}
+.ribbon-group .tool-button:hover {background:#245064;}
+.ribbon-group .tool-button.active {background:#1b4c52;border-color:#389c96;color:#7de6d5;}
+.ribbon-group .tool-button small {white-space:nowrap;}
+.ribbon-group .toolbar-checkbox {min-height:36px;white-space:normal;}
+.ribbon-help,.ribbon-status {font-size:11px;color:#91b7c3;line-height:1.4;}
+.ribbon-help {max-width:380px;margin:0;}
+.ribbon-status {border:1px solid #315061;border-radius:7px;padding:8px;align-self:center;}
+#main-ribbon .geometry-options {display:flex!important;}
+.layer-source-dialog{width:min(585px,calc(100vw - 28px));max-height:min(88vh,850px);}
+.layer-source-dialog .select-head{padding:17px 21px 13px;}
+.layer-source-dialog .select-content{padding:16px 21px;gap:9px;}
+.layer-source-dialog .select-actions{padding:13px 21px 17px;}
+.layer-source-dialog #underlay-opacity,.layer-source-dialog #raster-opacity{
+  accent-color:#2ccab6;width:100%;height:23px;padding:0;
+}
+.layer-source-dialog #underlay-url{color:#a9cad7;background:#192b3b;font-size:11px;}
+.layer-source-dialog .underlay-layer-line{display:flex;align-items:center;justify-content:space-between;gap:8px;}
+.layer-source-dialog .underlay-layer-line label{margin:0;}
+.layer-source-dialog .underlay-dialog-hint {color:#88a7b5;font-size:11px;margin:0;}
+.layer-source-dialog .raster-gcp-details{border:1px solid #3d586b;border-radius:9px;padding:12px;background:#12283b;}
+.layer-source-dialog .raster-gcp-details summary{cursor:pointer;color:#9be0d5;font-size:12px;font-weight:660;}
+.layer-source-dialog .raster-gcp-details[open]{display:grid;gap:10px;}
+.layer-source-dialog .raster-gcp-details textarea{width:100%;min-width:0;}
+.layer-source-dialog #underlay-crs-convert{justify-self:start;}
+.layer-source-dialog .underlay-divider{height:1px;background:#3b5468;border:0;margin:6px 0;}
+@media(max-width:1120px){
+  #main-ribbon.toolbar{padding:0 10px;}
+  .ribbon-tab{padding:7px 10px;font-size:11px;}
+  .ribbon-panel{gap:10px 14px;}
+}
+@media(max-width:680px){
+  .ribbon-tab{padding:6px 8px;font-size:10px;min-height:30px;}
+  .ribbon-panel{padding:8px 0;min-height:54px;}
+  .ribbon-group .tool-button{min-height:34px;padding:6px 8px;}
+  .layer-source-dialog .select-grid{grid-template-columns:1fr;}
+}
