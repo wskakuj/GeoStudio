@@ -446,3 +446,8 @@ button:disabled { opacity:.38; cursor:not-allowed; filter:none !important; }
 #underlay-dialog input[type=file]{background:#172d3e;color:#a9d3d6;border:1px solid #466075;border-radius:7px;padding:8px;width:100%;font-size:11px}
 #underlay-dialog textarea{display:block;width:100%;min-height:98px;resize:vertical;border:1px solid #456475;background:#142b3d;color:#dcf3f5;border-radius:8px;padding:10px;font:12px Consolas,monospace;margin:8px 0 10px}
 #underlay-dialog #raster-opacity{width:100%;accent-color:#37beac}
+
+/* Stage 12C: read-only coordinate verification. */
+#underlay-dialog .underlay-crs-tools{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px;margin:13px 0}
+#underlay-dialog .underlay-crs-tools input[type=file]{max-width:100%}
+@media(max-width:620px){#underlay-dialog .underlay-crs-tools{grid-template-columns:1fr}}
