@@ -2339,7 +2339,7 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
     if(!feature.closed||!style.hasFill||style.opacity<=0)return;
     addPath(feature.geometry);
     ctx.fillStyle=hatchPattern(style);
-    ctx.globalAlpha=Math.min(underlay.enabled&&underlay.image&&!state.exporting?.40:1,
+    ctx.globalAlpha=Math.min(underlay.enabled && underlay.image && !state.exporting ? .40 : 1,
                              Math.max(0,style.opacity));
     ctx.fill("evenodd");
     ctx.globalAlpha=1;
