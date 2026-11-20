@@ -20,7 +20,8 @@
     firstLoad: true, inspectorCache: new Map(),
     edit: null, editBusy: false, bulkPreview: null, movePreview: null,
     moveIds: [], moveGhost: null, objectPreview:null,
-    drawPoints:[], drawHover:null, copyIds:[],
+    drawPoints:[], drawHover:null, drawSnap:null,
+    drawMagnet:true,drawCursorWorld:null,copyIds:[],
     geometryPreview:null,cutIds:[],lineEditId:null,
     snapEnabled: true, sharedNodes: false, vertexDrag: null,
     hoverInsert: null, selectedVertex: null
@@ -40,6 +41,7 @@
     {name:"Edytuj wybraną linię", hint:"Shift+L", run:startEditLine},
     {name:"Usuń wybrane obiekty", hint:"Ctrl+Delete", run:deleteObjects},
     {name:"Rysuj nowy poligon", hint:"N", run:()=>setTool("draw")},
+    {name:"Magnes rysowania — przełącz; Alt chwilowo wyłącza", hint:"G", run:toggleDrawMagnet},
     {name:"Wczytaj plik stylów GeoStudio", hint:"JSON", run:()=> $("file-sidecar").click()},
     {name:"Wczytaj biblioteki kartograficzne GEO-MAP LAY/CDF/SYM", hint:"Etap 7", run:chooseCartographicLibraries},
     {name:"Odtwórz oryginalną geometrię z JSON topologii", hint:"MAP+JSON", run:()=> $("file-topology").click()},
@@ -378,7 +380,8 @@
     state.vertexDrag=null;state.moveGhost=null;state.movePreview=null;
     state.moveIds=[];state.copyIds=[];state.drawPoints=[];
     state.cutIds=[];state.lineEditId=null;state.geometryPreview=null;
-    state.drawHover=null;state.objectPreview=null;setTool("select");
+    state.drawHover=null;state.drawSnap=null;state.drawCursorWorld=null;
+    state.objectPreview=null;setTool("select");
     state.features = []; state.inspectorCache.clear();
     // Match the old user's map view: survey markers are opt-in.
     // Their heavy symbol density otherwise hides the parcel boundaries.
@@ -1460,6 +1463,53 @@
   }
   function mergePolygons(){return simpleGeometryAction("merge");}
   function repairWinding(){return simpleGeometryAction("repair");}
+  function toggleDrawMagnet() {
+    state.drawMagnet=!state.drawMagnet;
+    const control=$("tool-draw-snap");
+    control.classList.toggle("active",state.drawMagnet);
+    control.setAttribute("aria-pressed",String(state.drawMagnet));
+    if(!state.drawMagnet)state.drawSnap=null;
+    if(state.drawCursorWorld&&["draw","cut","line","line-edit"].includes(state.tool))
+      updateDrawingHover(state.drawCursorWorld,false);
+    inform(state.drawMagnet
+      ?"Magnes rysowania włączony: 7 px do węzła, 5 px do linii. Alt — bez przyciągania."
+      :"Magnes rysowania wyłączony: punkty dokładnie pod kursorem. G — włącz.");
+  }
+  function drawingSnapAt(world,altPressed=false) {
+    const helper=window.GeoStudioDrawingSnap;
+    if(!helper||!state.drawMagnet||altPressed)
+      return {point:world,kind:null,code:null};
+    return helper.snapPoint(world,
+      state.features.filter(isVisible),{scale:state.scale,
+        enabled:true,bypass:altPressed,vertexPixels:7,edgePixels:5});
+  }
+  function updateDrawingHover(world,altPressed=false) {
+    state.drawCursorWorld=world;
+    const target=drawingSnapAt(world,altPressed);
+    state.drawHover={x:-target.point.y,y:target.point.x};
+    state.drawSnap=target.kind?target:null;
+    requestDraw();
+    return target;
+  }
+  function drawMagnetMarker() {
+    if(!state.drawSnap||!["draw","cut","line","line-edit"].includes(state.tool))
+      return;
+    const p=worldToScreen(state.drawSnap.point.x,state.drawSnap.point.y);
+    ctx.save();
+    ctx.strokeStyle="#048f8a";ctx.lineWidth=2;
+    ctx.beginPath();ctx.arc(p.x,p.y,7.5,0,Math.PI*2);ctx.stroke();
+    ctx.beginPath();ctx.moveTo(p.x-11,p.y);ctx.lineTo(p.x+11,p.y);
+    ctx.moveTo(p.x,p.y-11);ctx.lineTo(p.x,p.y+11);ctx.stroke();
+    const label=(state.drawSnap.kind==="węzeł"?"WĘZEŁ":"LINIA")+
+      (state.drawSnap.code?" · "+state.drawSnap.code:"");
+    ctx.font="600 10px Segoe UI, sans-serif";
+    const width=Math.min(160,ctx.measureText(label).width+12);
+    const left=Math.max(5,Math.min(state.width-width-5,p.x+13));
+    const top=Math.max(5,Math.min(state.height-23,p.y-29));
+    ctx.fillStyle="rgba(11,88,84,.94)";ctx.fillRect(left,top,width,19);
+    ctx.fillStyle="#ffffff";ctx.fillText(label,left+6,top+13);
+    ctx.restore();
+  }
   function drawDraftPolygon() {
     if(!["draw","cut","line","line-edit"].includes(state.tool)||
        !state.drawPoints.length)return;
@@ -1477,6 +1527,7 @@
       ctx.strokeStyle="#ffffff";ctx.stroke();
     }
     ctx.restore();
+    drawMagnetMarker();
   }
   function magneticMove(ids,rawDx,rawDy) {
     // Only snap to other polygons with the SAME native object code. Foreign
