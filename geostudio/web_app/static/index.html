@@ -80,7 +80,7 @@
 <section class="ribbon-group" aria-label="ETYKIETY"><span class="section-label">ETYKIETY</span><div class="tool-row"><button class="tool-button active" id="tool-labels"><span class="tool-glyph">Aa</span>Etykiety</button>
 <button class="tool-button" id="tool-label-move" title="Przesuwanie pojedynczych opisów A1/A2/TX myszą (tryb L)"><span class="tool-glyph">↗</span>Przesuń napisy <small>L</small></button>
 <button class="tool-button" id="tool-label-config" title="Ustaw widoczność, rozmiar i kolor osobno dla A1/A2 według kodu (Ctrl+Alt+L)"><span class="tool-glyph">Aa</span>Styl opisów</button></div></section>
-<section class="ribbon-group" aria-label="Biblioteki kartograficzne"><span class="section-label">BIBLIOTEKI</span><div class="tool-row"><button class="tool-button" id="tool-cartography" title="Wczytaj oryginalne biblioteki kartograficzne LAY, CDF i SYM"><span class="tool-glyph">▤</span>LAY/CDF/SYM</button><span id="cartography-status" class="ribbon-status" title="Załadowane biblioteki kartograficzne">Brak bibliotek</span></div></section>
+<section class="ribbon-group" aria-label="Biblioteki kartograficzne"><span class="section-label">BIBLIOTEKI</span><div class="tool-row"><button class="tool-button" id="tool-cartography" title="Wczytaj oryginalne biblioteki kartograficzne LAY, CDF i SYM"><span class="tool-glyph">▤</span>LAY/CDF/SYM</button><button class="tool-button" id="tool-carto-catalog" title="Sprawdź faktyczne kolory, desenie, kreski i symbole z bibliotek dla kodów MAP"><span class="tool-glyph">◫</span>Podgląd stylów</button><span id="cartography-status" class="ribbon-status" title="Załadowane biblioteki kartograficzne">Brak bibliotek</span></div></section>
 </div>
 <div id="ribbon-panel-underlay" class="ribbon-panel" data-ribbon-panel="underlay" role="tabpanel" aria-labelledby="ribbon-tab-underlay" hidden>
 <section class="ribbon-group" aria-label="Podkłady mapowe"><span class="section-label">ŹRÓDŁA PODKŁADU</span><div class="tool-row">
@@ -664,6 +664,23 @@
     <div class="select-actions">
       <button type="button" class="button ghost" id="raster-remove">Usuń raster z widoku</button>
       <button type="button" class="button primary" id="raster-close-bottom">Zamknij</button>
+    </div>
+  </dialog>
+  <dialog id="cartography-catalog-dialog" class="advanced-select-dialog bulk-dialog cartography-catalog-dialog">
+    <div class="select-head">
+      <div><div class="eyebrow">ETAP 13 · KARTOGRAFIA GEO-MAP</div><h2>Podgląd stylów LAY / CDF / SYM</h2></div>
+      <button type="button" id="carto-catalog-close" class="select-close" aria-label="Zamknij podgląd stylów">×</button>
+    </div>
+    <div class="select-content">
+      <p class="select-explain">Wyświetlane style pochodzą z aktualnie załadowanych bibliotek oraz rzeczywistych obiektów MAP. Każda karta przedstawia <strong>przykładowy obiekt danego kodu</strong>; reguły CDF zależne od A1/A2 mogą dawać inny wygląd pozostałych obiektów. Nierozpoznane instrukcje są oznaczane zamiast przybliżane.</p>
+      <label for="carto-catalog-filter">Wyszukaj kod lub warstwę</label>
+      <input id="carto-catalog-filter" type="search" autocomplete="off" placeholder="Np. 5310 albo Budynki">
+      <p id="carto-catalog-summary" role="status" class="select-preview">Otwórz mapę, aby zobaczyć katalog.</p>
+      <div id="carto-catalog-list" class="carto-catalog-list" aria-live="polite"></div>
+    </div>
+    <div class="select-actions">
+      <button type="button" id="carto-catalog-refresh" class="button ghost">Odśwież katalog</button>
+      <button type="button" id="carto-catalog-close-bottom" class="button primary">Zamknij</button>
     </div>
   </dialog>
   <dialog id="raster-visual-dialog" class="raster-visual-dialog" aria-label="Wizualna kalibracja obrazu">
