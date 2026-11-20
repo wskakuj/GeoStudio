@@ -494,6 +494,27 @@ def create_app(workspace: PreviewWorkspace | None = None) -> FastAPI:
         except (ValueError, KeyError) as exc:
             raise HTTPException(400, str(exc)) from exc
 
+    @app.get("/api/cartography/outline")
+    async def get_outline_settings(code: str):
+        try:
+            return state.outline_settings(code)
+        except ValueError as exc:
+            raise HTTPException(400,str(exc)) from exc
+
+    @app.post("/api/cartography/outline")
+    async def set_outline_settings(request: Request):
+        data=await edit_payload(request)
+        try:
+            return state.set_outline_settings(
+                data.get("code"),data.get("stroke"),
+                data.get("strokeWidth"),reset=data.get("reset",False),
+                document_token=data.get("documentToken"),
+                revision=data.get("revision"))
+        except RuntimeError as exc:
+            raise HTTPException(409,str(exc)) from exc
+        except (ValueError,TypeError) as exc:
+            raise HTTPException(400,str(exc)) from exc
+
     @app.get("/api/labels/settings")
     async def get_label_settings(code: str):
         try:
