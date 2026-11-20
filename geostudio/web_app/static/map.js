@@ -16,6 +16,8 @@
   const formatter = new Intl.NumberFormat("pl-PL");
   const state = {
     meta: null, features: [], visibleLayers: new Set(), hiddenGrades: new Set(),
+    hiddenLandUses:new Set(), expandedLandUses:false,
+    appTheme:"dark", mapBackground:"#FFFFFF",
     center: {x: 0, y: 0}, scale: 1, tool: "select",
     labels: true, grid: false, active: null, detail: null, pinned: new Set(),
     cartoLibraries: {},
@@ -88,7 +90,8 @@
     {name:"Ustaw skalę widoku",hint:"Ctrl+M",run:()=> $("view-scale").focus()},
     {name:"Włącz / wyłącz siatkę", hint:"▦", run:toggleGrid},
     {name:"Pokaż wszystkie warstwy", hint:"Warstwy", run:showAllLayers},
-    {name:"Zmień motyw płótna", hint:"◐", run:toggleTheme}
+    {name:"Przełącz jasny/ciemny motyw programu", hint:"◐", run:toggleTheme},
+    {name:"Wybierz kolor tła mapy", hint:"Paleta", run:()=> $("map-background-menu").open=true}
   ];
   let toastTimer;
   let recoveryTimer=null,recoverySavedKey='',recoveryBusy=false;
@@ -449,7 +452,8 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
     // Their heavy symbol density otherwise hides the parcel boundaries.
     state.visibleLayers = new Set(
       meta.layers.map(layer=>layer.name).filter(name=>name!=="Graniczniki"));
-    state.hiddenGrades = new Set(); state.firstLoad = false;
+    state.hiddenGrades = new Set();state.hiddenLandUses = new Set();
+    state.expandedLandUses=false; state.firstLoad = false;
     $("empty-state").hidden = true;
     htmlText($("document-title"), meta.name);
     htmlText($("map-status"), meta.name);
@@ -3211,7 +3215,51 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
     $("tool-grid").classList.toggle("active",state.grid);
     requestDraw();
   }
-  function toggleTheme() { document.body.classList.toggle("dark-map"); requestDraw(); }
+  const APPEARANCE_KEY="geostudio-appearance-v1";
+  const validMapColor=value=>/^#[0-9a-fA-F]{6}$/.test(value);
+  function persistAppearance(){
+    try{
+      window.localStorage.setItem(APPEARANCE_KEY,JSON.stringify({
+        theme:state.appTheme,mapBackground:state.mapBackground
+      }));
+    }catch(_error){ /* Preferences are optional in restricted WebView2. */ }
+  }
+  function applyAppearance(){
+    document.body.dataset.theme=state.appTheme;
+    document.body.classList.remove("dark-map");
+    document.documentElement.style.setProperty("--main-bg",state.mapBackground);
+    const themeButton=$("btn-theme");
+    themeButton.textContent=state.appTheme==="dark"?"☀":"☾";
+    themeButton.title=state.appTheme==="dark"
+      ?"Włącz jasny motyw programu":"Włącz ciemny motyw programu";
+    themeButton.setAttribute("aria-pressed",String(state.appTheme==="dark"));
+    $("map-background-color").value=state.mapBackground;
+    $("map-background-value").textContent=state.mapBackground.toUpperCase();
+    document.querySelector('meta[name="theme-color"]').content=
+      state.appTheme==="dark"?"#111d2d":"#f6f8fb";
+    requestDraw();
+  }
+  function restoreAppearance(){
+    try{
+      const saved=JSON.parse(window.localStorage.getItem(APPEARANCE_KEY)||"null");
+      if(saved?.theme==="light"||saved?.theme==="dark")
+        state.appTheme=saved.theme;
+      if(validMapColor(saved?.mapBackground))
+        state.mapBackground=saved.mapBackground.toUpperCase();
+    }catch(_error){ /* Unsupported or malformed local preference. */ }
+    applyAppearance();
+  }
+  function toggleTheme(){
+    state.appTheme=state.appTheme==="dark"?"light":"dark";
+    applyAppearance();
+    persistAppearance();
+  }
+  function changeMapBackground(value){
+    if(!validMapColor(value))return;
+    state.mapBackground=value.toUpperCase();
+    applyAppearance();
+    persistAppearance();
+  }
 
   function drawGrid() {
     if (!state.grid) return;
@@ -3237,7 +3285,9 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
   }
   function isVisible(feature) {
     return state.visibleLayers.has(feature.layer) &&
-           !(feature.grade && state.hiddenGrades.has(feature.grade));
+           !(feature.grade && state.hiddenGrades.has(feature.grade)) &&
+           !(feature.layer==="Użytki" &&
+             state.hiddenLandUses.has(feature.landUse||""));
   }
   function isInView(box, view) {
     return box[0]<=view[2]&&box[2]>=view[0]&&box[1]<=view[3]&&box[3]>=view[1];
@@ -3885,10 +3935,9 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
   }
   function draw() {
     state.scheduled=false;
-    const isDark=document.body.classList.contains("dark-map");
     ctx.setTransform(state.pixelRatio,0,0,state.pixelRatio,0,0);
     ctx.clearRect(0,0,state.width,state.height);
-    ctx.fillStyle=isDark?"#17283b":"#FAFCFD";
+    ctx.fillStyle=state.mapBackground;
     ctx.fillRect(0,0,state.width,state.height);
     state.hasVisibleUnderlay=!!(
       (underlay.enabled&&underlay.visible&&underlay.image)||
@@ -4158,7 +4207,8 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
       tableRows:parseRows("layout-table-rows","tabela",8),
       compilationScale:state.edit?.compilationScale||5000,
       sourceCompilationScale:state.edit?.sourceCompilationScale||5000,
-      visibleLayers:[...state.visibleLayers]
+      visibleLayers:[...state.visibleLayers],
+      hiddenLandUses:[...state.hiddenLandUses]
     };
   }
   function layoutOptions(){
@@ -4942,11 +4992,15 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
   function showAllLayers() {
     if(!state.meta)return;
     state.visibleLayers=new Set(state.meta.layers.map(layer=>layer.name));
-    state.hiddenGrades.clear();renderLayers();requestDraw();inform("Wszystkie warstwy są widoczne.");
+    state.hiddenGrades.clear();state.hiddenLandUses.clear();
+    renderLayers();renderCartographyMatches();requestDraw();
+    inform("Wszystkie warstwy i klasy użytków są widoczne.");
   }
   function refreshInspectorVisibility() {
     if(state.detail&&(!state.visibleLayers.has(state.detail.layer)||
-       state.detail.grade&&state.hiddenGrades.has(state.detail.grade))){
+       (state.detail.grade&&state.hiddenGrades.has(state.detail.grade))||
+       (state.detail.layer==="Użytki"&&state.hiddenLandUses.has(
+         String(state.detail.fields?.A1||"").trim().toLocaleLowerCase("pl-PL"))))){
       state.active=null;state.detail=null;updateInspector();
     }
     updateSelectionCount();
