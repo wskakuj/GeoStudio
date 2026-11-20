@@ -1,0 +1,108 @@
+"""Regression: zoom-independent Canvas labels and consistent raster export."""
+from __future__ import annotations
+
+from pathlib import Path
+import shutil
+import subprocess
+
+import pytest
+
+
+STATIC = Path(__file__).resolve().parents[1] / "geostudio/web_app/static"
+
+
+def _node_assertions(script: str):
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("Node.js is required for Canvas text rendering checks")
+    result = subprocess.run(
+        [node, "-e", script], cwd=STATIC, capture_output=True,
+        text=True, timeout=25, check=False,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+def test_label_size_does_not_depend_on_zoom_or_export_dpi():
+    _node_assertions(r"""
+const assert=require('node:assert/strict');
+const fs=require('node:fs');
+const src=fs.readFileSync('./map.js','utf8');
+const start=src.indexOf('  function labelFontSize(');
+const stop=src.indexOf('  function renderLabels(',start);
+assert.ok(start>=0&&stop>start);
+const fontSource=src.slice(start,stop);
+const sample={field:'A1',text:'l',size:16};
+const mapFeature={code:'5310'};
+function size(scale,dpi,compilation=5000){
+  const state={
+    scale,exporting:dpi!==96,exportFontRatio:dpi/96,
+    edit:{compilationScale:compilation,sourceCompilationScale:5000}
+  };
+  return new Function('state',fontSource+';return labelFontSize;')
+    (state)(mapFeature,sample,false);
+}
+// The exact same style size is used by the screen, viewport navigation
+// and exported PNG, regardless of the export's spatial resolution.
+for(const scale of [.012,.1,1,8])
+  for(const dpi of [96,150,300])
+    assert.equal(size(scale,dpi),16);
+assert.ok(size(1,96,1000)<16);
+assert.ok(size(1,96,10000)>16);
+assert.ok(!fontSource.includes('exportFontRatio'));
+""")
+
+
+def test_labels_of_different_buildings_cull_across_export_batches():
+    _node_assertions(r"""
+const assert=require('node:assert/strict');
+const fs=require('node:fs');
+const src=fs.readFileSync('./map.js','utf8');
+const start=src.indexOf('  function labelFontSize(');
+const end=src.indexOf('  function draw() {',start);
+const snippet=src.slice(start,end);
+const painted=[];
+const ctx={
+  save(){},restore(){},measureText(v){return {width:v.length*9}},
+  fillRect(){},strokeRect(){},strokeText(){},
+  fillText(v){painted.push(v)}
+};
+const state={
+  labels:true,active:null,pinned:new Set(),tool:'select',
+  labelSelected:null,labelHits:[],exporting:true,scale:1,
+  width:200,height:200,
+  edit:{sourceCompilationScale:5000,compilationScale:5000}
+};
+const renderLabels=new Function(
+ 'state','ctx','worldToScreen','document',
+ snippet+';return renderLabels;'
+)(state,ctx,(x,y)=>({x,y}),{body:{classList:{contains:()=>false}}});
+function building(id,labelText){
+  return {
+    id,code:'5310',bbox:[0,0,80,80],
+    labels:[
+      {field:'A1',text:labelText,x:100,y:100,size:16,color:'#CC202C'},
+      {field:'A2',text:'II-0.5',x:100,y:100,size:16,color:'#CC202C'}
+    ]
+  };
+}
+const collisions=[];
+renderLabels([building('f1','a')],collisions);
+assert.deepEqual(painted,['a','II-0.5']);
+assert.equal(collisions.length,2);
+renderLabels([building('f2','b')],collisions);
+assert.deepEqual(painted,['a','II-0.5']);
+assert.equal(collisions.length,2);
+// A subsequent export page uses the SAME ledger; the export renderer
+// never applies a second text scale for 300 DPI.
+assert.ok(src.includes('renderLabels(visible,collisions)'));
+assert.ok(src.includes('renderExportBatch(g,options,part,pass,exportLabelCollisions)'));
+assert.ok(!src.includes('state.exportFontRatio=options.dpi/96'));
+""")
+
+
+def test_navigation_preview_never_scales_old_labels_as_geometry():
+    source=(STATIC/"map.js").read_text(encoding="utf-8")
+    begin=source[source.index("  function beginNavigationPreview()"):source.index(
+        "  function drawNavigationPreview()")]
+    assert "if(!state.geometrySnapshotValid)return;" in begin
+    assert "snapshotContext.drawImage(canvas,0,0);" not in begin
