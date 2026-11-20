@@ -10,6 +10,11 @@ on:
       - "pyproject.toml"
       - ".github/workflows/windows-preview.yml"
 
+# New draft revisions invalidate obsolete installer binaries.
+concurrency:
+  group: windows-geostudio2-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 permissions:
   contents: read
 
