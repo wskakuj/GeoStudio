@@ -392,13 +392,13 @@
             <input id="create-a2" type="text" maxlength="512" placeholder="Np. bud. mieszk.">
           </div>
         </div>
-        <p class="select-explain">Nie zmieniamy innych obiektów. Nowy poligon ma własny identyfikator i domknięty obrys. Zapisz osobną kopię MAP po zatwierdzeniu.</p>
-        <p class="select-preview" id="create-summary" role="status">Sprawdź obrys.</p>
+        <p class="select-explain">Enter tworzy i sprawdza poligon automatycznie. Po zapisaniu nadal rysujesz następny poligon (N); do zaznaczania wrócisz klawiszem S. Oryginalny MAP pozostaje nienaruszony.</p>
+        <p class="select-preview" id="create-summary" role="status">Wpisz A1 i naciśnij Enter, aby utworzyć poligon.</p>
       </div>
       <div class="select-actions">
         <button id="create-back" type="button" class="button ghost">Wróć do rysowania</button>
-        <button id="create-preview" type="button" class="button ghost">Sprawdź obrys</button>
-        <button id="create-apply" type="submit" class="button primary" disabled>Utwórz poligon</button>
+        <button id="create-preview" type="button" class="button ghost" hidden aria-hidden="true" tabindex="-1">Sprawdź obrys</button>
+        <button id="create-apply" type="submit" class="button primary">Utwórz poligon <small>Enter</small></button>
       </div>
     </form>
   </dialog>
