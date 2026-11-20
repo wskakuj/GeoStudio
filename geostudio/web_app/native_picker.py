@@ -118,7 +118,7 @@ class NativeMapPicker:
         if chosen.suffix.casefold() != ".map" or not chosen.is_file():
             raise ValueError("Wybierz prawidłowy plik GEO-MAP .MAP.")
         if not 0 < chosen.stat().st_size <= MAX_MAP_BYTES:
-            raise ValueError("Plik MAP jest pusty lub przekracza limit 80 MB.")
+            raise ValueError("Plik MAP jest pusty lub przekracza limit 512 MB.")
         raw=chosen.read_bytes()
         meta=self._workspace.load_map(raw,chosen.name)
         metadata_path=chosen.with_suffix(".geostudio-topology.json")
@@ -256,6 +256,62 @@ class NativeMapPicker:
                  for name,content in data]
         return {"cancelled":False,"libraries":reports,
                 "status":self._workspace.cartography_status()}
+
+
+    def save_generated_export(self, ticket: str) -> dict:
+        """Windows Save As for PNG/JPG/TIFF/DXF produced in the browser.
+
+        The trusted in-memory workspace holds bytes behind a random ticket.
+        JS can never pass a file path or make the native bridge overwrite the
+        original MAP. The picker is created/destroyed on this worker thread.
+        """
+        import tkinter as tk
+        from tkinter import filedialog
+
+        suggested,extension,data=self._workspace.generated_export(ticket)
+        known={"png":"PNG","jpg":"JPG","tif":"TIFF","dxf":"DXF"}
+        if extension not in known:
+            raise ValueError("Niedozwolony typ eksportu.")
+        root=tk.Tk()
+        try:
+            root.withdraw()
+            root.attributes("-topmost",True)
+            root.update()
+            directory=(self._source_path.parent if self._source_path
+                       else Path(read_last_map_directory(self._settings) or
+                                 str(Path.home()/"Documents")))
+            chosen_name=filedialog.asksaveasfilename(
+                parent=root,
+                initialdir=str(directory),
+                initialfile=suggested,
+                title="GeoStudio 2.0 — Zapisz eksport "+known[extension],
+                defaultextension="."+extension,
+                filetypes=((known[extension],"*."+extension),),
+                confirmoverwrite=True)
+        finally:
+            root.destroy()
+        if not chosen_name:
+            return {"cancelled":True}
+        chosen=Path(chosen_name)
+        if chosen.suffix.lower()!="."+extension:
+            raise ValueError("Wybierz plik ."+extension+".")
+        if self._source_path and chosen.resolve()==self._source_path:
+            raise ValueError("Nie wolno nadpisać otwartej mapy MAP.")
+        fd,temporary=tempfile.mkstemp(
+            prefix=".geostudio-export-",suffix=".tmp",dir=str(chosen.parent))
+        try:
+            with os.fdopen(fd,"wb") as stream:
+                stream.write(data)
+                stream.flush()
+                os.fsync(stream.fileno())
+            os.replace(temporary,chosen)
+        finally:
+            try:
+                os.unlink(temporary)
+            except FileNotFoundError:
+                pass
+        self._workspace.generated_export(ticket,consume=True)
+        return {"cancelled":False,"path":str(chosen),"bytes":len(data)}
 
     def save_map(self) -> dict:
         """Default Save As: bake same-code overlays when any exist."""
