@@ -4941,33 +4941,115 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
     }finally{button.disabled=false;printButton.disabled=false;}
   }
 
-  function buildLayer(name,count) {
-    const item=document.createElement("div");item.className="layer-item";
-    const row=document.createElement("label");row.className="layer-row";
-    const toggle=document.createElement("input");toggle.type="checkbox";toggle.className="layer-toggle";
+  function buildLayer(name,count,filter="") {
+    const item=document.createElement("div");
+    item.className="layer-item";
+    const row=document.createElement("div");row.className="layer-row";
+    const main=document.createElement("label");main.className="layer-main";
+    const toggle=document.createElement("input");
+    toggle.type="checkbox";toggle.className="layer-toggle";
     toggle.checked=state.visibleLayers.has(name);
+    const landUses=name==="Użytki"?(state.meta?.landUseClasses||[]):[];
+    const visibleCount=()=>landUses.reduce((n,entry)=>
+      n+(state.hiddenLandUses.has(entry.key)?0:entry.count),0);
+    toggle.indeterminate=!!landUses.length&&toggle.checked&&
+      visibleCount()<count;
+    toggle.setAttribute("aria-label","Pokaż lub ukryj warstwę "+name);
     toggle.addEventListener("change",()=>{
-      if(toggle.checked)state.visibleLayers.add(name);else state.visibleLayers.delete(name);
-      renderCartographyMatches();
-      requestDraw();refreshInspectorVisibility();
+      if(toggle.checked)state.visibleLayers.add(name);
+      else state.visibleLayers.delete(name);
+      toggle.indeterminate=!!landUses.length&&toggle.checked&&
+        visibleCount()<count;
+      item.classList.toggle("layer-muted",!toggle.checked);
+      renderCartographyMatches();requestDraw();refreshInspectorVisibility();
     });
-    const color=document.createElement("span");color.className="layer-swatch";
-    const hue=colorForLayer(name);color.style.backgroundColor=hue;color.style.borderColor=hue;
-    const text=document.createElement("span");text.className="layer-name";text.textContent=name;
-    const qty=document.createElement("span");qty.className="layer-count";qty.textContent=display(count);
-    row.append(toggle,color,text,qty);item.append(row);
-    if(name==="Użytki Leśne"&&state.meta&&Object.keys(state.meta.forestClasses).length){
-      const grades=document.createElement("div");grades.className="layer-grades";
+    const swatch=document.createElement("span");swatch.className="layer-swatch";
+    const hue=colorForLayer(name);
+    swatch.style.backgroundColor=hue;swatch.style.borderColor=hue;
+    const label=document.createElement("span");label.className="layer-name";
+    label.textContent=name;
+    const countBadge=document.createElement("span");
+    countBadge.className="layer-count";
+    const refreshCount=()=>{
+      countBadge.textContent=landUses.length&&visibleCount()<count
+        ?display(visibleCount())+"/"+display(count)
+        :display(count);
+    };
+    refreshCount();
+    main.append(toggle,swatch,label,countBadge);
+    row.append(main);
+    item.append(row);
+    item.classList.toggle("layer-muted",!toggle.checked);
+
+    if(landUses.length){
+      const expanded=state.expandedLandUses||!!filter;
+      const details=document.createElement("div");
+      details.className="landuse-list";details.id="landuse-classes-list";
+      details.hidden=!expanded;
+      const disclosure=document.createElement("button");
+      disclosure.type="button";disclosure.className="layer-disclosure";
+      disclosure.setAttribute("aria-controls",details.id);
+      disclosure.setAttribute("aria-expanded",String(expanded));
+      disclosure.setAttribute("aria-label","Rozwiń klasy użytków");
+      disclosure.textContent=expanded?"⌃":"⌄";
+      disclosure.addEventListener("click",()=>{
+        state.expandedLandUses=!state.expandedLandUses;
+        details.hidden=!state.expandedLandUses;
+        disclosure.setAttribute("aria-expanded",
+          String(state.expandedLandUses));
+        disclosure.setAttribute("aria-label",
+          state.expandedLandUses?"Zwiń klasy użytków":"Rozwiń klasy użytków");
+        disclosure.textContent=state.expandedLandUses?"⌃":"⌄";
+      });
+      row.append(disclosure);
+      const heading=document.createElement("div");
+      heading.className="landuse-list-heading";
+      heading.textContent="KLASY W POLU A1 · "+landUses.length;
+      details.append(heading);
+      for(const landUse of landUses){
+        if(filter&&!landUse.label.toLocaleLowerCase("pl-PL").includes(filter)&&
+           !name.toLocaleLowerCase("pl-PL").includes(filter))continue;
+        const line=document.createElement("label");
+        line.className="landuse-row";
+        const checkbox=document.createElement("input");
+        checkbox.type="checkbox";checkbox.className="grade-toggle landuse-toggle";
+        checkbox.checked=!state.hiddenLandUses.has(landUse.key);
+        checkbox.setAttribute("aria-label","Pokaż użytek "+landUse.label);
+        const className=document.createElement("span");
+        className.className="landuse-class-name";
+        className.textContent=landUse.label;
+        const amount=document.createElement("span");
+        amount.className="landuse-count";
+        amount.textContent=display(landUse.count);
+        checkbox.addEventListener("change",()=>{
+          if(checkbox.checked)state.hiddenLandUses.delete(landUse.key);
+          else state.hiddenLandUses.add(landUse.key);
+          toggle.indeterminate=toggle.checked&&visibleCount()<count;
+          refreshCount();
+          renderCartographyMatches();requestDraw();refreshInspectorVisibility();
+        });
+        line.append(checkbox,className,amount);
+        details.append(line);
+      }
+      item.append(details);
+    }
+    if(name==="Użytki Leśne"&&state.meta&&
+       Object.keys(state.meta.forestClasses).length){
+      const grades=document.createElement("div");
+      grades.className="layer-grades";
       for(const [grade,amount] of Object.entries(state.meta.forestClasses)){
         const line=document.createElement("label");line.className="grade-row";
-        const input=document.createElement("input");input.type="checkbox";input.className="grade-toggle";
+        const input=document.createElement("input");
+        input.type="checkbox";input.className="grade-toggle";
         input.checked=!state.hiddenGrades.has(grade);
         input.addEventListener("change",()=>{
-          if(input.checked)state.hiddenGrades.delete(grade);else state.hiddenGrades.add(grade);
-          requestDraw();refreshInspectorVisibility();
+          if(input.checked)state.hiddenGrades.delete(grade);
+          else state.hiddenGrades.add(grade);
+          renderCartographyMatches();requestDraw();refreshInspectorVisibility();
         });
         const nameNode=document.createElement("b");nameNode.textContent=grade;
-        const badge=document.createElement("em");badge.textContent=amount;
+        const badge=document.createElement("em");
+        badge.textContent=display(amount);
         line.append(input,nameNode,badge);grades.append(line);
       }
       item.append(grades);
@@ -4980,12 +5062,17 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
     const needle=$("layer-search").value.toLocaleLowerCase("pl-PL").trim();
     let found=0;
     for(const layer of state.meta.layers){
-      if(needle&&!layer.name.toLocaleLowerCase("pl-PL").includes(needle))continue;
-      list.append(buildLayer(layer.name,layer.count));found++;
+      const matchesName=layer.name.toLocaleLowerCase("pl-PL").includes(needle);
+      const matchesUse=layer.name==="Użytki"&&
+        (state.meta.landUseClasses||[]).some(item=>
+          item.label.toLocaleLowerCase("pl-PL").includes(needle));
+      if(needle&&!matchesName&&!matchesUse)continue;
+      list.append(buildLayer(layer.name,layer.count,needle));found++;
     }
     if(!found){
-      const message=document.createElement("div");message.className="panel-placeholder";
-      message.textContent="Brak warstw pasujących do wyszukiwania.";
+      const message=document.createElement("div");
+      message.className="panel-placeholder";
+      message.textContent="Brak warstw lub klas użytków pasujących do wyszukiwania.";
       list.append(message);
     }
   }
