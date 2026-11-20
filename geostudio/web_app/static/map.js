@@ -4011,7 +4011,7 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
   function openLayoutDialog(resume=false){
     if(!state.meta||!state.edit)return;
     if(resume!==true){
-      $("layout-title").value=state.meta.name.replace(/\\.map$/i,"");
+      $("layout-title").value=state.meta.name.replace(/\.map$/i,"");
       // Do not derive export scale from state.scale (current zoom).
       $("layout-scale").value=String(state.edit.compilationScale||5000);
     }
