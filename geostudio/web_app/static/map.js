@@ -2145,6 +2145,7 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
     renderRasterLayers();
   }
   function removeRaster(all=false){
+    if(gcpView.open)closeVisualCalibration();
     raster.ticket++;
     if(all)raster.layers=[];
     if(!all&&raster.layers.length)assignRaster(raster.layers.pop());
@@ -2890,9 +2891,9 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
     addPath(feature.geometry);
     ctx.fillStyle=hatchPattern(style);
     ctx.globalAlpha=Math.min(
-      ((underlay.enabled&&underlay.image)||
-       (raster.image&&raster.affine&&raster.boundEPSG===
-        Number($("underlay-epsg").value)))&&
+      ((underlay.enabled&&underlay.visible&&underlay.image)||
+       [...raster.layers,...(raster.image?[rasterEntry()]:[])]
+        .some(item=>rasterCanShow(item)))&&
       !state.exporting ? .40 : 1,
       Math.max(0,style.opacity));
     ctx.fill("evenodd");
@@ -4699,12 +4700,12 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
   $("raster-opacity").addEventListener("input",ev=>{
     raster.opacity=Number(ev.target.value)/100;
     $("raster-opacity-value").textContent=ev.target.value+"%";
-    state.previewActive=false;state.geometrySnapshotValid=false;requestDraw();
+    requestDraw();renderRasterLayers();
   });
   $("underlay-opacity").addEventListener("input",ev=>{
     underlay.opacity=Number(ev.target.value)/100;
     $("underlay-opacity-value").textContent=ev.target.value+"%";
-    state.previewActive=false;state.geometrySnapshotValid=false;requestDraw();
+    requestDraw();renderRasterLayers();
   });
   link("tool-sidecar",()=> $("file-sidecar").click());
   link("tool-cartography",chooseCartographicLibraries);
@@ -4753,6 +4754,19 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
   link("btn-theme",toggleTheme);
   link("btn-command",openCommands);
   link("layers-all",showAllLayers);
+  function activateLayerTab(which){
+    const rasterTab=which==="raster";
+    $("vectors-layer-panel").hidden=rasterTab;
+    $("rasters-layer-panel").hidden=!rasterTab;
+    $("layers-vectors-tab").classList.toggle("active",!rasterTab);
+    $("layers-rasters-tab").classList.toggle("active",rasterTab);
+    $("layers-vectors-tab").setAttribute("aria-selected",String(!rasterTab));
+    $("layers-rasters-tab").setAttribute("aria-selected",String(rasterTab));
+    if(rasterTab)renderRasterLayers();
+  }
+  link("layers-vectors-tab",()=>activateLayerTab("vector"));
+  link("layers-rasters-tab",()=>activateLayerTab("raster"));
+  link("raster-layers-add",openRasterDialog);
   $("layer-search").addEventListener("input",renderLayers);
   $("file-map").addEventListener("change",ev=>openMap(ev.target.files?.[0]));
   $("file-sidecar").addEventListener("change",ev=>openStyles(ev.target.files?.[0]));
@@ -4779,7 +4793,9 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
     }
   });
   new ResizeObserver(()=>{resizeCanvas();if(state.meta)scheduleViewport();}).observe(shell);
-  resizeCanvas();
+  new ResizeObserver(()=>{if(gcpView.open)drawGcpCanvas();})
+    .observe($("raster-gcp-canvas"));
+  resizeCanvas();renderRasterLayers();
   api("/api/map").then(meta=>{
     if(meta.loaded){
       state.meta=meta;
