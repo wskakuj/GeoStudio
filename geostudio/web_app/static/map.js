@@ -13,6 +13,7 @@
     meta: null, features: [], visibleLayers: new Set(), hiddenGrades: new Set(),
     center: {x: 0, y: 0}, scale: 1, tool: "select",
     labels: true, grid: false, active: null, detail: null, pinned: new Set(),
+    cartoLibraries: {},
     width: 1, height: 1, pixelRatio: 1, isDragging: false, drag: null,
     lastPick: null, scheduled: false, refreshTimer: null, queryCounter: 0,
     queryAbort: null, selectionRequest: 0, limited: false,
@@ -463,12 +464,35 @@
   }
 
   function cartographyMessage(payload) {
-    const libs=payload?.libraries||{};
-    const summary=Object.entries(libs).map(([name,item])=>
-      name+" ("+(item.definitions||0)+")").join(" · ");
-    $("cartography-status").textContent=summary||"Brak bibliotek";
-    $("cartography-status").title=summary
-      ?"Załadowane biblioteki: "+summary:"Brak dodatkowych bibliotek GEO-MAP";
+    state.cartoLibraries=payload?.libraries||{};
+    renderCartographyMatches();
+  }
+  function renderCartographyMatches() {
+    const loaded=state.cartoLibraries||{};
+    if(!Object.keys(loaded).length){
+      $("cartography-status").textContent="Brak bibliotek";
+      $("cartography-status").title="Wczytaj oryginalne LAY/CDF/SYM, aby odwzorować znane style GEO-MAP.";
+      return;
+    }
+    const matched={CDF:0,LAY:0,SYM:0},applied={CDF:0,LAY:0,SYM:0};
+    for(const feature of state.features){
+      for(const type of feature.style?.libraryMatches||[])
+        if(Object.hasOwn(matched,type))matched[type]++;
+      for(const type of feature.style?.libraryApplied||[])
+        if(Object.hasOwn(applied,type))applied[type]++;
+    }
+    const summary=Object.entries(loaded).map(([kind,item])=>
+      kind+": "+applied[kind]+"/"+matched[kind]).join(" · ");
+    const noMatch=Object.keys(loaded).every(type=>!matched[type]);
+    $("cartography-status").textContent=summary||
+      "Brak dopasowań";
+    $("cartography-status").title=
+      "W aktualnie wyświetlonej części mapy: ZASTOSOWANIA / DOPASOWANIA. "+
+      Object.entries(loaded).map(([kind,item])=>kind+": "+
+        (item.definitions||0)+" rozpoznanych definicji, "+
+        (matched[kind]||0)+" obiektów pasuje, "+
+        (applied[kind]||0)+" wykorzystuje styl.").join(" ")+
+      (noMatch?" Wybrane biblioteki mogą nie zawierać kodów widocznej mapy.":"");
   }
   async function chooseCartographicLibraries() {
     if(window.pywebview?.api?.open_libraries){
@@ -479,6 +503,9 @@
           inform("Załadowano biblioteki kartograficzne: "+
             result.libraries.map(item=>item.kind+" "+item.definitions).join(", "));
           await refreshViewport();
+          if(result.libraries.some(x=>x.kind==="SYM")&&
+             !state.visibleLayers.has("Graniczniki"))
+            inform("Symbole SYM mogą być niewidoczne: warstwa Graniczniki jest ukryta. Włącz ją w panelu warstw.");
         }
       }catch(error){
         inform("Nie można załadować bibliotek: "+error.message,true);
@@ -515,6 +542,8 @@
       cartographyMessage(status);
       inform("Załadowano "+list.length+" bibliotek. Renderowanie mapy odświeżone.");
       await refreshViewport();
+      if(kinds.has("SYM")&&!state.visibleLayers.has("Graniczniki"))
+        inform("Włącz warstwę Graniczniki w panelu, by zobaczyć symbole punktowe SYM.");
     }catch(error){
       inform("Błąd biblioteki GEO-MAP: "+error.message,true);
     }finally{busy(false);$("file-library").value="";}
@@ -2240,6 +2269,7 @@
       if(ticket!==state.queryCounter)return;
       state.features=res.features;
       state.limited=res.limited;
+      renderCartographyMatches();
       requestDraw();
     }catch(err){
       if(err.name!=="AbortError")inform("Nie udało się narysować mapy: "+err.message,true);
