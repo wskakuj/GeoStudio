@@ -8,12 +8,15 @@
   const $ = id => document.getElementById(id);
   const token = document.querySelector('meta[name="api-token"]').content;
   const canvas = $("map-canvas"), shell = $("canvas-shell"), ctx = canvas.getContext("2d");
+  const viewportSnapshot=document.createElement("canvas");
+  const snapshotContext=viewportSnapshot.getContext("2d");
   const formatter = new Intl.NumberFormat("pl-PL");
   const state = {
     meta: null, features: [], visibleLayers: new Set(), hiddenGrades: new Set(),
     center: {x: 0, y: 0}, scale: 1, tool: "select",
     labels: true, grid: false, active: null, detail: null, pinned: new Set(),
     cartoLibraries: {},
+    previewActive:false,previewCamera:null,
     width: 1, height: 1, pixelRatio: 1, isDragging: false, drag: null,
     lastPick: null, scheduled: false, refreshTimer: null, queryCounter: 0,
     queryAbort: null, selectionRequest: 0, limited: false,
@@ -21,6 +24,7 @@
     edit: null, editBusy: false, bulkPreview: null, movePreview: null,
     moveIds: [], moveGhost: null, objectPreview:null,
     drawPoints:[], drawHover:null, drawSnap:null,
+    labelHits:[],labelDrag:null,labelSelected:null,
     drawMagnet:true,drawCursorWorld:null,copyIds:[],
     geometryPreview:null,cutIds:[],lineEditId:null,
     snapEnabled: true, sharedNodes: false, vertexDrag: null,
@@ -30,7 +34,6 @@
     {name:"Otwórz plik GEO-MAP", hint:"Ctrl+O", run:chooseMap},
     {name:"Wybierz obiekty według kodu, A1, A2", hint:"Ctrl+H", run:openAdvancedSelection},
     {name:"Edytuj zbiorowo pola A1/A2", hint:"Ctrl+Shift+E", run:openBulkEditor},
-    {name:"Dokładnie przesuń poligony X/Y", hint:"Ctrl+Shift+M", run:()=>openMoveEditor()},
     {name:"Przeciągaj wybrane poligony", hint:"M", run:()=>setTool("move")},
     {name:"Kopiuj obok i przesuń myszą", hint:"Ctrl+D", run:quickDuplicate},
     {name:"Kopiuj z dokładnym przesunięciem", hint:"X/Y", run:openCopyEditor},
@@ -57,6 +60,10 @@
     {name:"Usuń zaznaczony węzeł poligonu", hint:"Delete", run:deleteSelectedVertex},
     {name:"Przesuwanie mapy", hint:"H", run:()=>setTool("pan")},
     {name:"Włącz / wyłącz etykiety", hint:"Aa", run:toggleLabels},
+    {name:"Przesuń pojedyncze A1/A2/TX myszą",hint:"Alt+L",run:()=>setTool("labels")},
+    {name:"Ustaw opis według kodu",hint:"Ctrl+Alt+L",run:openLabelSettings},
+    {name:"Ustaw skalę opracowania",hint:"Ctrl+F5",run:()=> $("compilation-scale").focus()},
+    {name:"Ustaw skalę widoku",hint:"Ctrl+M",run:()=> $("view-scale").focus()},
     {name:"Włącz / wyłącz siatkę", hint:"▦", run:toggleGrid},
     {name:"Pokaż wszystkie warstwy", hint:"Warstwy", run:showAllLayers},
     {name:"Zmień motyw płótna", hint:"◐", run:toggleTheme}
@@ -83,6 +90,9 @@
       canUndo:!!status.canUndo,
       canRedo:!!status.canRedo,
       hasReversibleMasks:!!status.hasReversibleMasks,
+      hasVisualStyles:!!status.hasVisualStyles,
+      compilationScale:status.compilationScale||5000,
+      sourceCompilationScale:status.sourceCompilationScale||5000,
       revision:status.revision,
       documentToken:status.documentToken,
       undoLabel:status.undoLabel||"",
@@ -96,8 +106,11 @@
     $("tool-new-polygon").disabled=state.editBusy||!state.meta;
     $("btn-export").disabled=state.editBusy||!state.meta;
     $("tool-export-baked").disabled=state.editBusy||!state.meta;
-    $("btn-export").textContent=state.edit.hasReversibleMasks
+    $("btn-export").textContent=(
+      state.edit.hasReversibleMasks||state.edit.hasVisualStyles)
       ?"↓ Pobierz MAP + JSON":"↓ Pobierz MAP";
+    if(document.activeElement!==$("compilation-scale"))
+      $("compilation-scale").value="1:"+state.edit.compilationScale;
     updateBulkButton();
     $("tool-undo").title=state.edit.undoLabel
       ?"Cofnij: "+state.edit.undoLabel+" (Ctrl+Z)":"Cofnij (Ctrl+Z)";
@@ -322,14 +335,17 @@
                  " ("+display(saved.bytes)+" bajtów).");
           window.alert("Kopia GEO-MAP została zapisana w:\n"+saved.path+
             (saved.topologyPath?"\n\nPlik odwracalnej topologii:\n"+
-            saved.topologyPath+"\nZachowaj oba pliki razem.":""));
+            saved.topologyPath+"\nZachowaj oba pliki razem.":"")+
+(saved.visualPath?"\n\nUstawienia opisów i skali:\n"+
+saved.visualPath+"\nZachowaj obok MAP.":""));
         }
         return;
       }
       const hasMasks=!!state.edit.hasReversibleMasks;
+      const needsPackage=hasMasks||!!state.edit.hasVisualStyles;
       const params=new URLSearchParams({documentToken:state.edit.documentToken,
         normalizePositive:"true"});
-      const response=await fetch((hasMasks?"/api/export/package":"/api/export/map")+
+      const response=await fetch((needsPackage?"/api/export/package":"/api/export/map")+
         "?"+params.toString(),{
         headers:{"X-GeoStudio-Token":token},cache:"no-store"
       });
@@ -340,14 +356,14 @@
       const blob=await response.blob();
       const original=state.meta.name.replace(/\\/g,"/").split("/").pop();
       const filename=original.replace(/\.map$/i,"")+
-        (hasMasks?"_GeoStudio2_wyciecia.zip":"_GeoStudio2_kopia.MAP");
+        (needsPackage?"_GeoStudio2_z_etykietami.zip":"_GeoStudio2_kopia.MAP");
       const url=URL.createObjectURL(blob);
       const anchor=document.createElement("a");
       anchor.href=url;anchor.download=filename;
       document.body.append(anchor);anchor.click();anchor.remove();
       setTimeout(()=>URL.revokeObjectURL(url),60000);
-      inform(hasMasks
-        ?"Zapisano ZIP zawierający rzeczywiście wycięty MAP oraz plik JSON do odtworzenia. Rozpakuj oba razem."
+      inform(needsPackage
+        ?"Pobrano ZIP z MAP i ustawieniami etykiet oraz topologii. Zachowaj pliki JSON obok MAP."
         :"Wysłano "+filename+" do pobrania; sprawdź Pobrane (Ctrl+J).");
     }catch(error){inform("Nie udało się zapisać kopii: "+error.message,true);}
   }
@@ -378,6 +394,8 @@
     state.active = null; state.detail = null; state.pinned.clear();
     populateSelectCodes();
     state.vertexDrag=null;state.moveGhost=null;state.movePreview=null;
+    state.labelDrag=null;state.labelSelected=null;state.labelHits=[];
+    state.previewActive=false;state.previewCamera=null;
     state.moveIds=[];state.copyIds=[];state.drawPoints=[];
     state.cutIds=[];state.lineEditId=null;state.geometryPreview=null;
     state.drawHover=null;state.drawSnap=null;state.drawCursorWorld=null;
@@ -432,7 +450,10 @@
       const result = await api("/api/styles", {
         method:"POST", headers:{"Content-Type":"application/json"}, body:file
       });
-      inform("Wczytano " + result.styleCount + " ustawień stylu (tylko podgląd).");
+      const meta=await api("/api/map");
+      updateEditState(meta);
+      inform("Wczytano "+result.labelPositions+" pozycji opisów, "+
+        result.styleCount+" stylów. Skala opracowania 1:"+result.compilationScale+".");
       await refreshViewport();
     } catch (error) {
       inform("Nie udało się wczytać JSON: " + error.message, true);
@@ -566,6 +587,8 @@
             finishOpeningMap(answer.metadata);
             if(answer.metadata.topologyWarning)
               inform(answer.metadata.topologyWarning,true);
+            if(answer.metadata.visualWarning)
+              inform(answer.metadata.visualWarning,true);
             if(answer.metadata.recoveryAvailable&&
                window.pywebview.api?.restore_recovery){
               const candidate=answer.metadata.recoveryAvailable;
@@ -1273,7 +1296,7 @@
     }finally{state.editBusy=false;updateEditState(state.edit);}
   }
   function finishDrawPolygon() {
-    if(state.tool!=="draw")return;
+    if(state.tool!=="draw"||$("create-dialog").open)return;
     if(state.drawPoints.length<3){
       inform("Poligon wymaga minimum trzech różnych punktów.",true);return;
     }
@@ -1479,6 +1502,12 @@
     const helper=window.GeoStudioDrawingSnap;
     if(!helper||!state.drawMagnet||altPressed)
       return {point:world,kind:null,code:null};
+    if(state.tool==="draw"&&state.drawPoints.length>=3){
+      const first=state.drawPoints[0];
+      const point={x:first[1],y:-first[0]};
+      if(Math.hypot(world.x-point.x,world.y-point.y)*state.scale<=10)
+        return {point,kind:"start",code:null,targetId:null};
+    }
     return helper.snapPoint(world,
       state.features.filter(isVisible),{scale:state.scale,
         enabled:true,bypass:altPressed,vertexPixels:7,edgePixels:5});
@@ -1500,7 +1529,8 @@
     ctx.beginPath();ctx.arc(p.x,p.y,7.5,0,Math.PI*2);ctx.stroke();
     ctx.beginPath();ctx.moveTo(p.x-11,p.y);ctx.lineTo(p.x+11,p.y);
     ctx.moveTo(p.x,p.y-11);ctx.lineTo(p.x,p.y+11);ctx.stroke();
-    const label=(state.drawSnap.kind==="węzeł"?"WĘZEŁ":"LINIA")+
+    const label=(state.drawSnap.kind==="start"?"DOMKNIJ POLIGON":
+      state.drawSnap.kind==="węzeł"?"WĘZEŁ":"LINIA")+
       (state.drawSnap.code?" · "+state.drawSnap.code:"");
     ctx.font="600 10px Segoe UI, sans-serif";
     const width=Math.min(160,ctx.measureText(label).width+12);
@@ -1600,7 +1630,10 @@
     state.pixelRatio = Math.min(2, window.devicePixelRatio || 1);
     const w = Math.round(state.width * state.pixelRatio);
     const h = Math.round(state.height * state.pixelRatio);
-    if (canvas.width !== w || canvas.height !== h) { canvas.width=w; canvas.height=h; }
+    if (canvas.width !== w || canvas.height !== h) {
+      canvas.width=w;canvas.height=h;
+      state.previewActive=false;state.previewCamera=null;
+    }
     requestDraw();
   }
   function worldToScreen(x,y) {
@@ -1626,15 +1659,161 @@
     state.scale=Math.max(.000001,Math.min(3500,state.scale));
     requestDraw(); scheduleViewport(true);
   }
+  function beginNavigationPreview() {
+    if(state.previewActive||!state.meta||!canvas.width||!canvas.height)return;
+    viewportSnapshot.width=canvas.width;
+    viewportSnapshot.height=canvas.height;
+    snapshotContext.setTransform(1,0,0,1,0,0);
+    snapshotContext.clearRect(0,0,canvas.width,canvas.height);
+    snapshotContext.drawImage(canvas,0,0);
+    state.previewCamera={
+      center:{...state.center},scale:state.scale,
+      width:state.width,height:state.height
+    };
+    state.previewActive=true;
+  }
+  function drawNavigationPreview() {
+    const c=state.previewCamera;
+    if(!state.previewActive||!c||!viewportSnapshot.width)return false;
+    const factor=state.scale/c.scale;
+    const dx=state.width/2-c.width/2*factor+
+      (c.center.x-state.center.x)*state.scale;
+    const dy=state.height/2-c.height/2*factor+
+      (c.center.y-state.center.y)*state.scale;
+    ctx.drawImage(viewportSnapshot,dx,dy,c.width*factor,c.height*factor);
+    updateScaleReadout();
+    return true;
+  }
   function zoomAt(factor, px, py) {
     if (!state.meta) return;
     const origin=screenToWorld(px,py);
+    beginNavigationPreview();
     state.scale=Math.max(.000001,Math.min(3500,state.scale*factor));
     state.center={
       x:origin.x-(px-state.width/2)/state.scale,
       y:origin.y-(py-state.height/2)/state.scale
     };
     requestDraw(); scheduleViewport();
+  }
+  // Same logical-DPI convention as the classic Qt scale selector.
+  // This is an APPROXIMATE screen scale, never a claimed source EPSG.
+  const cssPixelsPerGroundMetre=96/.0254;
+  function scaleDenominator(value,min,max) {
+    const raw=String(value||"").replace(/\s/g,"").replace(",",".");
+    const parts=raw.split(":");
+    if(parts.length>2)return null;
+    const n=Number(parts.at(-1));
+    return Number.isFinite(n)&&n>=min&&n<=max?n:null;
+  }
+  function updateScaleReadout() {
+    const den=Math.round(cssPixelsPerGroundMetre/state.scale);
+    if(Number.isFinite(den)&&den>0&&den<=1e9&&
+       document.activeElement!==$("view-scale"))
+      $("view-scale").value="1:"+den;
+    $("scale-label").textContent="Podgląd: "+
+       state.scale.toFixed(state.scale<1?3:1)+" px / jedn.";
+  }
+  function applyViewScale() {
+    if(!state.meta)return;
+    const den=scaleDenominator($("view-scale").value,10,10000000);
+    if(!den){inform("Skala widoku: wpisz 1:N (10–10000000).",true);return;}
+    const next=cssPixelsPerGroundMetre/den;
+    if(!(next>1e-6&&next<=3500)){
+      inform("Ta skala widoku przekracza zakres GeoStudio.",true);return;
+    }
+    zoomAt(next/state.scale,state.width/2,state.height/2);
+    inform("Przybliżona skala ekranu: 1:"+den+
+      ". Współrzędne X/Y i MAP nie zostały zmienione.");
+  }
+  async function applyCompilationScale() {
+    if(!state.meta||state.editBusy)return;
+    const den=scaleDenominator($("compilation-scale").value,100,1000000);
+    if(!den||!Number.isInteger(den)){
+      inform("Skala opracowania musi być 1:N, N od 100 do 1000000.",true);
+      return;
+    }
+    state.editBusy=true;updateEditState(state.edit);
+    try{
+      const status=await api("/api/compilation-scale",{
+        method:"POST",headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({...editRequestBody(),denominator:den})
+      });
+      updateEditState(status);
+      requestDraw();
+      inform("Skala opracowania ustawiona na 1:"+den+
+        ". Opisy zmieniają rozmiar; geometria MAP pozostaje bez zmian.");
+    }catch(err){
+      inform("Nie zmieniono skali opracowania: "+err.message,true);
+    }finally{state.editBusy=false;updateEditState(state.edit);}
+  }
+  let labelConfigFields={},labelConfigTicket=0;
+  function fillLabelSettingsForm(){
+    const field=$("label-settings-field").value;
+    const code=$("label-settings-code").value.trim();
+    const spec=labelConfigFields[field]||{};
+    const isBuilding=code==="5310";
+    $("label-settings-visible").checked=spec.visible!==false;
+    $("label-settings-size").value=spec.size||
+      (isBuilding?16:code==="5216"?12:11);
+    $("label-settings-color").value=spec.color||
+      (isBuilding?"#CC202C":code==="5230"||code==="5220"?"#35753A":"#58686F");
+    $("label-settings-bold").checked=spec.bold===undefined?isBuilding:!!spec.bold;
+  }
+  async function refreshLabelSettingsForm(){
+    const code=$("label-settings-code").value.trim();
+    if(!/^[0-9]{4}$/.test(code)){
+      $("label-settings-summary").textContent="Wybierz czterocyfrowy kod.";
+      return;
+    }
+    const ticket=++labelConfigTicket;
+    try{
+      const data=await api("/api/labels/settings?code="+encodeURIComponent(code));
+      if(ticket!==labelConfigTicket)return;
+      labelConfigFields=data.fields||{};
+      fillLabelSettingsForm();
+      $("label-settings-summary").textContent=
+        "Zapisz, aby zmienić osobno wybrany opis kodu "+code+
+        ". Ctrl+Z cofa konfigurację.";
+    }catch(err){
+      $("label-settings-summary").textContent="Nie odczytano ustawień: "+err.message;
+    }
+  }
+  function openLabelSettings(){
+    if(!state.meta)return;
+    const selectedFeature=state.features.find(x=>x.id===state.labelSelected?.fid);
+    $("label-settings-code").value=state.detail?.code||
+       selectedFeature?.code||"5310";
+    $("label-settings-field").value=["A1","A2","TX"].includes(
+       state.labelSelected?.field)?state.labelSelected.field:"A1";
+    $("label-settings-dialog").showModal();
+    refreshLabelSettingsForm();
+  }
+  async function saveLabelSettings(ev){
+    ev.preventDefault();
+    if(state.editBusy)return;
+    const code=$("label-settings-code").value.trim();
+    const field=$("label-settings-field").value;
+    const properties={
+      visible:$("label-settings-visible").checked,
+      size:Number($("label-settings-size").value),
+      color:$("label-settings-color").value,
+      bold:$("label-settings-bold").checked
+    };
+    state.editBusy=true;updateEditState(state.edit);
+    try{
+      const status=await api("/api/labels/settings",{
+        method:"POST",headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({...editRequestBody(),code,field,properties})
+      });
+      updateEditState(status);
+      $("label-settings-dialog").close();
+      await refreshViewport();
+      inform("Zmieniono "+field+" dla kodu "+code+
+        ". A1 i A2 pozostają osobnymi opisami. Ctrl+Z cofa.");
+    }catch(err){
+      $("label-settings-summary").textContent="Błąd zapisu: "+err.message;
+      inform("Nie zapisano stylu opisów: "+err.message,true);
+    }finally{state.editBusy=false;updateEditState(state.edit);}
   }
   function updateGeometryHelp() {
     if(state.tool!=="nodes")return;
@@ -1659,11 +1838,13 @@
     state.tool=tool;
     state.hoverInsert=null;
     if(tool!=="nodes")state.selectedVertex=null;
+    if(tool!=="labels")state.labelSelected=null;
     updateDeleteNodeButton();
     shell.classList.toggle("panning",tool==="pan");
     shell.classList.toggle("nodes-editing",tool==="nodes");
     shell.classList.toggle("moving-objects",tool==="move");
     shell.classList.toggle("drawing-objects",tool==="draw");
+    shell.classList.toggle("labels-editing",tool==="labels");
     if(!["draw","cut","line","line-edit"].includes(tool)){
       state.drawPoints=[];state.drawHover=null;
       state.drawSnap=null;state.drawCursorWorld=null;
@@ -1673,6 +1854,7 @@
     for(const [name,id] of [
       ["select","tool-select"],["pan","tool-pan"],["nodes","tool-nodes"],
       ["move","tool-move"],["draw","tool-new-polygon"],
+      ["labels","tool-label-move"],
       ["cut","tool-split"],["line","tool-line"],["line-edit","tool-line"],
       ["select","float-select"],["pan","float-pan"],["nodes","float-nodes"],
       ["move","float-move"]
@@ -1685,7 +1867,10 @@
       inform("Klikaj punkty; Enter/dwuklik kończy. Magnes G: "+
         (state.drawMagnet?"włączony":"wyłączony")+
         "; Alt stawia punkt obok linii bez przyciągania.");
-    else if(tool==="move")inform("Tryb M: przeciągnij wybrany poligon lub całą grupę, potem potwierdź podgląd.");
+    else if(tool==="labels")
+      inform("Tryb opisów: przeciągnij osobno A1, A2 lub TX. Esc — zaznaczanie; Ctrl+Z — cofnij.");
+    else if(tool==="move")
+      inform("Tryb M: przeciągnij wybrany poligon albo całą grupę. Zapis automatyczny i Ctrl+Z.");
     else inform(tool==="select"
       ?"Tryb zaznaczania obiektów (S).":"Tryb przesuwania mapy (H).");
     requestDraw();
@@ -2199,38 +2384,28 @@
     }finally{state.editBusy=false;updateEditState(state.edit);}
   }
   function labelFontSize(feature,label,selected) {
-    // Keep label proportions tied to map units, not to the window pixels.
-    // Fixed 9–36px texts previously grew RELATIVELY when the map zoomed out.
-    // The cap is for readability at very high zoom; zooming OUT never
-    // increases the apparent font size.
-    const worldHeight=label.worldTextHeight!=null
-      ?label.worldTextHeight
-      :feature.code==="5310"?2.25:
-       feature.code==="5216"?1.60:
-       feature.code==="5220"||feature.code==="5230"?1.75:1.85;
-    let pixels=Math.min(label.size||16,worldHeight*state.scale);
-    // A selected object is always inspectable even when its shape is tiny.
-    // Other labels vanish below readable size instead of covering the map.
-    if(pixels<5.5)return selected?10:0;
-    return Math.min(32,pixels);
+    const source=state.edit?.sourceCompilationScale||5000;
+    const compilation=state.edit?.compilationScale||source;
+    const ratio=Math.max(.1,Math.min(10,compilation/source));
+    // The previous stage's worldHeight=2.25 caused 5310 text to be
+    // effectively invisible (0–2px) at everyday cadastral zoom.
+    // Scale continuously with the map without giant fixed-pixel overviews.
+    const world=label.worldTextHeight;
+    const wanted=world!==null&&world!==undefined
+      ?Number(world)*state.scale*ratio
+      :(label.size||16)*Math.pow(Math.max(1e-6,state.scale)/.65,.43)*ratio;
+    if(!Number.isFinite(wanted))return 0;
+    if(wanted<7)return selected?11:0;
+    return Math.max(7,Math.min(40,wanted));
   }
-  function labelGroups(feature) {
-    if(feature.code!=="5310")
-      return (feature.labels||[]).map(label=>[label]);
-    // GMW A1/A2 form one caption. Draw them as a single group and reserve
-    // ONE collision rectangle, otherwise A1 hid A2 of its own building.
-    // Preserve any explicitly distinct coordinates from manual positioning.
-    const groups=[];
-    for(const label of feature.labels||[]){
-      const match=groups.find(group=>
-        Math.hypot(group[0].x-label.x,group[0].y-label.y)<.001);
-      if(match)match.push(label);else groups.push([label]);
-    }
-    return groups;
+  function labelTextRows(label,size) {
+    const lines=String(label.text||"").split("\n").slice(0,6);
+    return {lines,size,height:lines.length*size*1.20};
   }
   function renderLabels(features) {
+    state.labelHits=[];
     if(!state.labels)return;
-    const collisionBoxes=[];
+    const collisions=[];
     let painted=0;
     const ordered=[...features].sort((a,b)=>{
       const priority=f=>f.id===state.active?-2:
@@ -2245,67 +2420,85 @@
     for(const feature of ordered){
       if(!feature.labels?.length)continue;
       const selected=feature.id===state.active;
-      const bbox=feature.bbox;
-      const w=(bbox[2]-bbox[0])*state.scale;
-      const h=(bbox[3]-bbox[1])*state.scale;
-      const special=["7900","6900","6000","6301"].includes(feature.code);
-      const building=feature.code==="5310";
-      if(!selected&&!special&&!building&&
-         (Math.max(w,h)<34||Math.min(w,h)<9))continue;
-      if(!selected&&building&&Math.max(w,h)<17)continue;
-      for(const group of labelGroups(feature)){
-        if(painted>=1100){ctx.restore();return;}
-        const labelRows=[];
-        let width=0,height=0;
-        for(const label of group){
-          const size=labelFontSize(feature,label,selected);
-          if(size<=0)continue;
-          const font=(label.bold?"700":"400")+" "+size+"px '"+
-            String(label.fontFamily||"Segoe UI").replace(/["'\\]/g,"")+
-            "', sans-serif";
-          ctx.font=font;
-          const lines=String(label.text).split("\n").slice(0,6);
-          for(const line of lines){
-            const text=line.slice(0,100);
-            const lineWidth=ctx.measureText(text).width;
-            const rowHeight=size*1.18;
-            labelRows.push({label,text,font,size,lineWidth,rowHeight});
-            width=Math.max(width,lineWidth);
-            height+=rowHeight;
-          }
-        }
-        if(!labelRows.length)continue;
-        const anchor=group[0],p=worldToScreen(anchor.x,anchor.y);
-        const rect=[p.x-width/2-3,p.y-height/2-3,
-                    p.x+width/2+3,p.y+height/2+3];
+      const box=feature.bbox;
+      const w=(box[2]-box[0])*state.scale;
+      const h=(box[3]-box[1])*state.scale;
+      const sheet=["7900","6900","6000","6301"].includes(feature.code);
+      if(!selected&&!sheet){
+        if(feature.code==="5310"){
+          if(Math.max(w,h)<14)continue;
+        }else if(Math.max(w,h)<32||Math.min(w,h)<8)continue;
+      }
+      // A1 and A2 are TWO draggable labels with separate collision boxes.
+      // Only their *default* vertical positions are stacked for legibility.
+      const stack=feature.code==="5310"?feature.labels.filter(
+        label=>!label.manuallyPlaced):[];
+      const stackSizes=new Map();
+      let stackHeight=0;
+      for(const label of stack){
+        const size=labelFontSize(feature,label,selected);
+        if(!size)continue;
+        const height=labelTextRows(label,size).height;
+        stackSizes.set(label.field,{height,size,center:stackHeight+height/2});
+        stackHeight+=height;
+      }
+      for(const label of feature.labels){
+        if(painted>=1400){ctx.restore();return;}
+        const size=labelFontSize(feature,label,selected);
+        if(!size)continue;
+        const font=(label.bold?"700":"400")+" "+size+"px '"+
+          String(label.fontFamily||"Segoe UI").replace(/["'\\]/g,"")+
+          "', sans-serif";
+        ctx.font=font;
+        const {lines,height}=labelTextRows(label,size);
+        const widths=lines.map(line=>ctx.measureText(line.slice(0,100)).width);
+        const maxWidth=Math.max(0,...widths);
+        let offset=label.manuallyPlaced?0:
+          (label.offset||0)*(size/(label.size||16));
+        if(stackSizes.has(label.field))
+          offset=stackSizes.get(label.field).center-stackHeight/2;
+        const p=worldToScreen(label.x,label.y);
+        const cy=p.y+offset;
+        const rect=[p.x-maxWidth/2-3,cy-height/2-3,
+                    p.x+maxWidth/2+3,cy+height/2+3];
         if(rect[2]<0||rect[0]>state.width||
            rect[3]<0||rect[1]>state.height)continue;
-        // All rows of A1 and A2 share a single collision rectangle.
-        // Separately positioned labels on the same feature are NOT
-        // allowed to suppress each other.
-        if(!selected&&collisionBoxes.some(item=>
-           item.id!==feature.id&&item.rect[0]<rect[2]&&
+        // Never let a feature's A1 suppress its OWN independent A2.
+        // At working zoom every native building gets BOTH separate
+        // labels, even if an unrelated nearby caption would otherwise
+        // hide just its A2. At overview scales use collision culling.
+        const readableBuilding=feature.code==="5310"&&Math.max(w,h)>=28;
+        if(!selected&&!readableBuilding&&collisions.some(item=>
+           item.fid!==feature.id&&item.rect[0]<rect[2]&&
            item.rect[2]>rect[0]&&item.rect[1]<rect[3]&&
            item.rect[3]>rect[1]))continue;
-        collisionBoxes.push({id:feature.id,rect});
-        if(selected&&group.some(label=>
-           label.field==="A1"||label.field==="A2")){
-          ctx.fillStyle="rgba(27,150,143,.23)";
-          ctx.fillRect(rect[0]-2,rect[1]-2,
-                       rect[2]-rect[0]+4,rect[3]-rect[1]+4);
+        collisions.push({fid:feature.id,rect});
+        if((selected||state.tool==="labels")&&
+           (label.field==="A1"||label.field==="A2"||
+            state.labelSelected?.field===label.field&&
+            state.labelSelected?.fid===feature.id)){
+          ctx.fillStyle="rgba(27,150,143,.18)";
+          ctx.fillRect(rect[0],rect[1],rect[2]-rect[0],rect[3]-rect[1]);
         }
-        let cursor=p.y-height/2;
-        for(const row of labelRows){
-          cursor+=row.rowHeight;
-          const x=p.x-row.lineWidth/2;
-          ctx.font=row.font;
+        if(state.tool==="labels"&&state.labelSelected?.fid===feature.id&&
+           state.labelSelected?.field===label.field){
+          ctx.strokeStyle="#0b9e8f";ctx.lineWidth=1.5;
+          ctx.strokeRect(...[rect[0],rect[1],rect[2]-rect[0],rect[3]-rect[1]]);
+        }
+        ctx.font=font;
+        for(let i=0;i<lines.length;i++){
+          const line=lines[i].slice(0,100);
+          const x=p.x-widths[i]/2;
+          const y=cy-height/2+size+(i*size*1.20);
           ctx.strokeStyle=document.body.classList.contains("dark-map")
             ?"#1b2c3d":"#f8fafc";
-          ctx.lineWidth=Math.min(2.2,Math.max(.6,row.size*.12));
-          ctx.strokeText(row.text,x,cursor);
-          ctx.fillStyle=row.label.color||"#4A5056";
-          ctx.fillText(row.text,x,cursor);
+          ctx.lineWidth=Math.max(.7,Math.min(2,size*.11));
+          ctx.strokeText(line,x,y);
+          ctx.fillStyle=label.color||"#4A5056";
+          ctx.fillText(line,x,y);
         }
+        state.labelHits.push({fid:feature.id,field:label.field,
+                              rect,label,feature});
         painted++;
       }
     }
@@ -2319,7 +2512,10 @@
     ctx.fillStyle=isDark?"#17283b":"#FAFCFD";
     ctx.fillRect(0,0,state.width,state.height);
     drawGrid();
-    if(!state.meta) return;
+    if(!state.meta)return;
+    // Keep the last verified viewport visible while the spatial request
+    // catches up to the new camera, avoiding blank flashes on zoom.
+    if(drawNavigationPreview())return;
     const box=boundsFromViewport(.05);
     const features=state.features.filter(f=>isVisible(f)&&isInView(f.bbox,box));
     // Match the classic QGraphicsScene: paint fills below ALL outlines.
@@ -2331,7 +2527,7 @@
     for(const feature of features) renderStroke(feature);
     renderHighlights(features);drawMoveGhost(features);drawMoveMagnet();
     renderLabels(features);drawDraftPolygon();drawMagnetMarker();drawVertexTool();
-    $("scale-label").textContent="Podgląd: "+state.scale.toFixed(state.scale<1?3:1)+" px / jedn.";
+    updateScaleReadout();
     $("count-visible").textContent=display(features.length);
     $("render-hint").textContent=state.limited
       ?"Zbyt wiele obiektów · przybliż mapę":"HTML Canvas · "+display(features.length)+" obiektów";
@@ -2349,7 +2545,9 @@
     // index scans when a user zooms far out or pans away from their map.
     const map=state.meta.bounds;
     if(view[2]<map[0]||view[0]>map[2]||view[3]<map[1]||view[1]>map[3]){
-      state.features=[];state.limited=false;requestDraw();return;
+      state.features=[];state.limited=false;
+      state.previewActive=false;state.previewCamera=null;
+      requestDraw();return;
     }
     view=[Math.max(view[0],map[0]),Math.max(view[1],map[1]),
           Math.min(view[2],map[2]),Math.min(view[3],map[3])];
@@ -2361,16 +2559,20 @@
       if(ticket!==state.queryCounter)return;
       state.features=res.features;
       state.limited=res.limited;
+      state.previewActive=false;state.previewCamera=null;
       renderCartographyMatches();
       requestDraw();
     }catch(err){
-      if(err.name!=="AbortError")inform("Nie udało się narysować mapy: "+err.message,true);
+      if(err.name!=="AbortError"){
+        state.previewActive=false;state.previewCamera=null;requestDraw();
+        inform("Nie udało się narysować mapy: "+err.message,true);
+      }
     }
   }
   function scheduleViewport(now=false) {
     clearTimeout(state.refreshTimer);
     if(now)refreshViewport();
-    else state.refreshTimer=setTimeout(refreshViewport,150);
+    else state.refreshTimer=setTimeout(refreshViewport,100);
   }
   function buildLayer(name,count) {
     const item=document.createElement("div");item.className="layer-item";
@@ -2543,6 +2745,48 @@
     });
     return candidates.map(c=>c.fid);
   }
+  function pickLabelAt(screen) {
+    return state.labelHits.filter(hit=>
+      screen.x>=hit.rect[0]-5&&screen.x<=hit.rect[2]+5&&
+      screen.y>=hit.rect[1]-5&&screen.y<=hit.rect[3]+5
+    ).sort((a,b)=>{
+      const rank=item=>item.fid===state.active?0:1;
+      const cx=item=>(item.rect[0]+item.rect[2])/2;
+      const cy=item=>(item.rect[1]+item.rect[3])/2;
+      return rank(a)-rank(b)||
+        Math.hypot(screen.x-cx(a),screen.y-cy(a))-
+        Math.hypot(screen.x-cx(b),screen.y-cy(b));
+    })[0]||null;
+  }
+  async function commitLabelDrag(drag) {
+    if(!drag||state.editBusy)return;
+    const x=Math.round(-drag.label.y*1000)/1000;
+    const y=Math.round(drag.label.x*1000)/1000;
+    const body={...editRequestBody(),
+      fid:drag.fid,field:drag.field,x,y};
+    state.editBusy=true;updateEditState(state.edit);
+    try{
+      const result=await api("/api/labels/move",{
+        method:"POST",headers:{"Content-Type":"application/json"},
+        body:JSON.stringify(body)
+      });
+      updateEditState(result);
+      await refreshEditedDocument(drag.fid);
+      inform("Przeniesiono osobną etykietę "+drag.field+
+        " na X: "+x.toFixed(3)+", Y: "+y.toFixed(3)+
+        ". Ctrl+Z cofa. Zapisz MAP i towarzyszący JSON.");
+    }catch(error){
+      drag.label.x=drag.origin.x;drag.label.y=drag.origin.y;
+      drag.label.offset=drag.origin.offset;
+      drag.label.manuallyPlaced=drag.origin.manuallyPlaced;
+      inform("Etykieta nie została przeniesiona: "+error.message,true);
+      scheduleViewport(true);
+    }finally{
+      state.editBusy=false;updateEditState(state.edit);
+      requestDraw();
+    }
+  }
+
   function eventCoords(ev){
     const box=canvas.getBoundingClientRect();
     return {x:ev.clientX-box.left,y:ev.clientY-box.top};
@@ -2552,6 +2796,20 @@
     canvas.setPointerCapture(ev.pointerId);
     const p=eventCoords(ev);
     state.hoverInsert=null;
+    if(state.tool==="labels"&&ev.button===0&&!state.editBusy){
+      const hit=pickLabelAt(p);
+      if(!hit){inform("Kliknij i przeciągnij tekst A1, A2 lub TX.");return;}
+      const label=hit.label;
+      state.labelSelected={fid:hit.fid,field:hit.field};
+      state.labelDrag={
+        fid:hit.fid,field:hit.field,label,start:p,
+        origin:{x:label.x,y:label.y,offset:label.offset,
+                manuallyPlaced:label.manuallyPlaced}
+      };
+      state.drag={pointer:ev.pointerId,start:p,last:p,moved:false,label:true};
+      if(state.active!==hit.fid){state.pinned.clear();selectFeature(hit.fid);}
+      requestDraw();return;
+    }
     if(["draw","cut","line","line-edit"].includes(state.tool)&&
        ev.button===0&&!state.editBusy&&state.meta){
       state.drag={pointer:ev.pointerId,start:p,last:p,moved:false,draw:true};
@@ -2601,7 +2859,16 @@
     if(!state.drag||state.drag.pointer!==ev.pointerId)return;
     const d=state.drag;
     if(Math.hypot(p.x-d.start.x,p.y-d.start.y)>4)d.moved=true;
-    if(d.moveIds&&state.moveGhost){
+    if(d.label&&state.labelDrag){
+      const moving=state.labelDrag;
+      if(d.moved){
+        moving.label.x=moving.origin.x+(p.x-d.start.x)/state.scale;
+        moving.label.y=moving.origin.y+(p.y-d.start.y)/state.scale;
+        moving.label.offset=0;
+        moving.label.manuallyPlaced=true;
+        requestDraw();
+      }
+    }else if(d.moveIds&&state.moveGhost){
       let dx=Math.round((d.start.y-p.y)/state.scale*1000)/1000;
       let dy=Math.round((p.x-d.start.x)/state.scale*1000)/1000;
       const snap=magneticMove(d.moveIds,dx,dy);
@@ -2618,6 +2885,7 @@
       }
     }else if(d.moved){
       if(d.pan||state.tool==="select"){
+        beginNavigationPreview();
         state.center.x-=(p.x-d.last.x)/state.scale;
         state.center.y-=(p.y-d.last.y)/state.scale;
         shell.classList.add("dragging");requestDraw();
@@ -2628,12 +2896,29 @@
   canvas.addEventListener("pointerup", ev=>{
     const d=state.drag;state.drag=null;shell.classList.remove("dragging");
     if(!d||ev.pointerId!==d.pointer)return;
+    if(d.label){
+      const moving=state.labelDrag;
+      state.labelDrag=null;
+      if(d.moved&&moving)commitLabelDrag(moving);
+      else requestDraw();
+      return;
+    }
     if(d.draw){
       if(!d.moved){
         const p=eventCoords(ev),world=screenToWorld(p.x,p.y);
         // The actual click is authoritative, not a stale hover target.
         // Alt always bypasses the magnet for the clicked point.
         const snapped=drawingSnapAt(world,ev.altKey);
+        if(state.tool==="draw"&&snapped.kind==="start"&&
+           state.drawPoints.length>=3){
+          state.drawSnap=null;state.drawHover=null;
+          finishDrawPolygon();
+          // One click on the first corner completes the sketch and runs
+          // its normal topology preview; code/A1/A2 still require approval.
+          previewObject("create");
+          requestDraw();
+          return;
+        }
         const next=[Math.round(-snapped.point.y*1000)/1000,
                     Math.round(snapped.point.x*1000)/1000];
         state.drawSnap=snapped.kind?snapped:null;
@@ -2644,7 +2929,7 @@
         }
         requestDraw();
         inform("Rysowanie: "+state.drawPoints.length+
-          " punktów. Enter/dwuklik — zakończ; Esc — anuluj.");
+          " punktów. Esc — cofnij ostatni; kliknij pierwszy punkt — domknij.");
       }
       return;
     }
@@ -2716,7 +3001,15 @@
       requestDraw();
     }
   });
-  canvas.addEventListener("pointercancel",()=>{state.drag=null;state.vertexDrag=null;state.moveGhost=null;shell.classList.remove("dragging");requestDraw();});
+  canvas.addEventListener("pointercancel",()=>{
+    if(state.labelDrag){
+      const moving=state.labelDrag;
+      Object.assign(moving.label,moving.origin);
+      state.labelDrag=null;
+    }
+    state.drag=null;state.vertexDrag=null;state.moveGhost=null;
+    shell.classList.remove("dragging");requestDraw();
+  });
   canvas.addEventListener("wheel",ev=>{
     if(!state.meta)return;
     ev.preventDefault();
@@ -2764,12 +3057,24 @@
     if((ev.ctrlKey||ev.metaKey)&&ev.shiftKey&&ev.key.toLowerCase()==="e"){
       ev.preventDefault();openBulkEditor();return;
     }
-    if((ev.ctrlKey||ev.metaKey)&&ev.shiftKey&&ev.key.toLowerCase()==="m"){
-      ev.preventDefault();openMoveEditor();return;
+    if((ev.ctrlKey||ev.metaKey)&&ev.altKey&&ev.key.toLowerCase()==="l"){
+      ev.preventDefault();openLabelSettings();return;
+    }
+    if((ev.ctrlKey||ev.metaKey)&&ev.key.toLowerCase()==="m"&&
+       !ev.shiftKey&&!ev.altKey){
+      ev.preventDefault();$("view-scale").focus();$("view-scale").select();return;
+    }
+    if((ev.ctrlKey||ev.metaKey)&&ev.key==="F5"){
+      ev.preventDefault();
+      $("compilation-scale").focus();$("compilation-scale").select();return;
+    }
+    if(ev.altKey&&!ev.ctrlKey&&!ev.metaKey&&ev.key.toLowerCase()==="l"){
+      ev.preventDefault();setTool("labels");return;
     }
     if($("line-dialog").open||$("split-dialog").open||
        $("copy-dialog").open||$("create-dialog").open||$("move-dialog").open||
-       $("bulk-dialog").open||$("select-dialog").open)return;
+       $("bulk-dialog").open||$("select-dialog").open||
+       $("label-settings-dialog").open)return;
     if(typing)return;
     if((ev.ctrlKey||ev.metaKey)&&ev.shiftKey&&ev.key.toLowerCase()==="g"){
       ev.preventDefault();mergePolygons();return;
@@ -2810,9 +3115,23 @@
       ev.preventDefault();setTool("nodes");return;
     }
     if(ev.key==="Escape"){
-      if(dialog.open)dialog.close();
-      else if(["nodes","move","draw","cut","line","line-edit"].includes(state.tool)){
-        state.vertexDrag=null;setTool("select");
+      if(dialog.open){dialog.close();return;}
+      if(["draw","cut","line","line-edit"].includes(state.tool)){
+        ev.preventDefault();
+        if(state.drawPoints.length){
+          state.drawPoints.pop();
+          state.drawSnap=null;
+          requestDraw();
+          inform("Cofnięto ostatni punkt. Pozostało "+
+            state.drawPoints.length+". Rysuj dalej; S kończy narzędzie.");
+        }else{
+          setTool("select");
+          inform("Rysowanie anulowane — szkic nie miał punktów.");
+        }
+        return;
+      }
+      if(["nodes","move","labels"].includes(state.tool)){
+        state.vertexDrag=null;state.labelDrag=null;setTool("select");
       }else selectFeature(null);
       return;
     }
@@ -2848,6 +3167,8 @@
   link("tool-advanced-select",openAdvancedSelection);
   link("tool-bulk-edit",openBulkEditor);
   link("tool-move",()=>setTool("move"));
+  link("tool-label-move",()=>setTool("labels"));
+  link("tool-label-config",openLabelSettings);
   link("tool-new-polygon",()=>setTool("draw"));
   link("tool-draw-snap",toggleDrawMagnet);
   link("tool-merge",mergePolygons);
@@ -2929,6 +3250,17 @@
   link("float-fit",fitToMap);
   link("tool-grid",toggleGrid);
   link("tool-labels",toggleLabels);
+  link("label-settings-close",()=>$("label-settings-dialog").close());
+  link("label-settings-cancel",()=>$("label-settings-dialog").close());
+  $("label-settings-code").addEventListener("change",refreshLabelSettingsForm);
+  $("label-settings-field").addEventListener("change",fillLabelSettingsForm);
+  $("label-settings-form").addEventListener("submit",saveLabelSettings);
+  $("view-scale").addEventListener("change",applyViewScale);
+  $("compilation-scale").addEventListener("change",applyCompilationScale);
+  for(const id of ["view-scale","compilation-scale"])
+    $(id).addEventListener("keydown",ev=>{
+      if(ev.key==="Enter"){ev.preventDefault();$(id).blur();}
+    });
   link("btn-theme",toggleTheme);
   link("btn-command",openCommands);
   link("layers-all",showAllLayers);

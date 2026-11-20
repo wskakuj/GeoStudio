@@ -87,7 +87,8 @@ def test_magnet_applies_to_all_draw_tools_uses_actual_clicked_point_and_alt():
     assert "Math.round(-snapped.point.y*1000)/1000" in src
 
 
-def test_5310_a1_a2_share_one_collision_group_and_follow_zoom():
+def test_5310_a1_and_a2_are_independent_and_readable_at_typical_zoom():
+    """10A changed grouping: a field has its own drag target and collision box."""
     node_assertions(r"""
 const assert=require('node:assert/strict');
 const fs=require('node:fs');
@@ -95,33 +96,25 @@ const src=fs.readFileSync('./map.js','utf8');
 const start=src.indexOf('  function labelFontSize(');
 const stop=src.indexOf('  function renderLabels(',start);
 assert.ok(start>=0&&stop>start);
-const {labelFontSize,labelGroups}=new Function('state',
-  src.slice(start,stop)+';return {labelFontSize,labelGroups};')
-  ({scale:1,active:null});
-const b={code:'5310',labels:[
- {field:'A1',text:'l',x:10,y:20,size:16},
- {field:'A2',text:'So120\nII-0.3',x:10,y:20,size:16},
-]};
-assert.equal(labelGroups(b).length,1);
-assert.deepEqual(labelGroups(b)[0].map(x=>x.field),['A1','A2']);
-const moved={...b,labels:[
- {...b.labels[0]}, {...b.labels[1],x:11}]};
-assert.equal(labelGroups(moved).length,2);
-const low=new Function('state',src.slice(start,stop)+
-  ';return labelFontSize;',)({scale:.2,active:null});
-const med=new Function('state',src.slice(start,stop)+
-  ';return labelFontSize;',)({scale:5,active:null});
-const high=new Function('state',src.slice(start,stop)+
-  ';return labelFontSize;',)({scale:12,active:null});
-assert.equal(low(b,b.labels[0],false),0);
-assert.ok(med(b,b.labels[0],false)>0);
-assert.ok(high(b,b.labels[0],false)>med(b,b.labels[0],false));
-assert.ok(high(b,b.labels[0],false)<=16);
-assert.equal(low(b,b.labels[0],true),10); // only active feature at overview
+const make=(scale,compilationScale=5000)=>
+  new Function('state',src.slice(start,stop)+';return labelFontSize;')
+    ({scale,tool:'select',edit:{compilationScale,sourceCompilationScale:5000}});
+const feature={code:'5310'};
+const a1={field:'A1',text:'l',x:10,y:20,size:16};
+const a2={field:'A2',text:'So120\nII-0.3',x:10,y:20,size:16};
+assert.equal(make(.01)(feature,a1,false),0);
+assert.ok(make(.2)(feature,a1,false)>=8);
+assert.ok(make(1)(feature,a1,false)>make(.2)(feature,a1,false));
+assert.ok(make(5)(feature,a1,false)>make(1)(feature,a1,false));
+assert.ok(make(12)(feature,a1,false)<=40);
+assert.equal(make(.01)(feature,a1,true),11);
+assert.equal(make(.6,1000)(feature,a1,false),0);
+assert.ok(make(.6,10000)(feature,a1,false)>make(.6)(feature,a1,false));
 const main=src.slice(stop,src.indexOf('  function draw() {',stop));
-assert.ok(main.includes('for(const group of labelGroups(feature))'));
-assert.ok(main.includes('item.id!==feature.id'));
-assert.ok(main.includes('if(selected&&group.some('));
+assert.ok(main.includes('for(const label of feature.labels)'));
+assert.ok(main.includes('item.fid!==feature.id'));
+assert.ok(main.includes('state.labelHits.push({fid:feature.id,field:label.field'));
+assert.ok(!main.includes('for(const group of labelGroups('));
 """)
 
 

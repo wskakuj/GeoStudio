@@ -362,6 +362,54 @@ def create_app(workspace: PreviewWorkspace | None = None) -> FastAPI:
         except (ValueError, KeyError) as exc:
             raise HTTPException(400, str(exc)) from exc
 
+    @app.get("/api/labels/settings")
+    async def get_label_settings(code: str):
+        try:
+            return state.label_settings(code)
+        except ValueError as exc:
+            raise HTTPException(400,str(exc)) from exc
+
+    @app.post("/api/labels/move")
+    async def move_label(request: Request):
+        data=await edit_payload(request)
+        try:
+            return state.move_label(
+                data.get("fid"),data.get("field"),data.get("x"),data.get("y"),
+                document_token=data.get("documentToken"),
+                revision=data.get("revision"))
+        except LookupError as exc:
+            raise HTTPException(404,str(exc)) from exc
+        except RuntimeError as exc:
+            raise HTTPException(409,str(exc)) from exc
+        except (ValueError,TypeError) as exc:
+            raise HTTPException(400,str(exc)) from exc
+
+    @app.post("/api/labels/settings")
+    async def set_label_settings(request: Request):
+        data=await edit_payload(request)
+        try:
+            return state.set_label_settings(
+                data.get("code"),data.get("field"),data.get("properties"),
+                document_token=data.get("documentToken"),
+                revision=data.get("revision"))
+        except RuntimeError as exc:
+            raise HTTPException(409,str(exc)) from exc
+        except (ValueError,TypeError) as exc:
+            raise HTTPException(400,str(exc)) from exc
+
+    @app.post("/api/compilation-scale")
+    async def set_compilation_scale(request: Request):
+        data=await edit_payload(request)
+        try:
+            return state.set_compilation_scale(
+                data.get("denominator"),
+                document_token=data.get("documentToken"),
+                revision=data.get("revision"))
+        except RuntimeError as exc:
+            raise HTTPException(409,str(exc)) from exc
+        except (ValueError,TypeError) as exc:
+            raise HTTPException(400,str(exc)) from exc
+
     @app.post("/api/edit/{direction}")
     async def history_action(direction: str, request: Request):
         payload = await edit_payload(request)
@@ -377,24 +425,32 @@ def create_app(workspace: PreviewWorkspace | None = None) -> FastAPI:
 
     @app.get("/api/export/package")
     async def export_native_map_with_recovery(documentToken: str):
-        """One browser download with both the baked MAP and its source rings."""
+        """ZIP: MAP with required topology and optional visual label companion."""
         try:
-            name,content,companion=state.export_native_cutouts(documentToken)
+            status=state.editing_status()
+            if status["hasReversibleMasks"]:
+                name,content,companion=state.export_native_cutouts(documentToken)
+            else:
+                name,content=state.export_positive_copy(documentToken)
+                companion=state.export_topology_metadata(content)
+            visual=state.export_visual_sidecar(content)
         except RuntimeError as exc:
             raise HTTPException(409,str(exc)) from exc
         except ValueError as exc:
             raise HTTPException(400,str(exc)) from exc
-        target=name[:-4]+".geostudio-topology.json"
         stream=BytesIO()
         with ZipFile(stream,"w",compression=ZIP_STORED) as archive:
             archive.writestr(name,content)
-            archive.writestr(target,companion)
+            if companion:
+                archive.writestr(name[:-4]+".geostudio-topology.json",companion)
+            if visual:
+                archive.writestr(name[:-4]+".geostudio.json",visual)
         archive_name=name[:-4]+".zip"
-        disposition=("attachment; filename=GeoStudio2_MAP_i_topologia.zip; "
+        disposition=("attachment; filename=GeoStudio2_MAP_z_ustawieniami.zip; "
                      "filename*=UTF-8''"+quote(archive_name,safe=""))
         return Response(stream.getvalue(),media_type="application/zip",
                         headers={"Content-Disposition":disposition,
-                                 "X-GeoStudio-Export":"native-cutouts-and-recovery"})
+                                 "X-GeoStudio-Export":"map-topology-and-labels"})
 
     @app.get("/api/export/map")
     async def download_map_copy(documentToken: str, normalizePositive: bool = False):

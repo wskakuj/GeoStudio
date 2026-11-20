@@ -21,6 +21,7 @@ import base64
 
 from geostudio.geomap import GeoMap
 from geostudio.forest_classes import forest_class_value
+from geostudio.map_layout import detect_source_compilation_scale, validated_compilation_scale, DEFAULT_SCALE
 from geostudio.geometry_index import GeometryIndex
 from geostudio.history import History
 from geostudio.topology_edit import linked_vertex_plan
@@ -115,6 +116,8 @@ class PreviewWorkspace:
         self._index: GeometryIndex | None = None
         self._styles: dict[str, dict] = {}
         self._label_positions: dict[str, dict] = {}
+        self._source_compilation_scale = DEFAULT_SCALE
+        self._loaded_map_sha = ""
         self._carto_cdf={}
         self._carto_lay={}
         self._carto_sym={}
@@ -150,6 +153,8 @@ class PreviewWorkspace:
             self._move_preview_key = ""
             self._objects_preview_key = ""
             self._reindex(doc, name)
+            self._source_compilation_scale=detect_source_compilation_scale(doc.objects)
+            self._loaded_map_sha=sha256(content).hexdigest()
             self._styles = {}
             self._label_positions = {}
             self._history = History(_WebHistoryTarget(self))
@@ -438,6 +443,121 @@ class PreviewWorkspace:
             name=_display_name(self._doc.filename)
             return name[:-4]+"_GeoStudio2_wyciecia.MAP",baked_bytes,companion
 
+    def _require_edit(self,document_token: str,revision: int) -> None:
+        if self._doc is None or self._history is None:
+            raise ValueError("Najpierw otwórz mapę.")
+        if (document_token!=self._document_token or
+                type(revision) is not int or revision!=self._revision):
+            raise RuntimeError("Dokument zmienił się podczas edycji.")
+
+    def _visual_user_styles(self) -> dict:
+        """Exclude reversible topology; that has its own checksum-bound JSON."""
+        return {k:v for k,v in self._styles.items() if k!=TOPOLOGY_STACK_KEY}
+
+    def _current_compilation_scale(self) -> int:
+        style=self._styles.get("cartography:compilation_scale")
+        value=style.get("denominator") if isinstance(style,dict) else None
+        return validated_compilation_scale(
+            value,default=self._source_compilation_scale)
+
+    def export_visual_sidecar(self, map_bytes: bytes) -> bytes | None:
+        """SHA-bound optional sidecar for independently movable labels."""
+        with self._lock:
+            styles=self._visual_user_styles()
+            if not self._label_positions and not styles:return None
+            payload={
+                "format":STYLE_FORMAT,
+                "sha256":sha256(map_bytes).hexdigest(),
+                "objects":styles,
+                "labels":self._label_positions
+            }
+            raw=json.dumps(payload,ensure_ascii=False,
+                           separators=(",",":")).encode("utf-8")
+            if len(raw)>MAX_STYLES_BYTES:
+                raise ValueError("Konfiguracja etykiet przekracza limit 2 MB.")
+            return raw
+
+    def move_label(self,fid: str,field: str,x: float,y: float,
+                   *,document_token: str,revision: int) -> dict:
+        """Undoable label move in native (X,Y); never touch MAP P lines."""
+        with self._lock:
+            self._require_edit(document_token,revision)
+            if field not in LABEL_FIELDS:
+                raise ValueError("Niedozwolone pole etykiety.")
+            entry=self._lookup.get(fid)
+            if entry is None:
+                raise LookupError(fid)
+            obj=entry.obj
+            if not obj.uid or self._uid_counts.get(obj.uid)!=1:
+                raise ValueError("Nie można przesunąć etykiety bez unikalnego ID.")
+            if not obj.fields.get(field,"").strip():
+                raise ValueError("Wybrana etykieta nie ma tekstu.")
+            if (type(x) not in (int,float) or type(y) not in (int,float)
+                    or not all(isfinite(z) and abs(z)<1e9 for z in (x,y))):
+                raise ValueError("Nieprawidłowe współrzędne etykiety.")
+            point=[round(x,3),round(y,3)]
+            existing=self._label_positions.get(obj.uid,{})
+            if existing.get(field)==point:
+                return {**self._editing_status(),"changed":False}
+            before=self._doc.to_bytes()
+            with self._history.begin(
+                "Przesunięcie etykiety "+field+" ("+obj.code+")",
+                selection_before=(obj.uid,)
+            ):
+                self._label_positions.setdefault(obj.uid,{})[field]=point
+            if self._doc.to_bytes()!=before:
+                raise ValueError("Naruszono geometrię MAP podczas przesuwania etykiety.")
+            self._revision+=1
+            return {**self._editing_status(),"changed":True,
+                    "fid":fid,"field":field,"point":point}
+
+    def set_compilation_scale(self, denominator: int,
+                              *,document_token: str,revision: int) -> dict:
+        with self._lock:
+            self._require_edit(document_token,revision)
+            if type(denominator) is not int or not (
+                    100<=denominator<=1_000_000):
+                raise ValueError("Skala opracowania musi mieć mianownik 100–1000000.")
+            if self._current_compilation_scale()==denominator:
+                return {**self._editing_status(),"changed":False}
+            with self._history.begin("Skala opracowania 1:"+str(denominator)):
+                self._styles["cartography:compilation_scale"]={
+                    "denominator":denominator}
+            self._revision+=1
+            return {**self._editing_status(),"changed":True}
+
+    def set_label_settings(self, code: str, field: str, properties: dict,
+                           *,document_token: str,revision: int) -> dict:
+        """One-field, one-code presentation settings with safe validation."""
+        with self._lock:
+            self._require_edit(document_token,revision)
+            if (not re.fullmatch(r"[0-9]{4}",str(code)) or
+                    code not in {entry.obj.code for entry in self._entries} or
+                    field not in LABEL_FIELDS or not isinstance(properties,dict) or
+                    set(properties)-{"visible","size","color","bold"}):
+                raise ValueError("Nieprawidłowe ustawienia etykiety kodu.")
+            visible=properties.get("visible",True)
+            size=properties.get("size",16)
+            bold=properties.get("bold",False)
+            color=properties.get("color","#4A5056")
+            if (type(visible) is not bool or type(bold) is not bool or
+                    type(size) is not int or not 8<=size<=36 or
+                    not isinstance(color,str) or not HEX.fullmatch(color)):
+                raise ValueError("Nieprawidłowy rozmiar, kolor lub widoczność.")
+            key="labels:code:"+code
+            old=self._styles.get(key,{})
+            fields=old.get("fields",{}) if isinstance(old,dict) else {}
+            new_spec={"visible":visible,"size":size,"color":color,"bold":bold}
+            if fields.get(field)==new_spec:
+                return {**self._editing_status(),"changed":False}
+            with self._history.begin("Wygląd etykiety "+code+" / "+field):
+                current=self._styles.get(key,{})
+                updated=dict(current.get("fields",{}))
+                updated[field]=new_spec
+                self._styles[key]={**current,"fields":updated}
+            self._revision+=1
+            return {**self._editing_status(),"changed":True}
+
     def _editing_status(self) -> dict:
         history = self._history
         return {
@@ -449,6 +569,10 @@ class PreviewWorkspace:
             "revision": self._revision,
             "documentToken": self._document_token,
             "hasReversibleMasks": bool(self._overlay_uids()),
+            "hasVisualStyles":bool(
+                self._label_positions or self._visual_user_styles()),
+            "compilationScale":self._current_compilation_scale(),
+            "sourceCompilationScale":self._source_compilation_scale,
         }
 
     def select_by_attributes(self, *, code: str = "", a1: str = "",
@@ -1725,6 +1849,9 @@ class PreviewWorkspace:
             raise ValueError("Niepoprawny format JSON stylów.") from exc
         if not isinstance(payload, dict) or payload.get("format") != STYLE_FORMAT:
             raise ValueError("Nieznany format stylów GeoStudio.")
+        expected=payload.get("sha256")
+        if expected is not None and expected!=self._loaded_map_sha:
+            raise ValueError("Plik etykiet i stylów nie pasuje do otwartego MAP.")
         raw = payload.get("objects", {})
         styles = {}
         if isinstance(raw, dict):
@@ -1732,11 +1859,29 @@ class PreviewWorkspace:
                 if isinstance(key, str) and isinstance(value, dict):
                     styles[key[:220]] = value
         pos = payload.get("labels", {})
-        labels = pos if isinstance(pos, dict) else {}
+        labels={}
+        if isinstance(pos,dict) and len(pos)<=50000:
+            known={obj.uid for obj in self._doc.objects if obj.uid}
+            for uid,coords in pos.items():
+                if (uid not in known or not isinstance(coords,dict) or
+                        len(coords)>len(LABEL_FIELDS)):continue
+                kept={}
+                for field,xy in coords.items():
+                    if (field in LABEL_FIELDS and isinstance(xy,list)
+                            and len(xy)==2 and all(
+                                type(v) in (int,float) and isfinite(v)
+                                and abs(v)<1e9 for v in xy)):
+                        kept[field]=[round(xy[0],3),round(xy[1],3)]
+                if kept:labels[uid]=kept
         with self._lock:
-            self._styles = styles
+            # Preserve the separately checked 6A/6B dynamic overlay stack.
+            topology=self._styles.get(TOPOLOGY_STACK_KEY)
+            self._styles={**styles}
+            if topology is not None:
+                self._styles[TOPOLOGY_STACK_KEY]=topology
             self._label_positions = labels
-        return {"loaded": True, "styleCount": len(styles), "labelPositions": len(labels)}
+        return {"loaded": True, "styleCount": len(styles), "labelPositions": len(labels),
+                "compilationScale":self._current_compilation_scale()}
 
     def _style(self, entry: _Entry) -> dict:
         """Approximate the classic scene_builder styling WITHOUT inventing fills.
@@ -1851,15 +1996,20 @@ class PreviewWorkspace:
             ],
         }
 
+    def label_settings(self,code: str) -> dict:
+        if not re.fullmatch(r"[0-9]{4}",str(code)):
+            raise ValueError("Kod etykiety musi mieć cztery cyfry.")
+        with self._lock:
+            if self._doc is None:raise ValueError("Najpierw otwórz mapę.")
+            spec=self._styles.get("labels:code:"+code,{})
+            return {"code":code,"fields":dict(spec.get("fields",{}))
+                if isinstance(spec,dict) else {}}
+
     def _labels(self, entry: _Entry) -> list[dict]:
         obj = entry.obj
         code_config = self._styles.get("labels:code:" + obj.code, {})
         overrides = code_config.get("fields") if isinstance(code_config, dict) else None
-        if isinstance(overrides, dict) and overrides:
-            fields = [key for key in LABEL_FIELDS
-                      if isinstance(overrides.get(key), dict)
-                      and overrides[key].get("visible")]
-        elif obj.code == "5310":
+        if obj.code == "5310":
             fields = ["A1", "A2"]
         elif obj.code in {"5216", "5220", "5230"}:
             fields = ["A2"]
@@ -1867,6 +2017,26 @@ class PreviewWorkspace:
             fields = ["TX"]
         else:
             fields = []
+        # Each native field remains INDEPENDENT. A style override for A1
+        # cannot implicitly hide A2. Explicitly enabled extra fields are
+        # supported without changing the normal default for each code.
+        if isinstance(overrides,dict):
+            explicit_extras=[
+                key for key, config in overrides.items()
+                if (key in LABEL_FIELDS and key not in fields and
+                    isinstance(config,dict) and config.get("visible") is True)]
+            if explicit_extras:
+                # Legacy editor semantics: declaring an entirely new
+                # attribute set replaces the defaults. Existing sidecars
+                # that explicitly selected only A3 continue to work.
+                fields=[key for key in LABEL_FIELDS if
+                        isinstance(overrides.get(key),dict) and
+                        overrides[key].get("visible") is True]
+            else:
+                # Merely styling A1 does not accidentally hide native A2.
+                fields=[key for key in fields if not (
+                        isinstance(overrides.get(key),dict) and
+                        overrides[key].get("visible") is False)]
         pos = self._label_positions.get(obj.uid, {}) if obj.uid else {}
         center = _label_anchor(obj)
         result = []
@@ -1897,7 +2067,9 @@ class PreviewWorkspace:
             result.append({
                 "field": field, "text": formatted[:220],
                 "x": east, "y": south,
-                "offset": (i - (len(fields) - 1) / 2) * base_size * .80,
+                "offset": (0 if location else
+                    (i - (len(fields) - 1)/2)*base_size*.80),
+                "manuallyPlaced":bool(location),
                 "color": _color(style.get("color"), palette),
                 "size": max(8, min(36, _int(style.get("size"), base_size))),
                 "fontFamily": str(style.get(

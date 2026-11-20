@@ -132,6 +132,14 @@ class NativeMapPicker:
                 meta["topologyWarning"]=(
                     "Pominięto niezgodny plik topologii. "
                     "Mapa bazowa została wczytana bez odwracalnych wycięć.")
+        visual_path=chosen.with_suffix(".geostudio.json")
+        if visual_path.is_file():
+            try:
+                visual=self._workspace.set_visual_sidecar(visual_path.read_bytes())
+                meta={**self._workspace.metadata(),"visualImported":visual}
+            except (ValueError,OSError,TypeError) as exc:
+                meta["visualWarning"]=(
+                    "Pominięto niezgodne ustawienia opisów GeoStudio: "+str(exc))
         self._source_path = chosen.resolve()
         self._source_sha = sha256(raw).hexdigest()
         available=self._recovery_store().candidate(
@@ -162,6 +170,15 @@ class NativeMapPicker:
                 "format":"geostudio-topology-v1",
                 "sha256":sha256(raw).hexdigest(),"uids":[]
             },separators=(",",":")).encode("utf-8")
+        # Crash recovery must include label moves and compilation scale too;
+        # placing the visual snapshot in the checksum-bound recovery blob
+        # changes neither the public 6A nor 6B topology companion format.
+        visual=self._workspace.export_visual_sidecar(raw)
+        if visual:
+            envelope=json.loads(companion)
+            envelope["recoveryVisual"]=json.loads(visual)
+            companion=json.dumps(envelope,ensure_ascii=False,
+                                 separators=(",",":")).encode("utf-8")
         new=self._workspace.editing_status()
         if (new["revision"]!=status["revision"] or
                 new["documentToken"]!=status["documentToken"] or
@@ -189,8 +206,15 @@ class NativeMapPicker:
         if (not check.checksum_valid or
                 check.declared_lines!=len(check.lines)):
             raise ValueError("Migawka zawiera nieprawidłową sumę GEO-MAP.")
+        recovery_meta=json.loads(companion)
+        visual=recovery_meta.pop("recoveryVisual",None)
+        topology=json.dumps(recovery_meta,ensure_ascii=False,
+                            separators=(",",":")).encode("utf-8")
         self._workspace.load_map(raw,path.name)
-        self._workspace.import_topology_metadata(companion,raw)
+        self._workspace.import_topology_metadata(topology,raw)
+        if visual:
+            self._workspace.set_visual_sidecar(
+                json.dumps(visual,ensure_ascii=False).encode("utf-8"))
         self._workspace.mark_recovered_unsaved()
         return {"restored":True,"metadata":self._workspace.metadata()}
 
@@ -265,6 +289,7 @@ class NativeMapPicker:
             suggested_name,content=self._workspace.export_positive_copy(
                 status["documentToken"])
             overlay_bytes=self._workspace.export_topology_metadata(content)
+        visual_bytes=self._workspace.export_visual_sidecar(content)
         root = tk.Tk()
         try:
             root.withdraw()
@@ -294,64 +319,70 @@ class NativeMapPicker:
             raise ValueError("Nie wolno nadpisać otwartego pliku źródłowego.")
         if chosen.name.casefold() == self._workspace.metadata()["name"].casefold():
             raise ValueError("Podaj inną nazwę niż mapa źródłowa.")
-        if burn_cutouts and chosen.exists():
-            raise ValueError(
-                "Eksport natywnych wycięć wymaga nowej nazwy pliku. "
-                "Nie nadpisuj istniejącej pary MAP/JSON.")
-        # Prepare BOTH files on disk before committing a new 6B pair.
-        # Do not leave behind a MAP without its source-ring recovery JSON.
+        # A MAP and its two companions are published as a new project;
+        # never overwrite existing files when any companion is required.
+        if (burn_cutouts or visual_bytes) and chosen.exists():
+            raise ValueError("Wybierz nową nazwę MAP, aby nie nadpisać pary MAP/JSON.")
         companion=chosen.with_suffix(".geostudio-topology.json")
-        if burn_cutouts and companion.exists():
-            raise ValueError("Plik odwracalności już istnieje. Wybierz nową nazwę.")
+        visual_path=chosen.with_suffix(".geostudio.json")
+        if overlay_bytes and companion.exists():
+            raise ValueError("Istnieje już plik topologii. Wybierz nową nazwę.")
+        if visual_bytes and visual_path.exists():
+            raise ValueError("Istnieje już plik stylów. Wybierz nową nazwę.")
         fd,tmp=tempfile.mkstemp(prefix=".geostudio2-",suffix=".tmp",
                                 dir=str(chosen.parent))
         tmp_companion=None
-        companion_committed=False
+        tmp_visual=None
+        committed=[]
         map_committed=False
         try:
             with os.fdopen(fd,"wb") as stream:
                 stream.write(content)
                 stream.flush()
                 os.fsync(stream.fileno())
-            if overlay_bytes:
-                fd2,tmp_companion=tempfile.mkstemp(
-                    prefix=".geostudio-topology-",suffix=".tmp",
-                    dir=str(chosen.parent))
-                with os.fdopen(fd2,"wb") as stream:
-                    stream.write(overlay_bytes)
+            for target,data,prefix in (
+                (companion,overlay_bytes,".geostudio-topology-"),
+                (visual_path,visual_bytes,".geostudio-visual-")
+            ):
+                if not data:continue
+                extra_fd,temp=tempfile.mkstemp(
+                    prefix=prefix,suffix=".tmp",dir=str(chosen.parent))
+                if target==companion:tmp_companion=temp
+                else:tmp_visual=temp
+                with os.fdopen(extra_fd,"wb") as stream:
+                    stream.write(data)
                     stream.flush()
                     os.fsync(stream.fileno())
-            if burn_cutouts:
-                # New output name is required, so cleanup cannot delete
-                # any pre-existing project data if the second rename fails.
-                os.replace(tmp_companion,companion)
-                companion_committed=True
+            if burn_cutouts or visual_bytes:
+                # Publish the companions first. The MAP is committed last.
+                if tmp_companion:
+                    os.replace(tmp_companion,companion)
+                    committed.append(companion)
+                if tmp_visual:
+                    os.replace(tmp_visual,visual_path)
+                    committed.append(visual_path)
                 os.replace(tmp,chosen)
                 map_committed=True
             else:
                 os.replace(tmp,chosen)
                 map_committed=True
-                if tmp_companion:
-                    os.replace(tmp_companion,companion)
+                if tmp_companion:os.replace(tmp_companion,companion)
         except Exception:
-            if burn_cutouts and companion_committed and not map_committed:
-                try:
-                    companion.unlink()
-                except OSError:
-                    pass
+            if not map_committed:
+                for target in committed:
+                    try:target.unlink()
+                    except OSError:pass
             raise
         finally:
-            for candidate in (tmp,tmp_companion):
+            for candidate in (tmp,tmp_companion,tmp_visual):
                 if candidate:
-                    try:
-                        os.unlink(candidate)
-                    except FileNotFoundError:
-                        pass
+                    try:os.unlink(candidate)
+                    except FileNotFoundError:pass
         try:
             save_last_map_directory(self._settings,chosen.parent)
         except OSError:
             pass
         return {"cancelled": False, "path": str(chosen),
                 "bytes": len(content), "nativeCutouts": burn_cutouts,
-                "topologyPath": str(chosen.with_suffix(".geostudio-topology.json"))
-                 if overlay_bytes else None}
+                "topologyPath":str(companion) if overlay_bytes else None,
+                 "visualPath":str(visual_path) if visual_bytes else None}
