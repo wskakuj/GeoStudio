@@ -4692,7 +4692,12 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
         ?pdfLayoutOptions():layoutOptions();
     }catch(error){exportInfo(error.message);inform(error.message,true);return;}
     if(print&&options.format==="dxf"){
-      inform("Druk wymaga obrazu. Wybierz PNG, JPG lub TIFF.",true);return;
+      inform("Druk wymaga obrazu. Wybierz PNG, JPG, TIFF lub PDF.",true);return;
+    }
+    if(print&&options.tiled){
+      inform("Wielkoformatowy wydruk przygotuj z PDF wektorowego; "+
+        "JPG/PNG/TIFF o tym rozmiarze są zapisywane jako osobne arkusze ZIP.",true);
+      return;
     }
     button.disabled=true;printButton.disabled=true;
     try{
@@ -4732,6 +4737,9 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
         if(!await downloadLayoutFile(await response.blob(),basename+".dxf")){
           exportInfo("Anulowano zapis DXF.");return;
         }
+      }else if(options.tiled){
+        const saved=await exportTiledLayout(options,basename);
+        if(!saved){exportInfo("Anulowano zapis wieloarkuszowego ZIP.");return;}
       }else{
         const raster=await renderLayoutCanvas(options);
         const raw=(print||options.format==="png")
