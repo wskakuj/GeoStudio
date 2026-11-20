@@ -392,3 +392,39 @@ testów API oznacza sprawdzoną zgodność terenową.
   rozmieszczenie punktów wymaga poprawienia par przed pracą.
   Ostateczną zgodność ortofotomapy i rastrów należy sprawdzić na
   charakterystycznych punktach terenowych.
+
+
+## Etap 12 — łatwiejsza kalibracja GCP po testach (2026-11-20)
+
+Kalibracja wymaga kliknięcia punktu na obrazie i odpowiadającego mu
+punktu w głównym widoku MAP. **Nie ma już przycisku „Wybierz odpowiednik
+na mapie”**: po wskazaniu piksela automatycznie przechodzimy do punktu
+na mapie. Jeśli drugi klik na obrazie nastąpi przed wyborem na mapie,
+zastępuje aktualnie oczekujący piksel — nie tworzy dodatkowej pary.
+
+Numerowane, już zapisane pary można **chwycić i przeciągnąć zarówno na
+rastrze, jak i na mapie**. Po puszczeniu uchwytu, jeżeli raster miał
+obliczoną transformację i pozostały minimum trzy pary, program ponownie
+oblicza transformację i błąd RMSE. Jeżeli par jest mniej, raster jest
+ukrywany do czasu ponownego dopasowania. Można też anulować oczekującą
+parę, usunąć ostatnią parę oraz ręcznie ponownie obliczyć dopasowanie.
+Rolka nadal przybliża w stronę kursora. Nowe pozycje przechowywane są
+w oryginalnych pikselach źródła, również dla rastra z mniejszym
+podglądem niż oryginalny plik.
+
+## Etap 13A — diagnostyka i podgląd kartografii LAY/CDF/SYM
+
+W zakładce **Kartografia** obok importu **LAY/CDF/SYM** jest
+**Podgląd stylów**. Wczytując prawdziwe biblioteki GEO-MAP, można
+sprawdzić dla przykładowego obiektu każdego kodu mapy jego kolor
+obrysu, grubość, kreskowanie, wypełnienie i proste symbole punktowe,
+jak również które biblioteki dopasowano i faktycznie zastosowano.
+Przedstawiany jest obiekt reprezentatywny dla danego kodu, a nie
+obietnica identycznego wyglądu wszystkich jego wariantów A1/A2.
+Wszelkie nierozpoznane instrukcje SYM, LAY i nietypowe desenie CDF
+są oznaczane, nie interpretowane zgadywaniem.
+
+To pierwsza część odtwarzania pełnej kartografii. Wciąż nie istnieje
+wierny interpreter dowolnych makr O/T/łuków SYM i wszystkich linii
+LAY; nie należy na tej podstawie deklarować zgodności kartograficznej
+1:1 z GEO-MAP. Import jest odczytowy, a źródłowy MAP nienaruszony.
