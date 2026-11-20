@@ -894,3 +894,446 @@ body[data-theme] .map-bottom-left,body[data-theme] .map-bottom-right {
   .map-background-popover {right:-45px;}
   .map-background-presets {grid-template-columns:repeat(2,minmax(0,1fr));}
 }
+
+/* Stage 15B — legibility pass. Intentional visual hierarchy:
+   app bar > task ribbon > docked panels > nested cards, with a
+   dedicated unobstructed canvas. Both themes share component geometry.
+   No CSS rule here changes the drawing Canvas or export DPI. */
+body[data-theme="light"] {
+  --ui-bg:#e6edf4;
+  --ui-surface:#edf3f9;
+  --ui-surface-2:#e2eaf3;
+  --ui-panel:#ffffff;
+  --ui-input:#ffffff;
+  --ui-edge:#b4c6d6;
+  --ui-ink:#172c40;
+  --ui-muted:#4c6579;
+  --ui-accent:#096c65;
+  --ui-accent-soft:#d5eeea;
+  --ui-hover:#e4edf5;
+  --ui-shadow:#1b385b1a;
+}
+body[data-theme="dark"] {
+  --ui-bg:#091423;
+  --ui-surface:#15273b;
+  --ui-surface-2:#1a3047;
+  --ui-panel:#102033;
+  --ui-input:#0a1b2c;
+  --ui-edge:#40586b;
+  --ui-ink:#f0f6fb;
+  --ui-muted:#b2c3d0;
+  --ui-accent:#65decd;
+  --ui-accent-soft:#17474b;
+  --ui-hover:#254258;
+  --ui-shadow:#0006;
+}
+body[data-theme] {
+  font-size:13px;
+  line-height:1.45;
+  -webkit-font-smoothing:antialiased;
+}
+body[data-theme] .app-shell {background:var(--ui-bg);}
+body[data-theme="light"] .topbar {
+  background:#ffffff;
+  border-bottom:1px solid #b1c4d5;
+  box-shadow:0 4px 16px #1a3e6024;
+}
+body[data-theme="light"] #main-ribbon.toolbar {
+  background:#e3ecf5;
+  border-bottom:1px solid #a8bccf;
+  box-shadow:0 4px 12px #1a365518;
+}
+body[data-theme="light"] .side-panel {
+  background:#edf3f9;
+}
+body[data-theme="light"] .right-panel {
+  background:#f5f8fc;
+}
+body[data-theme="light"] .left-panel {
+  box-shadow:inset -1px 0 #b4c6d6,3px 0 12px #24415a12;
+}
+body[data-theme="light"] .right-panel {
+  box-shadow:inset 1px 0 #b4c6d6,-3px 0 12px #24415a12;
+}
+body[data-theme] .panel-head {
+  min-height:83px;
+  padding:17px 18px 15px;
+}
+body[data-theme="light"] .panel-head {
+  background:#e3ebf4;
+  border-bottom:2px solid #b5c7d7;
+}
+body[data-theme="dark"] .panel-head {
+  background:#1a3046;
+  border-bottom:2px solid #39546a;
+}
+body[data-theme] .panel-head h2 {
+  font-size:18px;
+  letter-spacing:-.35px;
+  font-weight:760;
+}
+body[data-theme] .eyebrow,
+body[data-theme] .section-label,
+body[data-theme] .top-kicker {
+  font-size:10px;
+  letter-spacing:.09em;
+  font-weight:770;
+}
+body[data-theme] .brand-version {
+  font-size:11px;
+  font-weight:650;
+}
+body[data-theme] .header-center #document-title {
+  font-size:14px;
+  font-weight:750;
+}
+body[data-theme] .document-meta {font-size:11px;font-weight:670;}
+body[data-theme] .header-actions {gap:7px;}
+body[data-theme] .top-icon {min-height:40px;font-size:18px;}
+body[data-theme] .button {
+  min-height:39px;
+  padding:9px 13px;
+  font-size:12px;
+  font-weight:700;
+  border-width:1px;
+}
+body[data-theme="light"] .button.primary {
+  background:#087b72;
+  border-color:#03665f;
+  color:#fff;
+  box-shadow:0 3px 9px #046b652e;
+}
+body[data-theme="light"] .button.primary:hover {
+  background:#066961;
+  box-shadow:0 4px 13px #046b653e;
+}
+body[data-theme="light"] .button.export {
+  background:#d5efea;
+  color:#075e58;
+  border-color:#6aaba4;
+}
+body[data-theme="light"] .button.ghost {
+  background:#fff;
+  border-color:#a8bdce;
+}
+body[data-theme] .ribbon-tabs {
+  gap:4px;
+  min-height:44px;
+}
+body[data-theme] .ribbon-tab {
+  min-height:39px;
+  padding:9px 14px;
+  font-size:12px;
+  font-weight:700;
+}
+body[data-theme="light"] .ribbon-tab {
+  color:#304a61;
+}
+body[data-theme="light"] .ribbon-tab.active,
+body[data-theme="light"] .ribbon-tab[aria-selected="true"] {
+  color:#075a54;
+  background:#fff;
+  border-color:#afc3d4;
+  border-bottom:3px solid #0d8278;
+}
+body[data-theme] .ribbon-group .tool-button {
+  min-height:39px;
+  padding:9px 12px;
+  font-size:12px;
+  font-weight:650;
+}
+body[data-theme] .ribbon-group .tool-glyph {
+  font-size:19px;
+  color:var(--ui-accent);
+}
+body[data-theme] .ribbon-group .tool-button.active {
+  box-shadow:inset 0 0 0 1px var(--ui-accent);
+  font-weight:760;
+}
+body[data-theme] .ribbon-group .tool-button small,
+body[data-theme] .ribbon-help,
+body[data-theme] .ribbon-status {font-size:11px;}
+body[data-theme="light"] .ribbon-group .tool-button {
+  background:#f8fbff;
+  border-color:#b5c8d7;
+}
+body[data-theme="light"] .ribbon-group .tool-button:hover {
+  background:#fff;
+  border-color:#4e978e;
+}
+body[data-theme="light"] .ribbon-group .tool-button.active {
+  background:#d6eee9;
+  color:#075c56;
+  border-color:#368e83;
+}
+body[data-theme] .layer-section-header {
+  padding-top:12px;
+  padding-bottom:11px;
+  font-size:11px;
+  font-weight:760;
+}
+body[data-theme="light"] .layer-section-header {
+  color:#425d72;
+}
+body[data-theme] .search-box {height:43px;}
+body[data-theme] .search-box input {
+  font-size:13px;
+  font-weight:520;
+}
+body[data-theme="light"] .search-box {
+  background:#fff;
+  border:1px solid #9eb5c8;
+  box-shadow:0 1px 4px #193f5e13;
+}
+body[data-theme] .layer-tablist {padding-top:12px;padding-bottom:8px;}
+body[data-theme] .layer-tab {
+  min-height:42px;
+  font-size:13px;
+  font-weight:720;
+}
+body[data-theme="light"] .layer-tab {
+  background:#fff;
+  color:#344e63;
+  border:1px solid #b3c6d7;
+}
+body[data-theme="light"] .layer-tab.active {
+  background:#d7eee9;
+  color:#065d56;
+  border-color:#488f85;
+  box-shadow:inset 0 0 0 1px #488f85;
+}
+body[data-theme="light"] .layer-item {
+  background:#fff;
+  border-color:#b7c9d7;
+  box-shadow:0 2px 7px #29475e12;
+}
+body[data-theme="light"] .layer-item:hover {
+  border-color:#649b93;
+  background:#f4f9fb;
+}
+body[data-theme] .layer-row {padding:5px 9px;min-height:49px;}
+body[data-theme] .layer-name {
+  font-size:13px;
+  font-weight:730;
+}
+body[data-theme] .layer-count,
+body[data-theme] .landuse-count {
+  font-size:11px;
+  font-weight:670;
+}
+body[data-theme] .layer-toggle,
+body[data-theme] .grade-toggle {width:17px;height:17px;}
+body[data-theme] .layer-disclosure {width:32px;height:32px;font-size:19px;}
+body[data-theme="light"] .landuse-list {
+  background:#f1f6fa;
+  border-top:1px solid #c0d0dd;
+}
+body[data-theme="dark"] .landuse-list {background:#11253a;}
+body[data-theme] .landuse-list-heading {
+  font-size:10px;
+  padding:8px 10px;
+}
+body[data-theme] .landuse-row {
+  min-height:38px;
+  padding:6px 10px;
+  gap:10px;
+}
+body[data-theme] .landuse-class-name {
+  font-size:13px;
+  font-weight:670;
+}
+body[data-theme="light"] .landuse-row:nth-child(even) {
+  background:#e9f1f8;
+}
+body[data-theme="light"] .landuse-row:hover {
+  background:#d6eee9;
+}
+body[data-theme] .mini-stat span {font-size:12px;}
+body[data-theme] .mini-stat strong {font-size:13px;}
+body[data-theme="light"] .layer-footer {
+  background:#fff;
+  border:1px solid #b1c5d5;
+  box-shadow:0 2px 10px #23435c17;
+}
+body[data-theme] .inspector-section h3 {
+  font-size:11px;
+  font-weight:760;
+}
+body[data-theme] .inspector-title strong {font-size:14px;}
+body[data-theme] .inspector-field .key {font-size:12px;font-weight:680;}
+body[data-theme] .inspector-field .value {font-size:13px;font-weight:610;}
+body[data-theme] .inspector-edit-field label {font-size:12px;font-weight:680;}
+body[data-theme] .inspector-edit-field input {
+  min-height:42px;
+  font-size:13px;
+}
+body[data-theme] .text-edit-button {
+  background:var(--ui-accent-soft);
+  color:var(--ui-accent);
+  border-color:var(--ui-edge);
+}
+body[data-theme] .inspector-edit p {
+  color:var(--ui-muted);font-size:12px;
+}
+body[data-theme="light"] .inspector-section,
+body[data-theme="light"] .inspector-title {
+  background:#fff;
+}
+body[data-theme="light"] .inspector-bottom {
+  background:#e7eef6;
+}
+/* Dialogs: distinct white cards, strong labels, clear section dividers. */
+body[data-theme="light"] .advanced-select-dialog,
+body[data-theme="light"] .command-dialog,
+body[data-theme="light"] .raster-visual-dialog {
+  background:#fff;
+  color:#192e40;
+  border:1px solid #9fb4c6;
+  box-shadow:0 22px 65px #102b4560;
+}
+body[data-theme="light"] .select-head,
+body[data-theme="light"] .command-search {
+  background:#e7eff7;
+  border-bottom:1px solid #b1c5d5;
+}
+body[data-theme="light"] .select-head h2 {color:#182e42;}
+body[data-theme="light"] .select-content label {color:#344d62;}
+body[data-theme="light"] .select-content .select-explain {color:#425c70;}
+body[data-theme="light"] .select-content input,
+body[data-theme="light"] .select-content textarea,
+body[data-theme="light"] .select-content select {
+  background:#fff;
+  color:#192f42;
+  border:1px solid #98aec0;
+}
+body[data-theme="light"] .select-preview {
+  background:#e5f3f0;
+  color:#075c54;
+  border-color:#95c4ba;
+}
+body[data-theme="light"] .select-actions {
+  background:#eef4f9;
+  border-top:1px solid #b1c5d5;
+}
+body[data-theme] .select-head h2 {
+  font-size:20px;
+  line-height:1.25;
+  font-weight:770;
+}
+body[data-theme] .select-content label,
+body[data-theme] .select-explain {
+  font-size:12px;
+  line-height:1.5;
+}
+body[data-theme] .select-content input:not([type="checkbox"]):not([type="radio"]),
+body[data-theme] .select-content select,
+body[data-theme] .select-content textarea {
+  min-height:42px;
+  font-size:13px;
+}
+body[data-theme] .select-preview {font-size:12px;line-height:1.6;}
+body[data-theme="light"] .bulk-dialog .bulk-checkbox-line {
+  background:#eef4f9;
+  color:#1a3145;
+  border-color:#b5c6d5;
+}
+body[data-theme="light"] .bulk-checkbox-line strong,
+body[data-theme="light"] .bulk-samples td {
+  color:#213a4e;
+}
+body[data-theme="light"] .bulk-checkbox-line small {
+  color:#536d80;
+}
+body[data-theme="light"] .bulk-samples,
+body[data-theme="light"] .bulk-samples td,
+body[data-theme="light"] .bulk-samples th {
+  border-color:#b8c9d8;
+}
+body[data-theme="light"] .bulk-samples th {
+  background:#e4edf6;
+  color:#075f59;
+}
+body[data-theme="light"] .geostudio-find-result {
+  background:#f3f7fb;
+  border-color:#b5c6d7;
+  color:#172d41;
+}
+body[data-theme="light"] .geostudio-find-result strong {
+  color:#075e58;
+}
+body[data-theme="light"] .geostudio-find-result span {
+  color:#385468;
+}
+body[data-theme="light"] .geostudio-find-result:hover {
+  background:#e1f1ed;
+  border-color:#379184;
+}
+body[data-theme="light"] .command-row.active,
+body[data-theme="light"] .command-row:hover {
+  background:#d8efe9;
+  color:#075f56;
+}
+body[data-theme="light"] .command-search input {
+  color:#1b344a;
+}
+body[data-theme="light"] .command-search input::placeholder {
+  color:#5c7285;
+}
+body[data-theme="light"] .command-hint {
+  background:#edf3f9;
+  color:#4f6579;
+}
+body[data-theme="light"] .raster-layer-item {
+  background:#fff;
+  border-color:#b5c8d7;
+}
+body[data-theme="light"] .raster-layer-meta strong {color:#233c50;}
+body[data-theme="light"] .raster-layer-meta span {color:#526d81;}
+body[data-theme="light"] .raster-layer-actions button {
+  color:#1e384a;
+  background:#edf3f8;
+  border-color:#a7bdce;
+}
+body[data-theme="light"] .carto-catalog-row {
+  background:#fff;
+  border-color:#b5c6d7;
+}
+body[data-theme="light"] .carto-catalog-info strong {
+  color:#193447;
+}
+body[data-theme="light"] .carto-catalog-info {
+  color:#4a6479;
+}
+body[data-theme="light"] .layer-source-dialog #underlay-url,
+body[data-theme="light"] .layer-source-dialog .raster-gcp-details,
+body[data-theme="light"] #underlay-dialog textarea,
+body[data-theme="light"] #underlay-dialog input[type="file"],
+body[data-theme="light"] #outline-style-dialog input[type="color"] {
+  background:#f5f9fc;
+  color:#1e364a;
+  border-color:#a8bdce;
+}
+body[data-theme="light"] .layer-source-dialog .raster-gcp-details summary,
+body[data-theme="light"] #underlay-dialog .underlay-title {
+  color:#176f68;
+}
+body[data-theme="light"] .toast {
+  background:#1b3b49;
+  border-color:#1d8f81;
+  color:#f2fffb;
+}
+body[data-theme] button:focus-visible,
+body[data-theme] input:focus-visible,
+body[data-theme] select:focus-visible,
+body[data-theme] textarea:focus-visible,
+body[data-theme] summary:focus-visible {
+  outline:3px solid var(--ui-accent);
+  outline-offset:2px;
+}
+body[data-theme="light"] button:disabled {
+  opacity:.55;
+}
+@media(max-width:1230px){
+  body[data-theme] .ribbon-tab {padding:8px 11px;}
+  body[data-theme] .ribbon-group .tool-button {padding:8px 9px;}
+}

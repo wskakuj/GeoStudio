@@ -187,13 +187,14 @@ class PreviewWorkspace:
             if grade:
                 forest[grade] += 1
             if layer == "Użytki":
-                # A1 is the real cadastral land-use class. Case-insensitive
-                # keys avoid showing duplicate rows for e.g. R/r, but the
-                # displayed label keeps the original GEO-MAP spelling.
-                value = str(obj.fields.get("A1", "") or "").strip()
+                # In this GEO-MAP workflow, the detailed bonitation
+                # class is stored in A2 (e.g. RV, PsIV, RVI).
+                # A1 may only carry the general use category.
+                # Group spelling variants case-insensitively.
+                value = str(obj.fields.get("A2", "") or "").strip()
                 key = value.casefold()
                 land_use_counts[key] += 1
-                land_use_labels.setdefault(key, value or "(bez A1)")
+                land_use_labels.setdefault(key, value or "(bez A2)")
         extent = [
             min(entry.bbox[0] for entry in entries),
             min(entry.bbox[1] for entry in entries),
@@ -2663,7 +2664,7 @@ class PreviewWorkspace:
                         pass
         return {"id":entry.fid,"code":obj.code,"layer":entry.layer,
                 "grade":entry.grade,
-                "landUse": (str(obj.fields.get("A1", "") or "").strip().casefold()
+                "landUse": (str(obj.fields.get("A2", "") or "").strip().casefold()
                             if entry.layer == "Użytki" else None),
                 "bbox":entry.bbox,"closed":obj.is_closed,
                 "geometry":parts,"style":self._style(entry),
