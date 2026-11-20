@@ -421,3 +421,21 @@ button:disabled { opacity:.38; cursor:not-allowed; filter:none !important; }
 .layout-options input{accent-color:#078d89;width:16px;height:16px}
 .layout-dialog input[type=number],.layout-dialog input[type=text],.layout-dialog select{min-width:0;width:100%}
 @media(max-width:500px){.layout-dialog .select-grid,.layout-options{grid-template-columns:1fr}}
+
+/* Stage 12A: a non-interactive, geo-anchored orthoimagery background. */
+.underlay-chip {
+  position:absolute;top:67px;right:18px;z-index:1;
+  color:#2b6170;font-size:10px;font-weight:650;
+  background:#ffffffd9;border:1px solid #cfdee6;
+  padding:5px 9px;border-radius:7px;pointer-events:none;
+}
+#underlay-dialog .select-grid {grid-template-columns:repeat(2,minmax(0,1fr));}
+#underlay-dialog select {width:100%;min-width:0;}
+#underlay-dialog input[type="range"] {width:100%;accent-color:#2fbca9;margin-top:8px;}
+#underlay-dialog .underlay-layer-line {display:flex;align-items:center;justify-content:space-between;gap:12px;margin-top:10px;}
+#underlay-dialog .underlay-layer-line label {margin:0;}
+#underlay-dialog .underlay-layer-line button {flex-shrink:0;}
+@media(max-width:620px){
+  #underlay-dialog .select-grid {grid-template-columns:1fr;}
+  .underlay-chip {right:10px;top:67px;}
+}
