@@ -132,7 +132,7 @@ select('2180');
 assert.equal(state.mapEPSG,'2180');
 assert.ok(Object.values(inputs).every(x=>x.value==='2180'));
 assert.equal(removed,1);
-assert.match(info,/kalibracji/);
+assert.match(info,/georeferencji/);
 select('2180');
 assert.equal(redraw,1);
 select('9999');
