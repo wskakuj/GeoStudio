@@ -621,6 +621,24 @@
       <input id="underlay-opacity" type="range" min="0" max="100" value="75" step="5">
       <p id="underlay-summary" class="select-preview" role="status">Najpierw wybierz źródło i pobierz warstwy WMS.</p>
       <p class="select-explain">Po włączeniu obraz przesuwa się i skaluje razem z geometrią. Nowe fragmenty są automatycznie pobierane po zakończeniu nawigacji. Bez transformacji EPSG.</p>
+      <hr class="underlay-divider">
+      <div class="eyebrow">ETAP 12B · LOKALNY RASTER I KALIBRACJA</div>
+      <h3 class="underlay-title">Raster PNG / JPG / TIFF / GeoTIFF</h3>
+      <p class="select-explain">Wybierz EPSG mapy u góry. Obraz lokalny nie trafia do pliku MAP. GeoTIFF z georeferencją może być od razu umieszczony na mapie; zwykły raster potrzebuje pliku world albo punktów GCP.</p>
+      <div class="select-grid">
+        <div><label for="underlay-raster-file">Plik rastrowy</label><input type="file" id="underlay-raster-file" accept=".png,.jpg,.jpeg,.webp,.tif,.tiff"></div>
+        <div><label for="underlay-world-file">Plik world (.pgw, .jgw, .tfw, .wld)</label><input type="file" id="underlay-world-file" accept=".pgw,.jgw,.tfw,.wld,.pngw,.jpegw"></div>
+      </div>
+      <label for="raster-opacity">Widoczność lokalnego rastra: <strong id="raster-opacity-value">72%</strong></label>
+      <input id="raster-opacity" type="range" min="0" max="100" value="72" step="5">
+      <label for="raster-gcp">Opcjonalnie: kalibracja GCP — pary piksel/mapa</label>
+      <textarea id="raster-gcp" rows="4" spellcheck="false" placeholder="u  v  X_północ  Y_wschód (metry)&#10;0 0 514000.0 670000.0&#10;1000 0 514000.0 670100.0&#10;0 800 513920.0 670000.0"></textarea>
+      <p class="select-explain">Podaj minimum 3 niewspółliniowe punkty. X/Y to oryginalne współrzędne GEO-MAP, nie piksele ekranu. Sprawdź błąd RMSE przed pracą. Przykład w polu jest wyłącznie ilustracyjny.</p>
+      <div class="underlay-layer-line">
+        <button type="button" class="button ghost" id="raster-remove">Usuń raster</button>
+        <button type="button" class="button ghost" id="raster-calibrate">Zastosuj GCP</button>
+      </div>
+      <p id="raster-summary" class="select-preview" role="status">Nie wczytano rastra.</p>
     </div>
     <div class="select-actions">
       <button type="button" id="underlay-remove" class="button ghost">Usuń podkład</button>
