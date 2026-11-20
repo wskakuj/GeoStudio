@@ -1870,12 +1870,10 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
   function beginNavigationPreview() {
     if(state.previewActive||!state.meta||!canvas.width||!canvas.height)return;
     // Cache geometry only: text will be re-painted in fixed CSS pixels.
-    if(!state.geometrySnapshotValid){
-      viewportSnapshot.width=canvas.width;
-      viewportSnapshot.height=canvas.height;
-      snapshotContext.setTransform(1,0,0,1,0,0);
-      snapshotContext.drawImage(canvas,0,0);
-    }
+    // A canvas containing labels must never become the zoomable geometry
+    // snapshot: otherwise the previous text grows/shrinks underneath the
+    // freshly painted fixed-pixel labels while fetching the new viewport.
+    if(!state.geometrySnapshotValid)return;
     state.previewCamera={
       center:{...state.center},scale:state.scale,
       width:state.width,height:state.height
@@ -2603,17 +2601,17 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
     const compilation=state.edit?.compilationScale||source;
     const ratio=Math.max(.1,Math.min(10,compilation/source));
     const base=Math.max(8,Math.min(36,Number(label.size)||16));
-    return (Math.round(Math.max(8,Math.min(40,base*ratio))*10)/10)*
-      (state.exportFontRatio||1);
+    // CSS-pixel sizes are the same in the map and the exported bitmap.
+    // The export DPI determines map resolution, not text magnification.
+    return Math.round(Math.max(8,Math.min(40,base*ratio))*10)/10;
   }
   function labelTextRows(label,size) {
     const lines=String(label.text||"").split("\n").slice(0,6);
     return {lines,size,height:lines.length*size*1.20};
   }
-  function renderLabels(features) {
+  function renderLabels(features,collisions=[]) {
     state.labelHits=[];
     if(!state.labels)return;
-    const collisions=[];
     let painted=0;
     const ordered=[...features].sort((a,b)=>{
       const priority=f=>f.id===state.active?-2:
@@ -2627,7 +2625,7 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
     ctx.textBaseline="alphabetic";
     for(const feature of ordered){
       if(!feature.labels?.length)continue;
-      const selected=feature.id===state.active;
+      const selected=!state.exporting&&feature.id===state.active;
       const box=feature.bbox;
       const w=(box[2]-box[0])*state.scale;
       const h=(box[3]-box[1])*state.scale;
@@ -2651,7 +2649,7 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
         stackHeight+=height;
       }
       for(const label of feature.labels){
-        if(painted>=(state.exportFontRatio?8000:1400)){ctx.restore();return;}
+        if(painted>=(state.exporting?8000:1400)){ctx.restore();return;}
         const size=labelFontSize(feature,label,selected);
         if(!size)continue;
         const font=(label.bold?"700":"400")+" "+size+"px '"+
@@ -2671,24 +2669,22 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
                     p.x+maxWidth/2+3,cy+height/2+3];
         if(rect[2]<0||rect[0]>state.width||
            rect[3]<0||rect[1]>state.height)continue;
-        // Never let a feature's A1 suppress its OWN independent A2.
-        // At working zoom every native building gets BOTH separate
-        // labels, even if an unrelated nearby caption would otherwise
-        // hide just its A2. At overview scales use collision culling.
-        const readableBuilding=feature.code==="5310"&&Math.max(w,h)>=28;
-        if(!selected&&!readableBuilding&&collisions.some(item=>
+        // Keep A1 and A2 of the SAME feature together, but never let
+        // descriptions of DIFFERENT features overwrite one another.
+        // Culling is essential for dense 5310 areas and for export.
+        if(!selected&&collisions.some(item=>
            item.fid!==feature.id&&item.rect[0]<rect[2]&&
            item.rect[2]>rect[0]&&item.rect[1]<rect[3]&&
            item.rect[3]>rect[1]))continue;
         collisions.push({fid:feature.id,rect});
-        if((selected||state.tool==="labels")&&
+        if(!state.exporting&&(selected||state.tool==="labels")&&
            (label.field==="A1"||label.field==="A2"||
             state.labelSelected?.field===label.field&&
             state.labelSelected?.fid===feature.id)){
           ctx.fillStyle="rgba(27,150,143,.18)";
           ctx.fillRect(rect[0],rect[1],rect[2]-rect[0],rect[3]-rect[1]);
         }
-        if(state.tool==="labels"&&state.labelSelected?.fid===feature.id&&
+        if(!state.exporting&&state.tool==="labels"&&state.labelSelected?.fid===feature.id&&
            state.labelSelected?.field===label.field){
           ctx.strokeStyle="#0b9e8f";ctx.lineWidth=1.5;
           ctx.strokeRect(...[rect[0],rect[1],rect[2]-rect[0],rect[3]-rect[1]]);
@@ -2881,11 +2877,11 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
       await new Promise(resolve=>setTimeout(resolve,0));
     }
   }
-  function renderExportBatch(g,options,features,pass){
+  function renderExportBatch(g,options,features,pass,collisions){
     const previous={
       ctx,center:state.center,scale:state.scale,
       width:state.width,height:state.height,pixelRatio:state.pixelRatio,
-      exportFontRatio:state.exportFontRatio,labelHits:state.labelHits
+      exporting:state.exporting,labelHits:state.labelHits
     };
     ctx=g;
     state.center={
@@ -2895,7 +2891,9 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
     state.scale=options.pxPerUnit;
     state.width=options.width;state.height=options.height;
     state.pixelRatio=1;
-    state.exportFontRatio=options.dpi/96;
+    // The PNG/JPG/TIFF bitmap has its own pixel dimensions.
+    // Do NOT scale text by DPI a second time.
+    state.exporting=true;
     g.save();
     try{
       g.translate(options.margin,options.head);
@@ -2905,13 +2903,13 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
       visible.sort((a,b)=>(priority[a.code]??3)-(priority[b.code]??3));
       if(pass==="fills")for(const item of visible)renderFill(item);
       if(pass==="strokes")for(const item of visible)renderStroke(item);
-      if(pass==="labels")renderLabels(visible);
+      if(pass==="labels")renderLabels(visible,collisions);
     }finally{
       g.restore();
       ctx=previous.ctx;state.center=previous.center;
       state.scale=previous.scale;state.width=previous.width;
       state.height=previous.height;state.pixelRatio=previous.pixelRatio;
-      state.exportFontRatio=previous.exportFontRatio;
+      state.exporting=previous.exporting;
       state.labelHits=previous.labelHits;
     }
   }
@@ -3002,12 +3000,15 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
     g.fillStyle="#ffffff";g.fillRect(0,0,target.width,target.height);
     const revision=state.edit?.revision;
     const documentToken=state.edit?.documentToken;
+    // Keep collision boxes across all 4000-object pages. Without this
+    // ledger, labels from later batches can overwrite earlier labels.
+    const exportLabelCollisions=[];
     for(const [pass,label] of [
       ["fills","wypełnienia"],["strokes","linie"],["labels","etykiety"]
     ]){
       exportInfo("Eksport: "+label+"…");
       await forEachExportPage(options.bounds,part=>
-        renderExportBatch(g,options,part,pass));
+        renderExportBatch(g,options,part,pass,exportLabelCollisions));
       if(state.edit?.revision!==revision||
          state.edit?.documentToken!==documentToken)
         throw Error("Mapa została zmieniona podczas przygotowania eksportu.");
