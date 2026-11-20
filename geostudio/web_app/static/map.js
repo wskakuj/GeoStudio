@@ -2393,7 +2393,7 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
       ?Number(world)*state.scale*ratio
       :(label.size||16)*Math.pow(Math.max(1e-6,state.scale)/.65,.43)*ratio;
     if(!Number.isFinite(wanted))return 0;
-    if(wanted<7)return selected||state.tool==="labels"?11:0;
+    if(wanted<7)return selected?11:0;
     return Math.max(7,Math.min(40,wanted));
   }
   function labelTextRows(label,size) {
@@ -2422,7 +2422,7 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
       const w=(box[2]-box[0])*state.scale;
       const h=(box[3]-box[1])*state.scale;
       const sheet=["7900","6900","6000","6301"].includes(feature.code);
-      if(!selected&&state.tool!=="labels"&&!sheet){
+      if(!selected&&!sheet){
         if(feature.code==="5310"){
           if(Math.max(w,h)<14)continue;
         }else if(Math.max(w,h)<32||Math.min(w,h)<8)continue;
@@ -2462,7 +2462,11 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
         if(rect[2]<0||rect[0]>state.width||
            rect[3]<0||rect[1]>state.height)continue;
         // Never let a feature's A1 suppress its OWN independent A2.
-        if(!selected&&state.tool!=="labels"&&collisions.some(item=>
+        // At working zoom every native building gets BOTH separate
+        // labels, even if an unrelated nearby caption would otherwise
+        // hide just its A2. At overview scales use collision culling.
+        const readableBuilding=feature.code==="5310"&&Math.max(w,h)>=28;
+        if(!selected&&!readableBuilding&&collisions.some(item=>
            item.fid!==feature.id&&item.rect[0]<rect[2]&&
            item.rect[2]>rect[0]&&item.rect[1]<rect[3]&&
            item.rect[3]>rect[1]))continue;
