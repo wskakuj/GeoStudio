@@ -288,3 +288,24 @@ def test_render_cartography_shows_applied_vs_matched_and_hidden_symbols():
     assert 'renderCartographyMatches();' in js
     html=(root/"index.html").read_text(encoding="utf-8")
     assert 'id="cartography-status"' in html
+
+
+
+def test_lay_line_colorref_changes_visible_stroke_without_cdf():
+    from conftest import MapBuilder
+    raw=MapBuilder().object("5220","LAND",{"A2":"użytek"},
+           [(0,0),(0,20),(20,20),(20,0)]).build()
+    ws=PreviewWorkspace()
+    ws.load_map(raw,"lay.MAP")
+    before=ws.viewport((-2,-22,22,2))["features"][0]
+    assert before["style"]["stroke"]!="\x23008000"
+    # Windows COLORREF: 0x008000 => R=0, G=128, B=0.
+    ws.set_cartographic_library(
+        "linie.LAY",b"5220 32768 2.008 1 standard 2.5 0\r\n")
+    after=ws.viewport((-2,-22,22,2))["features"][0]
+    assert after["style"]["stroke"]=="\x23008000"
+    assert after["style"]["dash"]==[6,4]
+    assert "LAY" in after["style"]["libraryMatches"]
+    assert "LAY" in after["style"]["libraryApplied"]
+    # The original MAP bytes were never rewritten by the style import.
+    assert ws.export_copy(ws.editing_status()["documentToken"])[1]==raw
