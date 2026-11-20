@@ -2492,43 +2492,91 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
     if($("raster-visual-dialog").open)$("raster-visual-dialog").close();
     requestDraw();
   }
-  function pickGcpMapPoint(ev){
-    if(!gcpView.waiting||ev.button!==0||!raster.image||!gcpView.pending)return;
-    ev.preventDefault();ev.stopImmediatePropagation();
+  function gcpMapPoint(ev){
     const p=eventCoords(ev),world=screenToWorld(p.x,p.y);
-    // GEO-MAP native X north, Y east; Canvas x is Y, y is -X.
-    raster.gcps.push({u:gcpView.pending.u,v:gcpView.pending.v,
-      x:-world.y,y:world.x});
-    gcpView.waiting=false;gcpView.pending=null;
+    return {x:-world.y,y:world.x};
+  }
+  function pickGcpMapPoint(ev){
+    if(!gcpView.open||ev.button!==0||!raster.image)return;
+    const p=eventCoords(ev),index=gcpNearestMapPoint(p.x,p.y);
+    if(index<0&&(!gcpView.waiting||!gcpView.pending))return;
+    ev.preventDefault();ev.stopImmediatePropagation();
+    gcpView.consumeMapUp=ev.pointerId;
+    if(index>=0){
+      gcpView.mapDragging={pointer:ev.pointerId,index,moved:false};
+      gcpView.activeIndex=index;
+      gcpView.pending=null;gcpView.waiting=false;
+      canvas.setPointerCapture?.(ev.pointerId);
+      updateGcpUi("Przeciągnij punkt "+(index+1)+" po mapie.");
+      return;
+    }
+    raster.gcps.push({...gcpView.pending,...gcpMapPoint(ev)});
+    gcpView.activeIndex=raster.gcps.length-1;
+    gcpView.waiting=false;gcpView.pending=null;gcpView.fitSerial++;
     updateGcpUi("Dodano parę "+raster.gcps.length+
-      ". Wybierz kolejny punkt na obrazie lub oblicz dopasowanie.");
+      ". Kliknij kolejny punkt na obrazie.");
     renderRasterLayers();
   }
-  async function applyVisualGCP(){
+  function moveGcpMapPoint(ev){
+    const drag=gcpView.mapDragging;
+    if(!drag||drag.pointer!==ev.pointerId)return;
+    ev.preventDefault();ev.stopImmediatePropagation();
+    if(!raster.gcps[drag.index])return;
+    Object.assign(raster.gcps[drag.index],gcpMapPoint(ev));
+    drag.moved=true;gcpView.fitSerial++;
+    updateGcpUi("Przesuwasz punkt "+(drag.index+1)+" na mapie.");
+  }
+  function releaseGcpMapPoint(ev){
+    const drag=gcpView.mapDragging;
+    if(!drag&&gcpView.consumeMapUp!==ev.pointerId)return;
+    if(drag&&drag.pointer!==ev.pointerId)return;
+    ev.preventDefault();ev.stopImmediatePropagation();
+    if(canvas.hasPointerCapture?.(ev.pointerId))
+      canvas.releasePointerCapture(ev.pointerId);
+    gcpView.mapDragging=null;gcpView.consumeMapUp=null;
+    if(drag?.moved)finishGcpAdjustment();
+  }
+  async function applyVisualGCP(keepOpen=false){
     if(!raster.image||raster.gcps.length<3){
       inform("Do kalibracji potrzebne są minimum trzy pary punktów.",true);return;
     }
     const ticket=raster.ticket,documentToken=state.edit?.documentToken;
-    const imageId=raster.id,points=raster.gcps.map(item=>({...item}));
+    const imageId=raster.id,serial=++gcpView.fitSerial,
+      points=raster.gcps.map(item=>({...item}));
     try{
       const result=await api("/api/underlay/gcp",{
         method:"POST",headers:{"Content-Type":"application/json"},
         body:JSON.stringify({points})
       });
-      if(ticket!==raster.ticket||imageId!==raster.id||
-         documentToken!==state.edit?.documentToken)return;
+      if(serial!==gcpView.fitSerial||ticket!==raster.ticket||
+         imageId!==raster.id||documentToken!==state.edit?.documentToken)return;
       raster.affine=result.coefficients;
       raster.epsg=null; // visual GCP calibrates against native MAP XY.
       raster.boundEPSG=state.mapEPSG;
       raster.visible=true;raster.pendingWorld=null;
       rasterInfo("Wizualne GCP: "+result.count+" par, RMSE "+
         result.rmse.toFixed(3)+" m. Sprawdź położenie na innych punktach.");
-      closeVisualCalibration();
+      if(keepOpen)
+        updateGcpUi("Zaktualizowano dopasowanie: RMSE "+
+          result.rmse.toFixed(3)+" m. Możesz dalej przesuwać punkty.");
+      else closeVisualCalibration();
       requestDraw();
     }catch(error){
-      updateGcpUi("Kalibracja nie powiodła się: "+error.message+
-        ". Sprawdź rozmieszczenie punktów.");
+      if(serial===gcpView.fitSerial)
+        updateGcpUi("Kalibracja nie powiodła się: "+error.message+
+          ". Sprawdź rozmieszczenie punktów.");
     }
+  }
+  function finishGcpAdjustment(){
+    gcpView.fitSerial++;
+    if(raster.gcps.length>=3&&raster.affine){
+      updateGcpUi("Aktualizuję transformację po przesunięciu punktu…");
+      applyVisualGCP(true);
+    }else if(raster.gcps.length<3&&raster.affine){
+      raster.affine=null;
+      rasterInfo("Za mało par GCP. Raster wymaga ponownej kalibracji.");
+      updateGcpUi("Potrzebne są co najmniej 3 pary GCP.");
+    }else updateGcpUi("Punkt poprawiony. Po dodaniu 3 par oblicz dopasowanie.");
   }
   function setupVisualCalibration(){
     const canvas=$("raster-gcp-canvas");
