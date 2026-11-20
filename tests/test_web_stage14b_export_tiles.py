@@ -38,10 +38,10 @@ def test_large_map_zip_is_streamed_and_revision_bound():
         assert client.post(endpoint + "/finish", headers=header).status_code == 400
         payload = b"II*\x00" + b"x" * 1024
         for index in range(2):
-            response = client.post(f"{endpoint}/{index}", headers=header,
+            response = client.post(f"{endpoint}/part/{index}", headers=header,
                                    content=payload)
             assert response.status_code == 200, response.text
-        assert client.post(endpoint + "/1", headers=header,
+        assert client.post(endpoint + "/part/1", headers=header,
                            content=payload).status_code == 400
         completed = client.post(endpoint + "/finish", headers=header)
         assert completed.status_code == 200, completed.text
