@@ -1875,10 +1875,9 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
   }
   function beginNavigationPreview() {
     if(state.previewActive||!state.meta||!canvas.width||!canvas.height)return;
-    // Cache geometry only: text will be re-painted in fixed CSS pixels.
-    // A canvas containing labels must never become the zoomable geometry
-    // snapshot: otherwise the previous text grows/shrinks underneath the
-    // freshly painted fixed-pixel labels while fetching the new viewport.
+    // Cache geometry only. Labels remain anchored to world coordinates and
+    // are redrawn at the current map scale, without sampling old text from
+    // the geometry snapshot during a wheel/pan preview.
     if(!state.geometrySnapshotValid)return;
     state.previewCamera={
       center:{...state.center},scale:state.scale,
@@ -2598,18 +2597,21 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
     }finally{state.editBusy=false;updateEditState(state.edit);}
   }
   function labelFontSize(feature,label,selected) {
-    // Pixel-perfect, zoom-invariant labels, as requested for classic GIS:
-    // at 1:500, 1:5000 and 1:25000 the chosen A1/A2 size is the SAME.
-    // Only explicit changes to the *compilation* scale or style editor
-    // affect typography. Distant overview clutter is handled by culling
-    // geometrically tiny objects, not by magnifying fonts.
     const source=state.edit?.sourceCompilationScale||5000;
     const compilation=state.edit?.compilationScale||source;
     const ratio=Math.max(.1,Math.min(10,compilation/source));
     const base=Math.max(8,Math.min(36,Number(label.size)||16));
-    // CSS-pixel sizes are the same in the map and the exported bitmap.
-    // The export DPI determines map resolution, not text magnification.
-    return Math.round(Math.max(8,Math.min(40,base*ratio))*10)/10;
+    const styledSize=Math.round(Math.max(8,Math.min(40,base*ratio))*10)/10;
+    // Keep the already-correct PNG/JPG/TIFF typography EXACTLY as before.
+    if(state.exporting)return styledSize;
+    // On the interactive map an annotation has a fixed size in MAP world
+    // units, NOT a constant pixel size. Calibrate the style editor's 16 px
+    // building text to the legible working view around 1:2500. Both its
+    // location and glyph height then scale linearly with the map camera:
+    // zoom out by 2 -> geometry and A1/A2 text are both 2 times smaller.
+    // Do not impose a screen-pixel minimum: that would recreate the bug.
+    const worldTextHeight=styledSize*2500*.0254/96;
+    return worldTextHeight*state.scale;
   }
   function labelTextRows(label,size) {
     const lines=String(label.text||"").split("\n").slice(0,6);
@@ -2715,10 +2717,10 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
     ctx.restore();
   }
   function renderScreenLabels(features) {
-    // Map geometry is camera-zoomed. Labels are a separate transparent
-    // screen-space canvas: only devicePixelRatio affects glyph pixels,
-    // never state.scale. This also prevents browser bitmap resampling
-    // from changing font size during continuous wheel zoom.
+    // Labels use a separate transparent canvas so old text is never
+    // resampled from the geometry snapshot. Their positions AND font size
+    // derive from state.scale, keeping descriptions bound to the map.
+    // devicePixelRatio only improves raster sharpness on HiDPI monitors.
     labelCtx.setTransform(state.pixelRatio,0,0,state.pixelRatio,0,0);
     labelCtx.clearRect(0,0,state.width,state.height);
     const previousContext=ctx;
@@ -2752,8 +2754,8 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
     for(const feature of features) renderFill(feature);
     for(const feature of features) renderStroke(feature);
     renderHighlights(features);drawMoveGhost(features);drawMoveMagnet();
-    // Snapshot includes only the geometry canvas. Overlay labels never
-    // enter the bitmap used for zoom/pan previews.
+    // Snapshot includes geometry only. Labels are redrawn proportionally
+    // to the current map zoom instead of using scaled bitmap text.
     if(viewportSnapshot.width!==canvas.width||viewportSnapshot.height!==canvas.height){
       viewportSnapshot.width=canvas.width;viewportSnapshot.height=canvas.height;
     }
