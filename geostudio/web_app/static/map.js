@@ -2673,8 +2673,11 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
           offset=stackSizes.get(label.field).center-stackHeight/2;
         const p=worldToScreen(label.x,label.y);
         const cy=p.y+offset;
-        const rect=[p.x-maxWidth/2-3,cy-height/2-3,
-                    p.x+maxWidth/2+3,cy+height/2+3];
+        // Collision padding shrinks/grows with the map as well.
+        // The export path retains its existing three-pixel padding.
+        const labelPad=state.exporting?3:size*3/16;
+        const rect=[p.x-maxWidth/2-labelPad,cy-height/2-labelPad,
+                    p.x+maxWidth/2+labelPad,cy+height/2+labelPad];
         if(rect[2]<0||rect[0]>state.width||
            rect[3]<0||rect[1]>state.height)continue;
         // Keep A1 and A2 of the SAME feature together, but never let
@@ -2704,7 +2707,10 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
           const y=cy-height/2+size+(i*size*1.20);
           ctx.strokeStyle=document.body.classList.contains("dark-map")
             ?"#1b2c3d":"#f8fafc";
-          ctx.lineWidth=Math.max(.7,Math.min(2,size*.11));
+          // On-screen halo width must shrink with the glyph; an
+          // absolute 0.7px floor would dominate tiny zoomed-out text.
+          ctx.lineWidth=state.exporting
+            ?Math.max(.7,Math.min(2,size*.11)):size*.11;
           ctx.strokeText(line,x,y);
           ctx.fillStyle=label.color||"#4A5056";
           ctx.fillText(line,x,y);
