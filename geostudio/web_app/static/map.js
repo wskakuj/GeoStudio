@@ -4387,6 +4387,7 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
   link("tool-layout-ribbon",openLayoutDialog);
   link("tool-map-copy-ribbon",downloadMapCopy);
   link("underlay-close",()=>$("underlay-dialog").close());
+  link("underlay-close-bottom",()=>$("underlay-dialog").close());
   link("raster-close",()=>$("raster-dialog").close());
   link("raster-close-bottom",()=>$("raster-dialog").close());
   link("crs-close",()=>$("crs-dialog").close());
