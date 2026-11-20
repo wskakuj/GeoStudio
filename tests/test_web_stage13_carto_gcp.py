@@ -173,3 +173,40 @@ assert.equal(raster.gcps.length,0);
     result=subprocess.run([node,"-e",script],cwd=STATIC,
        capture_output=True,text=True,timeout=20)
     assert result.returncode==0,result.stdout+result.stderr
+
+
+def test_cdf_hatch_density_matches_qt_grid_and_unsupported_pattern_falls_back():
+    node=shutil.which("node")
+    if not node:return
+    script=r"""
+const fs=require('node:fs'),assert=require('node:assert/strict');
+const src=fs.readFileSync('map.js','utf8');
+const a=src.indexOf('  function hatchPattern(style) {');
+const b=src.indexOf('  function renderFill(feature) {',a);
+assert.ok(a>=0&&b>a);
+let dots=0,segments=0,tiles=[];
+const document={createElement:()=>{
+  const tile={width:0,height:0,getContext(){
+    return {clearRect(){},fillRect(){dots++;},beginPath(){},moveTo(){},
+      lineTo(){},stroke(){segments++;}};
+  }};
+  tiles.push(tile);return tile;
+}};
+const ctx={createPattern(){return 'pattern';}};
+const hatchCache=new Map();
+const hatch=new Function('document','ctx','hatchCache',
+  src.slice(a,b)+'return hatchPattern;')(document,ctx,hatchCache);
+assert.equal(hatch({fill:'#334455',hatch:1}),'pattern');
+assert.equal(dots,32);
+assert.equal(tiles[0].width,8);
+dots=0;
+assert.equal(hatch({fill:'#334455',hatch:2}),'pattern');
+assert.equal(dots,24);
+assert.equal(hatch({fill:'#334455',hatch:15}),'#334455');
+segments=0;
+assert.equal(hatch({fill:'#334455',hatch:8}),'pattern');
+assert.ok(segments>=4);
+"""
+    result=subprocess.run([node,"-e",script],cwd=STATIC,
+       capture_output=True,text=True,timeout=20)
+    assert result.returncode==0,result.stdout+result.stderr
