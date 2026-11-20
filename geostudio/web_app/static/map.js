@@ -17,6 +17,7 @@
     labels: true, grid: false, active: null, detail: null, pinned: new Set(),
     cartoLibraries: {},
     previewActive:false,previewCamera:null,
+    localMapReady:false,localMapCandidate:false,
     width: 1, height: 1, pixelRatio: 1, isDragging: false, drag: null,
     lastPick: null, scheduled: false, refreshTimer: null, queryCounter: 0,
     queryAbort: null, selectionRequest: 0, limited: false,
@@ -396,11 +397,17 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
     state.vertexDrag=null;state.moveGhost=null;state.movePreview=null;
     state.labelDrag=null;state.labelSelected=null;state.labelHits=[];
     state.previewActive=false;state.previewCamera=null;
+    state.localMapReady=false;state.localMapCandidate=false;
     state.moveIds=[];state.copyIds=[];state.drawPoints=[];
     state.cutIds=[];state.lineEditId=null;state.geometryPreview=null;
     state.drawHover=null;state.drawSnap=null;state.drawCursorWorld=null;
     state.objectPreview=null;setTool("select");
     state.features = []; state.inspectorCache.clear();
+    // Ordinary cadastral MAP: transfer the whole geometry just ONCE.
+    // Zoom and pan then render local Canvas data, without HTTP requests.
+    state.localMapCandidate=meta.objectCount<=12000&&
+      meta.vertexCount<=150000;
+    state.localMapReady=false;
     // Match the old user's map view: survey markers are opt-in.
     // Their heavy symbol density otherwise hides the parcel boundaries.
     state.visibleLayers = new Set(
@@ -1687,7 +1694,7 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
   function zoomAt(factor, px, py) {
     if (!state.meta) return;
     const origin=screenToWorld(px,py);
-    beginNavigationPreview();
+    if(!state.localMapReady)beginNavigationPreview();
     state.scale=Math.max(.000001,Math.min(3500,state.scale*factor));
     state.center={
       x:origin.x-(px-state.width/2)/state.scale,
@@ -2540,7 +2547,10 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
     const ticket=++state.queryCounter;
     if(state.queryAbort) state.queryAbort.abort();
     const controller=new AbortController();state.queryAbort=controller;
-    let view=boundsFromViewport();
+    // One whole-map response for manageable files (<=12k objects/150k
+    // vertices). Reuse all geometry for instant local navigation.
+    let view=state.localMapCandidate?[...state.meta.bounds]:
+      boundsFromViewport();
     // Bound requests to the actual map extent. This prevents huge spatial
     // index scans when a user zooms far out or pans away from their map.
     const map=state.meta.bounds;
@@ -2559,6 +2569,8 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
       if(ticket!==state.queryCounter)return;
       state.features=res.features;
       state.limited=res.limited;
+      state.localMapReady=state.localMapCandidate&&!res.limited&&
+        res.total<=12000;
       state.previewActive=false;state.previewCamera=null;
       renderCartographyMatches();
       requestDraw();
@@ -2570,6 +2582,8 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
     }
   }
   function scheduleViewport(now=false) {
+    // Wheel/pan never call HTTP after the entire small/medium MAP is loaded.
+    if(state.localMapReady)return;
     clearTimeout(state.refreshTimer);
     if(now)refreshViewport();
     else state.refreshTimer=setTimeout(refreshViewport,100);
@@ -2885,7 +2899,7 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
       }
     }else if(d.moved){
       if(d.pan||state.tool==="select"){
-        beginNavigationPreview();
+        if(!state.localMapReady)beginNavigationPreview();
         state.center.x-=(p.x-d.last.x)/state.scale;
         state.center.y-=(p.y-d.last.y)/state.scale;
         shell.classList.add("dragging");requestDraw();
