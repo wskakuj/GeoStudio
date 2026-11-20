@@ -2216,38 +2216,28 @@
     }finally{state.editBusy=false;updateEditState(state.edit);}
   }
   function labelFontSize(feature,label,selected) {
-    // Keep label proportions tied to map units, not to the window pixels.
-    // Fixed 9–36px texts previously grew RELATIVELY when the map zoomed out.
-    // The cap is for readability at very high zoom; zooming OUT never
-    // increases the apparent font size.
-    const worldHeight=label.worldTextHeight!=null
-      ?label.worldTextHeight
-      :feature.code==="5310"?2.25:
-       feature.code==="5216"?1.60:
-       feature.code==="5220"||feature.code==="5230"?1.75:1.85;
-    let pixels=Math.min(label.size||16,worldHeight*state.scale);
-    // A selected object is always inspectable even when its shape is tiny.
-    // Other labels vanish below readable size instead of covering the map.
-    if(pixels<5.5)return selected?10:0;
-    return Math.min(32,pixels);
+    const source=state.edit?.sourceCompilationScale||5000;
+    const compilation=state.edit?.compilationScale||source;
+    const ratio=Math.max(.1,Math.min(10,compilation/source));
+    // The previous stage's worldHeight=2.25 caused 5310 text to be
+    // effectively invisible (0–2px) at everyday cadastral zoom.
+    // Scale continuously with the map without giant fixed-pixel overviews.
+    const world=label.worldTextHeight;
+    const wanted=world!==null&&world!==undefined
+      ?Number(world)*state.scale*ratio
+      :(label.size||16)*Math.pow(Math.max(1e-6,state.scale)/.65,.43)*ratio;
+    if(!Number.isFinite(wanted))return 0;
+    if(wanted<7)return selected||state.tool==="labels"?11:0;
+    return Math.max(7,Math.min(40,wanted));
   }
-  function labelGroups(feature) {
-    if(feature.code!=="5310")
-      return (feature.labels||[]).map(label=>[label]);
-    // GMW A1/A2 form one caption. Draw them as a single group and reserve
-    // ONE collision rectangle, otherwise A1 hid A2 of its own building.
-    // Preserve any explicitly distinct coordinates from manual positioning.
-    const groups=[];
-    for(const label of feature.labels||[]){
-      const match=groups.find(group=>
-        Math.hypot(group[0].x-label.x,group[0].y-label.y)<.001);
-      if(match)match.push(label);else groups.push([label]);
-    }
-    return groups;
+  function labelTextRows(label,size) {
+    const lines=String(label.text||"").split("\n").slice(0,6);
+    return {lines,size,height:lines.length*size*1.20};
   }
   function renderLabels(features) {
+    state.labelHits=[];
     if(!state.labels)return;
-    const collisionBoxes=[];
+    const collisions=[];
     let painted=0;
     const ordered=[...features].sort((a,b)=>{
       const priority=f=>f.id===state.active?-2:
@@ -2262,67 +2252,81 @@
     for(const feature of ordered){
       if(!feature.labels?.length)continue;
       const selected=feature.id===state.active;
-      const bbox=feature.bbox;
-      const w=(bbox[2]-bbox[0])*state.scale;
-      const h=(bbox[3]-bbox[1])*state.scale;
-      const special=["7900","6900","6000","6301"].includes(feature.code);
-      const building=feature.code==="5310";
-      if(!selected&&!special&&!building&&
-         (Math.max(w,h)<34||Math.min(w,h)<9))continue;
-      if(!selected&&building&&Math.max(w,h)<17)continue;
-      for(const group of labelGroups(feature)){
-        if(painted>=1100){ctx.restore();return;}
-        const labelRows=[];
-        let width=0,height=0;
-        for(const label of group){
-          const size=labelFontSize(feature,label,selected);
-          if(size<=0)continue;
-          const font=(label.bold?"700":"400")+" "+size+"px '"+
-            String(label.fontFamily||"Segoe UI").replace(/["'\\]/g,"")+
-            "', sans-serif";
-          ctx.font=font;
-          const lines=String(label.text).split("\n").slice(0,6);
-          for(const line of lines){
-            const text=line.slice(0,100);
-            const lineWidth=ctx.measureText(text).width;
-            const rowHeight=size*1.18;
-            labelRows.push({label,text,font,size,lineWidth,rowHeight});
-            width=Math.max(width,lineWidth);
-            height+=rowHeight;
-          }
-        }
-        if(!labelRows.length)continue;
-        const anchor=group[0],p=worldToScreen(anchor.x,anchor.y);
-        const rect=[p.x-width/2-3,p.y-height/2-3,
-                    p.x+width/2+3,p.y+height/2+3];
+      const box=feature.bbox;
+      const w=(box[2]-box[0])*state.scale;
+      const h=(box[3]-box[1])*state.scale;
+      const sheet=["7900","6900","6000","6301"].includes(feature.code);
+      if(!selected&&state.tool!=="labels"&&!sheet){
+        if(feature.code==="5310"){
+          if(Math.max(w,h)<14)continue;
+        }else if(Math.max(w,h)<32||Math.min(w,h)<8)continue;
+      }
+      // A1 and A2 are TWO draggable labels with separate collision boxes.
+      // Only their *default* vertical positions are stacked for legibility.
+      const stack=feature.code==="5310"?feature.labels.filter(
+        label=>!label.manuallyPlaced):[];
+      const stackSizes=new Map();
+      let stackHeight=0;
+      for(const label of stack){
+        const size=labelFontSize(feature,label,selected);
+        if(!size)continue;
+        const height=labelTextRows(label,size).height;
+        stackSizes.set(label.field,{height,size,center:stackHeight+height/2});
+        stackHeight+=height;
+      }
+      for(const label of feature.labels){
+        if(painted>=1400){ctx.restore();return;}
+        const size=labelFontSize(feature,label,selected);
+        if(!size)continue;
+        const font=(label.bold?"700":"400")+" "+size+"px '"+
+          String(label.fontFamily||"Segoe UI").replace(/["'\\]/g,"")+
+          "', sans-serif";
+        ctx.font=font;
+        const {lines,height}=labelTextRows(label,size);
+        const widths=lines.map(line=>ctx.measureText(line.slice(0,100)).width);
+        const maxWidth=Math.max(0,...widths);
+        let offset=label.manuallyPlaced?0:
+          (label.offset||0)*(size/(label.size||16));
+        if(stackSizes.has(label.field))
+          offset=stackSizes.get(label.field).center-stackHeight/2;
+        const p=worldToScreen(label.x,label.y);
+        const cy=p.y+offset;
+        const rect=[p.x-maxWidth/2-3,cy-height/2-3,
+                    p.x+maxWidth/2+3,cy+height/2+3];
         if(rect[2]<0||rect[0]>state.width||
            rect[3]<0||rect[1]>state.height)continue;
-        // All rows of A1 and A2 share a single collision rectangle.
-        // Separately positioned labels on the same feature are NOT
-        // allowed to suppress each other.
-        if(!selected&&collisionBoxes.some(item=>
-           item.id!==feature.id&&item.rect[0]<rect[2]&&
+        // Never let a feature's A1 suppress its OWN independent A2.
+        if(!selected&&state.tool!=="labels"&&collisions.some(item=>
+           item.fid!==feature.id&&item.rect[0]<rect[2]&&
            item.rect[2]>rect[0]&&item.rect[1]<rect[3]&&
            item.rect[3]>rect[1]))continue;
-        collisionBoxes.push({id:feature.id,rect});
-        if(selected&&group.some(label=>
-           label.field==="A1"||label.field==="A2")){
-          ctx.fillStyle="rgba(27,150,143,.23)";
-          ctx.fillRect(rect[0]-2,rect[1]-2,
-                       rect[2]-rect[0]+4,rect[3]-rect[1]+4);
+        collisions.push({fid:feature.id,rect});
+        if((selected||state.tool==="labels")&&
+           (label.field==="A1"||label.field==="A2"||
+            state.labelSelected?.field===label.field&&
+            state.labelSelected?.fid===feature.id)){
+          ctx.fillStyle="rgba(27,150,143,.18)";
+          ctx.fillRect(rect[0],rect[1],rect[2]-rect[0],rect[3]-rect[1]);
         }
-        let cursor=p.y-height/2;
-        for(const row of labelRows){
-          cursor+=row.rowHeight;
-          const x=p.x-row.lineWidth/2;
-          ctx.font=row.font;
+        if(state.tool==="labels"&&state.labelSelected?.fid===feature.id&&
+           state.labelSelected?.field===label.field){
+          ctx.strokeStyle="#0b9e8f";ctx.lineWidth=1.5;
+          ctx.strokeRect(...[rect[0],rect[1],rect[2]-rect[0],rect[3]-rect[1]]);
+        }
+        ctx.font=font;
+        for(let i=0;i<lines.length;i++){
+          const line=lines[i].slice(0,100);
+          const x=p.x-widths[i]/2;
+          const y=cy-height/2+size+(i*size*1.20);
           ctx.strokeStyle=document.body.classList.contains("dark-map")
             ?"#1b2c3d":"#f8fafc";
-          ctx.lineWidth=Math.min(2.2,Math.max(.6,row.size*.12));
-          ctx.strokeText(row.text,x,cursor);
-          ctx.fillStyle=row.label.color||"#4A5056";
-          ctx.fillText(row.text,x,cursor);
+          ctx.lineWidth=Math.max(.7,Math.min(2,size*.11));
+          ctx.strokeText(line,x,y);
+          ctx.fillStyle=label.color||"#4A5056";
+          ctx.fillText(line,x,y);
         }
+        state.labelHits.push({fid:feature.id,field:label.field,
+                              rect,label,feature});
         painted++;
       }
     }
