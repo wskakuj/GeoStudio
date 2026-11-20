@@ -269,7 +269,7 @@ class NativeMapPicker:
         from tkinter import filedialog
 
         suggested,extension,data=self._workspace.generated_export(ticket)
-        known={"png":"PNG","jpg":"JPG","tif":"TIFF","dxf":"DXF"}
+        known={"png":"PNG","jpg":"JPG","tif":"TIFF","dxf":"DXF","pdf":"PDF"}
         if extension not in known:
             raise ValueError("Niedozwolony typ eksportu.")
         root=tk.Tk()
