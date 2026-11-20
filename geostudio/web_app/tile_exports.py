@@ -165,8 +165,8 @@ class TiledArchiveStore:
             raise ValueError("Mapa przekracza limit 16 GiB dla pojedynczego TIFF.")
         columns = (width + tile_width - 1) // tile_width
         rows = (height + tile_height - 1) // tile_height
-        if columns * rows > MAX_TILES:
-            raise ValueError("Mapa wymaga ponad 256 fragmentów — wybierz niższe DPI.")
+        if columns * rows > 1024:
+            raise ValueError("Mapa wymaga ponad 1024 fragmentów — zawęź zakres.")
         status = self.workspace.editing_status()
         if (document_token != status.get("documentToken") or
                 revision != status.get("revision")):
