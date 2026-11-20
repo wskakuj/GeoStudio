@@ -2141,7 +2141,11 @@ class PreviewWorkspace:
                 primitives = self._carto_sym.get(code, ())
                 unknown = sorted({p.kind for p in primitives if p.kind not in {"L", "A"}})
                 if unknown:
-                    notes.append("SYM: nierenderowane instrukcje " + ", ".join(unknown))
+                    if unknown == ["O"] and style["dash"]:
+                        notes.append("SYM: makro O użyte do kreski; inne efekty O nie są interpretowane")
+                    else:
+                        notes.append("SYM: częściowo lub wcale nierenderowane instrukcje " +
+                                     ", ".join(unknown))
                 if any(p.kind == "A" for p in primitives) and not style["symbolCircles"]:
                     notes.append("SYM: łuk nie jest pełnym okręgiem i wymaga weryfikacji")
                 lay = lay_for_code(self._carto_lay, code)
