@@ -41,6 +41,10 @@
     enabled:false, image:null, bounds:null, opacity:.75, preset:"standard",
     layer:"", epsg:null, ticket:0, timer:null, abort:null
   };
+  const raster = {
+    image:null,affine:null,epsg:null,opacity:.72,name:"",
+    ticket:0,pendingWorld:null
+  };
   const commands = [
     {name:"Otwórz plik GEO-MAP", hint:"Ctrl+O", run:chooseMap},
     {name:"Podkład ortofotomapy WMS (Geoportal)", hint:"Etap 12A", run:openUnderlayDialog},
@@ -406,7 +410,7 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
   }
 
   function finishOpeningMap(meta) {
-    removeUnderlay();
+    removeUnderlay();removeRaster();
     // An EPSG choice belongs to the previously opened map and must
     // NEVER be silently reused for unrelated GEO-MAP coordinates.
     $("underlay-epsg").value="";
@@ -1848,7 +1852,8 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
   function updateUnderlayStatus(message) {
     $("underlay-summary").textContent=message;
     $("underlay-chip").textContent=underlay.enabled
-      ?("Ortofotomapa WMS · EPSG:"+underlay.epsg):"Bez podkładu";
+      ?("WMS · EPSG:"+underlay.epsg+(raster.image&&raster.affine?" + raster":""))
+      :raster.image&&raster.affine?"Raster lokalny":"Bez podkładu";
   }
   function removeUnderlay(){
     underlay.ticket++;
@@ -1975,6 +1980,159 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
     ctx.save();ctx.globalAlpha=underlay.opacity;
     ctx.drawImage(underlay.image,top.x,top.y,
                   bottom.x-top.x,bottom.y-top.y);
+    ctx.restore();
+  }
+  function rasterInfo(message){
+    $("raster-summary").textContent=message;
+    updateUnderlayStatus($("underlay-summary").textContent);
+  }
+  function removeRaster(){
+    raster.ticket++;
+    raster.image=null;raster.affine=null;raster.epsg=null;
+    raster.name="";raster.pendingWorld=null;
+    if($("raster-summary"))rasterInfo("Raster usunięty. Plik MAP pozostaje bez zmian.");
+    if(state.meta){state.previewActive=false;state.geometrySnapshotValid=false;requestDraw();}
+  }
+  function parseWorldFileText(source){
+    const rows=source.trim().split(/\\r?\\n/);
+    if(rows.length!==6)throw Error("Plik world musi zawierać 6 wierszy.");
+    const values=rows.map(row=>Number(row.trim()));
+    if(values.some(v=>!Number.isFinite(v)))throw Error("Nieprawidłowe liczby w pliku world.");
+    const [A,D,B,E,C,F]=values;
+    if(Math.abs(A*E-B*D)<1e-12)throw Error("Nieprawidłowa transformacja world.");
+    // Standard ESRI world: east, north at pixel CENTER.
+    // Browser: GeoStudio X=north, Y=east at pixel CORNER.
+    return [D,E,F-(D+E)/2,A,B,C-(A+B)/2];
+  }
+  function rasterGeoValid(){
+    const epsg=Number($("underlay-epsg").value);
+    if(![2180,2176,2177,2178,2179].includes(epsg)){
+      inform("Wybierz prawidłowy EPSG mapy przed dodaniem rastra.",true);
+      return false;
+    }
+    if(raster.epsg&&raster.epsg!==epsg){
+      inform("GeoTIFF ma EPSG:"+raster.epsg+
+             ", a MAP ustawiono na EPSG:"+epsg+". Najpierw uzgodnij układy.",true);
+      return false;
+    }
+    return true;
+  }
+  function showRasterIfCalibrated(){
+    if(!rasterGeoValid())return;
+    if(!raster.image||!raster.affine)return;
+    state.previewActive=false;state.geometrySnapshotValid=false;
+    requestDraw();
+    rasterInfo(raster.name+" — podkład dopasowany do współrzędnych MAP.");
+  }
+  async function imageFromBlob(blob){
+    const url=URL.createObjectURL(blob);
+    try{
+      return await new Promise((resolve,reject)=>{
+        const image=new Image();
+        image.onload=()=>resolve(image);
+        image.onerror=()=>reject(Error("Nie można odczytać obrazu rastra."));
+        image.src=url;
+      });
+    }finally{URL.revokeObjectURL(url);}
+  }
+  async function openRasterFile(file){
+    if(!file||!state.meta)return;
+    if(!rasterGeoValid())return;
+    const ticket=++raster.ticket;
+    const documentToken=state.edit?.documentToken;
+    if(file.size>48*1024*1024){
+      inform("Raster przekracza limit 48 MB.",true);return;
+    }
+    rasterInfo("Wczytywanie rastra "+file.name+"…");
+    try{
+      const lower=file.name.toLowerCase();
+      let imageBlob=file,affine=null,epsg=null;
+      if(/\\.tiff?$/i.test(lower)){
+        const response=await fetch("/api/underlay/raster/prepare",{
+          method:"POST",headers:{"X-GeoStudio-Token":token,
+            "Content-Type":"application/octet-stream"},
+          body:file,cache:"no-store"
+        });
+        if(!response.ok){
+          const body=await response.json().catch(()=>({}));
+          throw Error(body.detail||"Nie można odczytać TIFF.");
+        }
+        affine=JSON.parse(response.headers.get("x-raster-affine")||"null");
+        epsg=Number(response.headers.get("x-raster-epsg")||0)||null;
+        imageBlob=await response.blob();
+      }else if(!/\\.(png|jpe?g|webp)$/i.test(lower)){
+        throw Error("Obsługiwane obrazy: PNG, JPG, WebP i TIFF.");
+      }
+      const decoded=await imageFromBlob(imageBlob);
+      if(decoded.width*decoded.height>24000000)
+        throw Error("Raster przekracza limit 24 mln pikseli.");
+      if(ticket!==raster.ticket||documentToken!==state.edit?.documentToken)return;
+      raster.image=decoded;raster.affine=affine;raster.epsg=epsg;
+      raster.name=file.name;
+      if(epsg&&epsg!==Number($("underlay-epsg").value)){
+        raster.affine=null;
+        rasterInfo("Uwaga: GeoTIFF ma EPSG:"+epsg+
+          ", lecz aktualny EPSG mapy jest inny. Nie wyświetlam rastra.");
+        return;
+      }
+      if(raster.pendingWorld)raster.affine=raster.pendingWorld;
+      rasterInfo(raster.affine
+        ?file.name+" — odczytano georeferencję."
+        :file.name+" — brak georeferencji. Dodaj world lub punkty GCP.");
+      if(raster.affine)showRasterIfCalibrated();
+    }catch(error){
+      rasterInfo("Nie udało się otworzyć rastra: "+error.message);
+      inform("Błąd rastra: "+error.message,true);
+    }
+  }
+  async function openWorldFile(file){
+    if(!file)return;
+    try{
+      const coeff=parseWorldFileText(await file.text());
+      raster.pendingWorld=coeff;
+      if(raster.image){
+        raster.affine=coeff;
+        showRasterIfCalibrated();
+      }else{
+        rasterInfo("Wczytano world. Wybierz teraz obraz rastra.");
+      }
+    }catch(error){rasterInfo("World: "+error.message);inform(error.message,true);}
+  }
+  async function calibrateRasterGCP(){
+    if(!raster.image){inform("Najpierw wczytaj obraz rastra.",true);return;}
+    if(!rasterGeoValid())return;
+    try{
+      const lines=$("raster-gcp").value.trim().split(/\\r?\\n/).filter(Boolean);
+      const points=lines.map(line=>{
+        const values=line.trim().split(/[;,\\s]+/).map(Number);
+        if(values.length!==4||values.some(v=>!Number.isFinite(v)))
+          throw Error("Wpisz cztery liczby u v X Y w każdym wierszu.");
+        return {u:values[0],v:values[1],x:values[2],y:values[3]};
+      });
+      const result=await api("/api/underlay/gcp",{
+        method:"POST",headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({points})
+      });
+      raster.affine=result.coefficients;
+      raster.pendingWorld=null;
+      showRasterIfCalibrated();
+      rasterInfo("Kalibracja GCP: "+result.count+" punktów, RMSE "+
+         result.rmse.toFixed(3)+" m. Sprawdź dopasowanie wizualnie.");
+    }catch(error){
+      rasterInfo("Nie udało się skalibrować: "+error.message);
+      inform("GCP: "+error.message,true);
+    }
+  }
+  function paintRaster(){
+    if(!raster.image||!raster.affine)return;
+    const [a,b,c,d,e,f]=raster.affine;
+    const scale=state.scale;
+    ctx.save();
+    ctx.globalAlpha=raster.opacity;
+    ctx.transform(d*scale,-a*scale,e*scale,-b*scale,
+      (f-state.center.x)*scale+state.width/2,
+      (-c-state.center.y)*scale+state.height/2);
+    ctx.drawImage(raster.image,0,0);
     ctx.restore();
   }
   function resizeCanvas() {
@@ -2339,8 +2497,10 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
     if(!feature.closed||!style.hasFill||style.opacity<=0)return;
     addPath(feature.geometry);
     ctx.fillStyle=hatchPattern(style);
-    ctx.globalAlpha=Math.min(underlay.enabled && underlay.image && !state.exporting ? .40 : 1,
-                             Math.max(0,style.opacity));
+    ctx.globalAlpha=Math.min(
+      ((underlay.enabled&&underlay.image)||(raster.image&&raster.affine))&&
+      !state.exporting ? .40 : 1,
+      Math.max(0,style.opacity));
     ctx.fill("evenodd");
     ctx.globalAlpha=1;
   }
@@ -2885,7 +3045,7 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
     ctx.clearRect(0,0,state.width,state.height);
     ctx.fillStyle=isDark?"#17283b":"#FAFCFD";
     ctx.fillRect(0,0,state.width,state.height);
-    paintUnderlay();drawGrid();
+    paintUnderlay();paintRaster();drawGrid();
     if(!state.meta){renderScreenLabels([]);return;}
     // Keep the last verified viewport visible while the spatial request
     // catches up to the new camera, avoiding blank flashes on zoom.
@@ -4108,6 +4268,24 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
   });
   $("underlay-epsg").addEventListener("change",()=>{
     if(underlay.enabled)removeUnderlay();
+    if(raster.image&&raster.epsg&&raster.epsg!==Number($("underlay-epsg").value)){
+      rasterInfo("GeoTIFF wymaga EPSG:"+raster.epsg+
+        ". Obecny układ MAP nie pasuje.");
+    }
+    state.previewActive=false;state.geometrySnapshotValid=false;requestDraw();
+  });
+  $("underlay-raster-file").addEventListener("change",ev=>{
+    openRasterFile(ev.target.files?.[0]);ev.target.value="";
+  });
+  $("underlay-world-file").addEventListener("change",ev=>{
+    openWorldFile(ev.target.files?.[0]);ev.target.value="";
+  });
+  link("raster-remove",removeRaster);
+  link("raster-calibrate",calibrateRasterGCP);
+  $("raster-opacity").addEventListener("input",ev=>{
+    raster.opacity=Number(ev.target.value)/100;
+    $("raster-opacity-value").textContent=ev.target.value+"%";
+    state.previewActive=false;state.geometrySnapshotValid=false;requestDraw();
   });
   $("underlay-opacity").addEventListener("input",ev=>{
     underlay.opacity=Number(ev.target.value)/100;
