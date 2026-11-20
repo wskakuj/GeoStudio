@@ -443,6 +443,13 @@ class PreviewWorkspace:
             name=_display_name(self._doc.filename)
             return name[:-4]+"_GeoStudio2_wyciecia.MAP",baked_bytes,companion
 
+    def _require_edit(self,document_token: str,revision: int) -> None:
+        if self._doc is None or self._history is None:
+            raise ValueError("Najpierw otwórz mapę.")
+        if (document_token!=self._document_token or
+                type(revision) is not int or revision!=self._revision):
+            raise RuntimeError("Dokument zmienił się podczas edycji.")
+
     def _visual_user_styles(self) -> dict:
         """Exclude reversible topology; that has its own checksum-bound JSON."""
         return {k:v for k,v in self._styles.items() if k!=TOPOLOGY_STACK_KEY}
