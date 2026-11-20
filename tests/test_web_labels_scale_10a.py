@@ -197,7 +197,8 @@ def test_esc_undoes_last_sketch_point_and_first_vertex_closes_one_click():
     assert "state.drawPoints.pop();" in ui
     assert 'state.tool==="draw"&&snapped.kind==="start"' in ui
     assert "finishDrawPolygon();" in ui
-    assert 'previewObject("create");' in ui
+    assert 'finishDrawPolygon();' in ui
+    assert 'quickCreatePolygon(ev)' in ui
     assert "first=state.drawPoints[0]" in ui
     assert 'state.drawPoints.length>=3' in ui
     assert 'state.drawMagnet' in ui
