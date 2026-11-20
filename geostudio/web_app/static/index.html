@@ -67,6 +67,7 @@
 <button type="button" role="tab" id="ribbon-tab-cartography" data-ribbon-tab="cartography" aria-controls="ribbon-panel-cartography" aria-selected="false" tabindex="-1" class="ribbon-tab" title="Opisy i style mapy">Kartografia</button>
 <button type="button" role="tab" id="ribbon-tab-underlay" data-ribbon-tab="underlay" aria-controls="ribbon-panel-underlay" aria-selected="false" tabindex="-1" class="ribbon-tab" title="WMS, raster i układy">Podkłady</button>
 <button type="button" role="tab" id="ribbon-tab-export" data-ribbon-tab="export" aria-controls="ribbon-panel-export" aria-selected="false" tabindex="-1" class="ribbon-tab" title="Wydruk i kopie">Eksport</button>
+<button type="button" role="tab" id="ribbon-tab-topology" data-ribbon-tab="topology" aria-controls="ribbon-panel-topology" aria-selected="false" tabindex="-1" class="ribbon-tab" title="Kontrola błędów geometrii i topologii">Kontrola mapy</button>
       </div>
       <div class="ribbon-panels"><div id="ribbon-panel-start" class="ribbon-panel active" data-ribbon-panel="start" role="tabpanel" aria-labelledby="ribbon-tab-start" >
 <section class="ribbon-group" aria-label="PLIKI"><span class="section-label">PLIKI</span><div class="tool-row"><button class="tool-button" id="tool-open"><span class="tool-glyph">▱</span>Otwórz</button>
@@ -124,6 +125,24 @@
 <section class="ribbon-group" aria-label="Formaty wyjściowe"><span class="section-label">PLIKI WYNIKOWE</span><div class="tool-row">
 <button class="tool-button" id="tool-layout-ribbon"><span class="tool-glyph">▤</span>Arkusz / druk</button>
 <button class="tool-button" id="tool-map-copy-ribbon"><span class="tool-glyph">↓</span>Pobierz MAP</button></div></section>
+</div>
+<div id="ribbon-panel-topology" class="ribbon-panel" data-ribbon-panel="topology"
+     role="tabpanel" aria-labelledby="ribbon-tab-topology" hidden>
+  <section class="ribbon-group" aria-label="Kontrola topologii">
+    <span class="section-label">GEOMETRIA I TOPOLOGIA</span>
+    <div class="tool-row">
+      <button class="tool-button" id="tool-topology-scan" type="button"
+        title="Przeanalizuj aktualną mapę bez zmiany jej danych">
+        <span class="tool-glyph">◈</span>Sprawdź mapę
+      </button>
+      <button class="tool-button" id="tool-topology-list" type="button"
+        title="Otwórz listę wykrytych nieprawidłowości">
+        <span class="tool-glyph">≡</span>Lista błędów
+      </button>
+    </div>
+  </section>
+  <p class="ribbon-help">Duplikaty, nakładki, szczeliny, błędne kontury i węzły.
+    Analiza nie modyfikuje pliku MAP.</p>
 </div></div>
     </div>
 
@@ -164,6 +183,58 @@
       <main class="canvas-shell" id="canvas-shell">
         <canvas id="map-canvas" aria-label="Mapa GEO-MAP. Użyj kółka myszy, aby przybliżyć." tabindex="0"></canvas>
         <canvas id="map-labels-canvas" aria-hidden="true"></canvas>
+        <aside id="topology-panel" class="topology-panel" hidden
+              aria-label="Kontrola poprawności mapy">
+          <header class="topology-head">
+            <div>
+              <div class="eyebrow">ETAP 15 · KONTROLA GEO-MAP</div>
+              <h2>Kontrola mapy</h2>
+            </div>
+            <button type="button" id="topology-close" class="topology-close"
+              aria-label="Zamknij kontrolę mapy" title="Zamknij panel">×</button>
+          </header>
+          <div class="topology-body">
+            <p class="topology-explain">Wyniki są wskazówkami do sprawdzenia.
+              Nakładki i luki mogą być zamierzone. Różne kody GEO-MAP nie są
+              automatycznie ze sobą łączone.</p>
+            <div class="topology-metrics">
+              <div><strong id="topology-found">—</strong><small>Zgłoszenia</small></div>
+              <div><strong id="topology-checked">—</strong><small>Sprawdzono</small></div>
+            </div>
+            <p id="topology-status" class="topology-status" role="status"
+               aria-live="polite">Uruchom „Sprawdź mapę”, aby wyszukać problemy.</p>
+            <div class="topology-filter-row">
+              <label for="topology-filter">Rodzaj</label>
+              <select id="topology-filter">
+                <option value="all">Wszystkie problemy</option>
+                <option value="duplicate">Duplikaty</option>
+                <option value="overlap">Nakładki poligonów</option>
+                <option value="gap">Szczeliny</option>
+                <option value="open">Niezamknięte obrysy</option>
+                <option value="invalid">Błędne geometrie</option>
+                <option value="node">Niezgodne węzły</option>
+              </select>
+              <button type="button" id="topology-rescan" class="topology-refresh"
+                title="Uruchom analizę dla aktualnej wersji mapy">↻</button>
+            </div>
+            <div id="topology-issues" class="topology-issues" aria-live="polite">
+              <p class="topology-empty">Lista pojawi się po sprawdzeniu mapy.</p>
+            </div>
+          </div>
+          <footer class="topology-footer">
+            <p id="topology-action-hint">Kliknij wynik, aby przybliżyć obszar
+              i zaznaczyć powiązany obiekt.</p>
+            <div class="topology-action-buttons">
+              <button type="button" id="topology-edit" class="button ghost"
+                disabled>Edytuj węzły</button>
+              <button type="button" id="topology-delete-duplicate"
+                class="button ghost topology-destructive" hidden
+                title="Usuwa wyłącznie drugi, wskazany duplikat; Ctrl+Z przywraca">
+                Usuń duplikat
+              </button>
+            </div>
+          </footer>
+        </aside>
         <div id="underlay-chip" class="underlay-chip">Bez podkładu</div>
         <div class="map-top-left">
           <div class="map-chip"><span class="map-chip-dot"></span><span id="map-status">Brak wczytanej mapy</span></div>

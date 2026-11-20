@@ -33,6 +33,7 @@
     labelHits:[],labelDrag:null,labelSelected:null,
     drawMagnet:true,drawCursorWorld:null,copyIds:[],
     geometryPreview:null,cutIds:[],lineEditId:null,
+    auditReport:null, auditBusy:false, auditActiveIssue:null,
     snapEnabled: true, sharedNodes: false, vertexDrag: null,
     hoverInsert: null, selectedVertex: null, mapEPSG:""
   };
@@ -91,6 +92,8 @@
     {name:"Włącz / wyłącz siatkę", hint:"▦", run:toggleGrid},
     {name:"Pokaż wszystkie warstwy", hint:"Warstwy", run:showAllLayers},
     {name:"Przełącz jasny/ciemny motyw programu", hint:"◐", run:toggleTheme},
+    {name:"Kontrola poprawności topologii mapy",hint:"Kontrola",run:()=>openTopologyPanel(true)},
+    {name:"Pokaż wyniki kontroli geometrii",hint:"Kontrola",run:openTopologyPanel},
     {name:"Wybierz kolor tła mapy", hint:"Paleta", run:()=> $("map-background-menu").open=true}
   ];
   let toastTimer;
@@ -117,6 +120,18 @@
     if(state.edit&&state.edit.documentToken!==status.documentToken){
       state.exportAreaBounds=null;state.exportAreaPicking=false;
       state.exportAreaDrag=null;
+    }
+    if(state.auditReport&&(status.revision!==state.auditReport.revision||
+       status.documentToken!==state.auditReport.documentToken)){
+      state.auditReport=null;state.auditActiveIssue=null;
+      if(!$("topology-panel").hidden){
+        $("topology-status").textContent=
+          "Mapa zmieniona. Uruchom kontrolę ponownie, aby sprawdzić nowe obrysy.";
+        $("topology-action-hint").textContent="Raport nieaktualny. Kliknij ↻.";
+        $("topology-issues").replaceChildren();
+        $("topology-edit").disabled=true;
+        $("topology-delete-duplicate").hidden=true;
+      }
     }
     state.edit={
       dirty:!!status.dirty,
@@ -3984,7 +3999,8 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
     features.sort((a,b)=>(priorities[a.code]??3)-(priorities[b.code]??3));
     for(const feature of features) renderFill(feature);
     for(const feature of features) renderStroke(feature);
-    renderHighlights(features);drawMoveGhost(features);drawMoveMagnet();
+    renderHighlights(features);drawTopologyHighlight(features);
+    drawMoveGhost(features);drawMoveMagnet();
     // No bitmap snapshot or resampling is made during a wheel frame.
     // The map remains rendered in native screen-space vector precision.
     renderScreenLabels(features);drawGcpMapMarkers();
@@ -4965,6 +4981,230 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
     }finally{button.disabled=false;printButton.disabled=false;}
   }
 
+  // Stage 15: non-destructive map audit; all positions are normal Canvas world
+  // coordinates (easting Y, -northing X), never native P record mutations.
+  const auditNames={
+    duplicate:"Duplikat",overlap:"Nakładka",gap:"Szczelina",
+    open:"Otwarty obrys",invalid:"Niepoprawny obrys",node:"Wspólny węzeł"
+  };
+  function openTopologyPanel(scan=false){
+    $("topology-panel").hidden=false;
+    if(!state.meta){
+      $("topology-status").textContent="Najpierw otwórz plik MAP.";
+      return;
+    }
+    if(scan||!state.auditReport)scanTopology();
+    else renderTopologyIssues();
+  }
+  function closeTopologyPanel(){
+    $("topology-panel").hidden=true;
+    state.auditActiveIssue=null;
+    requestDraw();
+  }
+  async function scanTopology(){
+    if(!state.meta||!state.edit){
+      inform("Najpierw otwórz mapę do kontroli.",true);return;
+    }
+    if(state.auditBusy)return;
+    const tokenAtStart=state.edit.documentToken;
+    const revisionAtStart=state.edit.revision;
+    state.auditBusy=true;
+    $("topology-rescan").disabled=true;
+    $("tool-topology-scan").disabled=true;
+    $("topology-status").textContent="Sprawdzam geometrię i topologię mapy…";
+    $("topology-issues").replaceChildren();
+    $("topology-edit").disabled=true;
+    $("topology-delete-duplicate").hidden=true;
+    try{
+      const query=new URLSearchParams({
+        documentToken:tokenAtStart,revision:String(revisionAtStart),
+        limit:"600"
+      });
+      const report=await api("/api/topology/audit?"+query);
+      if(state.edit?.documentToken!==tokenAtStart||
+         state.edit?.revision!==revisionAtStart)
+        throw Error("Mapa została zmieniona w czasie analizy. Uruchom ją ponownie.");
+      state.auditReport=report;
+      state.auditActiveIssue=null;
+      $("topology-found").textContent=display(report.detected);
+      $("topology-checked").textContent=display(report.checked);
+      const partial=report.truncated||report.skippedObjects>0;
+      $("topology-status").textContent=
+        "Znaleziono "+display(report.detected)+" potencjalnych problemów."+
+        (partial?" Raport częściowy — osiągnięto limit analizy.":"")+
+        " Kliknij wynik, aby go zobaczyć na mapie.";
+      renderTopologyIssues();
+    }catch(error){
+      $("topology-status").textContent="Nie można ukończyć kontroli: "+error.message;
+      inform("Kontrola mapy: "+error.message,true);
+    }finally{
+      state.auditBusy=false;
+      $("topology-rescan").disabled=false;
+      $("tool-topology-scan").disabled=false;
+    }
+  }
+  function renderTopologyIssues(){
+    const list=$("topology-issues");
+    list.replaceChildren();
+    const report=state.auditReport;
+    if(!report)return;
+    const filter=$("topology-filter").value;
+    const shown=report.issues.filter(issue=>
+      filter==="all"||issue.kind===filter);
+    if(!shown.length){
+      const message=document.createElement("p");
+      message.className="topology-empty";
+      message.textContent=report.issues.length
+        ?"Brak wyników tego typu. Wybierz inny filtr."
+        :"Nie znaleziono błędów w sprawdzonym zakresie.";
+      list.append(message);
+      return;
+    }
+    for(const issue of shown){
+      const button=document.createElement("button");
+      button.type="button";button.className="topology-issue";
+      button.classList.toggle("active",state.auditActiveIssue?.id===issue.id);
+      button.dataset.kind=issue.kind;
+      button.setAttribute("aria-label",issue.title+
+        ". Kod "+issue.code+". "+issue.description);
+      const top=document.createElement("span");
+      top.className="topology-issue-top";
+      const kind=document.createElement("span");
+      kind.className="topology-type";kind.textContent=auditNames[issue.kind]||issue.kind;
+      const code=document.createElement("span");
+      code.className="topology-code";code.textContent="Kod "+issue.code;
+      top.append(kind,code);
+      const title=document.createElement("strong");title.textContent=issue.title;
+      const detail=document.createElement("span");
+      detail.className="topology-issue-detail";
+      detail.textContent=issue.description;
+      const ids=document.createElement("small");
+      ids.textContent="Obiekty: "+issue.ids.join(", ")+
+        (Number.isFinite(issue.areaM2)?" · "+issue.areaM2+" m²":"");
+      button.append(top,title,detail,ids);
+      button.addEventListener("click",()=>focusTopologyIssue(issue));
+      list.append(button);
+    }
+  }
+  async function focusTopologyIssue(issue){
+    if(!state.meta||!state.auditReport||
+       state.edit?.revision!==state.auditReport.revision||
+       state.edit?.documentToken!==state.auditReport.documentToken){
+      inform("Raport jest nieaktualny. Uruchom kontrolę ponownie.",true);
+      return;
+    }
+    state.auditActiveIssue=issue;
+    const box=issue.bounds;
+    if(Array.isArray(box)&&box.length===4){
+      const dx=Math.max(.05,box[2]-box[0]);
+      const dy=Math.max(.05,box[3]-box[1]);
+      state.center={
+        x:(box[0]+box[2])/2,
+        y:(box[1]+box[3])/2
+      };
+      let target=Math.min(
+        Math.max(100,state.width-120)/dx,
+        Math.max(100,state.height-120)/dy
+      );
+      if(["gap","node"].includes(issue.kind)){
+        if(issue.location){
+          state.center={x:issue.location.x,y:issue.location.y};
+        }
+        target=Math.max(target,Math.min(1000,Math.max(12,state.scale)));
+      }
+      state.scale=Math.max(.000001,Math.min(3500,target));
+      requestDraw();
+      scheduleViewport(true);
+    }
+    // For duplicates always select the SECOND instance so the first remains
+    // the protected reference in the explicit "Usuń duplikat" workflow.
+    const fid=issue.canDeleteDuplicate&&issue.ids.length===2
+      ?issue.ids[1]:issue.ids[0];
+    state.pinned.clear();
+    await selectFeature(fid);
+    renderTopologyIssues();
+    $("topology-edit").disabled=issue.kind==="open";
+    const remove=$("topology-delete-duplicate");
+    remove.hidden=!issue.canDeleteDuplicate;
+    remove.disabled=!issue.canDeleteDuplicate||state.editBusy;
+    $("topology-action-hint").textContent=
+      issue.canDeleteDuplicate
+        ?"Wskazano drugi, powielony obiekt. Możesz go usunąć w kopii roboczej. Ctrl+Z cofa."
+        :issue.kind==="open"
+          ?"Obrys nie jest zamknięty. Sprawdź linię i popraw jej geometrię w narzędziach rysowania."
+          :"Przejdź do edycji węzłów (P), sprawdź połączenie i popraw ręcznie. Ctrl+Z cofa.";
+  }
+  function editTopologyIssue(){
+    const issue=state.auditActiveIssue;
+    if(!issue||state.editBusy)return;
+    if(issue.kind==="open"){
+      inform("Ten obiekt jest otwarty. Zweryfikuj, czy powinien być linią czy poligonem.",true);
+      return;
+    }
+    setTool("nodes");
+    inform("Edycja problemu topologicznego: użyj trybu P, "+
+      "wspólnych węzłów wyłącznie dla tego samego kodu i Ctrl+Z.");
+  }
+  async function removeTopologyDuplicate(){
+    const issue=state.auditActiveIssue;
+    const report=state.auditReport;
+    if(!issue||!issue.canDeleteDuplicate||issue.ids.length!==2||
+       !report||state.edit?.revision!==report.revision||
+       state.edit?.documentToken!==report.documentToken){
+      inform("Najpierw ponów kontrolę mapy.",true);
+      return;
+    }
+    if(state.editBusy)return;
+    // Deleting through the existing preview/apply workflow preserves
+    // the same MAP transaction history and undo rules as the Del key.
+    const revision=state.edit.revision;
+    state.pinned.clear();
+    const fid=issue.ids[1];
+    await selectFeature(fid);
+    if(state.edit?.revision!==revision)return;
+    await deleteObjects();
+    if(state.edit?.revision!==revision){
+      $("topology-action-hint").textContent=
+        "Usunięto wskazany duplikat w kopii roboczej. Ctrl+Z przywraca.";
+      await scanTopology();
+    }
+  }
+  function drawTopologyHighlight(features){
+    const issue=state.auditActiveIssue;
+    if(!issue||!state.auditReport||
+       state.auditReport.revision!==state.edit?.revision)return;
+    const marked=new Set(issue.ids);
+    ctx.save();
+    ctx.lineWidth=3.3;ctx.strokeStyle="#f06438";
+    ctx.setLineDash([9,5]);
+    for(const feature of features){
+      if(!marked.has(feature.id))continue;
+      for(const part of feature.geometry){
+        if(!part.length)continue;
+        ctx.beginPath();
+        const first=worldToScreen(part[0][0],part[0][1]);
+        ctx.moveTo(first.x,first.y);
+        for(let i=1;i<part.length;i++){
+          const p=worldToScreen(part[i][0],part[i][1]);
+          ctx.lineTo(p.x,p.y);
+        }
+        if(feature.closed)ctx.closePath();
+        ctx.stroke();
+      }
+    }
+    ctx.setLineDash([]);
+    if(issue.location){
+      const pos=worldToScreen(issue.location.x,issue.location.y);
+      ctx.beginPath();ctx.arc(pos.x,pos.y,10,0,Math.PI*2);
+      ctx.fillStyle="#fff";ctx.fill();
+      ctx.lineWidth=3;ctx.strokeStyle="#e84b23";ctx.stroke();
+      ctx.beginPath();ctx.moveTo(pos.x-16,pos.y);ctx.lineTo(pos.x+16,pos.y);
+      ctx.moveTo(pos.x,pos.y-16);ctx.lineTo(pos.x,pos.y+16);
+      ctx.lineWidth=1.5;ctx.stroke();
+    }
+    ctx.restore();
+  }
+
   function buildLayer(name,count,filter="") {
     const item=document.createElement("div");
     item.className="layer-item";
@@ -5834,7 +6074,14 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
     $(id).addEventListener("keydown",ev=>{
       if(ev.key==="Enter"){ev.preventDefault();$(id).blur();}
     });
-  link("btn-theme",toggleTheme);
+  link("tool-topology-scan",()=>openTopologyPanel(true));
+  link("tool-topology-list",()=>openTopologyPanel(false));
+  link("topology-close",closeTopologyPanel);
+  link("topology-rescan",scanTopology);
+  link("topology-edit",editTopologyIssue);
+  link("topology-delete-duplicate",removeTopologyDuplicate);
+  $("topology-filter").addEventListener("change",renderTopologyIssues);
+    link("btn-theme",toggleTheme);
   $("map-background-color").addEventListener("input",ev=>
     changeMapBackground(ev.target.value));
   document.querySelectorAll("[data-map-bg]").forEach(button=>{

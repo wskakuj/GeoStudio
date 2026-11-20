@@ -1337,3 +1337,140 @@ body[data-theme="light"] button:disabled {
   body[data-theme] .ribbon-tab {padding:8px 11px;}
   body[data-theme] .ribbon-group .tool-button {padding:8px 9px;}
 }
+
+/* Stage 15 — compact GIS topology audit. Floating dock leaves the map
+   interactive while selecting, inspecting and manually repairing nodes. */
+.topology-panel {
+  position:absolute;top:85px;right:16px;bottom:54px;z-index:6;
+  display:flex;flex-direction:column;
+  width:min(372px,calc(100% - 44px));min-height:180px;
+  border:1px solid #b3c4d3;border-radius:16px;
+  background:#f7fafc;color:#1c3448;
+  box-shadow:0 14px 46px #163f5b40;
+  overflow:hidden;
+  font-family:"Segoe UI Variable","Segoe UI",system-ui,sans-serif;
+}
+.topology-panel[hidden]{display:none}
+.topology-head {
+  padding:16px 17px 13px;
+  background:linear-gradient(115deg,#e5f0f5,#f7fbfb);
+  display:flex;align-items:start;justify-content:space-between;
+  gap:12px;border-bottom:1px solid #bdd0d9;
+}
+.topology-head .eyebrow {font-size:10px;color:#406e7a;}
+.topology-head h2 {font-size:19px;font-weight:760;color:#193449;margin:5px 0 0;}
+.topology-close {
+  display:grid;place-items:center;width:32px;height:32px;flex:none;
+  border-radius:9px;background:#fff;border:1px solid #b9cbd6;
+  color:#426071;font-size:23px;cursor:pointer;
+}
+.topology-close:hover {color:#9b321b;border-color:#ce7c6d;}
+.topology-body {
+  flex:1;min-height:0;display:flex;flex-direction:column;
+  padding:12px 12px 7px;
+}
+.topology-explain {
+  font-size:11px;line-height:1.6;color:#4d6574;
+  margin:0 4px 12px;
+}
+.topology-metrics {
+  display:grid;grid-template-columns:1fr 1fr;gap:8px;
+  margin:0 2px 10px;
+}
+.topology-metrics>div {
+  padding:9px 12px;border-radius:10px;
+  border:1px solid #bad4d1;background:#e7f4f1;
+  display:flex;align-items:baseline;justify-content:space-between;gap:4px;
+}
+.topology-metrics strong {color:#12675e;font-size:19px;font-variant-numeric:tabular-nums;}
+.topology-metrics small {color:#456c70;font-size:10px;}
+.topology-status {
+  font-size:11px;line-height:1.5;color:#355367;
+  margin:1px 4px 11px;
+}
+.topology-filter-row {
+  display:flex;align-items:center;gap:7px;
+  padding-bottom:10px;border-bottom:1px solid #d2e0e7;
+}
+.topology-filter-row label {
+  font-size:11px;font-weight:730;color:#3a596a;
+}
+.topology-filter-row select {
+  min-width:0;flex:1;min-height:34px;border-radius:8px;
+  color:#19364b;background:#fff;border:1px solid #aabfce;
+  padding:6px 8px;font-size:12px;cursor:pointer;
+}
+.topology-refresh {
+  height:34px;width:34px;flex:none;
+  background:#fff;color:#176b62;border:1px solid #aec4cf;
+  border-radius:8px;font-size:22px;cursor:pointer;
+}
+.topology-refresh:hover {background:#e6f6f2;}
+.topology-issues {
+  flex:1;min-height:0;overflow:auto;display:grid;align-content:start;
+  gap:8px;padding:11px 1px 14px;scrollbar-color:#bbcbd5 transparent;
+}
+.topology-empty {
+  color:#627c8b;text-align:center;line-height:1.8;font-size:12px;
+  margin:22px 10px;
+}
+.topology-issue {
+  display:grid;gap:5px;min-width:0;
+  text-align:left;border:1px solid #c1d2dc;
+  border-left:4px solid #e4a23c;
+  border-radius:9px;padding:10px 12px;
+  color:#1f3b4e;background:#fff;cursor:pointer;
+  box-shadow:0 2px 6px #23455e12;
+}
+.topology-issue[data-kind="duplicate"],
+.topology-issue[data-kind="invalid"],
+.topology-issue[data-kind="open"] {border-left-color:#d9553d;}
+.topology-issue[data-kind="gap"],
+.topology-issue[data-kind="node"] {border-left-color:#cf912e;}
+.topology-issue:hover {background:#f2f9fa;border-color:#8db6ba;}
+.topology-issue.active {
+  border-color:#0b9184;border-left-color:#0b9184;
+  background:#e1f6f0;box-shadow:inset 0 0 0 1px #0b9184;
+}
+.topology-issue-top {
+  display:flex;align-items:center;justify-content:space-between;gap:7px;
+}
+.topology-type {
+  text-transform:uppercase;letter-spacing:.06em;
+  color:#5a6e7b;font-size:9px;font-weight:800;
+}
+.topology-code {color:#527282;font-size:10px;font-weight:710;}
+.topology-issue strong {font-size:13px;line-height:1.4;}
+.topology-issue-detail {
+  color:#506b7d;line-height:1.55;font-size:11px;
+  display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;
+  overflow:hidden;
+}
+.topology-issue small {font-size:10px;color:#657f8e;}
+.topology-footer {
+  border-top:1px solid #c5d6df;
+  padding:12px;display:grid;gap:9px;background:#eaf2f7;
+}
+.topology-footer p {
+  color:#426174;font-size:11px;line-height:1.55;
+  margin:0;
+}
+.topology-action-buttons {display:flex;flex-wrap:wrap;gap:7px;}
+.topology-action-buttons .button {
+  flex:1;min-height:38px;padding:7px 10px;
+  font-size:11px;font-weight:700;
+  background:#fff;color:#1e5b61;border:1px solid #aac4cf;
+}
+.topology-action-buttons .topology-destructive {
+  color:#a93f27;border-color:#d5a39b;background:#fff7f5;
+}
+.topology-action-buttons .button:hover {
+  background:#d9ecef;border-color:#6ba9a6;
+}
+@media(max-width:920px){
+  .topology-panel {top:13px;right:10px;bottom:52px;width:min(340px,calc(100% - 20px));}
+}
+@media(max-width:560px){
+  .topology-panel {left:8px;right:8px;width:auto;top:9px;bottom:48px;}
+  .topology-issues {gap:6px;}
+}
