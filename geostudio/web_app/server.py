@@ -145,6 +145,16 @@ def create_app(workspace: PreviewWorkspace | None = None) -> FastAPI:
         except ValueError as exc:
             raise HTTPException(400, str(exc)) from exc
 
+    @app.get("/api/find")
+    async def find_objects(code: str = "", field: str = "*",
+                           value: str = "", match: str = "contains",
+                           limit: int = 120):
+        try:
+            return state.find_objects(
+                code=code,field=field,value=value,match=match,limit=limit)
+        except ValueError as exc:
+            raise HTTPException(400,str(exc)) from exc
+
     @app.get("/api/edit/status")
     async def edit_status():
         return state.editing_status()
@@ -158,6 +168,37 @@ def create_app(workspace: PreviewWorkspace | None = None) -> FastAPI:
         if not isinstance(payload, dict):
             raise HTTPException(400, "Oczekiwano obiektu JSON.")
         return payload
+
+    @app.post("/api/replace/preview")
+    async def replace_phrase_preview(request: Request):
+        data=await edit_payload(request,256*1024)
+        try:
+            return state.preview_replace_phrase(
+                data.get("operation"),
+                document_token=data.get("documentToken"),
+                revision=data.get("revision"))
+        except LookupError as exc:
+            raise HTTPException(404,str(exc)) from exc
+        except RuntimeError as exc:
+            raise HTTPException(409,str(exc)) from exc
+        except (ValueError,TypeError) as exc:
+            raise HTTPException(400,str(exc)) from exc
+
+    @app.post("/api/replace/apply")
+    async def replace_phrase_apply(request: Request):
+        data=await edit_payload(request,256*1024)
+        try:
+            return state.apply_replace_phrase(
+                data.get("operation"),
+                preview_key=data.get("previewKey"),
+                document_token=data.get("documentToken"),
+                revision=data.get("revision"))
+        except LookupError as exc:
+            raise HTTPException(404,str(exc)) from exc
+        except RuntimeError as exc:
+            raise HTTPException(409,str(exc)) from exc
+        except (ValueError,TypeError) as exc:
+            raise HTTPException(400,str(exc)) from exc
 
     @app.post("/api/bulk/preview")
     async def bulk_preview(request: Request):
