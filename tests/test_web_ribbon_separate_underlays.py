@@ -107,7 +107,7 @@ def test_toolbar_no_horizontal_scroll_and_tab_event_binding():
     assert 'for(const id of ["underlay-epsg","raster-epsg","crs-epsg"])' in js
 
 
-def test_shared_epsg_sync_does_not_guess_or_keep_old_raster():
+def test_shared_epsg_sync_keeps_native_map_calibrated_raster():
     node=shutil.which("node")
     if node is None: pytest.skip("Node required for JS UI regression")
     script=r"""
@@ -121,7 +121,7 @@ const inputs=Object.fromEntries(['underlay-epsg','raster-epsg','crs-epsg']
 let removed=0, redraw=0, info='';
 const state={mapEPSG:'',previewActive:true,geometrySnapshotValid:true};
 const underlay={enabled:true};
-const raster={image:{},affine:[0,1,2,3,4,5]};
+const raster={image:{},affine:[0,1,2,3,4,5],layers:[],boundEPSG:'',epsg:null};
 const select=new Function('state','underlay','raster','$',
   'removeUnderlay','rasterInfo','requestDraw',
   source.slice(start,end)+';return setMapEPSG;')(
@@ -133,13 +133,15 @@ select('2180');
 assert.equal(state.mapEPSG,'2180');
 assert.ok(Object.values(inputs).every(x=>x.value==='2180'));
 assert.equal(removed,1);
-assert.match(info,/georeferencji/);
+assert.match(info,/Rastry z wizualną/);
+assert.equal(raster.boundEPSG,'2180');
 select('2180');
 assert.equal(redraw,1);
 select('9999');
 assert.equal(state.mapEPSG,'2180');
 select('2177');
 assert.equal(state.mapEPSG,'2177');
+assert.equal(raster.boundEPSG,'2177');
 assert.ok(Object.values(inputs).every(x=>x.value==='2177'));
 """
     output=subprocess.run([node,"-e",script],cwd=STATIC,
