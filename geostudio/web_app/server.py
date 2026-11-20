@@ -493,6 +493,23 @@ def create_app(workspace: PreviewWorkspace | None = None) -> FastAPI:
                         headers={"Content-Disposition":disposition,
                                  "X-GeoStudio-Export":"map-topology-and-labels"})
 
+
+    @app.post("/api/export/buffer")
+    async def save_generated_export_buffer(request: Request):
+        try:
+            data=await receive(request,120*1024*1024)
+            name=unquote(request.headers.get("x-export-name",""))
+            extension=request.headers.get("x-export-format","").lower()
+            document_token=request.headers.get("x-document-token","")
+            revision=int(request.headers.get("x-document-revision","-1"))
+            ticket=state.store_generated_export(
+                document_token,revision,name,extension,data)
+            return {"ticket":ticket}
+        except RuntimeError as exc:
+            raise HTTPException(409,str(exc)) from exc
+        except (ValueError,TypeError) as exc:
+            raise HTTPException(400,str(exc)) from exc
+
     @app.get("/api/export/dxf")
     async def download_dxf(documentToken: str):
         try:
