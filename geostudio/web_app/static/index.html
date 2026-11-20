@@ -562,17 +562,18 @@
   <dialog id="layout-dialog" class="advanced-select-dialog bulk-dialog layout-dialog">
     <form id="layout-form">
       <div class="select-head">
-        <div><div class="eyebrow">ETAP 11 · EKSPORT I WYDRUK</div>
+        <div><div class="eyebrow">ETAP 14 · EKSPORT I OPRAWA 2.0</div>
           <h2>Arkusz mapy</h2></div>
         <button type="button" id="layout-close" class="select-close" aria-label="Zamknij">×</button>
       </div>
       <div class="select-content">
-        <p class="select-explain">Eksport nie zmienia MAP. Obrazy zachowują współrzędne mapy i zadany mianownik skali przy wskazanym DPI. DXF eksportuje całą geometrię w natywnych współrzędnych X/Y.</p>
+        <p class="select-explain">Arkusze PDF są wektorowe i obsługują A0–A4 bez limitu pikseli. Możesz edytować legendę, tabelkę i ramkę. PNG/JPG/TIFF nadal korzystają z rozdzielczości DPI, a DXF zachowuje edytowalne obiekty i współrzędne GEO-MAP.</p>
         <div class="select-grid">
           <div><label for="layout-format">Format</label><select id="layout-format">
             <option value="png">PNG — bezstratny</option>
             <option value="jpeg">JPG — wysoka jakość</option>
             <option value="tiff">TIFF — bez kompresji</option>
+            <option value="pdf">PDF — wektorowy arkusz A0–A4</option>
             <option value="dxf">DXF — edytowalna geometria</option>
           </select></div>
           <div><label for="layout-scope">Zakres mapy</label><select id="layout-scope">
@@ -587,6 +588,25 @@
             <option value="300" selected>300 DPI — druk</option>
           </select></div>
         </div>
+        <section class="layout-paper-tools" aria-label="Wielkoformatowy PDF">
+          <strong>Format i oprawa arkusza PDF</strong>
+          <div class="select-grid">
+            <div><label for="layout-paper">Papier</label>
+              <select id="layout-paper">
+                <option value="auto">Automatyczny — dopasowany do skali</option>
+                <option value="A0">A0 — wielkoformatowy</option>
+                <option value="A1">A1</option><option value="A2">A2</option>
+                <option value="A3">A3</option><option value="A4">A4</option>
+              </select>
+            </div>
+            <div><label for="layout-orientation">Orientacja</label>
+              <select id="layout-orientation">
+                <option value="landscape">Pozioma</option>
+                <option value="portrait">Pionowa</option>
+              </select>
+            </div>
+          </div>
+        </section>
         <label for="layout-title">Tytuł arkusza</label>
         <input type="text" id="layout-title" maxlength="100" value="Mapa GEO-MAP" placeholder="Tytuł opracowania">
         <div class="layout-options">
@@ -595,7 +615,21 @@
           <label><input id="layout-legend" type="checkbox" checked> Legenda</label>
           <label><input id="layout-scalebar" type="checkbox" checked> Podziałka liniowa i skala</label>
         </div>
-        <p id="layout-summary" class="select-preview" role="status">Wybierz format, zakres i skalę. Duże arkusze mogą wymagać mniejszego DPI lub większego mianownika skali.</p>
+        <details class="layout-editor-details" open>
+          <summary>Edytowalna legenda i oprawa PDF</summary>
+          <p class="select-explain">Jedna pozycja legendy w wierszu: <strong>Nazwa | #RRGGBB</strong>. Możesz zmieniać opisy, kolory, kolejność i usuwać wiersze. Tabelka: <strong>Pole | wartość</strong>.</p>
+          <label for="layout-legend-rows">Pozycje legendy</label>
+          <textarea id="layout-legend-rows" rows="5" spellcheck="false" placeholder="Działki | #426A88&#10;Linia obrębu | #704E93"></textarea>
+          <label for="layout-table-rows">Tabela opisowa / metryka arkusza</label>
+          <textarea id="layout-table-rows" rows="4" spellcheck="false" placeholder="Obręb | Przykładowy&#10;Opracował | GeoStudio"></textarea>
+          <div class="select-grid">
+            <div><label for="layout-frame-color">Kolor ramki PDF</label>
+              <input id="layout-frame-color" type="color" value="#263C4D"></div>
+            <div><label for="layout-frame-width">Grubość ramki (mm)</label>
+              <input id="layout-frame-width" type="number" min="0.1" max="2.5" step="0.1" value="0.3"></div>
+          </div>
+        </details>
+        <p id="layout-summary" class="select-preview" role="status">Wybierz format, zakres i skalę. PDF umożliwia wielkoformatowy druk bez rasteryzacji geometrii.</p>
       </div>
       <div class="select-actions">
         <button id="layout-print" type="button" class="button ghost">Drukuj mapę</button>
