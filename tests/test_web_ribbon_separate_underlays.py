@@ -113,7 +113,7 @@ def test_shared_epsg_sync_does_not_guess_or_keep_old_raster():
 const fs=require('node:fs'),assert=require('node:assert/strict');
 const source=fs.readFileSync('map.js','utf8');
 const start=source.indexOf('  function setMapEPSG(');
-const end=source.indexOf('  const geoportalWmsUrls',start);
+const end=source.indexOf('  const wmsPresetUrls',start);
 assert.ok(start>=0&&end>start);
 const inputs=Object.fromEntries(['underlay-epsg','raster-epsg','crs-epsg']
     .map(id=>[id,{value:''}]));
