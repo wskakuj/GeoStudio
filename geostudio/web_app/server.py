@@ -130,9 +130,9 @@ def create_app(workspace: PreviewWorkspace | None = None) -> FastAPI:
 
     @app.get("/api/viewport")
     async def viewport(xmin: float, ymin: float, xmax: float, ymax: float,
-                       limit: int = MAX_RENDER_FEATURES):
+                       limit: int = MAX_RENDER_FEATURES, offset: int = 0):
         try:
-            return state.viewport((xmin, ymin, xmax, ymax), limit)
+            return state.viewport((xmin, ymin, xmax, ymax), limit, offset)
         except ValueError as exc:
             raise HTTPException(400, str(exc)) from exc
 
@@ -492,6 +492,19 @@ def create_app(workspace: PreviewWorkspace | None = None) -> FastAPI:
         return Response(stream.getvalue(),media_type="application/zip",
                         headers={"Content-Disposition":disposition,
                                  "X-GeoStudio-Export":"map-topology-and-labels"})
+
+    @app.get("/api/export/dxf")
+    async def download_dxf(documentToken: str):
+        try:
+            name, content = state.export_dxf(documentToken)
+        except RuntimeError as exc:
+            raise HTTPException(409, str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from exc
+        disposition = ("attachment; filename=GeoStudio2_eksport.dxf; "
+                       "filename*=UTF-8''" + quote(name, safe=""))
+        return Response(content, media_type="application/dxf",
+                        headers={"Content-Disposition": disposition})
 
     @app.get("/api/export/map")
     async def download_map_copy(documentToken: str, normalizePositive: bool = False):
