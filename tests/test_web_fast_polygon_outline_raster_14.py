@@ -152,7 +152,7 @@ def test_code_wide_preset_editor_and_enter_shortcut_are_visible():
 
 def test_5310_A1_A2_never_culled_for_overlap_zoom_or_label_cap():
     js=(STATIC/"map.js").read_text(encoding="utf-8")
-    area=js[js.index('  function renderLabels(features,collisions=[]){'):
+    area=js[js.index('  function renderLabels(features,collisions=[]) {'):
             js.index('  function renderScreenLabels(features)')]
     assert 'const mandatory5310=feature.code==="5310"&&' in area
     assert '(label.field==="A1"||label.field==="A2")' in area
@@ -180,7 +180,7 @@ let drawCount=0;
 const setEPSG=new Function('state','underlay','raster','$',
   'removeUnderlay','rasterInfo','requestDraw',
   src.slice(a,b)+'return setMapEPSG;')(
-    state,{enabled:false},id=>inputs[id],()=>{},()=>{},()=>drawCount++);
+    state,{enabled:false},raster,id=>inputs[id],()=>{},()=>{},()=>drawCount++);
 setEPSG('2180');
 assert.equal(raster.boundEPSG,'2180');
 assert.equal(geotiff.boundEPSG,'');
