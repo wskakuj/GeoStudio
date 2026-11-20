@@ -218,7 +218,7 @@ def test_fixed_size_font_and_no_http_on_subsequent_zoom_small_map():
     assert "if(state.localMapReady){" in src
     assert "let view=state.localMapCandidate?[...state.meta.bounds]" in src
     assert "beginNavigationPreview();" in src
-    assert "renderLabels(state.features.filter" in src
+    assert "renderScreenLabels(state.features.filter" in src
     assert "function labelFontSize(feature,label,selected)" in src
     node=shutil.which("node")
     if not node:pytest.skip("Node is optional for JS zoom regression")
