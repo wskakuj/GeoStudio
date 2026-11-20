@@ -1888,6 +1888,52 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
       inform("Błąd WMS: "+error.message,true);
     }
   }
+  async function readUnderlayPrj(file){
+    if(!file||!state.meta)return;
+    try{
+      const response=await fetch("/api/underlay/crs/prj",{
+        method:"POST",headers:{"X-GeoStudio-Token":token,
+          "Content-Type":"application/octet-stream"},
+        cache:"no-store",body:file
+      });
+      if(!response.ok){
+        const err=await response.json().catch(()=>({}));
+        throw Error(err.detail||"Nie można zweryfikować pliku PRJ.");
+      }
+      const result=await response.json();
+      const input=$("underlay-epsg");
+      input.value=String(result.epsg);
+      input.dispatchEvent(new Event("change"));
+      $("underlay-crs-result").textContent=
+        "Zweryfikowano układ z PRJ: EPSG:"+result.epsg+
+        ". Zastosuj go tylko do odpowiadającego mu pliku MAP.";
+    }catch(error){
+      $("underlay-crs-result").textContent="PRJ: "+error.message;
+      inform(error.message,true);
+    }
+  }
+  async function convertUnderlayCenter(){
+    if(!state.meta)return;
+    const source=Number($("underlay-epsg").value);
+    const target=Number($("underlay-crs-target").value);
+    if(![2180,2176,2177,2178,2179].includes(source)){
+      inform("Wybierz najpierw prawdziwy EPSG mapy.",true);return;
+    }
+    const params=new URLSearchParams({
+      x:String(-state.center.y),y:String(state.center.x),
+      source:String(source),target:String(target)
+    });
+    try{
+      const result=await api("/api/underlay/crs/point?"+params);
+      $("underlay-crs-result").textContent=
+        "Środek: EPSG:"+source+" X="+(-state.center.y).toFixed(3)+
+        " Y="+state.center.x.toFixed(3)+" → EPSG:"+target+
+        " X="+result.x.toFixed(3)+" Y="+result.y.toFixed(3)+
+        ". Tylko podgląd, MAP bez zmian.";
+    }catch(error){
+      $("underlay-crs-result").textContent="Nie udało się przeliczyć: "+error.message;
+    }
+  }
   function openUnderlayDialog(){
     if(!state.meta){inform("Najpierw otwórz mapę MAP.");return;}
     $("underlay-dialog").showModal();
@@ -4263,6 +4309,10 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
   link("tool-underlay",openUnderlayDialog);
   link("underlay-close",()=>$("underlay-dialog").close());
   link("underlay-layers",loadUnderlayLayers);
+  link("underlay-crs-convert",convertUnderlayCenter);
+  $("underlay-prj-file").addEventListener("change",ev=>{
+    readUnderlayPrj(ev.target.files?.[0]);ev.target.value="";
+  });
   link("underlay-show",applyUnderlay);
   link("underlay-remove",removeUnderlay);
   $("underlay-preset").addEventListener("change",()=>{
