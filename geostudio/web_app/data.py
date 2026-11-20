@@ -2010,6 +2010,34 @@ class PreviewWorkspace:
                 self._generated_export=None
             return item[1:]
 
+    def export_vector_pdf(self, document_token: str, options: dict) -> tuple[str, bytes]:
+        """Render edited visible MAP geometry as a vector print sheet."""
+        from geostudio.web_app.print_layout import render_vector_pdf, _setup
+        if not isinstance(options,dict):
+            raise ValueError("Brak parametrów arkusza.")
+        _setup(options)  # Reject impossible paper / scale before indexing.
+        with self._lock:
+            if self._doc is None:
+                raise ValueError("Najpierw otwórz mapę.")
+            if document_token != self._document_token:
+                raise RuntimeError("Nieaktualny dokument.")
+            bounds=tuple(options["bounds"])
+            page=self.viewport(bounds,limit=MAX_RENDER_FEATURES)
+            if page["limited"] or page["total"]>85000:
+                raise ValueError("Za dużo obiektów do pojedynczego PDF; zawęź widok.")
+            visible=options.get("visibleLayers")
+            if visible is not None:
+                if (not isinstance(visible,list) or len(visible)>300 or
+                    not all(type(x) is str and len(x)<120 for x in visible)):
+                    raise ValueError("Nieprawidłowa lista widocznych warstw.")
+                chosen=set(visible)
+                features=[f for f in page["features"] if f["layer"] in chosen]
+            else:
+                features=page["features"]
+            data=render_vector_pdf(features,options)
+            base=_display_name(self._doc.filename)
+            return base[:-4]+"_arkusz_wektorowy.pdf", data
+
     def export_dxf(self, document_token: str) -> tuple[str, bytes]:
         """Export all native geometries to an in-memory DXF (R2010).
 
