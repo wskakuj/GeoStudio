@@ -1284,7 +1284,7 @@
     }finally{state.editBusy=false;updateEditState(state.edit);}
   }
   function finishDrawPolygon() {
-    if(state.tool!=="draw")return;
+    if(state.tool!=="draw"||$("create-dialog").open)return;
     if(state.drawPoints.length<3){
       inform("Poligon wymaga minimum trzech różnych punktów.",true);return;
     }
@@ -1490,6 +1490,12 @@
     const helper=window.GeoStudioDrawingSnap;
     if(!helper||!state.drawMagnet||altPressed)
       return {point:world,kind:null,code:null};
+    if(state.tool==="draw"&&state.drawPoints.length>=3){
+      const first=state.drawPoints[0];
+      const point={x:first[1],y:-first[0]};
+      if(Math.hypot(world.x-point.x,world.y-point.y)*state.scale<=10)
+        return {point,kind:"start",code:null,targetId:null};
+    }
     return helper.snapPoint(world,
       state.features.filter(isVisible),{scale:state.scale,
         enabled:true,bypass:altPressed,vertexPixels:7,edgePixels:5});
@@ -1511,7 +1517,8 @@
     ctx.beginPath();ctx.arc(p.x,p.y,7.5,0,Math.PI*2);ctx.stroke();
     ctx.beginPath();ctx.moveTo(p.x-11,p.y);ctx.lineTo(p.x+11,p.y);
     ctx.moveTo(p.x,p.y-11);ctx.lineTo(p.x,p.y+11);ctx.stroke();
-    const label=(state.drawSnap.kind==="węzeł"?"WĘZEŁ":"LINIA")+
+    const label=(state.drawSnap.kind==="start"?"DOMKNIJ POLIGON":
+      state.drawSnap.kind==="węzeł"?"WĘZEŁ":"LINIA")+
       (state.drawSnap.code?" · "+state.drawSnap.code:"");
     ctx.font="600 10px Segoe UI, sans-serif";
     const width=Math.min(160,ctx.measureText(label).width+12);
@@ -2847,6 +2854,16 @@
         // The actual click is authoritative, not a stale hover target.
         // Alt always bypasses the magnet for the clicked point.
         const snapped=drawingSnapAt(world,ev.altKey);
+        if(state.tool==="draw"&&snapped.kind==="start"&&
+           state.drawPoints.length>=3){
+          state.drawSnap=null;state.drawHover=null;
+          finishDrawPolygon();
+          // One click on the first corner completes the sketch and runs
+          // its normal topology preview; code/A1/A2 still require approval.
+          previewObject("create");
+          requestDraw();
+          return;
+        }
         const next=[Math.round(-snapped.point.y*1000)/1000,
                     Math.round(snapped.point.x*1000)/1000];
         state.drawSnap=snapped.kind?snapped:null;
@@ -2857,7 +2874,7 @@
         }
         requestDraw();
         inform("Rysowanie: "+state.drawPoints.length+
-          " punktów. Enter/dwuklik — zakończ; Esc — anuluj.");
+          " punktów. Esc — cofnij ostatni; kliknij pierwszy punkt — domknij.");
       }
       return;
     }
@@ -3031,9 +3048,23 @@
       ev.preventDefault();setTool("nodes");return;
     }
     if(ev.key==="Escape"){
-      if(dialog.open)dialog.close();
-      else if(["nodes","move","draw","cut","line","line-edit"].includes(state.tool)){
-        state.vertexDrag=null;setTool("select");
+      if(dialog.open){dialog.close();return;}
+      if(["draw","cut","line","line-edit"].includes(state.tool)){
+        ev.preventDefault();
+        if(state.drawPoints.length){
+          state.drawPoints.pop();
+          state.drawSnap=null;
+          requestDraw();
+          inform("Cofnięto ostatni punkt. Pozostało "+
+            state.drawPoints.length+". Rysuj dalej; S kończy narzędzie.");
+        }else{
+          setTool("select");
+          inform("Rysowanie anulowane — szkic nie miał punktów.");
+        }
+        return;
+      }
+      if(["nodes","move","labels"].includes(state.tool)){
+        state.vertexDrag=null;state.labelDrag=null;setTool("select");
       }else selectFeature(null);
       return;
     }
