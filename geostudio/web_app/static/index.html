@@ -104,15 +104,26 @@
           <div><div class="eyebrow">STRUKTURA DANYCH</div><h2>Warstwy mapy</h2></div>
           <span id="layer-count" class="small-count">0</span>
         </div>
-        <div class="panel-padding">
-          <label class="search-box"><span>⌕</span>
-            <input type="search" id="layer-search" placeholder="Filtruj warstwy…" autocomplete="off">
-            <kbd>/</kbd>
-          </label>
+        <div class="layer-tablist" role="tablist" aria-label="Rodzaj warstw">
+          <button class="layer-tab active" id="layers-vectors-tab" role="tab" aria-selected="true" aria-controls="vectors-layer-panel">Wektory</button>
+          <button class="layer-tab" id="layers-rasters-tab" role="tab" aria-selected="false" aria-controls="rasters-layer-panel">Rastry <span id="raster-layer-count">0</span></button>
         </div>
-        <div class="layer-section-header"><span>WIDOCZNOŚĆ</span><button id="layers-all" class="subtle-link">Pokaż wszystkie</button></div>
-        <div id="layers-list" class="layers-list">
-          <div class="panel-placeholder">Otwórz plik .MAP, aby zobaczyć warstwy i klasoużytki.</div>
+        <div id="vectors-layer-panel" class="layer-tab-panel" role="tabpanel" aria-labelledby="layers-vectors-tab">
+          <div class="panel-padding">
+            <label class="search-box"><span>⌕</span>
+              <input type="search" id="layer-search" placeholder="Filtruj warstwy…" autocomplete="off">
+              <kbd>/</kbd>
+            </label>
+          </div>
+          <div class="layer-section-header"><span>WIDOCZNOŚĆ</span><button id="layers-all" class="subtle-link">Pokaż wszystkie</button></div>
+          <div id="layers-list" class="layers-list">
+            <div class="panel-placeholder">Otwórz plik .MAP, aby zobaczyć warstwy i klasoużytki.</div>
+          </div>
+        </div>
+        <div id="rasters-layer-panel" class="layer-tab-panel" role="tabpanel" aria-labelledby="layers-rasters-tab" hidden>
+          <div class="layer-section-header"><span>PODKŁADY I OBRAZY</span><button type="button" id="raster-layers-add" class="subtle-link">+ Dodaj raster</button></div>
+          <div id="raster-layers-list" class="raster-layers-list" aria-live="polite"></div>
+          <p class="raster-layers-help">Zaznacz, aby pokazać lub ukryć. Suwak ustawia krycie bez zmieniania pliku MAP.</p>
         </div>
         <div class="layer-footer">
           <div class="mini-stat"><span>Obiekty</span><strong id="count-objects">—</strong></div>
@@ -635,13 +646,10 @@
     </div>
     <div class="select-content">
       <p class="select-explain">Dodaj własny obraz PNG, JPG lub TIFF. GeoTIFF z georeferencją i raster z plikiem world dopasują się do mapy. Zwykły obraz wymaga kalibracji GCP.</p>
-      <label for="raster-epsg">Układ współrzędnych mapy</label>
-      <select id="raster-epsg"><option value="" selected>Wybierz układ MAP…</option>
-<option value="2180">EPSG:2180 — PL-1992</option>
-<option value="2176">EPSG:2176 — PL-2000 strefa 5</option>
-<option value="2177">EPSG:2177 — PL-2000 strefa 6</option>
-<option value="2178">EPSG:2178 — PL-2000 strefa 7</option>
-<option value="2179">EPSG:2179 — PL-2000 strefa 8</option></select>
+      <p class="underlay-dialog-hint">Zwykłe obrazy JPG/PNG kalibruje się kliknięciami na obrazie i mapie. Nie trzeba wcześniej wybierać EPSG. GeoTIFF i world używają układu otwartej mapy, jeśli jest znany.</p>
+      <select id="raster-epsg" hidden aria-label="Układ MAP" tabindex="-1"><option value="" selected>Nieustalony</option>
+<option value="2180">EPSG:2180</option><option value="2176">EPSG:2176</option>
+<option value="2177">EPSG:2177</option><option value="2178">EPSG:2178</option><option value="2179">EPSG:2179</option></select>
       <div class="select-grid">
         <div><label for="underlay-raster-file">Plik rastrowy</label>
           <input type="file" id="underlay-raster-file" accept=".png,.jpg,.jpeg,.webp,.tif,.tiff"></div>
@@ -650,18 +658,32 @@
       </div>
       <label for="raster-opacity">Krycie rastra: <strong id="raster-opacity-value">72%</strong></label>
       <input id="raster-opacity" type="range" min="0" max="100" value="72" step="5">
-      <details class="raster-gcp-details">
-        <summary>Kalibruj ręcznie — punkty kontrolne GCP</summary>
-        <p class="select-explain">Co najmniej 3 niewspółliniowe punkty. Zapis: <strong>u v X Y</strong>, gdzie u/v to piksele rastra, a X/Y to metry GEO-MAP. Sprawdź RMSE i dopasowanie wizualne.</p>
-        <label for="raster-gcp">Pary punktów w osobnych wierszach</label>
-        <textarea id="raster-gcp" rows="4" spellcheck="false" placeholder="u  v  X_północ  Y_wschód (metry)&#10;0 0 514000.0 670000.0&#10;1000 0 514000.0 670100.0&#10;0 800 513920.0 670000.0"></textarea>
-        <button type="button" class="button ghost" id="raster-calibrate">Zastosuj punkty GCP</button>
-      </details>
+      <button type="button" class="button ghost raster-calibrate-launch" id="raster-calibrate">Kalibruj wizualnie — kliknij punkty na obrazie i mapie</button>
       <p id="raster-summary" class="select-preview" role="status">Nie wczytano rastra.</p>
     </div>
     <div class="select-actions">
       <button type="button" class="button ghost" id="raster-remove">Usuń raster z widoku</button>
       <button type="button" class="button primary" id="raster-close-bottom">Zamknij</button>
+    </div>
+  </dialog>
+  <dialog id="raster-visual-dialog" class="raster-visual-dialog" aria-label="Wizualna kalibracja obrazu">
+    <div class="select-head">
+      <div><div class="eyebrow">PODKŁADY · KALIBRACJA WIZUALNA</div><h2>Dopasuj punkty obrazu i mapy</h2></div>
+      <button type="button" id="raster-visual-close" class="select-close" aria-label="Zamknij kalibrację">×</button>
+    </div>
+    <div class="visual-calibration-body">
+      <p class="select-explain">1. Kliknij rozpoznawalny punkt na obrazie. 2. Wybierz „Punkt na mapie”. 3. Kliknij odpowiednik na mapie. Powtórz dla co najmniej 3 punktów, najlepiej 6–10 w różnych częściach.</p>
+      <canvas id="raster-gcp-canvas" width="450" height="270" aria-label="Kliknij punkt charakterystyczny na rastrowym obrazie"></canvas>
+      <div class="visual-calibration-actions">
+        <button type="button" id="raster-pick-map" class="button ghost" disabled>Wybierz odpowiednik na mapie</button>
+        <button type="button" id="raster-gcp-undo" class="button ghost">Usuń ostatnią parę</button>
+      </div>
+      <p class="select-preview" id="raster-visual-status" role="status">Najpierw kliknij punkt na obrazie.</p>
+      <div id="raster-gcp-pairs" class="visual-gcp-pairs" aria-live="polite"></div>
+      <div class="visual-calibration-actions">
+        <button type="button" id="raster-gcp-apply" class="button primary" disabled>Oblicz dopasowanie i nałóż raster</button>
+        <button type="button" id="raster-gcp-fit" class="button ghost">Dopasuj podgląd obrazu</button>
+      </div>
     </div>
   </dialog>
   <dialog id="crs-dialog" class="advanced-select-dialog bulk-dialog layer-source-dialog">
