@@ -39,7 +39,7 @@
   // WMS is a read-only background; never part of MAP, geometry or export.
   const underlay = {
     enabled:false, image:null, bounds:null, opacity:.75, preset:"standard",
-    layer:"", epsg:null, ticket:0, timer:null, abort:null
+    layer:"", epsg:null, ticket:0, timer:null, abort:null, visible:true, loading:false
   };
   const raster = {
     image:null,affine:null,epsg:null,boundEPSG:null,opacity:.72,name:"",
@@ -1865,10 +1865,11 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
     underlay.ticket++;
     clearTimeout(underlay.timer);
     if(underlay.abort)underlay.abort.abort();
-    underlay.abort=null;underlay.enabled=false;
+    underlay.abort=null;underlay.enabled=false;underlay.loading=false;
     underlay.image=null;underlay.bounds=null;underlay.layer="";
     underlay.epsg=null;
     if($("underlay-summary"))updateUnderlayStatus("Podkład usunięty. MAP pozostaje niezmieniony.");
+    renderRasterLayers();
     if(state.meta){state.previewActive=false;state.geometrySnapshotValid=false;requestDraw();}
   }
   async function loadUnderlayLayers(){
@@ -2009,24 +2010,37 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
     }
   }
   function underlayRequestDimensions(bounds){
+    // WMS must be requested at screen/HiDPI resolution rather than
+    // stretching a single low-resolution bitmap through successive zooms.
     const aspect=(bounds[2]-bounds[0])/(bounds[3]-bounds[1]);
-    let width=Math.max(128,Math.min(2048,Math.round(state.width*1.15)));
+    const dpr=Math.max(1,Math.min(2,state.pixelRatio||1));
+    let width=Math.max(128,Math.min(2048,Math.round(state.width*dpr*1.20)));
     let height=Math.round(width/aspect);
     if(height>2048){height=2048;width=Math.round(height*aspect);}
+    // Server allows at most three million pixels; preserve aspect ratio.
+    if(width*height>2950000){
+      const ratio=Math.sqrt(2950000/(width*height));
+      width=Math.floor(width*ratio);height=Math.floor(height*ratio);
+    }
     return {width:Math.max(128,Math.min(2048,width)),
             height:Math.max(128,Math.min(2048,height))};
   }
   function scheduleUnderlayRefresh(immediate=false){
-    if(!underlay.enabled||!state.meta)return;
+    if(!underlay.enabled||!state.meta||!underlay.visible)return;
+    // A zoom changes the desired BBOX: invalidate any old request now,
+    // not after a later debounced request has started.
+    underlay.ticket++;
+    if(underlay.abort){underlay.abort.abort();underlay.abort=null;}
     clearTimeout(underlay.timer);
-    underlay.timer=setTimeout(refreshUnderlay,immediate?0:420);
+    underlay.loading=true;
+    underlay.timer=setTimeout(refreshUnderlay,immediate?0:115);
   }
   async function refreshUnderlay(){
     if(!underlay.enabled||!state.meta)return;
     const id=++underlay.ticket;
     if(underlay.abort)underlay.abort.abort();
     const controller=new AbortController();underlay.abort=controller;
-    const bounds=boundsFromViewport(.15);
+    const bounds=boundsFromViewport(.09);
     const size=underlayRequestDimensions(bounds);
     const params=new URLSearchParams({
       preset:underlay.preset,layer:underlay.layer,epsg:String(underlay.epsg),
@@ -2056,14 +2070,15 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
       }finally{URL.revokeObjectURL(url);}
       if(!underlay.enabled||id!==underlay.ticket||
          documentToken!==state.edit?.documentToken)return;
-      underlay.image=image;underlay.bounds=bounds;
-      state.previewActive=false;state.previewCamera=null;
-      state.geometrySnapshotValid=false;requestDraw();
-      updateUnderlayStatus("WMS wczytany. Podkład dopasowany do aktualnego kadru.");
+      underlay.image=image;underlay.bounds=bounds;underlay.loading=false;
+      requestDraw();renderRasterLayers();
+      updateUnderlayStatus("WMS ostry dla aktualnego kadru.");
     }catch(error){
       if(error.name==="AbortError"||id!==underlay.ticket)return;
-      // Retain the previous valid image while reporting the failure.
+      // Existing WMS stays visible until a new image arrives.
+      underlay.loading=false;
       updateUnderlayStatus("WMS nie został odświeżony: "+error.message);
+      renderRasterLayers();
     }finally{
       if(underlay.abort===controller)underlay.abort=null;
     }
@@ -2083,16 +2098,18 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
     underlay.enabled=true;
     underlay.preset=$("underlay-preset").value;
     underlay.layer=layer;underlay.epsg=epsg;
-    underlay.image=null;underlay.bounds=null;
+    underlay.image=null;underlay.bounds=null;underlay.visible=true;
     updateUnderlayStatus("Pobieranie obrazu dla EPSG:"+epsg+"…");
+    renderRasterLayers();
     scheduleUnderlayRefresh(true);
   }
   function paintUnderlay(){
-    if(!underlay.enabled||!underlay.image||!underlay.bounds)return;
+    if(!underlay.enabled||!underlay.visible||!underlay.image||!underlay.bounds)return;
     const bounds=underlay.bounds;
     const top=worldToScreen(bounds[0],bounds[1]);
     const bottom=worldToScreen(bounds[2],bounds[3]);
     ctx.save();ctx.globalAlpha=underlay.opacity;
+    ctx.imageSmoothingEnabled=true;ctx.imageSmoothingQuality="high";
     ctx.drawImage(underlay.image,top.x,top.y,
                   bottom.x-top.x,bottom.y-top.y);
     ctx.restore();
@@ -2321,7 +2338,6 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
   function zoomAt(factor, px, py) {
     if (!state.meta) return;
     const origin=screenToWorld(px,py);
-    beginNavigationPreview();
     state.scale=Math.max(.000001,Math.min(3500,state.scale*factor));
     state.center={
       x:origin.x-(px-state.width/2)/state.scale,
@@ -3171,11 +3187,10 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
     if(!state.meta){renderScreenLabels([]);return;}
     // Keep the last verified viewport visible while the spatial request
     // catches up to the new camera, avoiding blank flashes on zoom.
-    if(drawNavigationPreview()){
-      const labelBounds=boundsFromViewport(.05);
-      renderScreenLabels(state.features.filter(f=>isVisible(f)&&isInView(f.bbox,labelBounds)));
-      return;
-    }
+    // Render current vector coordinates at the current camera on EVERY
+    // frame, even during a pending /api/viewport fetch. A rescaled Canvas
+    // snapshot is blurry and can crop previously unseen map fragments.
+    state.previewActive=false;state.previewCamera=null;
     const box=boundsFromViewport(.05);
     const features=state.features.filter(f=>isVisible(f)&&isInView(f.bbox,box));
     // Match the classic QGraphicsScene: paint fills below ALL outlines.
@@ -3212,7 +3227,7 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
     // Full local response up to 50k objects / 750k vertices.
     // Larger maps rely on viewport streaming and the cached bitmap.
     let view=state.localMapCandidate?[...state.meta.bounds]:
-      boundsFromViewport();
+      boundsFromViewport(.65);
     // Bound requests to the actual map extent. This prevents huge spatial
     // index scans when a user zooms far out or pans away from their map.
     const map=state.meta.bounds;
@@ -3247,14 +3262,14 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
   function scheduleViewport(now=false) {
     scheduleUnderlayRefresh();
     clearTimeout(state.refreshTimer);
-    if(state.localMapReady){
-      state.refreshTimer=setTimeout(()=>{
-        state.previewActive=false;state.previewCamera=null;requestDraw();
-      },now?0:110);
-      return;
-    }
+    // Once the complete MAP is local, zoom/pan never needs HTTP or a
+    // deferred frame: labels and vectors are recomputed at native precision.
+    if(state.localMapReady){requestDraw();return;}
+    // For large maps retain sharp known geometry while fetching a
+    // spacious surrounding viewport so quick panning rarely hits edges.
+    requestDraw();
     if(now)refreshViewport();
-    else state.refreshTimer=setTimeout(refreshViewport,100);
+    else state.refreshTimer=setTimeout(refreshViewport,85);
   }
 
   // Stage 11: screen layout uses its own physical print scale, independent
@@ -4013,7 +4028,6 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
       }
     }else if(d.moved){
       if(d.pan||state.tool==="select"){
-        beginNavigationPreview();
         state.center.x-=(p.x-d.last.x)/state.scale;
         state.center.y-=(p.y-d.last.y)/state.scale;
         shell.classList.add("dragging");requestDraw();
