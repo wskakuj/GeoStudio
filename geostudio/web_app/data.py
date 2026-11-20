@@ -1975,15 +1975,20 @@ class PreviewWorkspace:
             ],
         }
 
+    def label_settings(self,code: str) -> dict:
+        if not re.fullmatch(r"[0-9]{4}",str(code)):
+            raise ValueError("Kod etykiety musi mieć cztery cyfry.")
+        with self._lock:
+            if self._doc is None:raise ValueError("Najpierw otwórz mapę.")
+            spec=self._styles.get("labels:code:"+code,{})
+            return {"code":code,"fields":dict(spec.get("fields",{}))
+                if isinstance(spec,dict) else {}}
+
     def _labels(self, entry: _Entry) -> list[dict]:
         obj = entry.obj
         code_config = self._styles.get("labels:code:" + obj.code, {})
         overrides = code_config.get("fields") if isinstance(code_config, dict) else None
-        if isinstance(overrides, dict) and overrides:
-            fields = [key for key in LABEL_FIELDS
-                      if isinstance(overrides.get(key), dict)
-                      and overrides[key].get("visible")]
-        elif obj.code == "5310":
+        if obj.code == "5310":
             fields = ["A1", "A2"]
         elif obj.code in {"5216", "5220", "5230"}:
             fields = ["A2"]
@@ -1991,6 +1996,17 @@ class PreviewWorkspace:
             fields = ["TX"]
         else:
             fields = []
+        # Each native field remains INDEPENDENT. A style override for A1
+        # cannot implicitly hide A2. Explicitly enabled extra fields are
+        # supported without changing the normal default for each code.
+        if isinstance(overrides,dict):
+            for key, config in overrides.items():
+                if (key in LABEL_FIELDS and key not in fields and
+                        isinstance(config,dict) and config.get("visible",False)):
+                    fields.append(key)
+            fields=[key for key in fields if
+                    not (isinstance(overrides.get(key),dict) and
+                         overrides[key].get("visible") is False)]
         pos = self._label_positions.get(obj.uid, {}) if obj.uid else {}
         center = _label_anchor(obj)
         result = []
@@ -2021,7 +2037,9 @@ class PreviewWorkspace:
             result.append({
                 "field": field, "text": formatted[:220],
                 "x": east, "y": south,
-                "offset": (i - (len(fields) - 1) / 2) * base_size * .80,
+                "offset": (0 if location else
+                    (i - (len(fields) - 1)/2)*base_size*.80),
+                "manuallyPlaced":bool(location),
                 "color": _color(style.get("color"), palette),
                 "size": max(8, min(36, _int(style.get("size"), base_size))),
                 "fontFamily": str(style.get(
