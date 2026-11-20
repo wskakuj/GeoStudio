@@ -2039,53 +2039,137 @@ class PreviewWorkspace:
             return base[:-4]+"_arkusz_wektorowy.pdf", data
 
     def export_dxf(self, document_token: str) -> tuple[str, bytes]:
-        """Export all native geometries to an in-memory DXF (R2010).
+        """Editable R2010 DXF with native X/Y, geometry/description layers.
 
-        Every displayed part becomes its own closed or open CAD polyline.
-        Native GEO-MAP X/Y coordinates are never reprojected or mirrored.
-        The DXF is a separate copy; nothing is written back to source MAP.
+        Preserve G#### geometry layers for backward compatibility. Label
+        entities are separated as G####_A1/A2/TX and respect saved positions.
+        True-colour and lineweights are approximations of screen styling;
+        unknown GEO-MAP symbols and patterns are not claimed to round-trip.
         """
         import io
         import ezdxf
+
         with self._lock:
             if self._doc is None:
                 raise ValueError("Najpierw otwórz mapę.")
             if document_token != self._document_token:
                 raise RuntimeError("Nieaktualny dokument.")
-            dxf = ezdxf.new("R2010")
-            model = dxf.modelspace()
+            dxf=ezdxf.new("R2010")
+            dxf.header["$INSUNITS"]=6  # metres
+            dxf.header["$MEASUREMENT"]=1
+            model=dxf.modelspace()
+            if "GEOSTUDIO" not in dxf.appids:
+                dxf.appids.new("GEOSTUDIO")
+
+            def palette(style, kind="stroke"):
+                color=str(style.get(kind,"#4A5056"))
+                try:
+                    return int(color.lstrip("#"),16) if len(color)==7 else 0x4A5056
+                except ValueError:
+                    return 0x4A5056
+
+            def stroke_weight(style):
+                # Physical DXF lineweights are hundredths of a millimetre.
+                # Existing user stroke widths are screen pixels, so only an
+                # approximate 96DPI-to-mm conversion is possible.
+                chosen=int(round(float(style.get("strokeWidth",1)) * 25))
+                valid=(5,9,13,15,18,20,25,30,35,40,50,53,60,70,80,
+                       90,100,106,120,140,158,200,211)
+                return min(valid,key=lambda item:abs(item-chosen))
+
+            def layer(name, color=0x4A5056, weight=25):
+                if name not in dxf.layers:
+                    dxf.layers.new(name=name)
+                    dxf.layers.get(name).dxf.true_color=color
+                    dxf.layers.get(name).dxf.lineweight=weight
+                return name
+
+            def xdata(entity,obj):
+                if obj.uid:
+                    entity.set_xdata("GEOSTUDIO",[
+                        (1000,"UID:"+str(obj.uid)[:230]),
+                        (1000,"CODE:"+obj.code)])
+            entries=self._entry_by_objid
+
+            # Solid hatches for supported single-ring filled polygons.
+            # Multiple contours/holes remain geometry-only to avoid
+            # fabricating topology that may be misread by CAD.
+            for obj in self._doc.objects:
+                entry=entries.get(id(obj))
+                if not entry or not obj.points or not obj.is_closed:
+                    continue
+                style=self._style(entry)
+                parts=[part for part in obj.display_parts if len(part)>=4]
+                if (obj.code=="5214" or len(parts)!=1 or
+                    not style.get("hasFill") or style.get("opacity",0)<=0):
+                    continue
+                name=layer("G"+obj.code+"_FILL",palette(style,"fill"))
+                hatch=model.add_hatch(dxfattribs={"layer":name})
+                rgb=palette(style,"fill")
+                hatch.set_solid_fill(color=7,rgb=(
+                    (rgb>>16)&255,(rgb>>8)&255,rgb&255))
+                points=parts[0]
+                closed=(points[0].x==points[-1].x and
+                        points[0].y==points[-1].y)
+                hatch.paths.add_polyline_path(
+                    [(point.x,point.y) for point in (
+                        points[:-1] if closed else points)],
+                    is_closed=True)
+                xdata(hatch,obj)
+
             for obj in self._doc.objects:
                 if not obj.points:
                     continue
-                layer = "G" + obj.code
-                if layer not in dxf.layers:
-                    dxf.layers.new(name=layer)
+                entry=entries.get(id(obj))
+                style=self._style(entry) if entry else {}
+                base=layer("G"+obj.code,palette(style),stroke_weight(style))
+                rgb=palette(style)
+                attrs={"layer":base,"true_color":rgb,
+                       "lineweight":stroke_weight(style)}
                 for part in obj.display_parts:
-                    if not part:
-                        continue
-                    if len(part) == 1:
-                        model.add_point((part[0].x, part[0].y),
-                                        dxfattribs={"layer": layer})
-                        continue
-                    is_closed = (len(part) >= 4 and
-                                 part[0].x == part[-1].x and
-                                 part[0].y == part[-1].y)
-                    vertices = part[:-1] if is_closed else part
-                    model.add_lwpolyline(
-                        [(point.x, point.y) for point in vertices],
-                        close=is_closed, dxfattribs={"layer": layer})
-                for index, field in enumerate(("A1", "A2")):
-                    value = str(obj.fields.get(field, "")).strip()
-                    if value:
-                        model.add_text(
-                            value[:200], dxfattribs={
-                                "layer": layer, "height": 2.5,
-                                "insert": (obj.points[0].x,
-                                           obj.points[0].y - 3 * index)})
-            stream = io.StringIO()
+                    if not part:continue
+                    if len(part)==1:
+                        entity=model.add_point((part[0].x,part[0].y),
+                                               dxfattribs=attrs)
+                    else:
+                        closed=(len(part)>=4 and
+                                part[0].x==part[-1].x and
+                                part[0].y==part[-1].y)
+                        vertices=part[:-1] if closed else part
+                        entity=model.add_lwpolyline(
+                            [(point.x,point.y) for point in vertices],
+                            close=closed,dxfattribs=attrs)
+                    xdata(entity,obj)
+                positions={
+                    item["field"]: item for item in self._labels(entry)
+                } if entry else {}
+                for index,field in enumerate(("A1","A2","TX")):
+                    value=str(obj.fields.get(field,"")).strip()
+                    if not value:continue
+                    text_layer=layer("G"+obj.code+"_"+field,rgb)
+                    location=positions.get(field)
+                    if location:
+                        # Web label x=easting, y=-northing.
+                        position=(-float(location["y"]),float(location["x"]))
+                        size=max(1.,min(8.,float(location["size"])*.18))
+                        fill_color=palette({"stroke":location["color"]})
+                    else:
+                        position=(obj.points[0].x,
+                                  obj.points[0].y-index*3.)
+                        size=2.5;fill_color=rgb
+                    # Keep A1 and A2 as separate, editable TEXT entities.
+                    for i,line in enumerate(value.replace("||","\n").splitlines()[:6]):
+                        if not line:continue
+                        entity=model.add_text(
+                            line[:200],dxfattribs={
+                                "layer":text_layer,"height":size,
+                                "true_color":fill_color,
+                                "insert":(position[0],position[1]-i*size*1.2)})
+                        xdata(entity,obj)
+            stream=io.StringIO()
             dxf.write(stream)
-            name = _display_name(self._doc.filename)
-            return name[:-4] + "_GeoStudio2.dxf", stream.getvalue().encode("utf-8")
+            name=_display_name(self._doc.filename)
+            return name[:-4]+"_GeoStudio2.dxf",stream.getvalue().encode("utf-8")
 
     def export_copy(self, document_token: str) -> tuple[str, bytes]:
         """Return a valid MAP download; never write it on the server."""
