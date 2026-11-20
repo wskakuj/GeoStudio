@@ -162,6 +162,14 @@ def create_app(workspace: PreviewWorkspace | None = None) -> FastAPI:
     async def cartography_status():
         return state.cartography_status()
 
+    @app.get("/api/cartography/catalog")
+    async def cartography_catalog(limit: int = 150):
+        """Actual renderer styles for representative objects of each code."""
+        try:
+            return state.cartography_catalog(limit)
+        except ValueError as exc:
+            raise HTTPException(409, str(exc)) from exc
+
     @app.get("/api/viewport")
     async def viewport(xmin: float, ymin: float, xmax: float, ymax: float,
                        limit: int = MAX_RENDER_FEATURES, offset: int = 0):
