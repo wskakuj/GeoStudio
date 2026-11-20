@@ -1755,8 +1755,13 @@ class PreviewWorkspace:
                 self._carto_cdf,*cache_key)
         cdf=self._carto_match_cache[cache_key]
         lay=lay_for_code(self._carto_lay,obj.code)
+        # CDF override > LAY line colour > MAP native COLORREF. LAY's
+        # numeric word is a Windows BGR COLORREF, not an HTML RGB string.
+        # Ignore zero (often a "default pen" marker) and bad values.
+        lay_rgb=(tuple((lay.colorref>>shift)&255 for shift in (0,8,16))
+                 if lay and 0<lay.colorref<=0xFFFFFF else None)
         border_rgb=(cdf.border if cdf and cdf.border!=(0,0,0)
-                    else obj.colorref)
+                    else lay_rgb if lay_rgb else obj.colorref)
         border = "#" + "".join(f"{c:02X}" for c in border_rgb)
         native = native_fill_color(obj.style)
         land_use = obj.fields.get("A1", "").strip().casefold()
@@ -1839,8 +1844,8 @@ class PreviewWorkspace:
                     ("CDF",cdf is not None and (
                         cdf.border!=(0,0,0) or cdf.width>0 or
                         (fill_color is not None and not native))),
-                    ("LAY",lay is not None and sym_dash is None and
-                     lay.line_id.endswith(".008")),
+                    ("LAY",lay is not None and (lay_rgb is not None or
+                     (sym_dash is None and lay.line_id.endswith(".008")))),
                     ("SYM",sym_dash is not None or bool(segments) or bool(circles))
                 ) if applied
             ],
