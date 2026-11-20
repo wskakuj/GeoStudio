@@ -9,6 +9,7 @@ from __future__ import annotations
 from math import isfinite
 
 from geostudio.coordinates import MODERN_EPSG, transform_xy
+from pyproj.exceptions import CRSError
 
 MAX_PRJ = 128 * 1024
 
@@ -21,7 +22,7 @@ def verified_prj_epsg(raw: bytes) -> int:
         text = raw.decode("utf-8-sig")
         crs = CRS.from_wkt(text)
         number = crs.to_epsg(min_confidence=95)
-    except (UnicodeError, ValueError) as exc:
+    except (UnicodeError, ValueError, CRSError) as exc:
         raise ValueError("Plik PRJ nie zawiera poprawnego WKT.") from exc
     if number not in MODERN_EPSG:
         raise ValueError("Nie potwierdzono obsługiwanego EPSG (PL-1992/PL-2000).")
