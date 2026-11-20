@@ -8,6 +8,7 @@ import subprocess
 
 from fastapi.testclient import TestClient
 from PIL import Image
+import pytest
 
 from conftest import MapBuilder
 from geostudio.web_app.data import PreviewWorkspace
@@ -31,10 +32,10 @@ def tile_rgb(x, y, width, height):
 
 def test_tiff_headers_are_classic_or_big_based_on_actual_size():
     small, offset, big = tiff_header(5, 3, 300)
-    assert not big and offset == 180 and small[:4] == b"II*\\x00"
+    assert not big and offset == 180 and small[:4] == b"II*\x00"
     gigantic, offset, big = tiff_header(100_000, 100_000, 600)
     assert big and offset == 320
-    assert gigantic[:4] == b"II+\\x00"
+    assert gigantic[:4] == b"II+\x00"
     assert len(gigantic) == 320
 
 
@@ -46,7 +47,8 @@ def test_mosaic_is_one_real_tiff_with_exact_pixels_and_dpi():
     ticket = store.begin_mosaic(
         status["documentToken"], status["revision"],
         "calosc", 5, 3, 300, 2, 2)
-    assert store.finish_mosaic(ticket) is None if False else True
+    with pytest.raises(ValueError,match="Brakuje"):
+        store.finish_mosaic(ticket)
     # Three columns × two rows, including partial right/bottom tiles.
     for index, (x, y, w, h) in enumerate([
         (0, 0, 2, 2), (2, 0, 2, 2), (4, 0, 1, 2),
