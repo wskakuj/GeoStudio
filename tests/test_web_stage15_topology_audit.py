@@ -83,6 +83,23 @@ def test_topology_finds_real_errors_and_avoids_foreign_code_false_positives():
     assert ws.export_copy(ws.editing_status()["documentToken"])[1]==source
 
 
+def test_equal_shapes_with_different_attributes_are_not_safe_to_delete():
+    source=(MapBuilder()
+        .object("5310","B-1",{"A1":"100","A2":"Budynek A"},
+                _square(0,0,10,10))
+        .object("5310","B-2",{"A1":"101","A2":"Budynek B"},
+                _square(0,0,10,10))
+        .build())
+    ws=PreviewWorkspace()
+    ws.load_map(source,"different-attributes.MAP")
+    state=ws.editing_status()
+    result=ws.topology_audit(state["documentToken"],state["revision"])
+    identical=[x for x in result["issues"] if x["kind"]=="duplicate"]
+    assert identical and all(
+        x["canDeleteDuplicate"] is False for x in identical)
+    assert ws.export_copy(state["documentToken"])[1]==source
+
+
 def test_topology_does_not_flag_cross_code_shared_vertices():
     source=(MapBuilder()
         .object("5216","P-1",{},_square(0,0,10,10))
