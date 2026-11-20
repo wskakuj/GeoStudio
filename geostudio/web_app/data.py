@@ -1849,6 +1849,9 @@ class PreviewWorkspace:
             raise ValueError("Niepoprawny format JSON stylów.") from exc
         if not isinstance(payload, dict) or payload.get("format") != STYLE_FORMAT:
             raise ValueError("Nieznany format stylów GeoStudio.")
+        expected=payload.get("sha256")
+        if expected is not None and expected!=self._loaded_map_sha:
+            raise ValueError("Plik etykiet i stylów nie pasuje do otwartego MAP.")
         raw = payload.get("objects", {})
         styles = {}
         if isinstance(raw, dict):
@@ -1856,11 +1859,29 @@ class PreviewWorkspace:
                 if isinstance(key, str) and isinstance(value, dict):
                     styles[key[:220]] = value
         pos = payload.get("labels", {})
-        labels = pos if isinstance(pos, dict) else {}
+        labels={}
+        if isinstance(pos,dict) and len(pos)<=50000:
+            known={obj.uid for obj in self._doc.objects if obj.uid}
+            for uid,coords in pos.items():
+                if (uid not in known or not isinstance(coords,dict) or
+                        len(coords)>len(LABEL_FIELDS)):continue
+                kept={}
+                for field,xy in coords.items():
+                    if (field in LABEL_FIELDS and isinstance(xy,list)
+                            and len(xy)==2 and all(
+                                type(v) in (int,float) and isfinite(v)
+                                and abs(v)<1e9 for v in xy)):
+                        kept[field]=[round(xy[0],3),round(xy[1],3)]
+                if kept:labels[uid]=kept
         with self._lock:
-            self._styles = styles
+            # Preserve the separately checked 6A/6B dynamic overlay stack.
+            topology=self._styles.get(TOPOLOGY_STACK_KEY)
+            self._styles={**styles}
+            if topology is not None:
+                self._styles[TOPOLOGY_STACK_KEY]=topology
             self._label_positions = labels
-        return {"loaded": True, "styleCount": len(styles), "labelPositions": len(labels)}
+        return {"loaded": True, "styleCount": len(styles), "labelPositions": len(labels),
+                "compilationScale":self._current_compilation_scale()}
 
     def _style(self, entry: _Entry) -> dict:
         """Approximate the classic scene_builder styling WITHOUT inventing fills.
