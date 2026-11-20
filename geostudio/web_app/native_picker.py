@@ -12,6 +12,8 @@ from hashlib import sha256
 import os
 from pathlib import Path
 import tempfile
+import re
+from threading import RLock
 
 from .data import MAX_MAP_BYTES, PreviewWorkspace
 from .recovery import LocalRecoveryStore
@@ -37,28 +39,67 @@ def read_last_map_directory(settings: Path) -> str:
     return ""
 
 
-def save_last_map_directory(settings: Path, directory: Path) -> None:
-    if not directory.is_dir():
-        return
-    settings.parent.mkdir(parents=True, exist_ok=True)
-    # Store only a folder, never the MAP content or credentials.
-    payload = json.dumps(
-        {"last_map_directory": str(directory)},
-        ensure_ascii=False,
-        indent=2,
-    ).encode("utf-8")
-    # Replace atomically to prevent truncated settings on a forced exit.
-    fd, temporary = tempfile.mkstemp(
-        prefix=".geostudio2-", suffix=".tmp", dir=settings.parent)
+_PREFERENCES_LOCK = RLock()
+_HEX_COLOR = re.compile(r"^#[0-9a-fA-F]{6}$")
+
+
+def _read_preferences(settings: Path) -> dict:
     try:
-        with os.fdopen(fd, "wb") as stream:
-            stream.write(payload)
-        os.replace(temporary, settings)
-    finally:
+        if settings.stat().st_size > 16384:
+            return {}
+        payload = json.loads(settings.read_text(encoding="utf-8"))
+        return payload if isinstance(payload, dict) else {}
+    except (OSError, ValueError, TypeError, AttributeError):
+        return {}
+
+
+def _save_preferences(settings: Path, changes: dict) -> None:
+    """Atomically merge settings; appearance must not erase the last MAP folder."""
+    with _PREFERENCES_LOCK:
+        payload = {**_read_preferences(settings), **changes}
+        settings.parent.mkdir(parents=True, exist_ok=True)
+        data = json.dumps(payload,ensure_ascii=False,indent=2).encode("utf-8")
+        fd, temporary = tempfile.mkstemp(
+            prefix=".geostudio2-", suffix=".tmp", dir=settings.parent)
         try:
-            os.unlink(temporary)
-        except FileNotFoundError:
-            pass
+            with os.fdopen(fd, "wb") as stream:
+                stream.write(data)
+                stream.flush()
+                os.fsync(stream.fileno())
+            os.replace(temporary, settings)
+        finally:
+            try:
+                os.unlink(temporary)
+            except FileNotFoundError:
+                pass
+
+
+def save_last_map_directory(settings: Path, directory: Path) -> None:
+    if directory.is_dir():
+        # Keep the existing appearance settings when a new MAP is opened.
+        _save_preferences(settings, {"last_map_directory": str(directory)})
+
+
+def read_appearance_preference(settings: Path) -> dict:
+    stored = _read_preferences(settings).get("appearance")
+    if not isinstance(stored, dict):
+        stored = {}
+    theme = stored.get("theme")
+    color = stored.get("mapBackground")
+    return {
+        "theme": theme if theme in ("dark", "light") else "dark",
+        "mapBackground": color.upper() if isinstance(color,str)
+                         and _HEX_COLOR.fullmatch(color) else "#FFFFFF",
+    }
+
+
+def save_appearance_preference(settings: Path, theme: str, map_background: str) -> dict:
+    if theme not in ("dark","light") or not isinstance(map_background,str) or (
+        _HEX_COLOR.fullmatch(map_background) is None):
+        raise ValueError("Niepoprawny motyw lub kolor tła mapy.")
+    result={"theme":theme,"mapBackground":map_background.upper()}
+    _save_preferences(settings,{"appearance":result})
+    return result
 
 
 class NativeMapPicker:
