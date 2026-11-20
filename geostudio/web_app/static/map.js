@@ -1527,7 +1527,6 @@
       ctx.strokeStyle="#ffffff";ctx.stroke();
     }
     ctx.restore();
-    drawMagnetMarker();
   }
   function magneticMove(ids,rawDx,rawDy) {
     // Only snap to other polygons with the SAME native object code. Foreign
@@ -2331,7 +2330,7 @@
     for(const feature of features) renderFill(feature);
     for(const feature of features) renderStroke(feature);
     renderHighlights(features);drawMoveGhost(features);drawMoveMagnet();
-    renderLabels(features);drawDraftPolygon();drawVertexTool();
+    renderLabels(features);drawDraftPolygon();drawMagnetMarker();drawVertexTool();
     $("scale-label").textContent="Podgląd: "+state.scale.toFixed(state.scale<1?3:1)+" px / jedn.";
     $("count-visible").textContent=display(features.length);
     $("render-hint").textContent=state.limited
