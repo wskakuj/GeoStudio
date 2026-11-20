@@ -13,7 +13,6 @@ from tempfile import TemporaryDirectory
 from threading import RLock
 from zipfile import ZIP_STORED, ZipFile
 import re
-import os
 from shutil import disk_usage
 from .mosaic_tiff import tiff_header
 
@@ -113,7 +112,8 @@ class TiledArchiveStore:
             raise ValueError("Niewłaściwy rozmiar lub numer fragmentu.")
         with self._lock:
             entry = self._get(ticket)
-            if (not isinstance(entry, _Session) or entry.ready or\n                    index != entry.next_index or index >= entry.rows * entry.columns):
+            if (not isinstance(entry, _Session) or entry.ready or
+                    index != entry.next_index or index >= entry.rows * entry.columns):
                 raise ValueError("Fragmenty mapy muszą być zapisane w kolejności.")
             signatures = {
                 "png": data.startswith(b"\x89PNG\r\n\x1a\n"),
