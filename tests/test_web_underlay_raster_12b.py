@@ -107,7 +107,8 @@ def test_raster_canvas_uses_georeferenced_affine_and_not_export():
     assert 'id="underlay-world-file"' in html
     assert 'id="raster-gcp-canvas"' in html
     assert "paintUnderlay();paintRaster();drawGrid();" in js
-    assert "ctx.transform(d*state.scale,-a*state.scale,e*state.scale,-b*state.scale" in js
+    assert "ctx.transform(d*sourceX*state.scale,-a*sourceX*state.scale" in js
+    assert "e*sourceY*state.scale,-b*sourceY*state.scale" in js
     assert 'if(pass==="strokes")for(const item of visible)renderStroke(item);' in js
     assert 'id="raster-calibrate"' in html
     node=shutil.which("node")
