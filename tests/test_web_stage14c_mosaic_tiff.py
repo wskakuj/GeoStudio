@@ -37,6 +37,13 @@ def test_tiff_headers_are_classic_or_big_based_on_actual_size():
     assert big and offset == 320
     assert gigantic[:4] == b"II+\x00"
     assert len(gigantic) == 320
+    # Exercise a tiny BigTIFF in a real reader without allocating 4 GiB.
+    big_sample, offset, big = tiff_header(3, 2, 300, force_big=True)
+    assert big and offset == 320
+    with Image.open(io.BytesIO(big_sample + bytes([20, 60, 110] * 6))) as image:
+        assert image.size == (3, 2)
+        assert image.mode == "RGB"
+        assert image.getpixel((2, 1)) == (20, 60, 110)
 
 
 def test_mosaic_is_one_real_tiff_with_exact_pixels_and_dpi():
