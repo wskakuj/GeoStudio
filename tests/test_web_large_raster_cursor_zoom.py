@@ -96,6 +96,17 @@ def test_large_png_uses_bounded_preview_and_source_dimensions():
         assert vp*(meta["sourceHeight"]/preview.height)==pytest.approx(v)
 
 
+def test_panorama_preview_avoids_oversized_gpu_texture():
+    image=Image.new("RGB",(10000,1),(10,20,30))
+    output=BytesIO();image.save(output,format="PNG")
+    png,meta=prepare_raster(output.getvalue())
+    with Image.open(BytesIO(png)) as preview:
+        assert preview.width<=8192
+        assert preview.height==1
+        assert meta["sourceWidth"]==10000
+        assert meta["sourceHeight"]==1
+
+
 def test_small_tiff_still_returns_exact_pixel_affine_and_transparent_png():
     src=Image.new("RGBA",(30,20),(0,80,120,128))
     buf=BytesIO()
