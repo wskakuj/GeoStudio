@@ -4801,9 +4801,12 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
     }else selectFeature(fid);
   });
   canvas.addEventListener("dblclick",ev=>{
-    if(["draw","cut","line","line-edit"].includes(state.tool)&&state.meta){
+    // Double-click is often produced by two fast point placements.
+    // It must NEVER end polygon drawing: use Enter or the first vertex.
+    if(["cut","line","line-edit"].includes(state.tool)&&state.meta){
       ev.preventDefault();ev.stopPropagation();finishGeometryDrawing();return;
     }
+    if(state.tool==="draw")return;
     if(state.tool!=="nodes"||!state.meta)return;
     ev.preventDefault();ev.stopPropagation();
     if(state.editBusy||state.vertexDrag)return;
