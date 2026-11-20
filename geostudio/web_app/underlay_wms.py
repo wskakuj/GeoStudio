@@ -1,7 +1,7 @@
 """Read-only Geoportal WMS proxy for the localhost GeoStudio 2.0 canvas.
 
 The browser never requests remote imagery directly (CORS, credentials).
-Only two official HTTPS GUGiK endpoints are accessible; arbitrary URLs,
+Only approved official HTTPS GUGiK endpoints are accessible; arbitrary URLs,
 redirects, oversized replies and non-image responses are rejected.
 No MAP data or selected geometry is sent to the provider.
 """
