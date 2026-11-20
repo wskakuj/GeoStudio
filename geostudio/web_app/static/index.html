@@ -15,7 +15,7 @@
     <header class="topbar">
       <div class="identity">
         <div class="mark" aria-hidden="true"><span></span><span></span><span></span></div>
-        <div><strong>GeoStudio</strong><span class="brand-version">2.0 <em>ETAP 11 · EKSPORT I WYDRUK — TEST</em></span></div>
+        <div><strong>GeoStudio</strong><span class="brand-version">2.0 <em>ETAP 12A · PODKŁADY WMS — TEST</em></span></div>
       </div>
       <div class="header-center"><span class="top-kicker">OBSZAR ROBOCZY</span>
         <span id="document-title">Nowy projekt</span>
@@ -81,6 +81,7 @@
           <button class="tool-button" id="tool-label-move" title="Przesuwanie pojedynczych opisów A1/A2/TX myszą (tryb L)"><span class="tool-glyph">↗</span>Przesuń napisy <small>L</small></button>
           <button class="tool-button" id="tool-label-config" title="Ustaw widoczność, rozmiar i kolor osobno dla A1/A2 według kodu (Ctrl+Alt+L)"><span class="tool-glyph">Aa</span>Styl opisów</button>
           <button class="tool-button" id="tool-grid"><span class="tool-glyph">▦</span>Siatka</button>
+          <button class="tool-button" id="tool-underlay" title="Ortofotomapa WMS Geoportalu (etap 12A)"><span class="tool-glyph">▧</span>Podkłady WMS</button>
         </div>
       </div>
       <span class="tool-divider"></span>
@@ -121,6 +122,7 @@
       <main class="canvas-shell" id="canvas-shell">
         <canvas id="map-canvas" aria-label="Mapa GEO-MAP. Użyj kółka myszy, aby przybliżyć." tabindex="0"></canvas>
         <canvas id="map-labels-canvas" aria-hidden="true"></canvas>
+        <div id="underlay-chip" class="underlay-chip">Bez podkładu</div>
         <div class="map-top-left">
           <div class="map-chip"><span class="map-chip-dot"></span><span id="map-status">Brak wczytanej mapy</span></div>
           <div id="checksum-badge" class="map-chip secondary" hidden></div>
@@ -584,6 +586,46 @@
         <button id="layout-export" type="submit" class="button primary">Eksportuj plik</button>
       </div>
     </form>
+  </dialog>
+  <dialog id="underlay-dialog" class="advanced-select-dialog bulk-dialog layout-dialog">
+    <div class="select-head">
+      <div><div class="eyebrow">ETAP 12A · PODKŁADY</div><h2>Ortofotomapa Geoportalu — WMS</h2></div>
+      <button type="button" id="underlay-close" class="select-close" aria-label="Zamknij">×</button>
+    </div>
+    <div class="select-content">
+      <p class="select-explain">Podkład jest tylko do oglądania i nie zmienia pliku MAP. Wybierz znany układ EPSG swojej mapy — wartości współrzędnych nie wystarczają, żeby go automatycznie ustalić.</p>
+      <div class="select-grid">
+        <div><label for="underlay-preset">Źródło ortofotomapy</label>
+          <select id="underlay-preset">
+            <option value="standard">Geoportal — standardowa</option>
+            <option value="high">Geoportal — wysokiej rozdzielczości</option>
+          </select>
+        </div>
+        <div><label for="underlay-epsg">Układ współrzędnych otwartej MAP</label>
+          <select id="underlay-epsg">
+            <option value="" selected>Wybierz świadomie EPSG…</option>
+            <option value="2180">EPSG:2180 — PL-1992</option>
+            <option value="2176">EPSG:2176 — PL-2000 strefa 5</option>
+            <option value="2177">EPSG:2177 — PL-2000 strefa 6</option>
+            <option value="2178">EPSG:2178 — PL-2000 strefa 7</option>
+            <option value="2179">EPSG:2179 — PL-2000 strefa 8</option>
+          </select>
+        </div>
+      </div>
+      <div class="underlay-layer-line">
+        <label for="underlay-layer">Warstwa udostępniana przez Geoportal</label>
+        <button type="button" id="underlay-layers" class="button ghost">Pobierz warstwy</button>
+      </div>
+      <select id="underlay-layer"><option value="">Kliknij „Pobierz warstwy”…</option></select>
+      <label for="underlay-opacity">Widoczność ortofotomapy: <strong id="underlay-opacity-value">75%</strong></label>
+      <input id="underlay-opacity" type="range" min="0" max="100" value="75" step="5">
+      <p id="underlay-summary" class="select-preview" role="status">Najpierw wybierz źródło i pobierz warstwy WMS.</p>
+      <p class="select-explain">Po włączeniu obraz przesuwa się i skaluje razem z geometrią. Nowe fragmenty są automatycznie pobierane po zakończeniu nawigacji. Bez transformacji EPSG.</p>
+    </div>
+    <div class="select-actions">
+      <button type="button" id="underlay-remove" class="button ghost">Usuń podkład</button>
+      <button type="button" id="underlay-show" class="button primary">Pokaż pod mapą</button>
+    </div>
   </dialog>
   <dialog id="command-dialog" class="command-dialog">
     <div class="command-search"><span>⌕</span><input id="command-input" type="search" placeholder="Wpisz polecenie lub nazwę…" autocomplete="off"><kbd>ESC</kbd></div>
