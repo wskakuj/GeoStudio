@@ -133,7 +133,7 @@ assert.deepEqual(transform,[18,0,0,16,400,300]);
 // Source pixel 500,250 maps to preview 500/3,250/4;
 // without these scales the raster would be geographically undersized.
 """
-    const result=subprocess.run([node,"-e",script],cwd=STATIC,
+    result=subprocess.run([node,"-e",script],cwd=STATIC,
         capture_output=True,text=True,timeout=20)
     assert result.returncode==0,result.stdout+result.stderr
 
