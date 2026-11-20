@@ -2199,15 +2199,41 @@
       requestDraw();
     }finally{state.editBusy=false;updateEditState(state.edit);}
   }
+  function labelFontSize(feature,label,selected) {
+    // Keep label proportions tied to map units, not to the window pixels.
+    // Fixed 9–36px texts previously grew RELATIVELY when the map zoomed out.
+    // The cap is for readability at very high zoom; zooming OUT never
+    // increases the apparent font size.
+    const worldHeight=label.worldTextHeight!=null
+      ?label.worldTextHeight
+      :feature.code==="5310"?1.35:
+       feature.code==="5216"?1.20:
+       feature.code==="5220"||feature.code==="5230"?1.25:1.45;
+    let pixels=Math.min(label.size||16,worldHeight*state.scale);
+    // A selected object is always inspectable even when its shape is tiny.
+    // Other labels vanish below readable size instead of covering the map.
+    if(pixels<5.5)return selected?10:0;
+    return Math.min(32,pixels);
+  }
+  function labelGroups(feature) {
+    if(feature.code!=="5310")
+      return (feature.labels||[]).map(label=>[label]);
+    // GMW A1/A2 form one caption. Draw them as a single group and reserve
+    // ONE collision rectangle, otherwise A1 hid A2 of its own building.
+    // Preserve any explicitly distinct coordinates from manual positioning.
+    const groups=[];
+    for(const label of feature.labels||[]){
+      const match=groups.find(group=>
+        Math.hypot(group[0].x-label.x,group[0].y-label.y)<.001);
+      if(match)match.push(label);else groups.push([label]);
+    }
+    return groups;
+  }
   function renderLabels(features) {
-    if(!state.labels) return;
+    if(!state.labels)return;
+    const collisionBoxes=[];
     let painted=0;
-    const collisions=[];
-    // Source annotations have their own text height stored in GEO-MAP.
-    // Parcel numbers are suppressed at map overview scale, but appear
-    // when zoomed enough to read them. Building labels remain prioritized.
     const ordered=[...features].sort((a,b)=>{
-      // Active object's A1/A2 should not be hidden by competing labels.
       const priority=f=>f.id===state.active?-2:
         state.pinned.has(f.id)?-1:
         f.code==="5310"?0:
@@ -2215,64 +2241,76 @@
         f.code==="5216"?2:3;
       return priority(a)-priority(b);
     });
-    for(const feature of ordered) {
+    ctx.save();
+    ctx.textBaseline="alphabetic";
+    for(const feature of ordered){
       if(!feature.labels?.length)continue;
-      const box=feature.bbox;
-      const w=(box[2]-box[0])*state.scale;
-      const h=(box[3]-box[1])*state.scale;
+      const selected=feature.id===state.active;
+      const bbox=feature.bbox;
+      const w=(bbox[2]-bbox[0])*state.scale;
+      const h=(bbox[3]-bbox[1])*state.scale;
       const special=["7900","6900","6000","6301"].includes(feature.code);
       const building=feature.code==="5310";
-      if(!special&&!building&&(Math.max(w,h)<34||Math.min(w,h)<9))continue;
-      if(building&&Math.max(w,h)<9)continue;
-      for(const label of feature.labels){
-        if(painted>=1100)return;
-        const p=worldToScreen(label.x,label.y);
-        const lines=String(label.text).split("\n").slice(0,6);
-        const nativeSize=label.worldTextHeight;
-        const size=nativeSize!==null&&nativeSize!==undefined
-          ? Math.max(4,Math.min(50,nativeSize*state.scale))
-          : Math.max(9,Math.min(36,label.size||12));
-        const weight=label.bold?"700":"400";
-        const family=String(label.fontFamily||"Segoe UI").replace(/["'\\]/g,"");
-        ctx.font=weight+" "+size+"px '"+family+"', sans-serif";
-        const widths=lines.map(line=>ctx.measureText(line.slice(0,100)).width);
-        const maxWidth=Math.max(...widths,0);
-        const lineHeight=size*1.13;
-        const left=p.x-maxWidth/2;
-        const baseline=p.y+(label.offset||0);
-        const rect=[left-2,baseline-size-2,left+maxWidth+2,
-                    baseline+(lines.length-1)*lineHeight+4];
+      if(!selected&&!special&&!building&&
+         (Math.max(w,h)<34||Math.min(w,h)<9))continue;
+      if(!selected&&building&&Math.max(w,h)<17)continue;
+      for(const group of labelGroups(feature)){
+        if(painted>=1100){ctx.restore();return;}
+        const labelRows=[];
+        let width=0,height=0;
+        for(const label of group){
+          const size=labelFontSize(feature,label,selected);
+          if(size<=0)continue;
+          const font=(label.bold?"700":"400")+" "+size+"px '"+
+            String(label.fontFamily||"Segoe UI").replace(/["'\\]/g,"")+
+            "', sans-serif";
+          ctx.font=font;
+          const lines=String(label.text).split("\n").slice(0,6);
+          for(const line of lines){
+            const text=line.slice(0,100);
+            const lineWidth=ctx.measureText(text).width;
+            const rowHeight=size*1.18;
+            labelRows.push({label,text,font,size,lineWidth,rowHeight});
+            width=Math.max(width,lineWidth);
+            height+=rowHeight;
+          }
+        }
+        if(!labelRows.length)continue;
+        const anchor=group[0],p=worldToScreen(anchor.x,anchor.y);
+        const rect=[p.x-width/2-3,p.y-height/2-3,
+                    p.x+width/2+3,p.y+height/2+3];
         if(rect[2]<0||rect[0]>state.width||
            rect[3]<0||rect[1]>state.height)continue;
-        // Avoid pretending that a dense cadastral overview should show
-        // thousands of overlapping labels; classic Qt scales these.
-        if(collisions.some(r=>r[0]<rect[2]&&r[2]>rect[0]&&
-                              r[1]<rect[3]&&r[3]>rect[1]))continue;
-        collisions.push(rect);
-        const showSelectedLabel=feature.id===state.active&&
-          (label.field==="A1"||label.field==="A2");
-        if(showSelectedLabel){
-          // When a polygon 5310 is active, highlight BOTH corresponding
-          // description strings, not just the geometry outline.
+        // All rows of A1 and A2 share a single collision rectangle.
+        // Separately positioned labels on the same feature are NOT
+        // allowed to suppress each other.
+        if(!selected&&collisionBoxes.some(item=>
+           item.id!==feature.id&&item.rect[0]<rect[2]&&
+           item.rect[2]>rect[0]&&item.rect[1]<rect[3]&&
+           item.rect[3]>rect[1]))continue;
+        collisionBoxes.push({id:feature.id,rect});
+        if(selected&&group.some(label=>
+           label.field==="A1"||label.field==="A2")){
           ctx.fillStyle="rgba(27,150,143,.23)";
           ctx.fillRect(rect[0]-2,rect[1]-2,
-            rect[2]-rect[0]+4,rect[3]-rect[1]+4);
+                       rect[2]-rect[0]+4,rect[3]-rect[1]+4);
         }
-        ctx.textBaseline="alphabetic";
-        for(let j=0;j<lines.length;j++){
-          const line=lines[j].slice(0,100);
-          const px=p.x-widths[j]/2;
-          const py=baseline+j*lineHeight;
+        let cursor=p.y-height/2;
+        for(const row of labelRows){
+          cursor+=row.rowHeight;
+          const x=p.x-row.lineWidth/2;
+          ctx.font=row.font;
           ctx.strokeStyle=document.body.classList.contains("dark-map")
             ?"#1b2c3d":"#f8fafc";
-          ctx.lineWidth=Math.min(2.2,Math.max(.8,size*.14));
-          ctx.strokeText(line,px,py);
-          ctx.fillStyle=label.color||"#4A5056";
-          ctx.fillText(line,px,py);
+          ctx.lineWidth=Math.min(2.2,Math.max(.6,row.size*.12));
+          ctx.strokeText(row.text,x,cursor);
+          ctx.fillStyle=row.label.color||"#4A5056";
+          ctx.fillText(row.text,x,cursor);
         }
         painted++;
       }
     }
+    ctx.restore();
   }
   function draw() {
     state.scheduled=false;
