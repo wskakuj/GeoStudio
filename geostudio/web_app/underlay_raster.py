@@ -1,0 +1,140 @@
+"""Stage 12B raster helpers. Image pixels are never written into the MAP.
+
+GEO-MAP coordinates: X=northing, Y=easting. Browser image pixels:
+u grows right, v grows down. The affine coefficients always map
+(u,v) -> (X northing, Y easting), the same convention as fit_affine().
+"""
+from __future__ import annotations
+
+from io import BytesIO
+from math import isfinite
+from typing import Any
+
+from geostudio.raster_georef import GroundControlPoint, fit_affine
+
+MAX_RASTER_BYTES = 48 * 1024 * 1024
+MAX_RASTER_PIXELS = 24_000_000
+
+
+def parse_world_text(text: str) -> tuple[float, float, float, float, float, float]:
+    """ESRI A,D,B,E,C,F (east/north) -> GeoStudio affine X/Y at pixel CORNERS.
+
+    Standard world file C,F refer to the centre of the upper-left pixel.
+    Internal Canvas coordinates use pixel corners; adjust by half a pixel.
+    """
+    values = text.lstrip("\ufeff").splitlines()
+    if len(values) != 6:
+        raise ValueError("Plik world wymaga dokładnie sześciu liczb.")
+    try:
+        A, D, B, E, C, F = (float(z.strip()) for z in values)
+    except ValueError as exc:
+        raise ValueError("Plik world zawiera nieprawidłowe współczynniki.") from exc
+    if not all(isfinite(x) for x in (A, B, C, D, E, F)):
+        raise ValueError("Współczynniki pliku world muszą być skończone.")
+    if abs(A * E - B * D) < 1e-12:
+        raise ValueError("Transformacja pliku world jest osobliwa.")
+    return (D, E, F - (D + E) / 2,
+            A, B, C - (A + B) / 2)
+
+
+def fit_gcp_payload(items: Any) -> dict:
+    if not isinstance(items, list) or not 3 <= len(items) <= 60:
+        raise ValueError("Potrzeba od 3 do 60 par punktów kontrolnych GCP.")
+    points = []
+    for row in items:
+        if not isinstance(row, dict) or set(row) != {"u", "v", "x", "y"}:
+            raise ValueError("Każdy GCP wymaga pól u, v, x, y.")
+        try:
+            numbers = [float(row[name]) for name in ("u", "v", "x", "y")]
+        except (ValueError, TypeError) as exc:
+            raise ValueError("GCP zawiera nieprawidłowe liczby.") from exc
+        if not all(isfinite(n) for n in numbers):
+            raise ValueError("Współrzędne GCP muszą być skończone.")
+        points.append(GroundControlPoint(*numbers))
+    fitted = fit_affine(points)
+    return {"coefficients": list(fitted.coefficients),
+            "rmse": fitted.rmse,
+            "residuals": list(fitted.residuals),
+            "count": len(points)}
+
+
+def _epsg_from_tags(tags) -> int | None:
+    # GeoKeyDirectoryTag: (version, revision, minor, count, [4-word keys]).
+    keys = tags.get(34735)
+    if keys and len(keys) >= 4:
+        n = min(int(keys[3]), 4096)
+        for i in range(n):
+            offset = 4 + 4 * i
+            if offset + 4 > len(keys):
+                break
+            key, location, count, value = (int(x) for x in keys[offset:offset+4])
+            if key == 3072 and location == 0 and count == 1:
+                return value
+    return None
+
+
+def _geo_transform(tags) -> tuple[float, ...] | None:
+    # Reject PixelIsPoint unless properly shifted. We must not silently
+    # position its centre control point at the corner of the pixel.
+    keys = tags.get(34735) or ()
+    if len(keys) >= 4:
+        for i in range(min(int(keys[3]), 4096)):
+            k = 4 + 4 * i
+            if k + 4 <= len(keys) and tuple(keys[k:k+4]) == (1025, 0, 1, 2):
+                raise ValueError("GeoTIFF PixelIsPoint wymaga innej korekty piksela.")
+    matrix = tags.get(34264)
+    if matrix:
+        if len(matrix) != 16:
+            raise ValueError("Nieprawidłowa macierz GeoTIFF.")
+        vals = tuple(float(x) for x in matrix)
+        # TIFF ground (east,north) -> GEO-MAP (north,east).
+        coeff = (vals[4], vals[5], vals[7], vals[0], vals[1], vals[3])
+    else:
+        scale, tie = tags.get(33550), tags.get(33922)
+        if not scale or not tie:
+            return None
+        if len(scale) < 2 or len(tie) < 6:
+            raise ValueError("GeoTIFF zawiera niepełne znaczniki georeferencji.")
+        sx, sy = float(scale[0]), float(scale[1])
+        u0, v0 = float(tie[0]), float(tie[1])
+        east0, north0 = float(tie[3]), float(tie[4])
+        # TIFF Tiepoint includes the origin of the pixel AREA.
+        coeff = (0., -sy, north0 + sy * v0,
+                 sx, 0., east0 - sx * u0)
+    if not all(isfinite(n) for n in coeff) or abs(coeff[0]*coeff[4]-coeff[1]*coeff[3]) < 1e-12:
+        raise ValueError("Nieprawidłowa transformacja GeoTIFF.")
+    return coeff
+
+
+def prepare_geotiff(content: bytes) -> tuple[bytes, dict]:
+    """Decode TIFF into PNG and return optional embedded affine/EPSG.
+
+    A normal TIFF without GeoTIFF tags is accepted as an unpositioned
+    image; it must be calibrated with GCP or a world file.
+    """
+    if not content or len(content) > MAX_RASTER_BYTES:
+        raise ValueError("Raster TIFF jest pusty lub przekracza 48 MB.")
+    try:
+        from PIL import Image, UnidentifiedImageError
+        with Image.open(BytesIO(content)) as image:
+            if image.format != "TIFF":
+                raise ValueError("Przesłano plik inny niż TIFF.")
+            width, height = image.size
+            if not width or not height or width*height > MAX_RASTER_PIXELS:
+                raise ValueError("Raster przekracza limit 24 mln pikseli.")
+            tags = image.tag_v2
+            epsg = _epsg_from_tags(tags)
+            transform = _geo_transform(tags)
+            if epsg and epsg not in (2180,2176,2177,2178,2179):
+                raise ValueError("GeoTIFF używa nieobsługiwanego EPSG: " + str(epsg))
+            buffer = BytesIO()
+            image.convert("RGBA").save(buffer, format="PNG")
+            payload = buffer.getvalue()
+            if len(payload) > MAX_RASTER_BYTES:
+                raise ValueError("Rozkodowany obraz przekracza limit.")
+            return payload, {"width":width,"height":height,
+                             "epsg":epsg, "coefficients":transform}
+    except (OSError, ValueError, Image.DecompressionBombError) as exc:
+        if isinstance(exc, ValueError):
+            raise
+        raise ValueError("Nie udało się otworzyć pliku TIFF.") from exc
