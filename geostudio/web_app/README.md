@@ -1046,3 +1046,38 @@ LAY; nie należy na tej podstawie deklarować zgodności kartograficznej
 1:1 z GEO-MAP. Import jest odczytowy, a źródłowy MAP nienaruszony.
 
 **Kartografia 13A — gęstość CDF:** desenie 1/2 wykorzystują siatkę 8×8 i pokrycie odpowiednio 50% (odpowiednik Qt.Dense4Pattern) oraz 37,5% (Qt.Dense5Pattern). Pozostałe obsługiwane desenie 3–8 wykorzystują siatkę 8 px zgodną z kierunkami kresek używanymi w klasycznym rendererze Qt. Indeksy CDF 9–16 pozostają oznaczone jako niewspierane, zamiast pokazywać niezweryfikowany wzór.
+
+
+## Poprawki rysowania, obrysów i rastrów po etapie 13A (2026-11-20)
+
+- **Szybkie N**: punkt rysowania jest nanoszony już przy **pointerdown**
+  (bez czekania na pointerup); magnes szuka kandydatów tylko w pasie
+  do 12 pikseli od kursora zamiast badać wszystkie segmenty MAP.
+  Nadal obowiązują dotychczasowe progi 7/5 px, zamykanie pierwszym
+  punktem, Enter i Alt bypass. Status punktów nie wyświetla za każdym
+  razem nachodzącego na mapę powiadomienia.
+- **Tworzenie poligonu**: po domknięciu aktywne jest pole A1, a
+  naciśnięcie Enter powoduje automatyczny, chroniony preflight i zapis
+  transakcyjny. Osobny przycisk "Sprawdź obrys" jest ukryty. Błędy
+  walidacji wyświetlane są w tym samym formularzu; geometria nie jest
+  usuwana przy błędzie. Po powodzeniu kod obiektu zostaje zapamiętany,
+  pola A1/A2 są czyszczone, tryb N **pozostaje aktywny**. Klawisz S
+  lub inne narzędzie kończy sesję.
+- **Kartografia → Styl obrysu**: dla dowolnego kodu obecnego w
+  otwartym MAP (np. 5310) wybierz kolor #RRGGBB oraz grubość
+  0,5–12 px. Zmiana jest wspólna dla istniejących i kolejnych
+  poligonów tego kodu w danej mapie, umożliwia przywrócenie wzorca,
+  Ctrl+Z/Ctrl+Y i zapis do opcjonalnego JSON wizualnego przy
+  pobieraniu kopii. Oryginał MAP nie jest zmieniany.
+- **Opisy 5310**: etykiety A1 i A2 nie są pomijane na podstawie
+  kolizji z innymi tekstami, limitu zwykłych napisów ani wielkości
+  obiektu na ekranie. Mogą fizycznie nachodzić na siebie przy bardzo
+  gęstych budynkach — zgodnie z wyborem użytkownika.
+- **WMS + skalibrowany JPG**: wybór EPSG bieżącej mapy dla WMS nie
+  unieważnia kalibracji wizualnej JPG/PNG czy world względem tej samej
+  natywnej przestrzeni MAP X/Y. Warstwy zachowują niezależne przełączniki
+  widoczności i krycia. GeoTIFF z deklarowanym EPSG nadal wymaga
+  faktycznie zgodnego układu.
+
+Uwaga: wizualne style kodów zapisują się jako towarzyszący MAP
+sidecar, a nie jako stała preferencja globalna dla dowolnych innych map.
