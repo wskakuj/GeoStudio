@@ -2582,32 +2582,62 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
     const canvas=$("raster-gcp-canvas");
     canvas.addEventListener("pointerdown",ev=>{
       if(ev.button===2||ev.button===1){
-        ev.preventDefault();canvas.setPointerCapture(ev.pointerId);
-        gcpView.dragging={id:ev.pointerId,x:ev.clientX,y:ev.clientY};return;
+        ev.preventDefault();canvas.setPointerCapture?.(ev.pointerId);
+        gcpView.dragging={kind:"pan",id:ev.pointerId,x:ev.clientX,y:ev.clientY};
+        return;
       }
       if(ev.button!==0||!raster.image)return;
-      const rect=canvas.getBoundingClientRect(),pos=gcpCanvasLayout();
-      const u=(ev.clientX-rect.left-pos.left)/pos.scale;
-      const v=(ev.clientY-rect.top-pos.top)/pos.scale;
-      if(u<0||v<0||u>raster.image.width||v>raster.image.height)return;
-      // Pair coordinates always refer to ORIGINAL pixels, not the
-      // lower-resolution browser preview of a large raster.
-      gcpView.pending={
-        u:u*(raster.sourceWidth||raster.image.width)/raster.image.width,
-        v:v*(raster.sourceHeight||raster.image.height)/raster.image.height
-      };
-      gcpView.waiting=false;
-      updateGcpUi("Zaznaczono piksel obrazu. Kliknij „Wybierz odpowiednik na mapie”.");
+      const rect=canvas.getBoundingClientRect();
+      const x=ev.clientX-rect.left,y=ev.clientY-rect.top;
+      const index=gcpNearestRasterPoint(x,y);
+      if(index>=0){
+        canvas.setPointerCapture?.(ev.pointerId);
+        gcpView.dragging={kind:"point",id:ev.pointerId,index,moved:false};
+        gcpView.activeIndex=index;
+        gcpView.pending=null;gcpView.waiting=false;
+        updateGcpUi("Chwycono punkt "+(index+1)+". Przeciągnij go po obrazie.");
+        return;
+      }
+      const point=gcpScreenToSource(x,y);
+      const sw=raster.sourceWidth||raster.image.width;
+      const sh=raster.sourceHeight||raster.image.height;
+      if(point.u<0||point.v<0||point.u>sw||point.v>sh)return;
+      // Each image click immediately requests the matching map point.
+      // Clicking another image position replaces the pending coordinate.
+      gcpView.pending=point;gcpView.waiting=true;gcpView.activeIndex=null;
+      updateGcpUi("Teraz kliknij ten sam punkt na mapie. "+
+        "Możesz zmienić jego pozycję kolejnym kliknięciem obrazu.");
     });
     canvas.addEventListener("pointermove",ev=>{
-      if(!gcpView.dragging||gcpView.dragging.id!==ev.pointerId)return;
-      gcpView.panX+=ev.clientX-gcpView.dragging.x;
-      gcpView.panY+=ev.clientY-gcpView.dragging.y;
-      gcpView.dragging.x=ev.clientX;gcpView.dragging.y=ev.clientY;
-      drawGcpCanvas();
+      const drag=gcpView.dragging;
+      if(!drag||drag.id!==ev.pointerId)return;
+      if(drag.kind==="pan"){
+        gcpView.panX+=ev.clientX-drag.x;
+        gcpView.panY+=ev.clientY-drag.y;
+        drag.x=ev.clientX;drag.y=ev.clientY;
+        drawGcpCanvas();return;
+      }
+      if(drag.kind==="point"&&raster.gcps[drag.index]){
+        const rect=canvas.getBoundingClientRect();
+        const point=gcpScreenToSource(ev.clientX-rect.left,ev.clientY-rect.top);
+        const sw=raster.sourceWidth||raster.image.width;
+        const sh=raster.sourceHeight||raster.image.height;
+        raster.gcps[drag.index].u=Math.max(0,Math.min(sw,point.u));
+        raster.gcps[drag.index].v=Math.max(0,Math.min(sh,point.v));
+        drag.moved=true;gcpView.fitSerial++;
+        updateGcpUi("Przesuwasz punkt "+(drag.index+1)+" na obrazie.");
+      }
     });
-    for(const event of ["pointerup","pointercancel"])
-      canvas.addEventListener(event,()=>{gcpView.dragging=null;});
+    function finishImageDrag(ev){
+      const drag=gcpView.dragging;
+      if(!drag||drag.id!==ev.pointerId)return;
+      if(canvas.hasPointerCapture?.(ev.pointerId))
+        canvas.releasePointerCapture(ev.pointerId);
+      gcpView.dragging=null;
+      if(drag.kind==="point"&&drag.moved)finishGcpAdjustment();
+    }
+    canvas.addEventListener("pointerup",finishImageDrag);
+    canvas.addEventListener("pointercancel",finishImageDrag);
     canvas.addEventListener("contextmenu",ev=>ev.preventDefault());
     canvas.addEventListener("wheel",ev=>{
       ev.preventDefault();
@@ -2615,20 +2645,28 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
       zoomGcpAt(ev.clientX-rect.left,ev.clientY-rect.top,
         ev.deltaY,ev.deltaMode);
     },{passive:false});
-    link("raster-pick-map",()=>{
-      if(!gcpView.pending)return;
-      gcpView.waiting=true;
-      updateGcpUi("Teraz kliknij ten sam punkt na mapie. Rolka nadal pozwala przybliżać.");
+    link("raster-gcp-cancel",()=>{
+      gcpView.pending=null;gcpView.waiting=false;
+      updateGcpUi("Anulowano oczekujący punkt. Kliknij nowy na obrazie.");
     });
     link("raster-gcp-undo",()=>{
       raster.gcps.pop();gcpView.waiting=false;gcpView.pending=null;
-      updateGcpUi("Usunięto ostatnią parę punktów.");
+      gcpView.activeIndex=null;finishGcpAdjustment();
     });
-    link("raster-gcp-apply",applyVisualGCP);
+    link("raster-gcp-apply",()=>applyVisualGCP(false));
     link("raster-gcp-fit",()=>{
       gcpView.zoom=1;gcpView.panX=0;gcpView.panY=0;drawGcpCanvas();
     });
     link("raster-visual-close",closeVisualCalibration);
+    // Intercept markers before standard select/node/pan handlers.
+    canvasMapGcpEvents();
+  }
+  function canvasMapGcpEvents(){
+    const map=$("map-canvas");
+    map.addEventListener("pointerdown",pickGcpMapPoint,true);
+    map.addEventListener("pointermove",moveGcpMapPoint,true);
+    map.addEventListener("pointerup",releaseGcpMapPoint,true);
+    map.addEventListener("pointercancel",releaseGcpMapPoint,true);
   }
   function drawGcpMapMarkers(){
     if(!gcpView.open||!raster.gcps?.length)return;
@@ -4838,8 +4876,7 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
   link("raster-remove",removeRaster);
   link("raster-calibrate",openVisualCalibration);
   setupVisualCalibration();
-  // Capture paired map clicks BEFORE select/move/draw handlers.
-  canvas.addEventListener("pointerdown",pickGcpMapPoint,true);
+  // Visual calibration installs its own GCP capture handlers.
   $("raster-opacity").addEventListener("input",ev=>{
     raster.opacity=Number(ev.target.value)/100;
     $("raster-opacity-value").textContent=ev.target.value+"%";
