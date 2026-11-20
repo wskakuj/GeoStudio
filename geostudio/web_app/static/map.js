@@ -2367,6 +2367,23 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
       left:(w-img.width*scale)/2+gcpView.panX,
       top:(h-img.height*scale)/2+gcpView.panY};
   }
+  // Zoom at cursor: the same raster pixel must remain exactly under
+  // the wheel pointer before and after changing the image scale.
+  function zoomGcpAt(x,y,deltaY,deltaMode=0){
+    if(!raster.image)return;
+    const before=gcpCanvasLayout();
+    const u=(x-before.left)/before.scale;
+    const v=(y-before.top)/before.scale;
+    const normalized=deltaY*(deltaMode===1?16:deltaMode===2?before.h:1);
+    const next=Math.max(.4,Math.min(35,
+      gcpView.zoom*Math.exp(-normalized*.0025)));
+    if(next===gcpView.zoom)return;
+    gcpView.zoom=next;
+    const after=gcpCanvasLayout();
+    gcpView.panX+=x-(after.left+u*after.scale);
+    gcpView.panY+=y-(after.top+v*after.scale);
+    drawGcpCanvas();
+  }
   function drawGcpCanvas(){
     if(!raster.image)return;
     const canvas=$("raster-gcp-canvas");
@@ -2487,9 +2504,9 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
     canvas.addEventListener("contextmenu",ev=>ev.preventDefault());
     canvas.addEventListener("wheel",ev=>{
       ev.preventDefault();
-      gcpView.zoom=Math.max(.4,Math.min(35,
-        gcpView.zoom*Math.exp(-ev.deltaY*.002)));
-      drawGcpCanvas();
+      const rect=canvas.getBoundingClientRect();
+      zoomGcpAt(ev.clientX-rect.left,ev.clientY-rect.top,
+        ev.deltaY,ev.deltaMode);
     },{passive:false});
     link("raster-pick-map",()=>{
       if(!gcpView.pending)return;
