@@ -43,7 +43,8 @@
   };
   const raster = {
     image:null,affine:null,epsg:null,boundEPSG:null,opacity:.72,name:"",
-    ticket:0,pendingWorld:null
+    ticket:0,pendingWorld:null,visible:true,gcps:[],id:0,
+    layers:[],serial:0
   };
   const commands = [
     {name:"Otwórz plik GEO-MAP", hint:"Ctrl+O", run:chooseMap},
@@ -412,7 +413,7 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
   }
 
   function finishOpeningMap(meta) {
-    removeUnderlay();removeRaster();
+    removeUnderlay();removeRaster(true);
     // An EPSG choice belongs to the previously opened map and must
     // NEVER be silently reused for unrelated GEO-MAP coordinates.
     state.mapEPSG="";
@@ -1854,8 +1855,8 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
   }
   function updateUnderlayStatus(message) {
     $("underlay-summary").textContent=message;
-    const rasterReady=raster.image&&raster.affine&&raster.boundEPSG===
-      Number($("underlay-epsg").value);
+    const rasterReady=[...raster.layers,...(raster.image?[rasterEntry()]:[])]
+      .some(item=>rasterCanShow(item));
     const active=[];
     if(underlay.enabled)active.push("WMS · EPSG:"+underlay.epsg);
     if(rasterReady)active.push("Raster lokalny");
@@ -1953,9 +1954,9 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
       $(id).value=chosen;
     if(!changed)return;
     if(underlay.enabled)removeUnderlay();
-    if(raster.image&&raster.affine)
-      rasterInfo("Zmieniono EPSG mapy: raster wymaga ponownego "+
-        "potwierdzenia georeferencji i pozostaje ukryty.");
+    if(raster.image||raster.layers.length)
+      rasterInfo("Zmieniono EPSG mapy: wcześniejsze rastry wymagają "+
+        "ponownego potwierdzenia georeferencji i pozostają ukryte.");
     state.previewActive=false;state.geometrySnapshotValid=false;requestDraw();
   }
   const wmsPresetUrls={
@@ -2117,13 +2118,126 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
   function rasterInfo(message){
     $("raster-summary").textContent=message;
     updateUnderlayStatus($("underlay-summary").textContent);
+    renderRasterLayers();
   }
-  function removeRaster(){
+  function rasterEntry(){
+    return {id:raster.id,image:raster.image,affine:raster.affine,
+      epsg:raster.epsg,boundEPSG:raster.boundEPSG,
+      opacity:raster.opacity,visible:raster.visible,
+      name:raster.name,pendingWorld:raster.pendingWorld,
+      gcps:raster.gcps};
+  }
+  function assignRaster(entry){
+    for(const field of ["id","image","affine","epsg","boundEPSG",
+      "opacity","visible","name","pendingWorld","gcps"])
+      raster[field]=entry[field];
+    $("raster-opacity").value=Math.round(raster.opacity*100);
+    $("raster-opacity-value").textContent=Math.round(raster.opacity*100)+"%";
+  }
+  function selectRasterLayer(id){
+    if(id===raster.id)return;
+    const index=raster.layers.findIndex(item=>item.id===id);
+    if(index<0)return;
     raster.ticket++;
-    raster.image=null;raster.affine=null;raster.epsg=null;raster.boundEPSG=null;
-    raster.name="";raster.pendingWorld=null;
-    if($("raster-summary"))rasterInfo("Raster usunięty. Plik MAP pozostaje bez zmian.");
+    const selected=raster.layers.splice(index,1)[0];
+    if(raster.image)raster.layers.push(rasterEntry());
+    assignRaster(selected);
+    renderRasterLayers();
+  }
+  function removeRaster(all=false){
+    raster.ticket++;
+    if(all)raster.layers=[];
+    if(!all&&raster.layers.length)assignRaster(raster.layers.pop());
+    else assignRaster({id:0,image:null,affine:null,epsg:null,
+      boundEPSG:null,opacity:.72,visible:true,name:"",
+      pendingWorld:null,gcps:[]});
+    if($("raster-summary"))rasterInfo("Raster usunięty. MAP pozostaje bez zmian.");
     if(state.meta){state.previewActive=false;state.geometrySnapshotValid=false;requestDraw();}
+  }
+  function rasterCanShow(item){
+    if(!item.image||!item.affine||!item.visible)return false;
+    if(item.boundEPSG!==state.mapEPSG)return false;
+    return !item.epsg||item.epsg===Number(state.mapEPSG);
+  }
+  function renderRasterLayers(){
+    const list=$("raster-layers-list");
+    if(!list)return;
+    list.replaceChildren();
+    const items=[];
+    if(underlay.enabled)items.push({kind:"wms",id:"wms",
+      title:"WMS: "+($("underlay-preset").selectedOptions[0]?.textContent||"Geoportal"),
+      visible:underlay.visible,opacity:underlay.opacity,
+      status:underlay.loading?"Odświeżanie obrazu…":underlay.image?"Połączono":"Ładowanie…"});
+    for(const item of [...raster.layers,...(raster.image?[rasterEntry()]:[])])
+      items.push({kind:"raster",id:item.id,title:item.name,
+        visible:item.visible,opacity:item.opacity,
+        status:item.affine?"Pozycjonowany":"Wymaga kalibracji"});
+    $("raster-layer-count").textContent=String(items.length);
+    if(!items.length){
+      const empty=document.createElement("div");empty.className="panel-placeholder";
+      empty.textContent="Brak podkładów. Dodaj WMS lub raster z zakładki Podkłady.";
+      list.append(empty);return;
+    }
+    for(const item of items){
+      const root=document.createElement("div");root.className="raster-layer-item";
+      const head=document.createElement("div");head.className="raster-layer-head";
+      const checkbox=document.createElement("input");checkbox.type="checkbox";
+      checkbox.checked=item.visible;checkbox.setAttribute("aria-label","Widoczność "+item.title);
+      checkbox.addEventListener("change",()=>{
+        if(item.kind==="wms"){
+          underlay.visible=checkbox.checked;
+          if(underlay.visible)scheduleUnderlayRefresh(true);
+          else{underlay.ticket++;clearTimeout(underlay.timer);if(underlay.abort)underlay.abort.abort();}
+        }else {
+          const target=item.id===raster.id?raster:raster.layers.find(x=>x.id===item.id);
+          if(target)target.visible=checkbox.checked;
+        }
+        requestDraw();renderRasterLayers();
+      });
+      const info=document.createElement("div");info.className="raster-layer-meta";
+      const title=document.createElement("strong");title.textContent=item.title;title.title=item.title;
+      const status=document.createElement("span");status.textContent=item.status;
+      info.append(title,status);
+      head.append(checkbox,info);root.append(head);
+      const slider=document.createElement("input");slider.type="range";
+      slider.min="0";slider.max="100";slider.step="5";
+      slider.value=String(Math.round(item.opacity*100));
+      slider.setAttribute("aria-label","Krycie "+item.title);
+      slider.addEventListener("input",()=>{
+        const value=Number(slider.value)/100;
+        if(item.kind==="wms"){
+          underlay.opacity=value;
+          $("underlay-opacity").value=slider.value;
+          $("underlay-opacity-value").textContent=slider.value+"%";
+        }else {
+          const target=item.id===raster.id?raster:raster.layers.find(x=>x.id===item.id);
+          if(target)target.opacity=value;
+          if(item.id===raster.id){
+            $("raster-opacity").value=slider.value;
+            $("raster-opacity-value").textContent=slider.value+"%";
+          }
+        }
+        requestDraw();
+      });
+      root.append(slider);
+      const actions=document.createElement("div");actions.className="raster-layer-actions";
+      if(item.kind==="raster"){
+        const activate=document.createElement("button");activate.textContent="Kalibruj";
+        activate.type="button";activate.addEventListener("click",()=>{
+          selectRasterLayer(item.id);openVisualCalibration();
+        });actions.append(activate);
+      }
+      const remove=document.createElement("button");remove.textContent="Usuń";remove.type="button";
+      remove.addEventListener("click",()=>{
+        if(item.kind==="wms")removeUnderlay();
+        else if(item.id===raster.id)removeRaster();
+        else{
+          raster.layers=raster.layers.filter(x=>x.id!==item.id);
+          renderRasterLayers();requestDraw();
+        }
+      });
+      actions.append(remove);root.append(actions);list.append(root);
+    }
   }
   function parseWorldFileText(source){
     const rows=source.trim().split(/\r?\n/);
@@ -2137,14 +2251,14 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
     return [D,E,F-(D+E)/2,A,B,C-(A+B)/2];
   }
   function rasterGeoValid(){
-    const epsg=Number($("underlay-epsg").value);
-    if(![2180,2176,2177,2178,2179].includes(epsg)){
-      inform("Wybierz prawidłowy EPSG mapy przed dodaniem rastra.",true);
-      return false;
-    }
-    if(raster.epsg&&raster.epsg!==epsg){
-      inform("GeoTIFF ma EPSG:"+raster.epsg+
-             ", a MAP ustawiono na EPSG:"+epsg+". Najpierw uzgodnij układy.",true);
+    // JPG/PNG with visually paired GCPs need no chosen EPSG: both
+    // clicked points use the SAME native GEO-MAP coordinate space.
+    if(!raster.epsg)return true;
+    const epsg=Number(state.mapEPSG);
+    if(raster.epsg!==epsg){
+      rasterInfo("GeoTIFF: EPSG:"+raster.epsg+
+        ". Automatyczna georeferencja wymaga potwierdzonego EPSG mapy; "+
+        "alternatywnie użyj wizualnych punktów GCP.");
       return false;
     }
     return true;
@@ -2152,7 +2266,7 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
   function showRasterIfCalibrated(){
     if(!rasterGeoValid())return;
     if(!raster.image||!raster.affine)return;
-    raster.boundEPSG=Number($("underlay-epsg").value);
+    raster.boundEPSG=state.mapEPSG;
     state.previewActive=false;state.geometrySnapshotValid=false;
     requestDraw();
     rasterInfo(raster.name+" — podkład dopasowany do współrzędnych MAP.");
@@ -2170,7 +2284,6 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
   }
   async function openRasterFile(file){
     if(!file||!state.meta)return;
-    if(!rasterGeoValid())return;
     const ticket=++raster.ticket;
     const documentToken=state.edit?.documentToken;
     if(file.size>48*1024*1024){
@@ -2200,13 +2313,14 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
       if(decoded.width*decoded.height>24000000)
         throw Error("Raster przekracza limit 24 mln pikseli.");
       if(ticket!==raster.ticket||documentToken!==state.edit?.documentToken)return;
+      if(raster.image)raster.layers.push(rasterEntry());
       raster.image=decoded;raster.affine=affine;raster.epsg=epsg;
-      raster.boundEPSG=null;
+      raster.boundEPSG=null;raster.gcps=[];raster.visible=true;
+      raster.opacity=.72;raster.id=++raster.serial;
       raster.name=file.name;
-      if(epsg&&epsg!==Number($("underlay-epsg").value)){
-        raster.affine=null;
-        rasterInfo("Uwaga: GeoTIFF ma EPSG:"+epsg+
-          ", lecz aktualny EPSG mapy jest inny. Nie wyświetlam rastra.");
+      if(epsg&&epsg!==Number(state.mapEPSG)){
+        rasterInfo("GeoTIFF EPSG:"+epsg+
+          " — wybierz zgodny EPSG w Układach lub skalibruj wizualnie.");
         return;
       }
       if(raster.pendingWorld)raster.affine=raster.pendingWorld;
@@ -2259,18 +2373,17 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
     }
   }
   function paintRaster(){
-    if(!raster.image||!raster.affine||
-       raster.boundEPSG!==Number($("underlay-epsg").value)||
-       raster.epsg&&raster.epsg!==Number($("underlay-epsg").value))return;
-    const [a,b,c,d,e,f]=raster.affine;
-    const scale=state.scale;
-    ctx.save();
-    ctx.globalAlpha=raster.opacity;
-    ctx.transform(d*scale,-a*scale,e*scale,-b*scale,
-      (f-state.center.x)*scale+state.width/2,
-      (-c-state.center.y)*scale+state.height/2);
-    ctx.drawImage(raster.image,0,0);
-    ctx.restore();
+    for(const item of [...raster.layers,...(raster.image?[rasterEntry()]:[])]){
+      if(!rasterCanShow(item))continue;
+      const [a,b,c,d,e,f]=item.affine;
+      ctx.save();ctx.globalAlpha=item.opacity;
+      ctx.imageSmoothingEnabled=true;ctx.imageSmoothingQuality="high";
+      ctx.transform(d*state.scale,-a*state.scale,e*state.scale,-b*state.scale,
+        (f-state.center.x)*state.scale+state.width/2,
+        (-c-state.center.y)*state.scale+state.height/2);
+      ctx.drawImage(item.image,0,0);
+      ctx.restore();
+    }
   }
   function resizeCanvas() {
     const rect = shell.getBoundingClientRect();
