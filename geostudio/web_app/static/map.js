@@ -47,7 +47,7 @@
   };
   const commands = [
     {name:"Otwórz plik GEO-MAP", hint:"Ctrl+O", run:chooseMap},
-    {name:"Podkład WMS Geoportalu",hint:"Podkłady",run:openUnderlayDialog},
+    {name:"Podkłady WMS",hint:"Podkłady",run:openUnderlayDialog},
     {name:"Wczytaj raster i skalibruj GCP",hint:"Podkłady",run:openRasterDialog},
     {name:"Sprawdź układ mapy EPSG lub PRJ",hint:"Podkłady",run:openCrsDialog},
     {name:"Wybierz obiekty według kodu, A1, A2", hint:"Ctrl+H", run:openAdvancedSelection},
@@ -1957,13 +1957,13 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
         "potwierdzenia georeferencji i pozostaje ukryty.");
     state.previewActive=false;state.geometrySnapshotValid=false;requestDraw();
   }
-  const geoportalWmsUrls={
+  const wmsPresetUrls={
     standard:"https://mapy.geoportal.gov.pl/wss/service/PZGIK/ORTO/WMS/StandardResolution",
     high:"https://mapy.geoportal.gov.pl/wss/service/PZGIK/ORTO/WMS/HighResolution",
     kieg:"https://integracja.gugik.gov.pl/cgi-bin/KrajowaIntegracjaEwidencjiGruntow"
   };
   function showWmsPresetAddress(){
-    $("underlay-url").value=geoportalWmsUrls[$("underlay-preset").value]||"";
+    $("underlay-url").value=wmsPresetUrls[$("underlay-preset").value]||"";
   }
   function openUnderlayDialog(){
     if(!state.meta){inform("Najpierw otwórz mapę MAP.");return;}
