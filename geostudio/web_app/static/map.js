@@ -21,6 +21,7 @@
     edit: null, editBusy: false, bulkPreview: null, movePreview: null,
     moveIds: [], moveGhost: null, objectPreview:null,
     drawPoints:[], drawHover:null, drawSnap:null,
+    labelHits:[],labelDrag:null,labelSelected:null,
     drawMagnet:true,drawCursorWorld:null,copyIds:[],
     geometryPreview:null,cutIds:[],lineEditId:null,
     snapEnabled: true, sharedNodes: false, vertexDrag: null,
@@ -30,7 +31,6 @@
     {name:"Otwórz plik GEO-MAP", hint:"Ctrl+O", run:chooseMap},
     {name:"Wybierz obiekty według kodu, A1, A2", hint:"Ctrl+H", run:openAdvancedSelection},
     {name:"Edytuj zbiorowo pola A1/A2", hint:"Ctrl+Shift+E", run:openBulkEditor},
-    {name:"Dokładnie przesuń poligony X/Y", hint:"Ctrl+Shift+M", run:()=>openMoveEditor()},
     {name:"Przeciągaj wybrane poligony", hint:"M", run:()=>setTool("move")},
     {name:"Kopiuj obok i przesuń myszą", hint:"Ctrl+D", run:quickDuplicate},
     {name:"Kopiuj z dokładnym przesunięciem", hint:"X/Y", run:openCopyEditor},
@@ -57,6 +57,10 @@
     {name:"Usuń zaznaczony węzeł poligonu", hint:"Delete", run:deleteSelectedVertex},
     {name:"Przesuwanie mapy", hint:"H", run:()=>setTool("pan")},
     {name:"Włącz / wyłącz etykiety", hint:"Aa", run:toggleLabels},
+    {name:"Przesuń pojedyncze A1/A2/TX myszą",hint:"Alt+L",run:()=>setTool("labels")},
+    {name:"Ustaw opis według kodu",hint:"Ctrl+Alt+L",run:openLabelSettings},
+    {name:"Ustaw skalę opracowania",hint:"Ctrl+F5",run:()=> $("compilation-scale").focus()},
+    {name:"Ustaw skalę widoku",hint:"Ctrl+M",run:()=> $("view-scale").focus()},
     {name:"Włącz / wyłącz siatkę", hint:"▦", run:toggleGrid},
     {name:"Pokaż wszystkie warstwy", hint:"Warstwy", run:showAllLayers},
     {name:"Zmień motyw płótna", hint:"◐", run:toggleTheme}
@@ -83,6 +87,9 @@
       canUndo:!!status.canUndo,
       canRedo:!!status.canRedo,
       hasReversibleMasks:!!status.hasReversibleMasks,
+      hasVisualStyles:!!status.hasVisualStyles,
+      compilationScale:status.compilationScale||5000,
+      sourceCompilationScale:status.sourceCompilationScale||5000,
       revision:status.revision,
       documentToken:status.documentToken,
       undoLabel:status.undoLabel||"",
@@ -96,8 +103,11 @@
     $("tool-new-polygon").disabled=state.editBusy||!state.meta;
     $("btn-export").disabled=state.editBusy||!state.meta;
     $("tool-export-baked").disabled=state.editBusy||!state.meta;
-    $("btn-export").textContent=state.edit.hasReversibleMasks
+    $("btn-export").textContent=(
+      state.edit.hasReversibleMasks||state.edit.hasVisualStyles)
       ?"↓ Pobierz MAP + JSON":"↓ Pobierz MAP";
+    if(document.activeElement!==$("compilation-scale"))
+      $("compilation-scale").value="1:"+state.edit.compilationScale;
     updateBulkButton();
     $("tool-undo").title=state.edit.undoLabel
       ?"Cofnij: "+state.edit.undoLabel+" (Ctrl+Z)":"Cofnij (Ctrl+Z)";
@@ -378,6 +388,7 @@
     state.active = null; state.detail = null; state.pinned.clear();
     populateSelectCodes();
     state.vertexDrag=null;state.moveGhost=null;state.movePreview=null;
+    state.labelDrag=null;state.labelSelected=null;state.labelHits=[];
     state.moveIds=[];state.copyIds=[];state.drawPoints=[];
     state.cutIds=[];state.lineEditId=null;state.geometryPreview=null;
     state.drawHover=null;state.drawSnap=null;state.drawCursorWorld=null;
@@ -1659,11 +1670,13 @@
     state.tool=tool;
     state.hoverInsert=null;
     if(tool!=="nodes")state.selectedVertex=null;
+    if(tool!=="labels")state.labelSelected=null;
     updateDeleteNodeButton();
     shell.classList.toggle("panning",tool==="pan");
     shell.classList.toggle("nodes-editing",tool==="nodes");
     shell.classList.toggle("moving-objects",tool==="move");
     shell.classList.toggle("drawing-objects",tool==="draw");
+    shell.classList.toggle("labels-editing",tool==="labels");
     if(!["draw","cut","line","line-edit"].includes(tool)){
       state.drawPoints=[];state.drawHover=null;
       state.drawSnap=null;state.drawCursorWorld=null;
@@ -1673,6 +1686,7 @@
     for(const [name,id] of [
       ["select","tool-select"],["pan","tool-pan"],["nodes","tool-nodes"],
       ["move","tool-move"],["draw","tool-new-polygon"],
+      ["labels","tool-label-move"],
       ["cut","tool-split"],["line","tool-line"],["line-edit","tool-line"],
       ["select","float-select"],["pan","float-pan"],["nodes","float-nodes"],
       ["move","float-move"]
@@ -1685,7 +1699,10 @@
       inform("Klikaj punkty; Enter/dwuklik kończy. Magnes G: "+
         (state.drawMagnet?"włączony":"wyłączony")+
         "; Alt stawia punkt obok linii bez przyciągania.");
-    else if(tool==="move")inform("Tryb M: przeciągnij wybrany poligon lub całą grupę, potem potwierdź podgląd.");
+    else if(tool==="labels")
+      inform("Tryb opisów: przeciągnij osobno A1, A2 lub TX. Esc — zaznaczanie; Ctrl+Z — cofnij.");
+    else if(tool==="move")
+      inform("Tryb M: przeciągnij wybrany poligon albo całą grupę. Zapis automatyczny i Ctrl+Z.");
     else inform(tool==="select"
       ?"Tryb zaznaczania obiektów (S).":"Tryb przesuwania mapy (H).");
     requestDraw();
