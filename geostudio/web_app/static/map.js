@@ -3256,7 +3256,7 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
   const hatchCache=new Map();
   function hatchPattern(style) {
     if(!style.hatch)return style.fill;
-    const exportRatio=state.exporting&&state.exportDpi===600?2:1;
+    const exportRatio=typeof state!=="undefined"&&state.exporting&&state.exportDpi===600?2:1;
     const key=style.fill+"|"+style.hatch+"|"+exportRatio;
     if(hatchCache.has(key))return hatchCache.get(key);
     // The old Qt renderer uses 8x8 QBrush patterns:
@@ -3268,7 +3268,7 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
     const g=tile.getContext("2d");
     // Preserve the 8x8 cartographic motif while giving 600 DPI exports
     // twice as many physical pixels per hatch stroke.
-    g.setTransform(exportRatio,0,0,exportRatio,0,0);
+    if(exportRatio!==1)g.setTransform(exportRatio,0,0,exportRatio,0,0);
     g.clearRect(0,0,8,8);
     g.strokeStyle=style.fill;g.fillStyle=style.fill;g.lineWidth=1;
     const segment=(x1,y1,x2,y2)=>{
