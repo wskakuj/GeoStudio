@@ -1983,7 +1983,7 @@ class PreviewWorkspace:
                                filename: str, extension: str,
                                content: bytes) -> str:
         """One-use, bounded browser-generated image buffer for native Save As."""
-        valid={"png","jpg","tif","dxf"}
+        valid={"png","jpg","tif","dxf","pdf"}
         if (extension not in valid or not isinstance(filename,str)
                 or len(filename)>140 or filename in {".",".."}
                 or any(ch in filename for ch in "/\\\0\r\n")
