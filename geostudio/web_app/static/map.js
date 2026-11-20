@@ -16,6 +16,8 @@
   const formatter = new Intl.NumberFormat("pl-PL");
   const state = {
     meta: null, features: [], visibleLayers: new Set(), hiddenGrades: new Set(),
+    hiddenLandUses:new Set(), expandedLandUses:false,
+    appTheme:"dark", mapBackground:"#FFFFFF",
     center: {x: 0, y: 0}, scale: 1, tool: "select",
     labels: true, grid: false, active: null, detail: null, pinned: new Set(),
     cartoLibraries: {},
@@ -88,7 +90,8 @@
     {name:"Ustaw skalę widoku",hint:"Ctrl+M",run:()=> $("view-scale").focus()},
     {name:"Włącz / wyłącz siatkę", hint:"▦", run:toggleGrid},
     {name:"Pokaż wszystkie warstwy", hint:"Warstwy", run:showAllLayers},
-    {name:"Zmień motyw płótna", hint:"◐", run:toggleTheme}
+    {name:"Przełącz jasny/ciemny motyw programu", hint:"◐", run:toggleTheme},
+    {name:"Wybierz kolor tła mapy", hint:"Paleta", run:()=> $("map-background-menu").open=true}
   ];
   let toastTimer;
   let recoveryTimer=null,recoverySavedKey='',recoveryBusy=false;
@@ -449,7 +452,8 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
     // Their heavy symbol density otherwise hides the parcel boundaries.
     state.visibleLayers = new Set(
       meta.layers.map(layer=>layer.name).filter(name=>name!=="Graniczniki"));
-    state.hiddenGrades = new Set(); state.firstLoad = false;
+    state.hiddenGrades = new Set();state.hiddenLandUses = new Set();
+    state.expandedLandUses=false; state.firstLoad = false;
     $("empty-state").hidden = true;
     htmlText($("document-title"), meta.name);
     htmlText($("map-status"), meta.name);
@@ -3211,7 +3215,75 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
     $("tool-grid").classList.toggle("active",state.grid);
     requestDraw();
   }
-  function toggleTheme() { document.body.classList.toggle("dark-map"); requestDraw(); }
+  const APPEARANCE_KEY="geostudio-appearance-v1";
+  const validMapColor=value=>/^#[0-9a-fA-F]{6}$/.test(value);
+  let appearanceWriteTimer=null,appearanceRevision=0;
+  function persistAppearance(){
+    appearanceRevision++;
+    const preference={
+      theme:state.appTheme,mapBackground:state.mapBackground
+    };
+    try{
+      window.localStorage.setItem(APPEARANCE_KEY,JSON.stringify(preference));
+    }catch(_error){ /* Preferences are optional in restricted WebView2. */ }
+    // Desktop uses a different local origin each time. Write to the
+    // persistent GeoStudio2 preferences.json through the authenticated
+    // local API so theme and canvas color survive restarts.
+    clearTimeout(appearanceWriteTimer);
+    appearanceWriteTimer=setTimeout(()=>{
+      api("/api/appearance",{
+        method:"POST",headers:{"Content-Type":"application/json"},
+        body:JSON.stringify(preference)
+      }).catch(()=>{ /* Canvas and theme still work without disk access. */ });
+    },160);
+  }
+  function applyAppearance(){
+    document.body.dataset.theme=state.appTheme;
+    document.body.classList.remove("dark-map");
+    document.documentElement.style.setProperty("--main-bg",state.mapBackground);
+    const themeButton=$("btn-theme");
+    themeButton.textContent=state.appTheme==="dark"?"☀":"☾";
+    themeButton.title=state.appTheme==="dark"
+      ?"Włącz jasny motyw programu":"Włącz ciemny motyw programu";
+    themeButton.setAttribute("aria-pressed",String(state.appTheme==="dark"));
+    $("map-background-color").value=state.mapBackground;
+    $("map-background-value").textContent=state.mapBackground.toUpperCase();
+    document.querySelector('meta[name="theme-color"]').content=
+      state.appTheme==="dark"?"#111d2d":"#f6f8fb";
+    requestDraw();
+  }
+  async function restoreAppearance(){
+    try{
+      const saved=JSON.parse(window.localStorage.getItem(APPEARANCE_KEY)||"null");
+      if(saved?.theme==="light"||saved?.theme==="dark")
+        state.appTheme=saved.theme;
+      if(validMapColor(saved?.mapBackground))
+        state.mapBackground=saved.mapBackground.toUpperCase();
+    }catch(_error){ /* Unsupported or malformed local preference. */ }
+    applyAppearance();
+    const version=appearanceRevision;
+    try{
+      const stored=await api("/api/appearance");
+      // A user's newer click takes precedence over a slow initial GET.
+      if(appearanceRevision!==version)return;
+      if(stored.theme==="light"||stored.theme==="dark")
+        state.appTheme=stored.theme;
+      if(validMapColor(stored.mapBackground))
+        state.mapBackground=stored.mapBackground.toUpperCase();
+      applyAppearance();
+    }catch(_error){ /* Local browser preference remains the fallback. */ }
+  }
+  function toggleTheme(){
+    state.appTheme=state.appTheme==="dark"?"light":"dark";
+    applyAppearance();
+    persistAppearance();
+  }
+  function changeMapBackground(value){
+    if(!validMapColor(value))return;
+    state.mapBackground=value.toUpperCase();
+    applyAppearance();
+    persistAppearance();
+  }
 
   function drawGrid() {
     if (!state.grid) return;
@@ -3237,7 +3309,9 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
   }
   function isVisible(feature) {
     return state.visibleLayers.has(feature.layer) &&
-           !(feature.grade && state.hiddenGrades.has(feature.grade));
+           !(feature.grade && state.hiddenGrades.has(feature.grade)) &&
+           !(feature.layer==="Użytki" &&
+             state.hiddenLandUses.has(feature.landUse||""));
   }
   function isInView(box, view) {
     return box[0]<=view[2]&&box[2]>=view[0]&&box[1]<=view[3]&&box[3]>=view[1];
@@ -3885,10 +3959,9 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
   }
   function draw() {
     state.scheduled=false;
-    const isDark=document.body.classList.contains("dark-map");
     ctx.setTransform(state.pixelRatio,0,0,state.pixelRatio,0,0);
     ctx.clearRect(0,0,state.width,state.height);
-    ctx.fillStyle=isDark?"#17283b":"#FAFCFD";
+    ctx.fillStyle=state.mapBackground;
     ctx.fillRect(0,0,state.width,state.height);
     state.hasVisibleUnderlay=!!(
       (underlay.enabled&&underlay.visible&&underlay.image)||
@@ -4158,7 +4231,8 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
       tableRows:parseRows("layout-table-rows","tabela",8),
       compilationScale:state.edit?.compilationScale||5000,
       sourceCompilationScale:state.edit?.sourceCompilationScale||5000,
-      visibleLayers:[...state.visibleLayers]
+      visibleLayers:[...state.visibleLayers],
+      hiddenLandUses:[...state.hiddenLandUses]
     };
   }
   function layoutOptions(){
@@ -4891,33 +4965,115 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
     }finally{button.disabled=false;printButton.disabled=false;}
   }
 
-  function buildLayer(name,count) {
-    const item=document.createElement("div");item.className="layer-item";
-    const row=document.createElement("label");row.className="layer-row";
-    const toggle=document.createElement("input");toggle.type="checkbox";toggle.className="layer-toggle";
+  function buildLayer(name,count,filter="") {
+    const item=document.createElement("div");
+    item.className="layer-item";
+    const row=document.createElement("div");row.className="layer-row";
+    const main=document.createElement("label");main.className="layer-main";
+    const toggle=document.createElement("input");
+    toggle.type="checkbox";toggle.className="layer-toggle";
     toggle.checked=state.visibleLayers.has(name);
+    const landUses=name==="Użytki"?(state.meta?.landUseClasses||[]):[];
+    const visibleCount=()=>landUses.reduce((n,entry)=>
+      n+(state.hiddenLandUses.has(entry.key)?0:entry.count),0);
+    toggle.indeterminate=!!landUses.length&&toggle.checked&&
+      visibleCount()<count;
+    toggle.setAttribute("aria-label","Pokaż lub ukryj warstwę "+name);
     toggle.addEventListener("change",()=>{
-      if(toggle.checked)state.visibleLayers.add(name);else state.visibleLayers.delete(name);
-      renderCartographyMatches();
-      requestDraw();refreshInspectorVisibility();
+      if(toggle.checked)state.visibleLayers.add(name);
+      else state.visibleLayers.delete(name);
+      toggle.indeterminate=!!landUses.length&&toggle.checked&&
+        visibleCount()<count;
+      item.classList.toggle("layer-muted",!toggle.checked);
+      renderCartographyMatches();requestDraw();refreshInspectorVisibility();
     });
-    const color=document.createElement("span");color.className="layer-swatch";
-    const hue=colorForLayer(name);color.style.backgroundColor=hue;color.style.borderColor=hue;
-    const text=document.createElement("span");text.className="layer-name";text.textContent=name;
-    const qty=document.createElement("span");qty.className="layer-count";qty.textContent=display(count);
-    row.append(toggle,color,text,qty);item.append(row);
-    if(name==="Użytki Leśne"&&state.meta&&Object.keys(state.meta.forestClasses).length){
-      const grades=document.createElement("div");grades.className="layer-grades";
+    const swatch=document.createElement("span");swatch.className="layer-swatch";
+    const hue=colorForLayer(name);
+    swatch.style.backgroundColor=hue;swatch.style.borderColor=hue;
+    const label=document.createElement("span");label.className="layer-name";
+    label.textContent=name;
+    const countBadge=document.createElement("span");
+    countBadge.className="layer-count";
+    const refreshCount=()=>{
+      countBadge.textContent=landUses.length&&visibleCount()<count
+        ?display(visibleCount())+"/"+display(count)
+        :display(count);
+    };
+    refreshCount();
+    main.append(toggle,swatch,label,countBadge);
+    row.append(main);
+    item.append(row);
+    item.classList.toggle("layer-muted",!toggle.checked);
+
+    if(landUses.length){
+      const expanded=state.expandedLandUses||!!filter;
+      const details=document.createElement("div");
+      details.className="landuse-list";details.id="landuse-classes-list";
+      details.hidden=!expanded;
+      const disclosure=document.createElement("button");
+      disclosure.type="button";disclosure.className="layer-disclosure";
+      disclosure.setAttribute("aria-controls",details.id);
+      disclosure.setAttribute("aria-expanded",String(expanded));
+      disclosure.setAttribute("aria-label","Rozwiń klasy użytków");
+      disclosure.textContent=expanded?"⌃":"⌄";
+      disclosure.addEventListener("click",()=>{
+        state.expandedLandUses=!state.expandedLandUses;
+        details.hidden=!state.expandedLandUses;
+        disclosure.setAttribute("aria-expanded",
+          String(state.expandedLandUses));
+        disclosure.setAttribute("aria-label",
+          state.expandedLandUses?"Zwiń klasy użytków":"Rozwiń klasy użytków");
+        disclosure.textContent=state.expandedLandUses?"⌃":"⌄";
+      });
+      row.append(disclosure);
+      const heading=document.createElement("div");
+      heading.className="landuse-list-heading";
+      heading.textContent="KLASY W POLU A1 · "+landUses.length;
+      details.append(heading);
+      for(const landUse of landUses){
+        if(filter&&!landUse.label.toLocaleLowerCase("pl-PL").includes(filter)&&
+           !name.toLocaleLowerCase("pl-PL").includes(filter))continue;
+        const line=document.createElement("label");
+        line.className="landuse-row";
+        const checkbox=document.createElement("input");
+        checkbox.type="checkbox";checkbox.className="grade-toggle landuse-toggle";
+        checkbox.checked=!state.hiddenLandUses.has(landUse.key);
+        checkbox.setAttribute("aria-label","Pokaż użytek "+landUse.label);
+        const className=document.createElement("span");
+        className.className="landuse-class-name";
+        className.textContent=landUse.label;
+        const amount=document.createElement("span");
+        amount.className="landuse-count";
+        amount.textContent=display(landUse.count);
+        checkbox.addEventListener("change",()=>{
+          if(checkbox.checked)state.hiddenLandUses.delete(landUse.key);
+          else state.hiddenLandUses.add(landUse.key);
+          toggle.indeterminate=toggle.checked&&visibleCount()<count;
+          refreshCount();
+          renderCartographyMatches();requestDraw();refreshInspectorVisibility();
+        });
+        line.append(checkbox,className,amount);
+        details.append(line);
+      }
+      item.append(details);
+    }
+    if(name==="Użytki Leśne"&&state.meta&&
+       Object.keys(state.meta.forestClasses).length){
+      const grades=document.createElement("div");
+      grades.className="layer-grades";
       for(const [grade,amount] of Object.entries(state.meta.forestClasses)){
         const line=document.createElement("label");line.className="grade-row";
-        const input=document.createElement("input");input.type="checkbox";input.className="grade-toggle";
+        const input=document.createElement("input");
+        input.type="checkbox";input.className="grade-toggle";
         input.checked=!state.hiddenGrades.has(grade);
         input.addEventListener("change",()=>{
-          if(input.checked)state.hiddenGrades.delete(grade);else state.hiddenGrades.add(grade);
-          requestDraw();refreshInspectorVisibility();
+          if(input.checked)state.hiddenGrades.delete(grade);
+          else state.hiddenGrades.add(grade);
+          renderCartographyMatches();requestDraw();refreshInspectorVisibility();
         });
         const nameNode=document.createElement("b");nameNode.textContent=grade;
-        const badge=document.createElement("em");badge.textContent=amount;
+        const badge=document.createElement("em");
+        badge.textContent=display(amount);
         line.append(input,nameNode,badge);grades.append(line);
       }
       item.append(grades);
@@ -4930,23 +5086,32 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
     const needle=$("layer-search").value.toLocaleLowerCase("pl-PL").trim();
     let found=0;
     for(const layer of state.meta.layers){
-      if(needle&&!layer.name.toLocaleLowerCase("pl-PL").includes(needle))continue;
-      list.append(buildLayer(layer.name,layer.count));found++;
+      const matchesName=layer.name.toLocaleLowerCase("pl-PL").includes(needle);
+      const matchesUse=layer.name==="Użytki"&&
+        (state.meta.landUseClasses||[]).some(item=>
+          item.label.toLocaleLowerCase("pl-PL").includes(needle));
+      if(needle&&!matchesName&&!matchesUse)continue;
+      list.append(buildLayer(layer.name,layer.count,needle));found++;
     }
     if(!found){
-      const message=document.createElement("div");message.className="panel-placeholder";
-      message.textContent="Brak warstw pasujących do wyszukiwania.";
+      const message=document.createElement("div");
+      message.className="panel-placeholder";
+      message.textContent="Brak warstw lub klas użytków pasujących do wyszukiwania.";
       list.append(message);
     }
   }
   function showAllLayers() {
     if(!state.meta)return;
     state.visibleLayers=new Set(state.meta.layers.map(layer=>layer.name));
-    state.hiddenGrades.clear();renderLayers();requestDraw();inform("Wszystkie warstwy są widoczne.");
+    state.hiddenGrades.clear();state.hiddenLandUses.clear();
+    renderLayers();renderCartographyMatches();requestDraw();
+    inform("Wszystkie warstwy i klasy użytków są widoczne.");
   }
   function refreshInspectorVisibility() {
     if(state.detail&&(!state.visibleLayers.has(state.detail.layer)||
-       state.detail.grade&&state.hiddenGrades.has(state.detail.grade))){
+       (state.detail.grade&&state.hiddenGrades.has(state.detail.grade))||
+       (state.detail.layer==="Użytki"&&state.hiddenLandUses.has(
+         String(state.detail.fields?.A1||"").trim().toLocaleLowerCase("pl-PL"))))){
       state.active=null;state.detail=null;updateInspector();
     }
     updateSelectionCount();
@@ -5670,6 +5835,19 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
       if(ev.key==="Enter"){ev.preventDefault();$(id).blur();}
     });
   link("btn-theme",toggleTheme);
+  $("map-background-color").addEventListener("input",ev=>
+    changeMapBackground(ev.target.value));
+  document.querySelectorAll("[data-map-bg]").forEach(button=>{
+    button.addEventListener("click",()=>{
+      changeMapBackground(button.dataset.mapBg);
+      $("map-background-menu").open=false;
+    });
+  });
+  document.addEventListener("pointerdown",ev=>{
+    if($("map-background-menu").open&&
+       !ev.target.closest("#map-background-menu"))
+      $("map-background-menu").open=false;
+  });
   link("btn-command",openCommands);
   link("layers-all",showAllLayers);
   function activateLayerTab(which){
@@ -5713,6 +5891,7 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
   new ResizeObserver(()=>{resizeCanvas();if(state.meta)scheduleViewport();}).observe(shell);
   new ResizeObserver(()=>{if(gcpView.open)drawGcpCanvas();})
     .observe($("raster-gcp-canvas"));
+  restoreAppearance();
   resizeCanvas();renderRasterLayers();
   api("/api/map").then(meta=>{
     if(meta.loaded){

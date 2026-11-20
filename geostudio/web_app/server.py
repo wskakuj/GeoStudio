@@ -22,6 +22,8 @@ from .underlay_wms import list_layers as wms_layers, map_png as wms_map_png
 from .underlay_raster import prepare_raster, fit_gcp_payload, MAX_RASTER_BYTES
 from .underlay_crs import verified_prj_epsg, convert_point, MAX_PRJ
 from .tile_exports import TiledArchiveStore, MAX_TILE_BYTES
+from .native_picker import (preference_file, read_appearance_preference,
+                            save_appearance_preference)
 from starlette.concurrency import run_in_threadpool
 import json
 
@@ -83,6 +85,24 @@ def create_app(workspace: PreviewWorkspace | None = None) -> FastAPI:
     @app.get("/api/map")
     async def metadata():
         return state.metadata()
+
+    @app.get("/api/appearance")
+    async def get_appearance():
+        """Local per-user app palette; never read or mutate the MAP file."""
+        return await run_in_threadpool(read_appearance_preference,
+                                        preference_file())
+
+    @app.post("/api/appearance")
+    async def set_appearance(request: Request):
+        try:
+            payload=json.loads(await receive(request,2048))
+            if not isinstance(payload,dict):
+                raise ValueError("Nieprawidłowe ustawienia wyglądu.")
+            return await run_in_threadpool(
+                save_appearance_preference,preference_file(),
+                payload.get("theme"),payload.get("mapBackground"))
+        except (ValueError,TypeError) as exc:
+            raise HTTPException(400,str(exc)) from exc
 
     @app.get("/api/underlay/wms/layers")
     def underlay_wms_layers(preset: str = "standard"):
