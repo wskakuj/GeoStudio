@@ -625,7 +625,7 @@ def create_app(workspace: PreviewWorkspace | None = None) -> FastAPI:
         except (ValueError,TypeError) as exc:
             raise HTTPException(400,str(exc)) from exc
 
-    @app.post("/api/export/tiles/{ticket}/{index}")
+    @app.post("/api/export/tiles/{ticket}/part/{index}")
     async def add_large_raster_tile(ticket: str,index: int,request: Request):
         """One bounded browser-rendered tile, not a giant Canvas bitmap."""
         data=await receive(request,MAX_TILE_BYTES)
