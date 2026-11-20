@@ -20,7 +20,8 @@ def test_labels_are_separate_screen_space_overlay():
     assert "labelCanvas.width=w;labelCanvas.height=h;" in js
     assert "renderScreenLabels(features);drawGcpMapMarkers();" in js
     assert "renderScreenLabels(features);drawGcpMapMarkers();" in js
-    assert "snapshotContext.drawImage(canvas,0,0);" in js
+    assert "snapshotContext.drawImage(canvas,0,0);" not in js
+    assert "drawNavigationPreview()" not in js
     assert "if(pass===\"labels\")renderLabels(visible,collisions);" in js
 
 
