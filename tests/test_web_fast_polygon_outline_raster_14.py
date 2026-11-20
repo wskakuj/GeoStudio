@@ -169,6 +169,8 @@ def test_code_wide_preset_editor_and_enter_shortcut_are_visible():
                    'setTool("draw");','await refreshEditedDocument(null);']:
         assert phrase in create
     assert "const pad=12/Math.max(.000001,state.scale);" in js
+    assert 'if(state.tool==="draw")return;' in js
+    assert 'if(["cut","line","line-edit"].includes(state.tool)&&state.meta)' in js
 
 
 def test_5310_A1_A2_never_culled_for_overlap_zoom_or_label_cap():
