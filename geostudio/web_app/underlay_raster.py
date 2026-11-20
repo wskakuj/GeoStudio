@@ -18,6 +18,7 @@ MAX_RASTER_BYTES = 48 * 1024 * 1024
 MAX_SOURCE_PIXELS = 80_000_000
 MAX_RASTER_PIXELS = 14_000_000
 MAX_ALPHA_PREVIEW_PIXELS = 10_000_000
+MAX_PREVIEW_EDGE = 8192  # Typical WebView2/GPU texture-safe maximum.
 
 
 def parse_world_text(text: str) -> tuple[float, float, float, float, float, float]:
@@ -139,8 +140,9 @@ def prepare_raster(content: bytes, *, tiff_only: bool = False) -> tuple[bytes, d
                 raise ValueError("GeoTIFF używa nieobsługiwanego EPSG: " + str(epsg))
             has_alpha = "A" in image.getbands() or "transparency" in image.info
             max_pixels = MAX_ALPHA_PREVIEW_PIXELS if has_alpha else MAX_RASTER_PIXELS
-            if pixels > max_pixels:
-                factor = sqrt(max_pixels / pixels)
+            factor = min(1., sqrt(max_pixels / pixels),
+                         MAX_PREVIEW_EDGE / max(source_width, source_height))
+            if factor < 1.:
                 width = max(1, int(source_width * factor))
                 height = max(1, int(source_height * factor))
                 # JPEG's built-in decoder can downsample before allocating
