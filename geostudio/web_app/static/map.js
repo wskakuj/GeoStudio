@@ -13,8 +13,6 @@
   const labelCanvas = $("map-labels-canvas");
   const labelCtx = labelCanvas.getContext("2d");
   let ctx = canvas.getContext("2d");
-  const viewportSnapshot=document.createElement("canvas");
-  const snapshotContext=viewportSnapshot.getContext("2d");
   const formatter = new Intl.NumberFormat("pl-PL");
   const state = {
     meta: null, features: [], visibleLayers: new Set(), hiddenGrades: new Set(),
@@ -2574,30 +2572,6 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
     state.scale=Math.max(.000001,Math.min(3500,state.scale));
     requestDraw(); scheduleViewport(true);
   }
-  function beginNavigationPreview() {
-    if(state.previewActive||!state.meta||!canvas.width||!canvas.height)return;
-    // Cache geometry only. Labels remain anchored to world coordinates and
-    // are redrawn at the current map scale, without sampling old text from
-    // the geometry snapshot during a wheel/pan preview.
-    if(!state.geometrySnapshotValid)return;
-    state.previewCamera={
-      center:{...state.center},scale:state.scale,
-      width:state.width,height:state.height
-    };
-    state.previewActive=true;
-  }
-  function drawNavigationPreview() {
-    const c=state.previewCamera;
-    if(!state.previewActive||!c||!viewportSnapshot.width)return false;
-    const factor=state.scale/c.scale;
-    const dx=state.width/2-c.width/2*factor+
-      (c.center.x-state.center.x)*state.scale;
-    const dy=state.height/2-c.height/2*factor+
-      (c.center.y-state.center.y)*state.scale;
-    ctx.drawImage(viewportSnapshot,dx,dy,c.width*factor,c.height*factor);
-    updateScaleReadout();
-    return true;
-  }
   function zoomAt(factor, px, py) {
     if (!state.meta) return;
     const origin=screenToWorld(px,py);
@@ -2897,10 +2871,7 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
     addPath(feature.geometry);
     ctx.fillStyle=hatchPattern(style);
     ctx.globalAlpha=Math.min(
-      ((underlay.enabled&&underlay.visible&&underlay.image)||
-       [...raster.layers,...(raster.image?[rasterEntry()]:[])]
-        .some(item=>rasterCanShow(item)))&&
-      !state.exporting ? .40 : 1,
+      state.hasVisibleUnderlay&&!state.exporting?.40:1,
       Math.max(0,style.opacity));
     ctx.fill("evenodd");
     ctx.globalAlpha=1;
@@ -3446,6 +3417,10 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
     ctx.clearRect(0,0,state.width,state.height);
     ctx.fillStyle=isDark?"#17283b":"#FAFCFD";
     ctx.fillRect(0,0,state.width,state.height);
+    state.hasVisibleUnderlay=!!(
+      (underlay.enabled&&underlay.visible&&underlay.image)||
+      [...raster.layers,...(raster.image?[rasterEntry()]:[])]
+        .some(item=>rasterCanShow(item)));
     paintUnderlay();paintRaster();drawGrid();
     if(!state.meta){renderScreenLabels([]);return;}
     // Keep the last verified viewport visible while the spatial request
@@ -3464,15 +3439,8 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
     for(const feature of features) renderFill(feature);
     for(const feature of features) renderStroke(feature);
     renderHighlights(features);drawMoveGhost(features);drawMoveMagnet();
-    // Snapshot includes geometry only. Labels are redrawn proportionally
-    // to the current map zoom instead of using scaled bitmap text.
-    if(viewportSnapshot.width!==canvas.width||viewportSnapshot.height!==canvas.height){
-      viewportSnapshot.width=canvas.width;viewportSnapshot.height=canvas.height;
-    }
-    snapshotContext.setTransform(1,0,0,1,0,0);
-    snapshotContext.clearRect(0,0,canvas.width,canvas.height);
-    snapshotContext.drawImage(canvas,0,0);
-    state.geometrySnapshotValid=true;
+    // No bitmap snapshot or resampling is made during a wheel frame.
+    // The map remains rendered in native screen-space vector precision.
     renderScreenLabels(features);drawGcpMapMarkers();
     drawDraftPolygon();drawMagnetMarker();drawVertexTool();
     updateScaleReadout();
