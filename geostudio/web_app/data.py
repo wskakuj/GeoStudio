@@ -2334,10 +2334,13 @@ class PreviewWorkspace:
             if self._doc is None:
                 raise ValueError("Najpierw otwórz mapę.")
             entry=next((e for e in self._entries if e.obj.code==code),None)
-            if entry is None:
+            if entry is None and code not in {"5216","5220","5230","5310"}:
                 raise ValueError("Kod nie występuje w otwartej mapie.")
-            style=self._style(entry)
             saved=self._styles.get("code:"+code,{})
+            style=self._style(entry) if entry else {
+                "stroke":saved.get("stroke","#4A5056"),
+                "strokeWidth":saved.get("stroke_width",1.)
+            }
             return {
                 "code":code,"stroke":style["stroke"],
                 "strokeWidth":style["strokeWidth"],
@@ -2351,7 +2354,8 @@ class PreviewWorkspace:
         with self._lock:
             self._require_edit(document_token,revision)
             if (not re.fullmatch(r"[0-9]{4}",str(code)) or
-                    code not in {e.obj.code for e in self._entries}):
+                    (code not in {"5216","5220","5230","5310"} and
+                     code not in {e.obj.code for e in self._entries})):
                 raise ValueError("Nieprawidłowy kod obrysu.")
             if type(reset) is not bool:
                 raise ValueError("Nieprawidłowy tryb przywracania stylu.")
