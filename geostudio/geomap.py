@@ -297,6 +297,53 @@ class GeoMap:
                             obj.points[-1].x = round(x, 3)
                             obj.points[-1].y = round(y, 3)
 
+
+    def translate_objects(self, changes: dict[str, dict[int, tuple[float, float]]]):
+        """Translate complete GEO-MAP geometries, including points and open lines.
+
+        Every P record of each object must be supplied. Existing P types, optional
+        point labels, unknown attributes and line endings are preserved byte for
+        byte, apart from the two native coordinates. No changes are written until
+        every object has passed validation. The first/last vertex of a ring must
+        remain equal; a translation must never deform an existing object.
+        """
+        from math import isfinite
+        pending: dict[int, bytes] = {}
+        for uid, replacements in changes.items():
+            obj = self.by_id[uid]
+            if not obj.points or set(replacements) != set(range(len(obj.points))):
+                raise ValueError("Przesunięcie wymaga wszystkich punktów obiektu.")
+            deltas = set()
+            for index, point in enumerate(obj.points):
+                x, y = replacements[index]
+                if not all(isfinite(v) and -1e9 < v < 1e9 for v in (x, y)):
+                    raise ValueError("Współrzędne po przesunięciu są poza zakresem.")
+                deltas.add((round(x - point.x, 3), round(y - point.y, 3)))
+            if len(deltas) != 1:
+                raise ValueError("Przesunięcie nie może zmieniać kształtu geometrii.")
+            if obj.is_closed:
+                if replacements[0] != replacements[len(obj.points) - 1]:
+                    raise ValueError("Przesunięcie naruszyłoby zamknięcie poligonu.")
+            records = [(i, POINT_RE.match(raw.rstrip(b"\r\n")))
+                       for i, raw in enumerate(
+                           self.lines[obj.start + 1:obj.end], obj.start + 1)]
+            records = [(i, match) for i, match in records if match]
+            if len(records) != len(obj.points):
+                raise ValueError("Nieznana liczba rekordów P; odmowa zapisu.")
+            for index, (x, y) in replacements.items():
+                line_number, match = records[index]
+                raw = self.lines[line_number]
+                eol = b"\r\n" if raw.endswith(b"\r\n") else (
+                    b"\n" if raw.endswith(b"\n") else b"")
+                pending[line_number] = (
+                    raw[:match.start(2)] +
+                    f"{x:.3f}".encode("ascii") + b"   " +
+                    f"{y:.3f}".encode("ascii") + match.group(4) + eol)
+        for line_number, replacement in pending.items():
+            self.lines[line_number] = replacement
+        if pending:
+            self._parse()
+
     def move_polygon_vertex(self, uid: str, vertex_index: int, x: float, y: float):
         """Move one polygon vertex, preserving the original P record format."""
         self.move_polygon_vertices({uid: {vertex_index: (x, y)}})
