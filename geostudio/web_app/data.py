@@ -2021,13 +2021,22 @@ class PreviewWorkspace:
         # cannot implicitly hide A2. Explicitly enabled extra fields are
         # supported without changing the normal default for each code.
         if isinstance(overrides,dict):
-            for key, config in overrides.items():
+            explicit_extras=[
+                key for key, config in overrides.items()
                 if (key in LABEL_FIELDS and key not in fields and
-                        isinstance(config,dict) and config.get("visible",False)):
-                    fields.append(key)
-            fields=[key for key in fields if
-                    not (isinstance(overrides.get(key),dict) and
-                         overrides[key].get("visible") is False)]
+                    isinstance(config,dict) and config.get("visible") is True)]
+            if explicit_extras:
+                # Legacy editor semantics: declaring an entirely new
+                # attribute set replaces the defaults. Existing sidecars
+                # that explicitly selected only A3 continue to work.
+                fields=[key for key in LABEL_FIELDS if
+                        isinstance(overrides.get(key),dict) and
+                        overrides[key].get("visible") is True]
+            else:
+                # Merely styling A1 does not accidentally hide native A2.
+                fields=[key for key in fields if not (
+                        isinstance(overrides.get(key),dict) and
+                        overrides[key].get("visible") is False)]
         pos = self._label_positions.get(obj.uid, {}) if obj.uid else {}
         center = _label_anchor(obj)
         result = []
