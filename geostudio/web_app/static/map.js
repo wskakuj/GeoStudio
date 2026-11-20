@@ -4627,6 +4627,117 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
     return saveTiledArchive(ticket,complete.filename);
   }
 
+  function planSingleTiffTiles(options){
+    // A TIFF is ONE global sheet. Tiles exist only during rendering;
+    // margins, legend, title, frame and A1/A2 stay global and continuous.
+    const tileWidth=2048,tileHeight=2048;
+    const columns=Math.ceil(options.fullWidth/tileWidth);
+    const rows=Math.ceil(options.fullHeight/tileHeight);
+    if(columns*rows>256)
+      throw Error("Pojedynczy TIFF wymaga ponad 256 fragmentów. "+
+        "Zmniejsz zakres lub DPI.");
+    const centerX=(options.bounds[0]+options.bounds[2])/2;
+    const centerY=(options.bounds[1]+options.bounds[3])/2;
+    const pixelWorld=x=>centerX+
+      (x-options.margin-options.width/2)/options.pxPerUnit;
+    const pixelWorldY=y=>centerY+
+      (y-options.head-options.height/2)/options.pxPerUnit;
+    const overlap=512; // Neighboring labels/lines cross internal tile edges.
+    const tiles=[];
+    for(let row=0;row<rows;row++)for(let col=0;col<columns;col++){
+      const x=col*tileWidth,y=row*tileHeight;
+      const width=Math.min(tileWidth,options.fullWidth-x);
+      const height=Math.min(tileHeight,options.fullHeight-y);
+      tiles.push({
+        ...options,fullWidth:width,fullHeight:height,
+        queryBounds:[
+          pixelWorld(x-overlap),pixelWorldY(y-overlap),
+          pixelWorld(x+width+overlap),pixelWorldY(y+height+overlap)
+        ],
+        virtualLayout:{x,y,full:options}
+      });
+    }
+    return {tileWidth,tileHeight,columns,rows,tiles};
+  }
+  function mosaicRGBBlob(canvas){
+    // Transfer only RGB bytes of a small bounded canvas; no TIFF tile
+    // wrappers or duplicated 13mm margins appear in the final image.
+    const {width,height}=canvas;
+    const pixels=canvas.getContext("2d",{willReadFrequently:true})
+      .getImageData(0,0,width,height).data;
+    const rgb=new Uint8Array(width*height*3);
+    for(let i=0,j=0;i<pixels.length;i+=4){
+      rgb[j++]=pixels[i];rgb[j++]=pixels[i+1];rgb[j++]=pixels[i+2];
+    }
+    return new Blob([rgb],{type:"application/octet-stream"});
+  }
+  async function saveSingleMosaicTiff(ticket,filename){
+    if(window.pywebview?.api?.save_tiled_export){
+      exportInfo("Wybierz miejsce zapisu jednego pliku TIFF…");
+      const result=await window.pywebview.api.save_tiled_export(ticket);
+      if(!result||result.cancelled)return false;
+      inform("Zapisano całą mapę do jednego TIFF: "+result.path+".");
+      return true;
+    }
+    // Browser mode streams to disk; it must not buffer a gigabyte TIFF Blob.
+    if(!window.showSaveFilePicker)
+      throw Error("Zapis dużego TIFF wymaga aplikacji GeoStudio Windows "+
+        "lub przeglądarki obsługującej zapis strumieniowy.");
+    const handle=await window.showSaveFilePicker({
+      suggestedName:filename,
+      types:[{description:"Obraz TIFF",accept:{"image/tiff":[".tif"]}}]
+    });
+    const response=await fetch("/api/export/mosaic/"+ticket+"/download",{
+      headers:{"X-GeoStudio-Token":token},cache:"no-store"
+    });
+    if(!response.ok||!response.body){
+      const message=await response.json().catch(()=>({}));
+      throw Error(message.detail||"Nie można pobrać dużego TIFF.");
+    }
+    const file=await handle.createWritable();
+    try{
+      await response.body.pipeTo(file);
+    }catch(error){
+      await file.abort().catch(()=>{});
+      throw error;
+    }
+    return true;
+  }
+  async function exportSingleMosaicTiff(options,basename){
+    const plan=planSingleTiffTiles(options);
+    const start=await api("/api/export/mosaic/start",{
+      method:"POST",headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({
+        documentToken:state.edit.documentToken,
+        revision:state.edit.revision,
+        filename:basename,width:options.fullWidth,
+        height:options.fullHeight,dpi:options.dpi,
+        tileWidth:plan.tileWidth,tileHeight:plan.tileHeight
+      })
+    });
+    const ticket=start.ticket,documentToken=state.edit.documentToken;
+    const revision=state.edit.revision;
+    for(let i=0;i<plan.tiles.length;i++){
+      if(state.edit?.documentToken!==documentToken||
+         state.edit?.revision!==revision)
+        throw Error("Mapa zmieniła się podczas eksportu TIFF.");
+      exportInfo("Jeden TIFF · składanie obrazu "+(i+1)+"/"+
+        plan.tiles.length+" · "+options.dpi+" DPI");
+      const canvasTile=await renderLayoutCanvas(plan.tiles[i]);
+      const blob=mosaicRGBBlob(canvasTile);
+      canvasTile.width=0;canvasTile.height=0;
+      await api("/api/export/mosaic/"+ticket+"/part/"+i,{
+        method:"POST",body:blob
+      });
+    }
+    const finished=await api("/api/export/mosaic/"+ticket+"/finish",{
+      method:"POST"
+    });
+    exportInfo("Gotowy pełny TIFF "+options.fullWidth+" × "+
+      options.fullHeight+" px. Wybierz miejsce zapisu.");
+    return saveSingleMosaicTiff(ticket,finished.filename);
+  }
+
   async function downloadLayoutFile(blob,filename){
     // WebView2 may silently ignore browser-only download links. Use the same
     // native Save As mechanism as MAP for a guaranteed chosen Windows path.
@@ -4748,8 +4859,10 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
           exportInfo("Anulowano zapis DXF.");return;
         }
       }else if(options.tiled){
-        const saved=await exportTiledLayout(options,basename);
-        if(!saved){exportInfo("Anulowano zapis wieloarkuszowego ZIP.");return;}
+        const saved=options.format==="tiff"
+          ?await exportSingleMosaicTiff(options,basename)
+          :await exportTiledLayout(options,basename);
+        if(!saved){exportInfo("Anulowano zapis eksportu.");return;}
       }else{
         const raster=await renderLayoutCanvas(options);
         const raw=(print||options.format==="png")
