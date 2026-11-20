@@ -1,4 +1,4 @@
-"""Stage 15 — land-use A1 filters and independent application/map appearance."""
+"""Stage 15 — land-use A2 filters and independent application/map appearance."""
 from __future__ import annotations
 
 from pathlib import Path
@@ -13,31 +13,33 @@ from geostudio.web_app.data import PreviewWorkspace
 
 def fixture_map():
     return (MapBuilder(ext=(5000,-100,-100,160,160))
-        .object("5220","R1",{"A1":"R"},[(0,0),(0,5),(5,5),(5,0)])
-        .object("5220","R2",{"A1":"r"},[(10,0),(10,5),(15,5),(15,0)])
-        .object("5230","PS",{"A1":"Ps"},[(20,0),(20,5),(25,5),(25,0)])
-        .object("5230","DR",{"A1":"dr"},[(30,0),(30,5),(35,5),(35,0)])
-        .object("5230","LS",{"A1":"LsV"},[(40,0),(40,5),(45,5),(45,0)])
+        # A1 is deliberately broader than A2. Two distinct A2 grades
+        # must not be accidentally merged by their shared A1 category.
+        .object("5220","R1",{"A1":"R","A2":"RV"},[(0,0),(0,5),(5,5),(5,0)])
+        .object("5220","R2",{"A1":"R","A2":"rV"},[(10,0),(10,5),(15,5),(15,0)])
+        .object("5230","PS",{"A1":"Ps","A2":"PsIV"},[(20,0),(20,5),(25,5),(25,0)])
+        .object("5230","RVI",{"A1":"R","A2":"RVI"},[(30,0),(30,5),(35,5),(35,0)])
+        .object("5230","LS",{"A1":"LsV","A2":"LsV"},[(40,0),(40,5),(45,5),(45,0)])
         .object("5216","PARCEL",{"A2":"11/4"},[(50,0),(50,5),(55,5),(55,0)])
         .build())
 
 
-def test_land_use_classes_come_from_actual_a1_values_not_fixed_catalog():
+def test_land_use_classes_come_from_a2_bonitation_values_not_a1():
     ws = PreviewWorkspace()
     original=fixture_map()
     metadata=ws.load_map(original,"test.MAP")
     uses={item["key"]:item for item in metadata["landUseClasses"]}
     assert uses == {
-        "r":{"key":"r","label":"R","count":2},
-        "ps":{"key":"ps","label":"Ps","count":1},
-        "dr":{"key":"dr","label":"dr","count":1},
+        "rv":{"key":"rv","label":"RV","count":2},
+        "psiv":{"key":"psiv","label":"PsIV","count":1},
+        "rvi":{"key":"rvi","label":"RVI","count":1},
     }
     assert metadata["forestClasses"]["LsV"]==1
     features=ws.viewport(tuple(metadata["bounds"]))["features"]
     assert sum(f["layer"]=="Użytki" for f in features)==4
     assert sum(f["layer"]=="Użytki Leśne" for f in features)==1
     assert sorted(f["landUse"] for f in features if f["layer"]=="Użytki") == [
-        "dr", "ps", "r", "r"
+        "psiv", "rv", "rv", "rvi"
     ]
     assert ws.export_copy(ws.editing_status()["documentToken"])[1] == original
 
@@ -55,12 +57,12 @@ def test_pdf_respects_individual_hidden_uses_without_modifying_geometry(monkeypa
     options={
       "bounds":meta["bounds"],"denominator":5000,"paper":"auto",
       "showLegend":False,"visibleLayers":["Użytki","Użytki Leśne"],
-      "hiddenLandUses":["r"],
+      "hiddenLandUses":["rv"],
     }
     _, content=ws.export_vector_pdf(token,options)
     assert content == b"%PDF-STUB"
     assert sorted(f["landUse"] for f in captured if f["layer"]=="Użytki") == [
-        "dr","ps"
+        "psiv","rvi"
     ]
     assert any(f["layer"]=="Użytki Leśne" for f in captured)
     assert ws.export_copy(token)[1] == raw
@@ -82,6 +84,7 @@ def test_dynamic_class_visibility_and_theme_are_independent():
     assert 'ctx.fillStyle=state.mapBackground;' in js
     assert 'document.body.dataset.theme=state.appTheme;' in js
     assert 'function buildLayer(name,count,filter="")' in js
+    assert 'KLASY BONITACYJNE A2' in js
     assert 'state.hiddenLandUses.has(feature.landUse||"")' in js
 
     node=shutil.which("node")
@@ -96,11 +99,11 @@ const b=source.indexOf('  function isInView(',a);
 assert.ok(a>=0&&b>a);
 const state={
  visibleLayers:new Set(['Użytki','Użytki Leśne']),
- hiddenLandUses:new Set(['r']),hiddenGrades:new Set(['LsV'])
+ hiddenLandUses:new Set(['rv']),hiddenGrades:new Set(['LsV'])
 };
 const visible=new Function('state',source.slice(a,b)+'return isVisible;')(state);
-assert.equal(visible({layer:'Użytki',landUse:'r',grade:null}),false);
-assert.equal(visible({layer:'Użytki',landUse:'ps',grade:null}),true);
+assert.equal(visible({layer:'Użytki',landUse:'rv',grade:null}),false);
+assert.equal(visible({layer:'Użytki',landUse:'psiv',grade:null}),true);
 assert.equal(visible({layer:'Użytki Leśne',grade:'LsV'}),false);
 assert.equal(visible({layer:'Użytki Leśne',grade:'LsVI'}),true);
 state.hiddenLandUses.clear();
