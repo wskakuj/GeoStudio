@@ -20,6 +20,7 @@ from .data import (
 )
 from .underlay_wms import list_layers as wms_layers, map_png as wms_map_png
 from .underlay_raster import prepare_geotiff, fit_gcp_payload, MAX_RASTER_BYTES
+from .underlay_crs import verified_prj_epsg, convert_point, MAX_PRJ
 from starlette.concurrency import run_in_threadpool
 import json
 
@@ -201,6 +202,27 @@ def create_app(workspace: PreviewWorkspace | None = None) -> FastAPI:
         if not isinstance(payload, dict):
             raise HTTPException(400, "Oczekiwano obiektu JSON.")
         return payload
+
+    @app.post("/api/underlay/crs/prj")
+    async def underlay_read_prj(request: Request):
+        """Verify an explicitly supplied WKT .prj; never guess CRS from X/Y."""
+        if not state.metadata().get("loaded"):
+            raise HTTPException(409,"Najpierw otwórz mapę MAP.")
+        raw=await receive(request,MAX_PRJ)
+        try:
+            return {"epsg":verified_prj_epsg(raw)}
+        except ValueError as exc:
+            raise HTTPException(400,str(exc)) from exc
+
+    @app.get("/api/underlay/crs/point")
+    async def underlay_transform_point(x: float, y: float,
+                                        source: int, target: int):
+        if not state.metadata().get("loaded"):
+            raise HTTPException(409,"Najpierw otwórz mapę MAP.")
+        try:
+            return await run_in_threadpool(convert_point,x,y,source,target)
+        except (ValueError,TypeError) as exc:
+            raise HTTPException(400,str(exc)) from exc
 
     @app.post("/api/underlay/gcp")
     async def underlay_calibrate_gcp(request: Request):
