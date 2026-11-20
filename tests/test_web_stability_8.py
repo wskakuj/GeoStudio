@@ -265,7 +265,7 @@ def test_local_viewport_uses_candidate_index_without_scanning_all_objects():
                        [(x,0),(x,10),(x+10,10),(x+10,0)])
     ws=PreviewWorkspace()
     ws.load_map(builder.build(),"huge.MAP")
-    bounds=(-5.,-50.,15.,5.)
+    bounds=(-5.,-15.,15.,5.)
     expected=[entry.fid for entry in ws._entries
               if (entry.bbox[0]<=bounds[2] and
                   entry.bbox[2]>=bounds[0] and
