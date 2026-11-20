@@ -15,7 +15,7 @@
     <header class="topbar">
       <div class="identity">
         <div class="mark" aria-hidden="true"><span></span><span></span><span></span></div>
-        <div><strong>GeoStudio</strong><span class="brand-version">2.0 <em>ETAP 9 · MAGNES + ETYKIETY — TEST</em></span></div>
+        <div><strong>GeoStudio</strong><span class="brand-version">2.0 <em>ETAP 10A · OPISY I SKALA — TEST</em></span></div>
       </div>
       <div class="header-center"><span class="top-kicker">OBSZAR ROBOCZY</span>
         <span id="document-title">Nowy projekt</span>
@@ -51,7 +51,8 @@
           <button class="tool-button active" id="tool-select"><span class="tool-glyph">↖</span>Zaznacz <small>S</small></button>
           <button class="tool-button" id="tool-pan"><span class="tool-glyph">✥</span>Przesuń <small>H</small></button>
           <button class="tool-button" id="tool-move" title="Przeciągaj wybrane poligony (M)"><span class="tool-glyph">✥</span>Obiekty <small>M</small></button>
-          <button class="tool-button" id="tool-move-offset" title="Dokładne przesunięcie zaznaczenia (Ctrl+Shift+M)"><span class="tool-glyph">⊞</span>Δ X/Y</button>
+          <!-- Legacy numeric move retains the API but is intentionally not part of the UI. -->
+          <button id="tool-move-offset" type="button" hidden style="display:none" aria-hidden="true" tabindex="-1">Δ X/Y</button>
           <button class="tool-button" id="tool-nodes" title="Edycja węzłów poligonu (P)"><span class="tool-glyph">⬡</span>Węzły <small>P</small></button>
           <button class="tool-button" id="tool-advanced-select" title="Zaznacz według kodu i atrybutów (Ctrl+H)"><span class="tool-glyph">⌕</span>Filtruj <small>Ctrl+H</small></button>
           <button class="tool-button" id="tool-bulk-edit" disabled title="Zmień A1/A2 wielu zaznaczonych obiektów"><span class="tool-glyph">✎</span>Zbiorowo <small>A1/A2</small></button>
@@ -73,6 +74,8 @@
         <div class="tool-row">
           <span id="cartography-status" class="section-label" title="Załadowane biblioteki kartograficzne">Brak bibliotek</span>
           <button class="tool-button active" id="tool-labels"><span class="tool-glyph">Aa</span>Etykiety</button>
+          <button class="tool-button" id="tool-label-move" title="Przesuwanie pojedynczych opisów A1/A2/TX myszą (tryb L)"><span class="tool-glyph">↗</span>Przesuń napisy <small>L</small></button>
+          <button class="tool-button" id="tool-label-config" title="Ustaw widoczność, rozmiar i kolor osobno dla A1/A2 według kodu (Ctrl+Alt+L)"><span class="tool-glyph">Aa</span>Styl opisów</button>
           <button class="tool-button" id="tool-grid"><span class="tool-glyph">▦</span>Siatka</button>
         </div>
       </div>
@@ -127,8 +130,21 @@
           <button id="float-minus" class="floating" title="Oddal">−</button>
           <button id="float-fit" class="floating" title="Dopasuj mapę">⛶</button>
         </div>
-        <div class="map-scale-box" id="map-scale-box"><span class="north-rose">N <b>▲</b></span><span id="scale-label">Skala podglądu: —</span></div>
-        <div class="map-bottom-left"><span class="coordinate-dot"></span><span id="cursor-coords">X: — &nbsp; Y: —</span></div>
+        <div class="map-scale-box" id="map-scale-box">
+          <span class="north-rose">N <b>▲</b></span>
+          <label class="scale-control">Widok
+            <input id="view-scale" type="text" list="scale-presets" value="1:5000" title="Przybliżona skala widoku 1:N (Ctrl+M). Enter zatwierdza.">
+          </label>
+          <datalist id="scale-presets"><option value="1:500"><option value="1:1000"><option value="1:2000"><option value="1:5000"><option value="1:10000"><option value="1:25000"></datalist>
+          <label class="scale-control">Opracowanie
+            <input id="compilation-scale" type="text" list="compilation-presets" value="1:5000" title="Skala opracowania 1:N (Ctrl+F5). Zmienia wielkość etykiet, nie współrzędne.">
+          </label>
+          <datalist id="compilation-presets"><option value="1:500"><option value="1:1000"><option value="1:2000"><option value="1:5000"><option value="1:10000"></datalist>
+          <span id="scale-label" hidden>—</span>
+        </div>
+        <div class="map-bottom-left" title="Współrzędne GEO-MAP: X — północ, Y — wschód; jednostki mapy w metrach. Brak zgadywania EPSG.">
+          <span class="coordinate-dot"></span><span id="cursor-coords">X: —  Y: —</span><small>X / Y GEO-MAP</small>
+        </div>
         <div class="map-bottom-right" id="render-hint">Odczyt geometrii GEO-MAP</div>
         <div class="geometry-help" id="geometry-help" hidden>Tryb P: kliknij węzeł, następnie Delete, aby go usunąć; przeciągnij, żeby przesunąć; dwuklik na krawędzi dodaje punkt.</div>
         <div id="empty-state" class="empty-state">
@@ -417,6 +433,32 @@
         <button id="split-back" type="button" class="button ghost">Popraw linię</button>
         <button id="split-preview" type="button" class="button ghost">Sprawdź podział</button>
         <button id="split-apply" type="submit" class="button primary" disabled>Podziel poligon</button>
+      </div>
+    </form>
+  </dialog>
+  <dialog id="label-settings-dialog" class="advanced-select-dialog bulk-dialog">
+    <form id="label-settings-form" autocomplete="off">
+      <div class="select-head">
+        <div><div class="eyebrow">ETAP 10A · KARTOGRAFIA</div><h2>Wygląd opisów według kodu</h2></div>
+        <button id="label-settings-close" type="button" class="select-close" aria-label="Zamknij">×</button>
+      </div>
+      <div class="select-content">
+        <p class="select-explain">A1 i A2 są niezależne. Te ustawienia obowiązują dla wszystkich obiektów danego kodu w GeoStudio. Położenie pojedynczego napisu zmienisz narzędziem L.</p>
+        <div class="select-grid">
+          <div><label for="label-settings-code">Kod GEO-MAP</label><input id="label-settings-code" type="text" maxlength="4" pattern="[0-9]{4}" required value="5310"></div>
+          <div><label for="label-settings-field">Pole opisu</label><select id="label-settings-field">
+            <option value="A1">A1</option><option value="A2">A2</option><option value="TX">TX</option>
+          </select></div>
+          <div><label for="label-settings-size">Wielkość etykiety</label><input id="label-settings-size" type="number" min="8" max="36" step="1" value="16" required></div>
+          <div><label for="label-settings-color">Kolor</label><input id="label-settings-color" type="color" value="#CC202C"></div>
+        </div>
+        <label class="bulk-checkbox-line"><input type="checkbox" id="label-settings-visible" checked> Pokaż ten opis</label>
+        <label class="bulk-checkbox-line"><input type="checkbox" id="label-settings-bold" checked> Pogrubienie</label>
+        <p class="select-preview" id="label-settings-summary" role="status">Ustawienia nie zmieniają natywnego MAP; zapisują się w pliku stylów.</p>
+      </div>
+      <div class="select-actions">
+        <button id="label-settings-cancel" type="button" class="button ghost">Anuluj</button>
+        <button id="label-settings-save" type="submit" class="button primary">Zastosuj styl</button>
       </div>
     </form>
   </dialog>
