@@ -4633,8 +4633,8 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
     const tileWidth=2048,tileHeight=2048;
     const columns=Math.ceil(options.fullWidth/tileWidth);
     const rows=Math.ceil(options.fullHeight/tileHeight);
-    if(columns*rows>256)
-      throw Error("Pojedynczy TIFF wymaga ponad 256 fragmentów. "+
+    if(columns*rows>1024)
+      throw Error("Pojedynczy TIFF wymaga ponad 1024 fragmentów. "+
         "Zmniejsz zakres lub DPI.");
     const centerX=(options.bounds[0]+options.bounds[2])/2;
     const centerY=(options.bounds[1]+options.bounds[3])/2;
