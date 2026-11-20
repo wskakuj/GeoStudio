@@ -71,6 +71,24 @@ def _display_name(value: str) -> str:
     return Path(str(value).replace("\\", "/")).name[:160] or "Mapa.MAP"
 
 
+def _web_forest_class_value(obj) -> str | None:
+    """GEO-MAP browser classification: Ls grades from 5220 or 5230 A2/A1.
+
+    Keep the classic Qt scene builder's old classifier unchanged. A2 holds
+    the bonitation grade (LsVI), A1 may hold only generic Ls.
+    """
+    if obj.code not in {"5220", "5230"}:
+        return None
+    for field in ("A2", "A1"):
+        value = re.sub(r"\s+", "", str(obj.fields.get(field, "") or ""))
+        if re.fullmatch(r"Ls(?:[IVX]+[a-d]?)?", value, re.IGNORECASE):
+            suffix = value[2:]
+            roman = re.match(r"[ivx]*", suffix, re.IGNORECASE).group(0)
+            return "Ls" + roman.upper() + suffix[len(roman):].lower()
+    return None
+
+
+
 @dataclass(frozen=True)
 class _Entry:
     fid: str
@@ -177,7 +195,7 @@ class PreviewWorkspace:
                 continue
             xs = [p.x for p in obj.points]
             ys = [p.y for p in obj.points]
-            grade = forest_class_value(obj)
+            grade = _web_forest_class_value(obj)
             layer = "Użytki Leśne" if grade else CODES.get(obj.code, "Kod " + obj.code)
             fid = "f" + str(ix)
             bbox = (min(ys), -max(xs), max(ys), -min(xs))
