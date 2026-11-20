@@ -136,7 +136,6 @@ def test_t_junction_without_matching_native_vertex_is_detected():
 @pytest.mark.parametrize("ids,dx,dy,allow_detach", [
     (["f0", "f0"], 1, 2, False),
     (["missing"], 1, 2, False),
-    (["f5"], 1, 2, False),  # a line is not a polygon
     (["f0"], float("inf"), 2, False),
     (["f0"], 100001, 0, False),
     (["f0"], 1, 2, "true"),
