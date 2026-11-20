@@ -104,9 +104,9 @@ assert.ok(!src.includes('state.exportFontRatio=options.dpi/96'));
 """)
 
 
-def test_navigation_preview_never_scales_old_labels_as_geometry():
+def test_navigation_does_not_resample_previous_bitmap():
     source=(STATIC/"map.js").read_text(encoding="utf-8")
-    begin=source[source.index("  function beginNavigationPreview()"):source.index(
-        "  function drawNavigationPreview()")]
-    assert "if(!state.geometrySnapshotValid)return;" in begin
-    assert "snapshotContext.drawImage(canvas,0,0);" not in begin
+    assert "function beginNavigationPreview()" not in source
+    assert "function drawNavigationPreview()" not in source
+    assert "snapshotContext.drawImage(canvas,0,0);" not in source
+    assert "renderScreenLabels(features)" in source
