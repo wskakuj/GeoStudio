@@ -111,3 +111,56 @@ assert.equal(visible({layer:'Użytki',landUse:'r',grade:null}),false);
     result=subprocess.run([node,"-e",script],cwd=root,capture_output=True,
                           text=True,timeout=20)
     assert result.returncode==0,result.stdout+result.stderr
+
+
+def test_native_appearance_preference_survives_map_open_and_restart(tmp_path):
+    from geostudio.web_app.native_picker import (
+        read_appearance_preference,save_appearance_preference,
+        save_last_map_directory,read_last_map_directory,
+    )
+    settings=tmp_path/"GeoStudio2"/"preferences.json"
+    maps=tmp_path/"mapy"
+    maps.mkdir()
+    assert read_appearance_preference(settings)=={
+        "theme":"dark","mapBackground":"#FFFFFF"
+    }
+    assert save_appearance_preference(settings,"light","#e5e7eb")=={
+        "theme":"light","mapBackground":"#E5E7EB"
+    }
+    save_last_map_directory(settings,maps)
+    assert read_appearance_preference(settings)=={
+        "theme":"light","mapBackground":"#E5E7EB"
+    }
+    assert read_last_map_directory(settings)==str(maps)
+    save_appearance_preference(settings,"dark","#ffffff")
+    assert read_last_map_directory(settings)==str(maps)
+    with pytest.raises(ValueError,match="kolor"):
+        save_appearance_preference(settings,"light","rgb(1,2,3)")
+
+
+def test_appearance_api_stays_local_authenticated_and_does_not_touch_map(
+        tmp_path,monkeypatch):
+    from fastapi.testclient import TestClient
+    from geostudio.web_app.server import create_app
+    prefs=tmp_path/"prefs.json"
+    monkeypatch.setattr("geostudio.web_app.server.preference_file",lambda:prefs)
+    ws=PreviewWorkspace()
+    original=fixture_map()
+    ws.load_map(original,"untouched.MAP")
+    app=create_app(ws)
+    with TestClient(app) as client:
+        token={"X-GeoStudio-Token":app.state.api_token}
+        assert client.get("/api/appearance").status_code==403
+        assert client.post("/api/appearance",
+            json={"theme":"light","mapBackground":"#f1f4f6"}).status_code==403
+        result=client.post("/api/appearance",headers=token,
+            json={"theme":"light","mapBackground":"#f1f4f6"})
+        assert result.status_code==200,result.text
+        assert result.json()["mapBackground"]=="#F1F4F6"
+        assert client.get("/api/appearance",headers=token).json()=={
+            "theme":"light","mapBackground":"#F1F4F6"
+        }
+        assert client.post("/api/appearance",headers=token,
+            json={"theme":"light","mapBackground":"red"}).status_code==400
+    doc=ws.editing_status()["documentToken"]
+    assert ws.export_copy(doc)[1]==original
