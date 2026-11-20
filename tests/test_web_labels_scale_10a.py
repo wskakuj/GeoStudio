@@ -211,7 +211,7 @@ def test_stale_frame_is_retained_during_zoom_and_pan():
         "function drawNavigationPreview()",
         "if(drawNavigationPreview()){",
         "state.geometrySnapshotValid=true;",
-        "renderLabels(state.features.filter",
+        "renderScreenLabels(state.features.filter",
         "snapshotContext.drawImage(canvas,0,0);",
         "state.previewActive=false;state.previewCamera=null;"
     ):
