@@ -638,7 +638,7 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
     const select=$("outline-style-code");
     const last=select.value;
     select.replaceChildren();
-    const supported=new Set(["5216","5220","5230","5310",
+    const supported=new Set(["5214","5216","5220","5230","5310",
       ...Object.keys(state.meta.codes||{})]);
     for(const code of [...supported].sort())
       select.add(new Option(code+" · "+
@@ -1791,7 +1791,7 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
     }
     const feature=state.features.find(f=>f.id===ids[0]);
     if(!feature||feature.closed){
-      inform("Zaznacz istniejącą linię 6900/6000/6301/2364, nie poligon.",true);
+      inform("Zaznacz istniejącą linię 5214 (obręb), 6900 lub innego kodu linii.",true);
       return;
     }
     state.lineEditId=ids[0];
