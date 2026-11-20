@@ -1,8 +1,9 @@
 """Classify forest land-use objects without changing source GEO-MAP records.
 
-GEO-MAP forest bonitation may be recorded in A2 (LsV, LsVI) while A1
-only says "Ls". Prefer the more specific A2 grade, with A1 as fallback,
-for both 5220 and 5230. Other codes stay untouched.
+A1 is the land-use classification on 5230 (e.g. Ls, LsV or LsVI).
+Some source maps store the same notation in A2; accept it as a fallback
+only when A1 is not a forest classification. Do not turn roads or other
+5230 land uses into forests.
 """
 from __future__ import annotations
 
@@ -14,12 +15,9 @@ FILTER_KEY = "forest-class-visibility"
 
 def forest_class_value(obj) -> str | None:
     """Normalize Ls/roman-grade subclass while preserving useful display case."""
-    # Both 5220 and 5230 can carry land-use records in imported MAPs.
-    # Forest grade belongs to the forest layer regardless of which
-    # of these codes contains the Ls/roman-class notation.
-    if obj.code not in {"5220", "5230"}:
+    if obj.code != "5230":
         return None
-    for field in ("A2", "A1"):
+    for field in ("A1", "A2"):
         value = re.sub(r"\s+", "", str(obj.fields.get(field, "") or ""))
         if re.fullmatch(r"Ls(?:[IVX]+[a-d]?)?", value, re.IGNORECASE):
             suffix = value[2:]
