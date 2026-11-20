@@ -2365,7 +2365,8 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
   // Non-modal visual calibration follows the classic Qt workflow:
   // raster pixel click -> matching map click -> 3+ pairs -> affine RMSE.
   const gcpView={waiting:false,pending:null,zoom:1,panX:0,panY:0,
-    dragging:null,open:false};
+    dragging:null,mapDragging:null,consumeMapUp:null,activeIndex:null,
+    fitSerial:0,open:false};
   function gcpCanvasLayout(){
     const canvas=$("raster-gcp-canvas");
     const w=Math.max(250,canvas.clientWidth||450);
@@ -2394,6 +2395,34 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
     gcpView.panY+=y-(after.top+v*after.scale);
     drawGcpCanvas();
   }
+  function gcpScreenToSource(x,y){
+    const p=gcpCanvasLayout(),img=raster.image;
+    return {u:(x-p.left)/p.scale*(raster.sourceWidth||img.width)/img.width,
+            v:(y-p.top)/p.scale*(raster.sourceHeight||img.height)/img.height};
+  }
+  function gcpSourceToScreen(pt){
+    const p=gcpCanvasLayout(),img=raster.image;
+    return {x:p.left+pt.u*p.scale*img.width/(raster.sourceWidth||img.width),
+            y:p.top+pt.v*p.scale*img.height/(raster.sourceHeight||img.height)};
+  }
+  function gcpNearestRasterPoint(x,y){
+    let index=-1,best=12*12;
+    raster.gcps.forEach((point,i)=>{
+      const pos=gcpSourceToScreen(point);
+      const d=(pos.x-x)**2+(pos.y-y)**2;
+      if(d<=best){best=d;index=i;}
+    });
+    return index;
+  }
+  function gcpNearestMapPoint(x,y){
+    let index=-1,best=13*13;
+    raster.gcps.forEach((point,i)=>{
+      const pos=worldToScreen(point.y,-point.x);
+      const d=(pos.x-x)**2+(pos.y-y)**2;
+      if(d<=best){best=d;index=i;}
+    });
+    return index;
+  }
   function drawGcpCanvas(){
     if(!raster.image)return;
     const canvas=$("raster-gcp-canvas");
@@ -2421,15 +2450,22 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
     }
   }
   function updateGcpUi(message){
-    $("raster-pick-map").disabled=!gcpView.pending;
+    $("raster-gcp-cancel").disabled=!gcpView.pending;
     $("raster-gcp-apply").disabled=raster.gcps.length<3;
     $("raster-gcp-undo").disabled=!raster.gcps.length;
     $("raster-visual-status").textContent=message||
-      (gcpView.waiting?"Kliknij odpowiednik na mapie (poza oknem kalibracji).":
+      (gcpView.waiting?"Teraz kliknij odpowiednik na mapie lub zmień punkt na obrazie.":
       raster.gcps.length+" par. Kliknij kolejny punkt na obrazie.");
     const list=$("raster-gcp-pairs");list.replaceChildren();
     for(const [i,pt] of raster.gcps.entries()){
-      const item=document.createElement("span");item.className="gcp-pair-tag";
+      const item=document.createElement("button");item.type="button";
+      item.className="gcp-pair-tag";
+      item.classList.toggle("selected",i===gcpView.activeIndex);
+      item.title="Przeciągnij punkt na rastrze lub mapie";
+      item.addEventListener("click",()=>{
+        gcpView.activeIndex=i;gcpView.pending=null;gcpView.waiting=false;
+        updateGcpUi("Przeciągnij zaznaczony punkt "+(i+1)+" na obrazie lub mapie.");
+      });
       item.textContent=(i+1)+". raster "+
         Math.round(pt.u)+","+Math.round(pt.v)+" ↔ mapa "+
         pt.x.toFixed(2)+","+pt.y.toFixed(2);
@@ -2441,6 +2477,7 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
     if(!raster.image){inform("Najpierw dodaj obraz rastra.",true);return;}
     if($("raster-dialog").open)$("raster-dialog").close();
     gcpView.open=true;gcpView.waiting=false;gcpView.pending=null;
+    gcpView.activeIndex=null;gcpView.dragging=null;gcpView.mapDragging=null;
     gcpView.zoom=1;gcpView.panX=0;gcpView.panY=0;
     // show(), not showModal(): the MAP behind the window must receive
     // the second click without closing the calibration workspace.
@@ -2449,6 +2486,8 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
   }
   function closeVisualCalibration(){
     gcpView.waiting=false;gcpView.pending=null;gcpView.open=false;
+    gcpView.activeIndex=null;gcpView.mapDragging=null;gcpView.dragging=null;
+    gcpView.consumeMapUp=null;gcpView.fitSerial++;
     if($("raster-visual-dialog").open)$("raster-visual-dialog").close();
     requestDraw();
   }
