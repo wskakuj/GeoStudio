@@ -2458,7 +2458,7 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
   // raster pixel click -> matching map click -> 3+ pairs -> affine RMSE.
   const gcpView={waiting:false,pending:null,zoom:1,panX:0,panY:0,
     dragging:null,mapDragging:null,consumeMapUp:null,activeIndex:null,
-    fitSerial:0,open:false};
+    fitSerial:0,recalibrationActive:false,open:false};
   function gcpCanvasLayout(){
     const canvas=$("raster-gcp-canvas");
     const w=Math.max(250,canvas.clientWidth||450);
@@ -2570,6 +2570,7 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
     if(!raster.image){inform("Najpierw dodaj obraz rastra.",true);return;}
     if($("raster-dialog").open)$("raster-dialog").close();
     gcpView.open=true;gcpView.waiting=false;gcpView.pending=null;
+    gcpView.recalibrationActive=!!raster.affine;
     gcpView.activeIndex=null;gcpView.dragging=null;gcpView.mapDragging=null;
     gcpView.zoom=1;gcpView.panX=0;gcpView.panY=0;
     // show(), not showModal(): the MAP behind the window must receive
@@ -2643,6 +2644,7 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
       if(serial!==gcpView.fitSerial||ticket!==raster.ticket||
          imageId!==raster.id||documentToken!==state.edit?.documentToken)return;
       raster.affine=result.coefficients;
+      gcpView.recalibrationActive=true;
       raster.epsg=null; // visual GCP calibrates against native MAP XY.
       raster.boundEPSG=state.mapEPSG;
       raster.visible=true;raster.pendingWorld=null;
@@ -2661,7 +2663,12 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
   }
   function finishGcpAdjustment(){
     gcpView.fitSerial++;
-    if(raster.gcps.length>=3&&raster.affine){
+    if(raster.gcps.length>=3&&
+       (raster.affine||gcpView.recalibrationActive)){
+      gcpView.recalibrationActive=true;
+      // Never show the old geographic positioning after moving a GCP:
+      // keep the raster hidden until the new affine is verified.
+      raster.affine=null;
       updateGcpUi("Aktualizuję transformację po przesunięciu punktu…");
       applyVisualGCP(true);
     }else if(raster.gcps.length<3&&raster.affine){
