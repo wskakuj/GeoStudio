@@ -3988,10 +3988,59 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
     const denominator=Math.round(cssPixelsPerGroundMetre/state.scale);
     if(Number.isFinite(denominator)&&denominator>=10&&denominator<=100000000)
       $("layout-scale").value=denominator;
+    if(!$("layout-legend-rows").value.trim())
+      $("layout-legend-rows").value=(state.meta.layers||[])
+        .filter(layer=>state.visibleLayers.has(layer.name))
+        .slice(0,40).map(layer=>layer.name+" | "+colorForLayer(layer.name))
+        .join("\n");
     $("layout-summary").textContent=
-      "Obraz ma rzeczywistą rozdzielczość dla wybranej skali i DPI. " +
-      "Przy drukowaniu ustaw 100% rozmiaru strony, bez dopasowania.";
+      "PDF wektorowy obsługuje A0–A4 niezależnie od DPI. " +
+      "Drukuj w skali 100%, bez dopasowywania do strony.";
     $("layout-dialog").showModal();
+  }
+  function pdfLayoutOptions(){
+    const bounds=$("layout-scope").value==="all"
+      ?[...state.meta.bounds]:boundsFromViewport(0);
+    const denominator=Number($("layout-scale").value);
+    if(!Number.isInteger(denominator)||denominator<10||denominator>100000000)
+      throw Error("Nieprawidłowy mianownik skali PDF.");
+    const parseRows=(id,kind,max)=>{
+      const text=$(id).value.trim();
+      if(!text)return [];
+      const lines=text.split(/\r?\n/).map(x=>x.trim()).filter(Boolean);
+      if(lines.length>max)throw Error("Zbyt wiele wierszy w sekcji "+kind+".");
+      return lines.map((line,i)=>{
+        const split=line.indexOf("|");
+        if(split<0)throw Error("Wiersz "+(i+1)+" sekcji "+kind+
+          ": użyj formatu Nazwa | wartość.");
+        const first=line.slice(0,split).trim().slice(0,70);
+        const second=line.slice(split+1).trim().slice(0,120);
+        if(kind==="legenda"){
+          if(!/^#[0-9a-fA-F]{6}$/.test(second))
+            throw Error("Wiersz "+(i+1)+": kolor legendy musi mieć postać #RRGGBB.");
+          return {name:first,color:second};
+        }
+        return {label:first,value:second};
+      });
+    };
+    const frameWidthMm=Number($("layout-frame-width").value);
+    if(!Number.isFinite(frameWidthMm)||frameWidthMm<.1||frameWidthMm>2.5)
+      throw Error("Grubość ramki: od 0,1 do 2,5 mm.");
+    return {
+      format:"pdf",bounds,denominator,
+      paper:$("layout-paper").value,
+      orientation:$("layout-orientation").value,
+      title:$("layout-title").value.trim().slice(0,100)||"Mapa GEO-MAP",
+      frame:$("layout-frame").checked,
+      frameColor:$("layout-frame-color").value,
+      frameWidthMm,
+      north:$("layout-north").checked,
+      scaleBar:$("layout-scalebar").checked,
+      showLegend:$("layout-legend").checked,
+      legendRows:parseRows("layout-legend-rows","legenda",40),
+      tableRows:parseRows("layout-table-rows","tabela",8),
+      visibleLayers:[...state.visibleLayers]
+    };
   }
   function layoutOptions(){
     const source=$("layout-scope").value==="all"
@@ -4374,8 +4423,10 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
     if(!state.meta||!state.edit||state.editBusy)return;
     const button=$("layout-export"),printButton=$("layout-print");
     let options;
-    try{options=layoutOptions();}
-    catch(error){exportInfo(error.message);inform(error.message,true);return;}
+    try{
+      options=$("layout-format").value==="pdf"
+        ?pdfLayoutOptions():layoutOptions();
+    }catch(error){exportInfo(error.message);inform(error.message,true);return;}
     if(print&&options.format==="dxf"){
       inform("Druk wymaga obrazu. Wybierz PNG, JPG lub TIFF.",true);return;
     }
@@ -4384,7 +4435,27 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
       const basename=state.meta.name.replace(/\.map$/i,"")
         .replace(/[^a-zA-Z0-9\p{L}\p{N}._ -]+/gu,"_").slice(0,90)||
         "GeoStudio";
-      if(!print&&options.format==="dxf"){
+      if(options.format==="pdf"){
+        exportInfo("Generowanie wektorowego PDF z mapą, legendą i ramką…");
+        const response=await fetch("/api/export/pdf",{
+          method:"POST",
+          headers:{"X-GeoStudio-Token":token,
+                   "Content-Type":"application/json"},
+          body:JSON.stringify({
+            documentToken:state.edit.documentToken,options
+          }),
+          cache:"no-store"
+        });
+        if(!response.ok){
+          const data=await response.json().catch(()=>({}));
+          throw Error(data.detail||"Nie można wygenerować arkusza PDF.");
+        }
+        const ok=await downloadLayoutFile(await response.blob(),
+          basename+"_arkusz.pdf");
+        if(!ok){exportInfo("Anulowano zapis PDF.");return;}
+        if(print)inform("Zapisano wektorowy PDF. Otwórz go i drukuj "+
+          "w rozmiarze 100% bez dopasowania do papieru.");
+      }else if(!print&&options.format==="dxf"){
         exportInfo("Generowanie edytowalnego DXF…");
         const query=new URLSearchParams({
           documentToken:state.edit.documentToken});
