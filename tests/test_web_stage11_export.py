@@ -169,5 +169,5 @@ def test_dxf_http_auth_and_web_controls():
                  "layout-north", "layout-scalebar", "layout-export"):
         assert 'id="' + name + '"' in html
     for phrase in ("renderLayoutCanvas(", "makeRGBTiff(", "/api/export/dxf",
-                   "geometrySnapshotValid", "renderLabels(visible)"):
+                   "geometrySnapshotValid", "renderLabels(visible,collisions)"):
         assert phrase in js
