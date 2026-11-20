@@ -3714,11 +3714,10 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
       const w=(box[2]-box[0])*state.scale;
       const h=(box[3]-box[1])*state.scale;
       const sheet=["7900","6900","6000","6301"].includes(feature.code);
-      if(!selected&&!sheet){
-        if(feature.code==="5310"){
-          if(Math.max(w,h)<14)continue;
-        }else if(Math.max(w,h)<32||Math.min(w,h)<8)continue;
-      }
+      // 5310 A1 and A2 are mandatory descriptions. Never discard them
+      // because of zoom, a neighboring building or a sheet annotation.
+      if(!selected&&!sheet&&feature.code!=="5310"&&
+         (Math.max(w,h)<32||Math.min(w,h)<8))continue;
       // A1 and A2 are TWO draggable labels with separate collision boxes.
       // Only their *default* vertical positions are stacked for legibility.
       const stack=feature.code==="5310"?feature.labels.filter(
@@ -3733,7 +3732,9 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
         stackHeight+=height;
       }
       for(const label of feature.labels){
-        if(painted>=(state.exporting?8000:1400)){ctx.restore();return;}
+        const mandatory5310=feature.code==="5310"&&
+          (label.field==="A1"||label.field==="A2");
+        if(!mandatory5310&&painted>=(state.exporting?8000:1400))continue;
         const size=labelFontSize(feature,label,selected);
         if(!size)continue;
         const font=(label.bold?"700":"400")+" "+size+"px '"+
@@ -3759,7 +3760,7 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
         // Keep A1 and A2 of the SAME feature together, but never let
         // descriptions of DIFFERENT features overwrite one another.
         // Culling is essential for dense 5310 areas and for export.
-        if(!selected&&overlapsAnother(feature.id,rect))continue;
+        if(!mandatory5310&&!selected&&overlapsAnother(feature.id,rect))continue;
         const collision={fid:feature.id,rect};
         collisions.push(collision);indexCollision(collision);
         if(!state.exporting&&(selected||state.tool==="labels")&&
