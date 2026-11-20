@@ -2805,6 +2805,337 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
     if(now)refreshViewport();
     else state.refreshTimer=setTimeout(refreshViewport,100);
   }
+
+  // Stage 11: screen layout uses its own physical print scale, independent
+  // of the editing camera. Work with bounded viewport pages even on big MAPs.
+  function openLayoutDialog(){
+    if(!state.meta||!state.edit)return;
+    $("layout-title").value=state.meta.name.replace(/\.map$/i,"");
+    const denominator=Math.round(cssPixelsPerGroundMetre/state.scale);
+    if(Number.isFinite(denominator)&&denominator>=10&&denominator<=100000000)
+      $("layout-scale").value=denominator;
+    $("layout-summary").textContent=
+      "Obraz ma rzeczywistą rozdzielczość dla wybranej skali i DPI. " +
+      "Przy drukowaniu ustaw 100% rozmiaru strony, bez dopasowania.";
+    $("layout-dialog").showModal();
+  }
+  function layoutOptions(){
+    const source=$("layout-scope").value==="all"
+      ?state.meta.bounds:boundsFromViewport(0);
+    const bounds=[...source];
+    if(bounds.some(value=>!Number.isFinite(value))||
+       bounds[2]<=bounds[0]||bounds[3]<=bounds[1])
+      throw Error("Nieprawidłowy obszar mapy.");
+    const denominator=Number($("layout-scale").value);
+    if(!Number.isInteger(denominator)||denominator<10||
+       denominator>100000000)
+      throw Error("Mianownik skali musi mieścić się w zakresie 10–100000000.");
+    const dpi=Number($("layout-dpi").value);
+    if(![96,150,300].includes(dpi))
+      throw Error("Wybierz poprawną rozdzielczość.");
+    const pxPerUnit=dpi/(.0254*denominator);
+    const width=Math.ceil((bounds[2]-bounds[0])*pxPerUnit);
+    const height=Math.ceil((bounds[3]-bounds[1])*pxPerUnit);
+    if(width<1||height<1)throw Error(
+      "Obiekt jest za mały dla tej skali i DPI. Użyj większej skali.");
+    const mm=value=>Math.round(value*dpi/25.4);
+    const margin=mm(13),head=mm(20),foot=mm(21);
+    const legend=$("layout-legend").checked?mm(52):0;
+    const fullWidth=width+margin*2+legend;
+    const fullHeight=height+head+foot;
+    if(fullWidth>12000||fullHeight>12000||
+       fullWidth*fullHeight>40000000)
+      throw Error("Arkusz byłby zbyt duży ("+fullWidth+" × "+
+        fullHeight+" px). Zmniejsz DPI, zwiększ mianownik skali "+
+        "lub wybierz bieżący widok.");
+    return {
+      bounds,denominator,dpi,pxPerUnit,width,height,margin,head,foot,
+      legend,fullWidth,fullHeight,
+      title:$("layout-title").value.trim().slice(0,100)||"Mapa GEO-MAP",
+      frame:$("layout-frame").checked,north:$("layout-north").checked,
+      scaleBar:$("layout-scalebar").checked,
+      showLegend:$("layout-legend").checked,
+      format:$("layout-format").value,
+    };
+  }
+  function exportInfo(message){$("layout-summary").textContent=message;}
+  async function forEachExportPage(bounds,callback){
+    const limit=4000;
+    let offset=0,expected=null;
+    for(;;){
+      const qs=new URLSearchParams({
+        xmin:bounds[0],ymin:bounds[1],xmax:bounds[2],ymax:bounds[3],
+        limit,offset
+      });
+      const data=await api("/api/viewport?"+qs.toString());
+      if(expected===null)expected=data.total;
+      if(data.total!==expected)
+        throw Error("Mapa zmieniła się podczas pobierania geometrii.");
+      if(!data.features.length&&offset<expected)
+        throw Error("Brak kolejnej partii geometrii.");
+      callback(data.features);
+      offset+=data.features.length;
+      if(offset>=expected)break;
+      if(offset>10000000)throw Error("Przekroczono zakres eksportu.");
+      await new Promise(resolve=>setTimeout(resolve,0));
+    }
+  }
+  function renderExportBatch(g,options,features,pass){
+    const previous={
+      ctx,center:state.center,scale:state.scale,
+      width:state.width,height:state.height,pixelRatio:state.pixelRatio,
+      exportFontRatio:state.exportFontRatio,labelHits:state.labelHits
+    };
+    ctx=g;
+    state.center={
+      x:(options.bounds[0]+options.bounds[2])/2,
+      y:(options.bounds[1]+options.bounds[3])/2
+    };
+    state.scale=options.pxPerUnit;
+    state.width=options.width;state.height=options.height;
+    state.pixelRatio=1;
+    state.exportFontRatio=options.dpi/96;
+    g.save();
+    try{
+      g.translate(options.margin,options.head);
+      g.beginPath();g.rect(0,0,options.width,options.height);g.clip();
+      const visible=features.filter(isVisible);
+      const priority={"5216":0,"5220":1,"5230":2,"5310":3,"1246":4};
+      visible.sort((a,b)=>(priority[a.code]??3)-(priority[b.code]??3));
+      if(pass==="fills")for(const item of visible)renderFill(item);
+      if(pass==="strokes")for(const item of visible)renderStroke(item);
+      if(pass==="labels")renderLabels(visible);
+    }finally{
+      g.restore();
+      ctx=previous.ctx;state.center=previous.center;
+      state.scale=previous.scale;state.width=previous.width;
+      state.height=previous.height;state.pixelRatio=previous.pixelRatio;
+      state.exportFontRatio=previous.exportFontRatio;
+      state.labelHits=previous.labelHits;
+    }
+  }
+  function paintLayoutFurniture(g,opts){
+    const ratio=opts.dpi/96;
+    const {margin,head,width,height,legend,denominator,dpi}=opts;
+    const x=margin,y=head,base=margin+width;
+    g.save();
+    g.fillStyle="#fff";g.strokeStyle="#25384d";
+    g.lineWidth=Math.max(1,ratio);
+    g.textBaseline="middle";
+    g.font="700 "+Math.round(17*ratio)+"px sans-serif";
+    g.fillStyle="#172c40";
+    g.fillText(opts.title,margin,head/2,Math.max(50,width*.83));
+    if(opts.north){
+      const nx=base-15*ratio,ny=head/2;
+      g.fillStyle="#172c40";
+      g.font="700 "+Math.round(14*ratio)+"px sans-serif";
+      g.textAlign="center";g.fillText("N",nx,ny-6*ratio);
+      g.beginPath();g.moveTo(nx,ny-4*ratio);
+      g.lineTo(nx-7*ratio,ny+9*ratio);
+      g.lineTo(nx+7*ratio,ny+9*ratio);g.closePath();g.fill();
+      g.textAlign="start";
+    }
+    if(opts.frame){
+      g.strokeStyle="#25384d";g.lineWidth=Math.max(1,ratio);
+      g.strokeRect(x,y,width,height);
+    }
+    const footerY=head+height+opts.foot*.42;
+    if(opts.scaleBar){
+      const aim=width*.24/opts.pxPerUnit;
+      const magnitude=Math.pow(10,Math.floor(Math.log10(Math.max(1e-8,aim))));
+      const distance=([1,2,5,10].filter(n=>n*magnitude<=aim).pop()||1)*magnitude;
+      const barPixels=distance*opts.pxPerUnit;
+      const start=margin+Math.max(0,(width-barPixels)/2);
+      const ty=footerY-6*ratio;
+      g.strokeStyle="#172c40";g.lineWidth=Math.max(1,ratio);
+      for(let i=0;i<2;i++){
+        g.fillStyle=i?"#fff":"#172c40";
+        g.fillRect(start+i*barPixels/2,ty,barPixels/2,5*ratio);
+        g.strokeRect(start+i*barPixels/2,ty,barPixels/2,5*ratio);
+      }
+      g.fillStyle="#172c40";
+      g.textAlign="center";g.font=Math.round(10*ratio)+"px sans-serif";
+      g.fillText("0",start,ty-7*ratio);
+      g.fillText(new Intl.NumberFormat("pl-PL",{maximumFractionDigits:2})
+        .format(distance/2),start+barPixels/2,ty-7*ratio);
+      g.fillText(new Intl.NumberFormat("pl-PL",{maximumFractionDigits:2})
+        .format(distance)+" m",start+barPixels,ty-7*ratio);
+      g.textAlign="start";
+    }
+    g.font=Math.round(10*ratio)+"px sans-serif";
+    g.fillStyle="#475569";
+    g.fillText("Skala 1:"+new Intl.NumberFormat("pl-PL").format(denominator)+
+      "  •  "+dpi+" DPI",margin,head+height+opts.foot*.83);
+    g.textAlign="right";
+    g.fillText("X/Y GEO-MAP • bez transformacji współrzędnych",
+      base,head+height+opts.foot*.83);
+    g.textAlign="start";
+    if(opts.showLegend&&legend){
+      const lx=base+8*ratio;
+      const list=state.meta.layers.filter(layer=>
+        state.visibleLayers.has(layer.name));
+      g.font="700 "+Math.round(13*ratio)+"px sans-serif";
+      g.fillStyle="#172c40";g.fillText("LEGENDA",lx,head+15*ratio);
+      g.font=Math.round(10*ratio)+"px sans-serif";
+      let ly=head+34*ratio;
+      for(const layer of list.slice(0,24)){
+        if(ly>head+height-12*ratio)break;
+        g.fillStyle=colorForLayer(layer.name);
+        g.fillRect(lx,ly-7*ratio,10*ratio,10*ratio);
+        g.strokeStyle="#44546a";g.lineWidth=ratio*.55;
+        g.strokeRect(lx,ly-7*ratio,10*ratio,10*ratio);
+        g.fillStyle="#25384d";
+        g.fillText(layer.name,lx+15*ratio,ly,
+          Math.max(45,legend-20*ratio));
+        ly+=21*ratio;
+      }
+      if(list.length>24)g.fillText("… i pozostałe warstwy",lx,ly);
+    }
+    g.restore();
+  }
+  async function renderLayoutCanvas(options){
+    const target=document.createElement("canvas");
+    target.width=options.fullWidth;target.height=options.fullHeight;
+    const g=target.getContext("2d",{willReadFrequently:options.format==="tiff"});
+    if(!g)throw Error("Nie można przygotować obrazu.");
+    g.fillStyle="#ffffff";g.fillRect(0,0,target.width,target.height);
+    const revision=state.edit?.revision;
+    const documentToken=state.edit?.documentToken;
+    for(const [pass,label] of [
+      ["fills","wypełnienia"],["strokes","linie"],["labels","etykiety"]
+    ]){
+      exportInfo("Eksport: "+label+"…");
+      await forEachExportPage(options.bounds,part=>
+        renderExportBatch(g,options,part,pass));
+      if(state.edit?.revision!==revision||
+         state.edit?.documentToken!==documentToken)
+        throw Error("Mapa została zmieniona podczas przygotowania eksportu.");
+    }
+    paintLayoutFurniture(g,options);
+    return target;
+  }
+  function makeRGBTiff(target,dpi){
+    // Uncompressed baseline TIFF, little endian, one RGB strip.
+    const width=target.width,height=target.height;
+    const pixels=target.getContext("2d").getImageData(
+      0,0,width,height).data;
+    const byteCount=width*height*3,buf=new ArrayBuffer(180+byteCount);
+    const out=new DataView(buf);
+    const u16=(at,value)=>out.setUint16(at,value,true);
+    const u32=(at,value)=>out.setUint32(at,value,true);
+    out.setUint8(0,0x49);out.setUint8(1,0x49);
+    u16(2,42);u32(4,8);u16(8,12);
+    let entry=10;
+    function tag(id,type,count,value){
+      u16(entry,id);u16(entry+2,type);
+      u32(entry+4,count);
+      if(type===3&&count===1)u16(entry+8,value);
+      else u32(entry+8,value);
+      entry+=12;
+    }
+    tag(256,4,1,width);tag(257,4,1,height);tag(258,3,3,158);
+    tag(259,3,1,1);tag(262,3,1,2);tag(273,4,1,180);
+    tag(277,3,1,3);tag(278,4,1,height);tag(279,4,1,byteCount);
+    tag(282,5,1,164);tag(283,5,1,172);tag(296,3,1,2);
+    u32(154,0);
+    u16(158,8);u16(160,8);u16(162,8);
+    u32(164,dpi);u32(168,1);u32(172,dpi);u32(176,1);
+    const rgb=new Uint8Array(buf,180);
+    for(let p=0,j=0;p<pixels.length;p+=4){
+      rgb[j++]=pixels[p];rgb[j++]=pixels[p+1];rgb[j++]=pixels[p+2];
+    }
+    return new Blob([buf],{type:"image/tiff"});
+  }
+  function canvasBlob(canvas,mime,quality){
+    return new Promise((resolve,reject)=>canvas.toBlob(
+      blob=>blob?resolve(blob):reject(Error("Nie można zakodować obrazu.")),
+      mime,quality));
+  }
+  function downloadLayoutFile(blob,filename){
+    const uri=URL.createObjectURL(blob),a=document.createElement("a");
+    a.href=uri;a.download=filename;document.body.append(a);
+    a.click();a.remove();
+    setTimeout(()=>URL.revokeObjectURL(uri),60000);
+  }
+  async function printLayoutImage(blob,options){
+    // A print iframe is separate from map Canvas; the map stays editable.
+    const uri=URL.createObjectURL(blob);
+    const iframe=document.createElement("iframe");
+    iframe.title="GeoStudio — wydruk arkusza";
+    iframe.style.position="fixed";iframe.style.width="1px";
+    iframe.style.height="1px";iframe.style.left="-10000px";
+    iframe.style.top="0";iframe.style.border="0";
+    document.body.append(iframe);
+    const doc=iframe.contentDocument;
+    doc.open();doc.write("<!DOCTYPE html><html><head><title>GeoStudio - mapa</title></head><body></body></html>");doc.close();
+    doc.body.style.margin="0";
+    const img=doc.createElement("img");
+    img.alt="Arkusz mapy GeoStudio";
+    img.style.display="block";img.style.width=
+      (options.fullWidth*25.4/options.dpi).toFixed(2)+"mm";
+    img.style.height=
+      (options.fullHeight*25.4/options.dpi).toFixed(2)+"mm";
+    img.onload=()=>{
+      setTimeout(()=>{
+        try{iframe.contentWindow.focus();iframe.contentWindow.print();}
+        catch(err){inform("Okno druku zablokowane: "+err.message,true);}
+      },150);
+    };
+    img.onerror=()=>inform("Nie udało się przygotować podglądu wydruku.",true);
+    doc.body.append(img);img.src=uri;
+    const cleanup=()=>{setTimeout(()=>{
+      iframe.remove();URL.revokeObjectURL(uri);
+    },1500);};
+    iframe.contentWindow.addEventListener("afterprint",cleanup,{once:true});
+    setTimeout(cleanup,90000);
+  }
+  async function exportLayout(print=false){
+    if(!state.meta||!state.edit||state.editBusy)return;
+    const button=$("layout-export"),printButton=$("layout-print");
+    let options;
+    try{options=layoutOptions();}
+    catch(error){exportInfo(error.message);inform(error.message,true);return;}
+    if(print&&options.format==="dxf"){
+      inform("Druk wymaga obrazu. Wybierz PNG, JPG lub TIFF.",true);return;
+    }
+    button.disabled=true;printButton.disabled=true;
+    try{
+      const basename=state.meta.name.replace(/\.map$/i,"")
+        .replace(/[^a-zA-Z0-9\p{L}\p{N}._ -]+/gu,"_").slice(0,90)||
+        "GeoStudio";
+      if(!print&&options.format==="dxf"){
+        exportInfo("Generowanie edytowalnego DXF…");
+        const query=new URLSearchParams({
+          documentToken:state.edit.documentToken});
+        const response=await fetch("/api/export/dxf?"+query.toString(),{
+          headers:{"X-GeoStudio-Token":token},cache:"no-store"});
+        if(!response.ok){
+          const data=await response.json().catch(()=>({}));
+          throw Error(data.detail||"Nie udało się wyeksportować DXF.");
+        }
+        downloadLayoutFile(await response.blob(),basename+".dxf");
+      }else{
+        const raster=await renderLayoutCanvas(options);
+        const blob=(print||options.format==="png")
+          ?await canvasBlob(raster,"image/png")
+          :options.format==="jpeg"
+            ?await canvasBlob(raster,"image/jpeg",.96)
+            :makeRGBTiff(raster,options.dpi);
+        if(print)await printLayoutImage(blob,options);
+        else downloadLayoutFile(blob,basename+"."+
+          (options.format==="jpeg"?"jpg":options.format==="tiff"?"tif":"png"));
+      }
+      exportInfo(print
+        ?"Przekazano arkusz do okna drukowania. Wybierz skalowanie 100%."
+        :"Wysłano plik do pobrania. Oryginalny MAP nie został zmieniony.");
+      inform(print?"Otworzono wydruk. Sprawdź skalowanie 100% przed zatwierdzeniem."
+        :"Przygotowano eksport "+options.format.toUpperCase()+".");
+    }catch(error){
+      exportInfo("Eksport nieudany: "+error.message);
+      inform("Eksport nieudany: "+error.message,true);
+    }finally{button.disabled=false;printButton.disabled=false;}
+  }
+
   function buildLayer(name,count) {
     const item=document.createElement("div");item.className="layer-item";
     const row=document.createElement("label");row.className="layer-row";
