@@ -362,6 +362,54 @@ def create_app(workspace: PreviewWorkspace | None = None) -> FastAPI:
         except (ValueError, KeyError) as exc:
             raise HTTPException(400, str(exc)) from exc
 
+    @app.get("/api/labels/settings")
+    async def get_label_settings(code: str):
+        try:
+            return state.label_settings(code)
+        except ValueError as exc:
+            raise HTTPException(400,str(exc)) from exc
+
+    @app.post("/api/labels/move")
+    async def move_label(request: Request):
+        data=await edit_payload(request)
+        try:
+            return state.move_label(
+                data.get("fid"),data.get("field"),data.get("x"),data.get("y"),
+                document_token=data.get("documentToken"),
+                revision=data.get("revision"))
+        except LookupError as exc:
+            raise HTTPException(404,str(exc)) from exc
+        except RuntimeError as exc:
+            raise HTTPException(409,str(exc)) from exc
+        except (ValueError,TypeError) as exc:
+            raise HTTPException(400,str(exc)) from exc
+
+    @app.post("/api/labels/settings")
+    async def set_label_settings(request: Request):
+        data=await edit_payload(request)
+        try:
+            return state.set_label_settings(
+                data.get("code"),data.get("field"),data.get("properties"),
+                document_token=data.get("documentToken"),
+                revision=data.get("revision"))
+        except RuntimeError as exc:
+            raise HTTPException(409,str(exc)) from exc
+        except (ValueError,TypeError) as exc:
+            raise HTTPException(400,str(exc)) from exc
+
+    @app.post("/api/compilation-scale")
+    async def set_compilation_scale(request: Request):
+        data=await edit_payload(request)
+        try:
+            return state.set_compilation_scale(
+                data.get("denominator"),
+                document_token=data.get("documentToken"),
+                revision=data.get("revision"))
+        except RuntimeError as exc:
+            raise HTTPException(409,str(exc)) from exc
+        except (ValueError,TypeError) as exc:
+            raise HTTPException(400,str(exc)) from exc
+
     @app.post("/api/edit/{direction}")
     async def history_action(direction: str, request: Request):
         payload = await edit_payload(request)
