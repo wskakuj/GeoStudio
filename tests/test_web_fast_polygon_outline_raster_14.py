@@ -76,6 +76,27 @@ def test_outline_style_by_code_undo_safe_and_applies_to_new_polygons():
     assert not ws.outline_settings("5310")["custom"]
 
 
+def test_outline_default_for_code_not_yet_on_map():
+    ws=PreviewWorkspace()
+    ws.load_map((MapBuilder().object("5216","ONLY",{"A2":"1"},
+        [(0,0),(0,10),(10,10),(10,0)]).build()),"empty_buildings.MAP")
+    original=ws.outline_settings("5310")
+    assert original["code"]=="5310"
+    assert not original["custom"]
+    result=ws.set_outline_settings("5310","#AA3300",4.0,**auth(ws))
+    assert result["changed"]
+    assert ws.outline_settings("5310")["stroke"]=="#AA3300"
+    operation={"action":"create","code":"5310","fields":{"A1":"m"},
+      "points":[[100,100],[100,120],[120,120],[120,100]]}
+    report=ws.preview_object_operation(operation,**auth(ws))
+    applied=ws.apply_object_operation(
+        operation,preview_key=report["previewKey"],**auth(ws))
+    item=next(f for f in ws.viewport((-150,-150,150,150))["features"]
+      if f["id"]==applied["createdIds"][0])
+    assert item["style"]["stroke"]=="#AA3300"
+    assert item["style"]["strokeWidth"]==4.0
+
+
 def test_outline_api_guards_input_and_returns_current_style():
     ws=PreviewWorkspace()
     ws.load_map(sample(),"test.MAP")
