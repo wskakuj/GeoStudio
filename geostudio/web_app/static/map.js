@@ -1711,14 +1711,8 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
         method:"POST",headers:{"Content-Type":"application/json"},
         body:JSON.stringify(request)
       });
-      const summary=Object.entries(report.codes||{})
-        .map(([code,n])=>code+": "+display(n)).join(", ");
-      if(!window.confirm("Usunąć "+display(report.selected)+
-        " obiektów z kopii roboczej?\nKody: "+summary+
-        "\nOryginał na dysku pozostanie nienaruszony; Ctrl+Z cofa."))return;
-      if(report.selected>=20&&window.prompt(
-          "Dla bezpieczeństwa wpisz USUŃ, aby potwierdzić:",
-          "")!=="USUŃ")return;
+      if(!report.canApply||!report.previewKey)
+        throw Error(report.message||"Nie można bezpiecznie usunąć zaznaczenia.");
       const result=await api("/api/objects/apply",{
         method:"POST",headers:{"Content-Type":"application/json"},
         body:JSON.stringify({...request,previewKey:report.previewKey})
@@ -1746,7 +1740,12 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
     $("create-summary").textContent="Enter — utwórz poligon. "+
       "Sprawdzanie poprawności nastąpi automatycznie.";
     $("create-dialog").showModal();
-    $("create-a1").focus();
+    $("create-a1").focus({preventScroll:true});
+    // WebView2 can autofocus the modal's first toolbar button AFTER it
+    // opens. Restore the requested A1 focus on the next paint too.
+    requestAnimationFrame(()=>{
+      if($("create-dialog").open)$("create-a1").focus({preventScroll:true});
+    });
   }
   function finishGeometryDrawing() {
     if(state.tool==="draw"){finishDrawPolygon();return;}
@@ -4929,6 +4928,10 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
     if(state.tool==="nodes"&&state.detail&&!ev.ctrlKey&&!ev.metaKey&&!ev.altKey&&
        (ev.key==="Delete"||ev.key==="Backspace")){
       ev.preventDefault();deleteSelectedVertex();return;
+    }
+    if(ev.key==="Delete"&&!ev.ctrlKey&&!ev.metaKey&&!ev.altKey&&
+       selectedObjectIds().length){
+      ev.preventDefault();deleteObjects();return;
     }
     if((ev.ctrlKey||ev.metaKey)&&ev.key.toLowerCase()==="z"){
       ev.preventDefault();historyStep("undo");return;
