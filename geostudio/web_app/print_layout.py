@@ -12,7 +12,6 @@ from typing import Iterable
 import re
 
 from reportlab.lib import colors
-from reportlab.lib.pdfencrypt import StandardEncryption
 from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
 from reportlab.pdfgen import canvas as pdf_canvas
@@ -54,9 +53,12 @@ def _fit(c, label: str, x: float, y: float, width: float, size: float,
          font: str):
     if width <= 2 or not label:
         return
-    while label and pdfmetrics.stringWidth(label, font, size) > width:
-        label = label[:-2].rstrip() + "…"
-    c.drawString(x, y, label)
+    if pdfmetrics.stringWidth(label,font,size)>width:
+        suffix="…" if pdfmetrics.stringWidth("…",font,size)<width else ""
+        while label and pdfmetrics.stringWidth(label+suffix,font,size)>width:
+            label=label[:-1]
+        label=label+suffix if label else ""
+    if label:c.drawString(x,y,label)
 
 
 def _setup(opts: dict):
