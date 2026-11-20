@@ -1840,6 +1840,7 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
     if (canvas.width !== w || canvas.height !== h) {
       canvas.width=w;canvas.height=h;
       state.previewActive=false;state.previewCamera=null;
+      state.geometrySnapshotValid=false;
     }
     requestDraw();
   }
