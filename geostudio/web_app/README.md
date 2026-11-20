@@ -728,3 +728,87 @@ Brak pełnej identyczności kartograficznej względem starego Qt:
 w ROADMAP.md opisano priorytety: przesuwanie etykiet i ich
 reguły, wyszukiwanie/zamiana, eksport obrazu/DXF, WMS/rastry,
 transformacje i kompletna kartografia LAY/CDF/SYM.
+
+
+## Etap 10A — niezależne opisy, skale i płynne nawigowanie (draft)
+
+### Napisy 5310 — osobno A1 i A2
+
+**A1 i A2 to dwa osobne opisy, nie jeden blok tekstu**. Każdy ma
+własne położenie i możliwość edycji.
+
+- **Alt+L** lub **Przesuń napisy** — złap jeden widoczny opis A1, A2 lub
+  TX i przeciągnij myszą. Po puszczeniu zapisuje się jedną operacją
+  historii: Ctrl+Z / Ctrl+Y. Żaden punkt natywnej MAP nie jest zmieniany.
+- **Ctrl+Alt+L** lub **Styl opisów** — kod GEO-MAP, a następnie oddzielnie
+  A1, A2 lub TX: widoczność, rozmiar, kolor i pogrubienie.
+  Zmiana stylu A1 nie ukrywa A2. Starsze pliki, które celowo
+  deklarują całkiem inny zestaw opisów, nadal zachowują swoje reguły.
+- Czcionki nie są już mikroskopijne przy zwykłym przybliżeniu.
+  Wielkość reaguje na zmianę skali widoku i skali opracowania.
+  Opisy bardzo małych obiektów przy przeglądzie całej mapy są
+  upraszczane/ukrywane; aktywny obiekt pozostaje opisany.
+
+**Ważne:** własne przesunięcia i formatowanie opisów nie są częścią
+natywnej geometrii MAP. Windows przy Zapisz jako zapisuje
+obok nowego MAP również **\`nazwa.geostudio.json\`** zawierający
+pozycje, kolory i ustawienia skali; dodatkowo, jeśli używane
+są odwracalne wycięcia, zapisuje plik topologii JSON.
+Zachowaj wszystkie pliki razem. Przy standardowym otwarciu
+w Windows GeoStudio automatycznie weryfikuje sumę SHA256 i
+importuje zgodny JSON. Klasyczny GEO-MAP czyta nadal
+swoje natywne rekordy L/P — nie interpretuje nowych pozycji
+z pliku GeoStudio. W przeglądarce przy własnych ustawieniach
+pobierasz ZIP MAP+JSON, a po otwarciu mapy wskazujesz
+JSON przyciskiem Style JSON.
+
+Kopie awaryjne GeoStudio 2.0 Windows uwzględniają również
+odrębne pozycje opisów i skalę opracowania.
+
+### Współrzędne i dwie skale z GeoStudio 0.14
+
+W dolnym lewym rogu widoku znajdują się:
+- **X / Y GEO-MAP** — bieżące współrzędne kursora (X północ,
+  Y wschód) z dokładnością 0,001 m; program nie zgaduje EPSG.
+- **Skala widoku 1:N** — wpisz np. 1:2000, wybierz z listy
+  albo Ctrl+M i Enter. Jest to *przybliżona* skala ekranu,
+  wyliczana przy standardowym 96 CSS DPI. Zmienia zoom,
+  nie modyfikuje żadnych danych MAP.
+- **Skala opracowania 1:N** — wpisz np. 1:5000, wybierz z listy
+  albo Ctrl+F5 i Enter. Zmienia relatywny rozmiar tekstów;
+  nie zmienia geometrii, CRS ani współrzędnych.
+  Skala źródłowa jest odczytywana z tekstu legendy mapy,
+  jeśli istnieje, inaczej domyślna 1:5000.
+
+Przycisk dokładnego przesunięcia poligonów X/Y oraz jego
+Ctrl+Shift+M zostały usunięte z widocznego interfejsu;
+całe grupy przesuwaj myszą w trybie **M**.
+
+### Rysowanie bez przerywania szkicu
+
+- **Esc** cofa tylko ostatnio postawiony węzeł szkicu;
+  nie kończy nagle wkreślania.
+- Po utworzeniu co najmniej trzech punktów przy aktywnym
+  Magnesie G, zbliż do **pierwszego** węzła (maks. 10 pikseli).
+  Pokaże się napis „DOMKNIJ POLIGON”. Jedno kliknięcie
+  kończy rysowanie, otwiera standardowe okno kod/A1/A2
+  i natychmiast sprawdza geometrię. Potem można zatwierdzić
+  obiekt w MAP. Nie są omijane walidacje 5B.
+- **Alt** pozwala kliknąć obok pierwszego punktu bez domknięcia.
+  **S** przełącza na zaznaczanie, a **Enter** nadal kończy
+  otwarty szkic ręcznie.
+
+### Płynny zoom przy dużych mapach
+
+Podczas kółka myszy/panoramowania Canvas zachowuje ostatnią
+poprawnie narysowaną klatkę i natychmiast transformuje ją
+do nowej skali. Nowy wynik indeksu GIS podmienia podgląd,
+gdy jest gotowy. W efekcie nie pojawia się biała przerwa,
+a istniejące narzędzia rysunkowe pozostają aktywne.
+To optymalizacja wizualna: podczas oczekiwania widoczny jest
+przeskalowany podgląd, który może być chwilowo nieostry.
+
+**Do ręcznego sprawdzenia:** osobne A1/A2 przy skali 1:5000
+i 1:1000, pozycja po Zapisz jako i ponownym otwarciu MAP+JSON,
+cofanie Ctrl+Z, przyciąganie pierwszego węzła/Alt, Esc,
+oraz płynność na mapach o kilku tysiącach obiektów.
