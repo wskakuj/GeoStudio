@@ -674,3 +674,57 @@ klasycznym GEO-MAP, przesuń grupy 5310 oraz 5216, przeprowadź
 restart po edycji i odtwórz sesję, porównaj wygląd LAY/CDF/SYM
 z rzeczywistymi bibliotekami, przetestuj instalator na
 Windows 11. Gałąź jest draft i **nie modyfikuje main**.
+
+
+## Etap 9 (testowy): precyzyjne rysowanie i etykiety 5310
+
+Przy **Nowy poligon (N)** jest widoczny nowy przełącznik
+**Magnes G**. Magnes jest domyślnie włączony. Podczas rysowania
+N (nowy poligon), L (linia), Shift+L (zmiana przebiegu linii)
+i podziałów zapewnia precyzyjne przyciąganie tylko wtedy, gdy
+kursor znajduje się blisko widocznej geometrii:
+
+- do węzła: maksymalnie 7 pikseli od kursora;
+- do odcinka (rzut prostopadły): maksymalnie 5 pikseli;
+- punkt jest zawsze zapisywany po zaokrągleniu do siatki 0,001 m;
+- na mapie jest widoczna mała ramka „WĘZEŁ” lub „LINIA” z kodem obiektu;
+- **Alt podczas kliknięcia** omija przyciąganie tylko dla tego punktu;
+- **G** w trakcie rysowania lub przycisk Magnes przełącza je trwale;
+- ukryte warstwy nie są celami magnesu;
+- magnes nie zmienia żadnych węzłów istniejących poligonów ani linii.
+
+To oddzielny mechanizm od przyciągania edycji węzłów P i
+przesuwania grup M. Warto pracować na większym przybliżeniu,
+gdy w obszarze jest bardzo wiele nakładających się obiektów.
+
+Napisy A1/A2 budynków 5310 zachowują wspólny punkt zaczepienia:
+**są układane razem**, zamiast ukrywać A2 po wyświetleniu A1.
+Ręcznie rozdzielone pozycje nadal pozostają niezależne.
+Wielowierszowy opis A2 rozdzielany pionowymi kreskami
+jest rysowany w całości, jeżeli etykieta może zostać pokazana.
+
+Przy oddaleniu czcionka **maleje proporcjonalnie do mapy**.
+Gdy stałaby się nieczytelna, jest ukrywana, zamiast zasłaniać
+cały widok wielkimi napisami. Opis aktywnego obiektu nadal
+można odczytać, a jego pola A1 i A2 widać w Inspektorze.
+Przy dużym zbliżeniu czcionka ma ograniczoną maksymalną
+wielkość dla wygody czytania.
+
+### Zalecane próby
+
+1. Wczytaj mapę z kodami 5310, powiększ kilka budynków z A2
+   zawierającym separator pionowej kreski. Oba podpisy powinny
+   się pojawić bez wzajemnego przesłaniania.
+2. Powoli oddalaj mapę. Wszystkie napisy nie powinny stawać
+   się większe w stosunku do geometrii; małe opisy znikną.
+3. Narysuj N wzdłuż istniejącej granicy, obserwuj WĘZEŁ/LINIA,
+   kliknij punkt. Następny punkt przytrzymaj Alt blisko tej
+   samej krawędzi — powinien dać się postawić obok.
+4. Wyłącz Magnes G, powtórz rysowanie i sprawdź, że nic nie
+   przyciąga. Użyj Ctrl+Z, zapisz nową kopię MAP i sprawdź
+   jej węzły w klasycznym GEO-MAP.
+
+Brak pełnej identyczności kartograficznej względem starego Qt:
+w ROADMAP.md opisano priorytety: przesuwanie etykiet i ich
+reguły, wyszukiwanie/zamiana, eksport obrazu/DXF, WMS/rastry,
+transformacje i kompletna kartografia LAY/CDF/SYM.
