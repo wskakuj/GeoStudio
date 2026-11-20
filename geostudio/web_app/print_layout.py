@@ -135,6 +135,158 @@ def _setup(opts: dict):
     }
 
 
+
+def _bold_font() -> str:
+    """Register a matching bold Unicode face when the system provides one."""
+    for path in (
+        r"C:\Windows\Fonts\segoeuib.ttf", r"C:\Windows\Fonts\arialbd.ttf",
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+        "/usr/share/fonts/truetype/liberation2/LiberationSans-Bold.ttf",
+    ):
+        if Path(path).is_file():
+            try:
+                if "GeoStudioUnicodeBold" not in pdfmetrics.getRegisteredFontNames():
+                    pdfmetrics.registerFont(TTFont("GeoStudioUnicodeBold", path))
+                return "GeoStudioUnicodeBold"
+            except Exception:
+                continue
+    return _font()
+
+
+def _pdf_label_size(label: dict, options: dict) -> float:
+    """Match the map's world-sized captions at the selected print scale."""
+    source = float(options.get("sourceCompilationScale") or 5000)
+    compilation = float(options.get("compilationScale") or source)
+    if not isfinite(source) or not isfinite(compilation) or source <= 0 or compilation <= 0:
+        source = compilation = 5000
+    ratio = max(.1, min(10, compilation / source))
+    base = max(8, min(36, float(label.get("size") or 16)))
+    styled = round(max(8, min(40, base * ratio)) * 10) / 10
+    # Canvas: styled * 2500 * .0254 / 96 world metres.
+    # PDF: page points per world metre = 72 / (.0254 * denominator).
+    # Keep this conversion in physical points, not raster DPI.
+    return max(1, min(40, styled * 2500 * 72 / (96 * options["denominator"])))
+
+
+def _draw_pdf_labels(c, features: list[dict], options: dict, layout: dict, point) -> None:
+    """Canvas-like centered, stacked, collision-aware vector annotations.
+
+    Map labels are anchored at their native X/Y (including saved manual
+    positions). A1 and A2 of 5310 are independent, mandatory descriptions;
+    other captions are suppressed when their boxes collide with another
+    feature, exactly as on the browser map. Collisions are indexed in cells
+    to avoid comparing every text label with every previous label.
+    """
+    left, bottom, width, height = layout["map"]
+    xmin, ymin, xmax, ymax = layout["bounds"]
+    denominator = options["denominator"]
+    pixels_per_metre = 300 / (.0254 * denominator)
+    regular_font = layout["font"]
+    bold_font = _bold_font()
+    cell_size = 16.0
+    collision_cells: dict[tuple[int, int], list[tuple[str, tuple[float, ...]]]] = {}
+    painted = 0
+
+    def cells(rect):
+        x0 = max(0, floor((rect[0] - left) / cell_size))
+        x1 = min(floor(width / cell_size), floor((rect[2] - left) / cell_size))
+        y0 = max(0, floor((rect[1] - bottom) / cell_size))
+        y1 = min(floor(height / cell_size), floor((rect[3] - bottom) / cell_size))
+        for a in range(x0, x1 + 1):
+            for b in range(y0, y1 + 1):
+                yield a, b
+
+    def collides(fid, rect):
+        seen = set()
+        for key in cells(rect):
+            for other in collision_cells.get(key, ()):
+                if id(other) in seen:
+                    continue
+                seen.add(id(other))
+                other_fid, box = other
+                if (fid != other_fid and box[0] < rect[2] and
+                        box[2] > rect[0] and box[1] < rect[3] and
+                        box[3] > rect[1]):
+                    return True
+        return False
+
+    def register(fid, rect):
+        entry = (fid, rect)
+        for key in cells(rect):
+            collision_cells.setdefault(key, []).append(entry)
+
+    def priority(feature):
+        code = feature.get("code")
+        if code == "5310":
+            return 0
+        if code in ("7900", "6000", "6301", "6900"):
+            return 1
+        if code == "5216":
+            return 2
+        return 3
+
+    for feature in sorted(features, key=priority):
+        labels = feature.get("labels") or []
+        if not labels:
+            continue
+        code = feature.get("code")
+        sheet = code in ("7900", "6900", "6000", "6301")
+        bbox = feature.get("bbox") or ()
+        if len(bbox) == 4 and not sheet and code != "5310":
+            box_w = abs(bbox[2] - bbox[0]) * pixels_per_metre
+            box_h = abs(bbox[3] - bbox[1]) * pixels_per_metre
+            if max(box_w, box_h) < 32 or min(box_w, box_h) < 8:
+                continue
+        sizes = {id(label): _pdf_label_size(label, options) for label in labels}
+        stack = [label for label in labels
+                 if code == "5310" and not label.get("manuallyPlaced")]
+        stack_heights = {}
+        total_height = 0.0
+        for label in stack:
+            line_count = len(str(label.get("text") or "").split("\n")[:6])
+            item_height = line_count * sizes[id(label)] * 1.20
+            stack_heights[id(label)] = (total_height + item_height / 2, item_height)
+            total_height += item_height
+        for label in labels:
+            mandatory = code == "5310" and label.get("field") in ("A1", "A2")
+            if not mandatory and painted >= 8000:
+                continue
+            value = str(label.get("text") or "").replace("\r", "")[:220]
+            if not value:
+                continue
+            lines = [line[:100] for line in value.split("\n")[:6]]
+            size = sizes[id(label)]
+            label_font = bold_font if label.get("bold") else regular_font
+            widths = [pdfmetrics.stringWidth(line, label_font, size) for line in lines]
+            line_height = len(lines) * size * 1.20
+            if id(label) in stack_heights:
+                offset = stack_heights[id(label)][0] - total_height / 2
+            elif label.get("manuallyPlaced"):
+                offset = 0
+            else:
+                offset = float(label.get("offset") or 0) * (size / (float(label.get("size") or 16)))
+            x, anchor_y = point((float(label.get("x") or 0), float(label.get("y") or 0)))
+            cy = anchor_y - offset
+            if x < left or x > left + width or anchor_y < bottom or anchor_y > bottom + height:
+                continue
+            padding = 3 * 72 / 300
+            max_width = max(widths, default=0)
+            rect = (x - max_width / 2 - padding, cy - line_height / 2 - padding,
+                    x + max_width / 2 + padding, cy + line_height / 2 + padding)
+            if (rect[2] < left or rect[0] > left + width or
+                    rect[3] < bottom or rect[1] > bottom + height):
+                continue
+            if not mandatory and collides(str(feature.get("id")), rect):
+                continue
+            register(str(feature.get("id")), rect)
+            c.setFillColor(_rgb(label.get("color", "#4A5056")))
+            c.setFont(label_font, size)
+            for index, line in enumerate(lines):
+                baseline = cy + line_height / 2 - size - index * size * 1.20
+                c.drawCentredString(x, baseline, line)
+            painted += 1
+
+
 def render_vector_pdf(features: Iterable[dict], options: dict) -> bytes:
     """Render a true vector A0–A4/automatic layout; no 40MP Canvas limit."""
     o = _setup(options)
@@ -155,20 +307,11 @@ def render_vector_pdf(features: Iterable[dict], options: dict) -> bytes:
     # Fill ALL polygons before drawing ANY border so adjoining parcel
     # outlines are not painted over by a later opaque polygon.
     for pass_ in ("fill","stroke","labels"):
+        if pass_ == "labels":
+            _draw_pdf_labels(c, features, options, o, point)
+            continue
         for feature in features:
             style=feature.get("style") or {}
-            if pass_ == "labels":
-                for label in feature.get("labels") or []:
-                    value=_text(label.get("text",""),220)
-                    if not value:continue
-                    x,y=point((label.get("x",0),label.get("y",0)))
-                    if x<left or x>left+w or y<bottom or y>bottom+h:continue
-                    c.setFillColor(_rgb(label.get("color","#334455")))
-                    size=max(5,min(18,float(label.get("size",11))*.75))
-                    c.setFont(font,size)
-                    for i,line in enumerate(value.split("\n")[:4]):
-                        _fit(c,line,x,y-i*size*1.1,70*MM,size,font)
-                continue
             closed=feature.get("closed") is True
             if pass_=="fill" and (not closed or not style.get("hasFill") or
                                    float(style.get("opacity",0)) <= 0):

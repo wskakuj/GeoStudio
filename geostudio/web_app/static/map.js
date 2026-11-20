@@ -3256,16 +3256,20 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
   const hatchCache=new Map();
   function hatchPattern(style) {
     if(!style.hatch)return style.fill;
-    const key=style.fill+"|"+style.hatch;
+    const exportRatio=typeof state!=="undefined"&&state.exporting&&state.exportDpi===600?2:1;
+    const key=style.fill+"|"+style.hatch+"|"+exportRatio;
     if(hatchCache.has(key))return hatchCache.get(key);
     // The old Qt renderer uses 8x8 QBrush patterns:
     // 1=Qt.Dense4 (50%), 2=Qt.Dense5 (37.5%), 3–8 directional hatches.
     // Match the grid density/orientation without guessing vendor IDs >8.
-    const size=8;
+    const size=8*exportRatio;
     const tile=document.createElement("canvas");
     tile.width=tile.height=size;
     const g=tile.getContext("2d");
-    g.clearRect(0,0,size,size);
+    // Preserve the 8x8 cartographic motif while giving 600 DPI exports
+    // twice as many physical pixels per hatch stroke.
+    if(exportRatio!==1)g.setTransform(exportRatio,0,0,exportRatio,0,0);
+    g.clearRect(0,0,8,8);
     g.strokeStyle=style.fill;g.fillStyle=style.fill;g.lineWidth=1;
     const segment=(x1,y1,x2,y2)=>{
       g.beginPath();g.moveTo(x1,y1);g.lineTo(x2,y2);g.stroke();
@@ -3312,6 +3316,7 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
   }
   function renderStroke(feature) {
     const style=feature.style;
+    const exportRatio=state.exporting&&state.exportDpi===600?2:1;
     if(!style.drawStroke)return; // GEO-MAP text anchors aren't printed lines.
     if(feature.geometry.length===1 && feature.geometry[0].length===1) {
       const p=worldToScreen(...feature.geometry[0][0]);
@@ -3319,21 +3324,21 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
       const circles=style.symbolCircles||[];
       ctx.save();
       ctx.strokeStyle=style.stroke;
-      ctx.lineWidth=Math.max(.8,Math.min(3,style.strokeWidth||1));
+      ctx.lineWidth=Math.max(.8,Math.min(3,style.strokeWidth||1))*exportRatio;
       if(segments.length||circles.length){
         ctx.beginPath();
         for(const [x1,y1,x2,y2] of segments.slice(0,64)){
-          ctx.moveTo(p.x+x1*5,p.y-y1*5);
-          ctx.lineTo(p.x+x2*5,p.y-y2*5);
+          ctx.moveTo(p.x+x1*5*exportRatio,p.y-y1*5*exportRatio);
+          ctx.lineTo(p.x+x2*5*exportRatio,p.y-y2*5*exportRatio);
         }
         for(const [x,y,radius] of circles.slice(0,32)){
-          ctx.moveTo(p.x+x*5+radius*5,p.y-y*5);
-          ctx.arc(p.x+x*5,p.y-y*5,radius*5,0,2*Math.PI);
+          ctx.moveTo(p.x+x*5*exportRatio+radius*5*exportRatio,p.y-y*5*exportRatio);
+          ctx.arc(p.x+x*5*exportRatio,p.y-y*5*exportRatio,radius*5*exportRatio,0,2*Math.PI);
         }
         ctx.stroke();
       }else{
         ctx.fillStyle=style.stroke;ctx.beginPath();
-        ctx.arc(p.x,p.y,Math.max(.6,Math.min(2,style.pointSize||1)),
+        ctx.arc(p.x,p.y,Math.max(.6,Math.min(2,style.pointSize||1))*exportRatio,
                 0,Math.PI*2);
         ctx.fill();
       }
@@ -3342,9 +3347,9 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
     }
     addPath(feature.geometry);
     ctx.strokeStyle=style.stroke;
-    ctx.lineWidth=Math.max(.5,Math.min(12,style.strokeWidth));
+    ctx.lineWidth=Math.max(.5,Math.min(12,style.strokeWidth))*exportRatio;
     ctx.lineCap="round";ctx.lineJoin="round";
-    ctx.setLineDash(Array.isArray(style.dash)?style.dash:[]);
+    ctx.setLineDash(Array.isArray(style.dash)?style.dash.map(d=>d*exportRatio):[]);
     ctx.stroke();ctx.setLineDash([]);
   }
   function renderHighlights(features) {
@@ -3713,7 +3718,8 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
     const base=Math.max(8,Math.min(36,Number(label.size)||16));
     const styledSize=Math.round(Math.max(8,Math.min(40,base*ratio))*10)/10;
     // Keep the already-correct PNG/JPG/TIFF typography EXACTLY as before.
-    if(state.exporting)return styledSize;
+    // Keep the 300 DPI layout; double text metrics only for 600 DPI exports.
+    if(state.exporting)return styledSize*(state.exportDpi===600?2:1);
     // On the interactive map an annotation has a fixed size in MAP world
     // units, NOT a constant pixel size. Calibrate the style editor's 16 px
     // building text to the legible working view around 1:2500. Both its
@@ -3816,7 +3822,7 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
         const cy=p.y+offset;
         // Collision padding shrinks/grows with the map as well.
         // The export path retains its existing three-pixel padding.
-        const labelPad=state.exporting?3:size*3/16;
+        const labelPad=state.exporting?3*(state.exportDpi===600?2:1):size*3/16;
         const rect=[p.x-maxWidth/2-labelPad,cy-height/2-labelPad,
                     p.x+maxWidth/2+labelPad,cy+height/2+labelPad];
         if(rect[2]<0||rect[0]>state.width||
@@ -4039,6 +4045,8 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
       showLegend:$("layout-legend").checked,
       legendRows:parseRows("layout-legend-rows","legenda",40),
       tableRows:parseRows("layout-table-rows","tabela",8),
+      compilationScale:state.edit?.compilationScale||5000,
+      sourceCompilationScale:state.edit?.sourceCompilationScale||5000,
       visibleLayers:[...state.visibleLayers]
     };
   }
@@ -4054,7 +4062,7 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
        denominator>100000000)
       throw Error("Mianownik skali musi mieścić się w zakresie 10–100000000.");
     const dpi=Number($("layout-dpi").value);
-    if(![96,150,300].includes(dpi))
+    if(![96,150,300,600].includes(dpi))
       throw Error("Wybierz poprawną rozdzielczość.");
     const pxPerUnit=dpi/(.0254*denominator);
     const width=Math.ceil((bounds[2]-bounds[0])*pxPerUnit);
@@ -4107,7 +4115,8 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
     const previous={
       ctx,center:state.center,scale:state.scale,
       width:state.width,height:state.height,pixelRatio:state.pixelRatio,
-      exporting:state.exporting,labelHits:state.labelHits
+      exporting:state.exporting,labelHits:state.labelHits,
+      exportDpi:state.exportDpi
     };
     ctx=g;
     state.center={
@@ -4120,6 +4129,7 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
     // The PNG/JPG/TIFF bitmap has its own pixel dimensions.
     // Do NOT scale text by DPI a second time.
     state.exporting=true;
+    state.exportDpi=options.dpi;
     g.save();
     try{
       g.translate(options.margin,options.head);
@@ -4136,6 +4146,7 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
       state.scale=previous.scale;state.width=previous.width;
       state.height=previous.height;state.pixelRatio=previous.pixelRatio;
       state.exporting=previous.exporting;
+      state.exportDpi=previous.exportDpi;
       state.labelHits=previous.labelHits;
     }
   }
