@@ -316,52 +316,57 @@ class NativeMapPicker:
         fd,tmp=tempfile.mkstemp(prefix=".geostudio2-",suffix=".tmp",
                                 dir=str(chosen.parent))
         tmp_companion=None
-        companion_committed=False
+        tmp_visual=None
+        committed=[]
         map_committed=False
         try:
             with os.fdopen(fd,"wb") as stream:
                 stream.write(content)
                 stream.flush()
                 os.fsync(stream.fileno())
-            if overlay_bytes:
-                fd2,tmp_companion=tempfile.mkstemp(
-                    prefix=".geostudio-topology-",suffix=".tmp",
-                    dir=str(chosen.parent))
-                with os.fdopen(fd2,"wb") as stream:
-                    stream.write(overlay_bytes)
+            for target,data,prefix in (
+                (companion,overlay_bytes,".geostudio-topology-"),
+                (visual_path,visual_bytes,".geostudio-visual-")
+            ):
+                if not data:continue
+                extra_fd,temp=tempfile.mkstemp(
+                    prefix=prefix,suffix=".tmp",dir=str(chosen.parent))
+                if target==companion:tmp_companion=temp
+                else:tmp_visual=temp
+                with os.fdopen(extra_fd,"wb") as stream:
+                    stream.write(data)
                     stream.flush()
                     os.fsync(stream.fileno())
-            if burn_cutouts:
-                # New output name is required, so cleanup cannot delete
-                # any pre-existing project data if the second rename fails.
-                os.replace(tmp_companion,companion)
-                companion_committed=True
+            if burn_cutouts or visual_bytes:
+                # Publish the companions first. The MAP is committed last.
+                if tmp_companion:
+                    os.replace(tmp_companion,companion)
+                    committed.append(companion)
+                if tmp_visual:
+                    os.replace(tmp_visual,visual_path)
+                    committed.append(visual_path)
                 os.replace(tmp,chosen)
                 map_committed=True
             else:
                 os.replace(tmp,chosen)
                 map_committed=True
-                if tmp_companion:
-                    os.replace(tmp_companion,companion)
+                if tmp_companion:os.replace(tmp_companion,companion)
         except Exception:
-            if burn_cutouts and companion_committed and not map_committed:
-                try:
-                    companion.unlink()
-                except OSError:
-                    pass
+            if not map_committed:
+                for target in committed:
+                    try:target.unlink()
+                    except OSError:pass
             raise
         finally:
-            for candidate in (tmp,tmp_companion):
+            for candidate in (tmp,tmp_companion,tmp_visual):
                 if candidate:
-                    try:
-                        os.unlink(candidate)
-                    except FileNotFoundError:
-                        pass
+                    try:os.unlink(candidate)
+                    except FileNotFoundError:pass
         try:
             save_last_map_directory(self._settings,chosen.parent)
         except OSError:
             pass
         return {"cancelled": False, "path": str(chosen),
                 "bytes": len(content), "nativeCutouts": burn_cutouts,
-                "topologyPath": str(chosen.with_suffix(".geostudio-topology.json"))
-                 if overlay_bytes else None}
+                "topologyPath":str(companion) if overlay_bytes else None,
+                 "visualPath":str(visual_path) if visual_bytes else None}
