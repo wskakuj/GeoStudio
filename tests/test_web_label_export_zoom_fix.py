@@ -22,7 +22,7 @@ def _node_assertions(script: str):
     assert result.returncode == 0, result.stdout + result.stderr
 
 
-def test_label_size_does_not_depend_on_zoom_or_export_dpi():
+def test_screen_glyphs_follow_map_zoom_but_export_uses_existing_sizes():
     _node_assertions(r"""
 const assert=require('node:assert/strict');
 const fs=require('node:fs');
@@ -41,13 +41,17 @@ function size(scale,dpi,compilation=5000){
   return new Function('state',fontSource+';return labelFontSize;')
     (state)(mapFeature,sample,false);
 }
-// The exact same style size is used by the screen, viewport navigation
-// and exported PNG, regardless of the export's spatial resolution.
-for(const scale of [.012,.1,1,8])
-  for(const dpi of [96,150,300])
-    assert.equal(size(scale,dpi),16);
-assert.ok(size(1,96,1000)<16);
-assert.ok(size(1,96,10000)>16);
+// On-screen text is a world/map-space size and shrinks on zoom out.
+const reference=96/(.0254*2500);
+for(const scale of [.012,.1,1,8]){
+  assert.ok(Math.abs(size(scale,96)-16*scale/reference)<1e-8);
+  // PNG/JPG/TIFF export keeps its previously verified font size at
+  // different physical DPI values rather than using viewport zoom.
+  assert.equal(size(scale,150),16);
+  assert.equal(size(scale,300),16);
+}
+assert.ok(size(1,96,1000)<size(1,96,5000));
+assert.ok(size(1,96,10000)>size(1,96,5000));
 assert.ok(!fontSource.includes('exportFontRatio'));
 """)
 
