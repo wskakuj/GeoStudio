@@ -379,3 +379,32 @@ button:disabled { opacity:.38; cursor:not-allowed; filter:none !important; }
   .map-scale-box .scale-control {font-size:9px;}
   .map-scale-box .scale-control input {width:70px;}
 }
+
+
+/* 10B — compact GIS search results, never interpreted as HTML. */
+.geostudio-find-results {
+  display:grid;gap:6px;margin-top:10px;
+  max-height:240px;overflow:auto;
+  scrollbar-width:thin;scrollbar-color:#4e7886 transparent;
+}
+.geostudio-find-result {
+  display:flex;flex-direction:column;align-items:flex-start;gap:3px;
+  padding:9px 11px;width:100%;text-align:left;
+  border:1px solid #325165;border-radius:8px;
+  background:#11283a;color:#e5f6f6;cursor:pointer;
+  font-family:inherit;
+}
+.geostudio-find-result:hover,.geostudio-find-result:focus-visible {
+  border-color:#35bda7;background:#173c4c;
+}
+.geostudio-find-result strong {font-size:12px;color:#70dfc9;}
+.geostudio-find-result span {
+  font-size:11px;color:#b7d3dd;
+  max-width:100%;overflow-wrap:anywhere;
+}
+.geostudio-find-result.replace-preview-row {
+  background:#0f2435;cursor:default;
+}
+.geostudio-find-result.replace-preview-row span {
+  white-space:pre-wrap;
+}
