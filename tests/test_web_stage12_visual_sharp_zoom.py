@@ -44,7 +44,7 @@ def test_sidebar_layers_and_nonmodal_visual_pairing():
     for id_ in ("layers-vectors-tab","layers-rasters-tab",
                 "vectors-layer-panel","rasters-layer-panel",
                 "raster-layers-list","raster-gcp-canvas",
-                "raster-pick-map","raster-gcp-apply",
+                "raster-gcp-cancel","raster-gcp-apply",
                 "raster-visual-dialog"):
         assert f'id="{id_}"' in html
     assert '<textarea id="raster-gcp"' not in html
@@ -53,8 +53,9 @@ def test_sidebar_layers_and_nonmodal_visual_pairing():
     assert "checkbox.checked=item.visible" in js
     assert "target.opacity=value" in js
     assert "gcpView.waiting=true;" in js
+    assert "gcpView.pending=point;gcpView.waiting=true" in js
     assert '$("raster-visual-dialog").show();' in js
-    assert 'canvas.addEventListener("pointerdown",pickGcpMapPoint,true);' in js
+    assert 'map.addEventListener("pointerdown",pickGcpMapPoint,true);' in js
     assert ".layer-tab-panel[hidden]{display:none!important;}" in css
 
 
@@ -87,15 +88,15 @@ const visible=new Function('state',
 assert.equal(visible({image:{},affine:[0,1,2,3,4,5],
   visible:true,boundEPSG:'',epsg:null}),true);
 let draws=0;
-const view={waiting:true,pending:{u:125,v:231}};
+const view={open:true,waiting:true,pending:{u:125,v:231},fitSerial:0};
 const picked=new Function('gcpView','raster','eventCoords','screenToWorld',
-  'updateGcpUi','renderRasterLayers',
-  block('  function pickGcpMapPoint(','  async function applyVisualGCP(')+
+  'gcpNearestMapPoint','updateGcpUi','renderRasterLayers','canvas',
+  block('  function gcpMapPoint(','  function moveGcpMapPoint(')+
   ';return pickGcpMapPoint;')(
   view,raster,()=>({x:25,y:35}),()=>({x:701234.5,y:-513210.75}),
-  ()=>draws++,()=>{});
+  ()=>-1,()=>draws++,()=>{},{});
 let blocked=false;
-picked({button:0,preventDefault(){blocked=true;},stopImmediatePropagation(){}});
+picked({button:0,pointerId:1,preventDefault(){blocked=true;},stopImmediatePropagation(){}});
 assert.ok(blocked);
 assert.deepEqual(raster.gcps[0],{u:125,v:231,x:513210.75,y:701234.5});
 assert.equal(view.waiting,false);
