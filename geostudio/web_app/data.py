@@ -43,6 +43,7 @@ HEX = re.compile(r"^#[0-9A-Fa-f]{6}$")
 STYLE_FORMAT = "geostudio-visual-v1"
 TOPOLOGY_STACK_KEY = "__geostudio_topology_stack_v1__"
 CODES = {
+    "5214": "Linia obrębu",
     "5216": "Działki",
     "5220": "Użytki",
     "5230": "Użytki",
@@ -2245,7 +2246,11 @@ class PreviewWorkspace:
         fill_color = None
         opacity = 0
 
-        if obj.code == "5230" and land_use in {"dr", "droga"}:
+        if obj.code == "5214":
+            # An administrative precinct boundary is a LINE, never
+            # a filled area, regardless of any CDF/native fill token.
+            pass
+        elif obj.code == "5230" and land_use in {"dr", "droga"}:
             # Road class is never a filled land-use area, even with a code
             # styling override (same rule as the original PySide6 window).
             pass
