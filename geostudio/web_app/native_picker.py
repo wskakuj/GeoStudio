@@ -132,6 +132,14 @@ class NativeMapPicker:
                 meta["topologyWarning"]=(
                     "Pominięto niezgodny plik topologii. "
                     "Mapa bazowa została wczytana bez odwracalnych wycięć.")
+        visual_path=chosen.with_suffix(".geostudio.json")
+        if visual_path.is_file():
+            try:
+                visual=self._workspace.set_visual_sidecar(visual_path.read_bytes())
+                meta={**self._workspace.metadata(),"visualImported":visual}
+            except (ValueError,OSError,TypeError) as exc:
+                meta["visualWarning"]=(
+                    "Pominięto niezgodne ustawienia opisów GeoStudio: "+str(exc))
         self._source_path = chosen.resolve()
         self._source_sha = sha256(raw).hexdigest()
         available=self._recovery_store().candidate(
@@ -265,6 +273,7 @@ class NativeMapPicker:
             suggested_name,content=self._workspace.export_positive_copy(
                 status["documentToken"])
             overlay_bytes=self._workspace.export_topology_metadata(content)
+        visual_bytes=self._workspace.export_visual_sidecar(content)
         root = tk.Tk()
         try:
             root.withdraw()
@@ -294,15 +303,16 @@ class NativeMapPicker:
             raise ValueError("Nie wolno nadpisać otwartego pliku źródłowego.")
         if chosen.name.casefold() == self._workspace.metadata()["name"].casefold():
             raise ValueError("Podaj inną nazwę niż mapa źródłowa.")
-        if burn_cutouts and chosen.exists():
-            raise ValueError(
-                "Eksport natywnych wycięć wymaga nowej nazwy pliku. "
-                "Nie nadpisuj istniejącej pary MAP/JSON.")
-        # Prepare BOTH files on disk before committing a new 6B pair.
-        # Do not leave behind a MAP without its source-ring recovery JSON.
+        # A MAP and its two companions are published as a new project;
+        # never overwrite existing files when any companion is required.
+        if (burn_cutouts or visual_bytes) and chosen.exists():
+            raise ValueError("Wybierz nową nazwę MAP, aby nie nadpisać pary MAP/JSON.")
         companion=chosen.with_suffix(".geostudio-topology.json")
-        if burn_cutouts and companion.exists():
-            raise ValueError("Plik odwracalności już istnieje. Wybierz nową nazwę.")
+        visual_path=chosen.with_suffix(".geostudio.json")
+        if overlay_bytes and companion.exists():
+            raise ValueError("Istnieje już plik topologii. Wybierz nową nazwę.")
+        if visual_bytes and visual_path.exists():
+            raise ValueError("Istnieje już plik stylów. Wybierz nową nazwę.")
         fd,tmp=tempfile.mkstemp(prefix=".geostudio2-",suffix=".tmp",
                                 dir=str(chosen.parent))
         tmp_companion=None
