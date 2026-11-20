@@ -17,7 +17,7 @@ if not exist "%PYTHON%" (
     exit /b 1
   )
 )
-"%PYTHON%" -c "import fastapi, uvicorn, webview, shapely, PIL" >nul 2>&1
+"%PYTHON%" -c "import fastapi, uvicorn, webview, shapely, PIL, reportlab" >nul 2>&1
 if errorlevel 1 (
   echo [2/3] Jednorazowa instalacja zaleznosci web UI...
   "%PYTHON%" -m pip install --disable-pip-version-check -e ".[web]"
