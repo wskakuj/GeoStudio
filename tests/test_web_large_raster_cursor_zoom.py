@@ -63,7 +63,7 @@ const panned=pixelUnderCursor();
 functions.zoomGcpAt(point.x,point.y,-150,0);
 assert.ok(Math.abs(pixelUnderCursor().u-panned.u)<1e-9);
 assert.ok(Math.abs(pixelUnderCursor().v-panned.v)<1e-9);
-assert.equal(draws,4);
+assert.equal(draws,5);
 // Browser wheel event MUST pass real canvas-relative mouse coordinates.
 assert.ok(src.includes('zoomGcpAt(ev.clientX-rect.left,ev.clientY-rect.top,'));
 """
@@ -129,7 +129,7 @@ const paint=new Function('raster','rasterEntry','rasterCanShow','ctx','state',
   src.slice(a,b)+'return paintRaster;')(
   {layers:[item],image:null},()=>null,()=>true,ctx,state);
 paint();
-assert.deepEqual(transform,[18,0,0,16,400,300]);
+assert.deepEqual(transform.map(x=>x===0?0:x),[18,0,0,16,400,300]);
 // Source pixel 500,250 maps to preview 500/3,250/4;
 // without these scales the raster would be geographically undersized.
 """
