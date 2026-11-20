@@ -2437,7 +2437,8 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
     g.imageSmoothingEnabled=true;g.imageSmoothingQuality="high";
     g.drawImage(raster.image,pos.left,pos.top,
       raster.image.width*pos.scale,raster.image.height*pos.scale);
-    const markers=raster.gcps.map((pt,i)=>({u:pt.u,v:pt.v,label:String(i+1),color:"#54ead8"}));
+    const markers=raster.gcps.map((pt,i)=>({u:pt.u,v:pt.v,
+      label:String(i+1),color:i===gcpView.activeIndex?"#ffbc57":"#54ead8"}));
     if(gcpView.pending)markers.push({...gcpView.pending,label:"+",color:"#ffbc57"});
     for(const item of markers){
       const x=pos.left+item.u*pos.scale*raster.image.width/
@@ -2587,8 +2588,9 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
     for(const [index,pt] of raster.gcps.entries()){
       const p=worldToScreen(pt.y,-pt.x);
       if(p.x<0||p.y<0||p.x>state.width||p.y>state.height)continue;
-      ctx.beginPath();ctx.arc(p.x,p.y,6,0,Math.PI*2);
-      ctx.fillStyle="#00b9a3";ctx.fill();
+      ctx.beginPath();ctx.arc(p.x,p.y,8,0,Math.PI*2);
+      ctx.fillStyle=index===gcpView.activeIndex?"#ffbc57":"#00b9a3";
+      ctx.fill();
       ctx.lineWidth=2;ctx.strokeStyle="#fff";ctx.stroke();
       ctx.fillStyle="#17465b";ctx.font="bold 13px Arial";
       ctx.fillText(String(index+1),p.x+9,p.y-7);
