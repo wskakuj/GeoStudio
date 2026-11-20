@@ -1,0 +1,68 @@
+/* Precise, opt-in/out snapping for NEW drawing gestures.
+   Coordinates are Canvas world units [easting Y, -northing X].
+   Pure helper: no edits to stationary GEO-MAP P records.
+   Exported for both Windows WebView2 and offline Node regression tests. */
+(function (root, factory) {
+  "use strict";
+  const api=factory();
+  if(typeof module==="object"&&module.exports) module.exports=api;
+  else root.GeoStudioDrawingSnap=api;
+})(typeof window==="object"?window:globalThis,function () {
+  "use strict";
+  function closestPointOnSegment(point,a,b) {
+    const dx=b[0]-a[0],dy=b[1]-a[1],length=dx*dx+dy*dy;
+    const t=length?Math.max(0,Math.min(1,
+      ((point.x-a[0])*dx+(point.y-a[1])*dy)/length)):0;
+    return {x:a[0]+t*dx,y:a[1]+t*dy};
+  }
+  function snapPoint(world,features,options={}) {
+    const scale=Number(options.scale);
+    const noMatch={point:world,kind:null,code:null,targetId:null,distancePx:null};
+    if(options.enabled===false||options.bypass||!Number.isFinite(scale)||
+       scale<=0||!Number.isFinite(world?.x)||!Number.isFinite(world?.y))
+      return noMatch;
+    // Distances are *screen pixels*, not metres. A narrow capture radius
+    // lets users digitize parallel lines just outside the target boundary.
+    const vRadius=Math.max(1,Math.min(8,options.vertexPixels??7));
+    const eRadius=Math.max(1,Math.min(7,options.edgePixels??5));
+    const search=Math.max(vRadius,eRadius)/scale;
+    let vertex=null,edge=null,featureCount=0,segments=0;
+    for(const feature of features||[]) {
+      if(feature.visible===false||!feature.geometry?.length)continue;
+      const bbox=feature.bbox;
+      if(bbox&&(world.x<bbox[0]-search||world.x>bbox[2]+search||
+                world.y<bbox[1]-search||world.y>bbox[3]+search))continue;
+      // Work is capped even on >100k-point MAP at very low zoom.
+      if(++featureCount>120)break;
+      for(const part of feature.geometry) {
+        if(!Array.isArray(part)||!part.length)continue;
+        for(let i=0;i<part.length;i++) {
+          if(++segments>12000)break;
+          const p=part[i];
+          if(!Array.isArray(p)||p.length<2||
+             !Number.isFinite(p[0])||!Number.isFinite(p[1]))continue;
+          const dist=Math.hypot(world.x-p[0],world.y-p[1])*scale;
+          if(dist<=vRadius&&(!vertex||dist<vertex.distancePx))
+            vertex={point:{x:p[0],y:p[1]},kind:"węzeł",code:feature.code,
+                    targetId:feature.id,distancePx:dist};
+          if(i===0)continue;
+          const a=part[i-1];
+          if(!Array.isArray(a)||a.length<2)continue;
+          const q=closestPointOnSegment(world,a,p);
+          const eDist=Math.hypot(world.x-q.x,world.y-q.y)*scale;
+          if(eDist<=eRadius&&(!edge||eDist<edge.distancePx))
+            edge={point:q,kind:"krawędź",code:feature.code,
+                  targetId:feature.id,distancePx:eDist};
+        }
+        if(segments>12000)break;
+      }
+      if(segments>12000)break;
+    }
+    // Prefer an exact node only when similarly close to an edge. Otherwise
+    // the drawn point would jump several pixels along the neighbor line.
+    if(vertex&&(!edge||vertex.distancePx<=edge.distancePx+1.2))
+      return vertex;
+    return edge||vertex||noMatch;
+  }
+  return {closestPointOnSegment,snapPoint};
+});

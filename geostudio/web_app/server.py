@@ -64,6 +64,10 @@ def create_app(workspace: PreviewWorkspace | None = None) -> FastAPI:
     async def styles():
         return FileResponse(ROOT / "styles.css", media_type="text/css")
 
+    @app.get("/drawing_snap.js")
+    async def drawing_snap_js():
+        return FileResponse(ROOT / "drawing_snap.js", media_type="text/javascript")
+
     @app.get("/map.js")
     async def javascript():
         return FileResponse(ROOT / "map.js", media_type="text/javascript")

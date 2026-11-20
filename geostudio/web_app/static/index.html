@@ -7,6 +7,7 @@
   <meta name="theme-color" content="#111a2b">
   <title>GeoStudio 2.0 — Podgląd</title>
   <link rel="stylesheet" href="/styles.css">
+  <script defer src="/drawing_snap.js"></script>
   <script defer src="/map.js"></script>
 </head>
 <body>
@@ -14,7 +15,7 @@
     <header class="topbar">
       <div class="identity">
         <div class="mark" aria-hidden="true"><span></span><span></span><span></span></div>
-        <div><strong>GeoStudio</strong><span class="brand-version">2.0 <em>ETAP 7 · KARTOGRAFIA — TEST</em></span></div>
+        <div><strong>GeoStudio</strong><span class="brand-version">2.0 <em>ETAP 9 · MAGNES + ETYKIETY — TEST</em></span></div>
       </div>
       <div class="header-center"><span class="top-kicker">OBSZAR ROBOCZY</span>
         <span id="document-title">Nowy projekt</span>
@@ -58,6 +59,7 @@
           <button class="tool-button" id="tool-copy" title="Kopiuj zaznaczone poligony (Ctrl+D)"><span class="tool-glyph">⧉</span>Kopiuj obok <small>Ctrl+D</small></button>
           <button class="tool-button" id="tool-delete-objects" title="Usuń wybrane obiekty (Ctrl+Delete)"><span class="tool-glyph">×</span>Usuń obiekty</button>
           <button class="tool-button" id="tool-new-polygon" title="Narysuj nowy poligon (N)"><span class="tool-glyph">⬟</span>Nowy poligon <small>N</small></button>
+          <button class="tool-button active draw-magnet-control" id="tool-draw-snap" aria-pressed="true" title="Magnes przy rysowaniu: przyciąga tylko do bardzo bliskich węzłów i linii (G w trybie rysowania). Przytrzymaj Alt, aby chwilowo wyłączyć."><span class="tool-glyph">⌾</span>Magnes <small>G</small></button>
           <button class="tool-button" id="tool-merge" title="Scal wybrane poligony tego samego kodu (Ctrl+Shift+G)"><span class="tool-glyph">⧉</span>Scal</button>
           <button class="tool-button" id="tool-split" title="Narysuj linię podziału jednego poligonu (Ctrl+Shift+X)"><span class="tool-glyph">⌁</span>Podziel</button>
           <button class="tool-button" id="tool-winding" title="Ręczna naprawa starych rekordów; podczas Zapisz jako wszystkie proste poligony otrzymują dodatni obrys automatycznie"><span class="tool-glyph">⊕</span>Pole + (stare)</button>
@@ -337,6 +339,7 @@
       </div>
       <div class="select-content">
         <p id="create-selection-description" class="select-explain">Kliknij na mapie co najmniej 3 punkty.</p>
+        <p class="select-explain">Magnes G: węzły 7 px, linie 5 px; przytrzymaj <kbd>Alt</kbd>, aby postawić punkt tuż obok granicy. Przełącznik znajduje się obok „Nowy poligon”.</p>
         <div class="select-grid">
           <div><label for="create-code">Kod GEO-MAP</label>
             <select id="create-code">

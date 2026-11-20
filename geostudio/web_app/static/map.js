@@ -20,7 +20,8 @@
     firstLoad: true, inspectorCache: new Map(),
     edit: null, editBusy: false, bulkPreview: null, movePreview: null,
     moveIds: [], moveGhost: null, objectPreview:null,
-    drawPoints:[], drawHover:null, copyIds:[],
+    drawPoints:[], drawHover:null, drawSnap:null,
+    drawMagnet:true,drawCursorWorld:null,copyIds:[],
     geometryPreview:null,cutIds:[],lineEditId:null,
     snapEnabled: true, sharedNodes: false, vertexDrag: null,
     hoverInsert: null, selectedVertex: null
@@ -40,6 +41,7 @@
     {name:"Edytuj wybraną linię", hint:"Shift+L", run:startEditLine},
     {name:"Usuń wybrane obiekty", hint:"Ctrl+Delete", run:deleteObjects},
     {name:"Rysuj nowy poligon", hint:"N", run:()=>setTool("draw")},
+    {name:"Magnes rysowania — przełącz; Alt chwilowo wyłącza", hint:"G", run:toggleDrawMagnet},
     {name:"Wczytaj plik stylów GeoStudio", hint:"JSON", run:()=> $("file-sidecar").click()},
     {name:"Wczytaj biblioteki kartograficzne GEO-MAP LAY/CDF/SYM", hint:"Etap 7", run:chooseCartographicLibraries},
     {name:"Odtwórz oryginalną geometrię z JSON topologii", hint:"MAP+JSON", run:()=> $("file-topology").click()},
@@ -378,7 +380,8 @@
     state.vertexDrag=null;state.moveGhost=null;state.movePreview=null;
     state.moveIds=[];state.copyIds=[];state.drawPoints=[];
     state.cutIds=[];state.lineEditId=null;state.geometryPreview=null;
-    state.drawHover=null;state.objectPreview=null;setTool("select");
+    state.drawHover=null;state.drawSnap=null;state.drawCursorWorld=null;
+    state.objectPreview=null;setTool("select");
     state.features = []; state.inspectorCache.clear();
     // Match the old user's map view: survey markers are opt-in.
     // Their heavy symbol density otherwise hides the parcel boundaries.
@@ -1460,6 +1463,53 @@
   }
   function mergePolygons(){return simpleGeometryAction("merge");}
   function repairWinding(){return simpleGeometryAction("repair");}
+  function toggleDrawMagnet() {
+    state.drawMagnet=!state.drawMagnet;
+    const control=$("tool-draw-snap");
+    control.classList.toggle("active",state.drawMagnet);
+    control.setAttribute("aria-pressed",String(state.drawMagnet));
+    if(!state.drawMagnet)state.drawSnap=null;
+    if(state.drawCursorWorld&&["draw","cut","line","line-edit"].includes(state.tool))
+      updateDrawingHover(state.drawCursorWorld,false);
+    inform(state.drawMagnet
+      ?"Magnes rysowania włączony: 7 px do węzła, 5 px do linii. Alt — bez przyciągania."
+      :"Magnes rysowania wyłączony: punkty dokładnie pod kursorem. G — włącz.");
+  }
+  function drawingSnapAt(world,altPressed=false) {
+    const helper=window.GeoStudioDrawingSnap;
+    if(!helper||!state.drawMagnet||altPressed)
+      return {point:world,kind:null,code:null};
+    return helper.snapPoint(world,
+      state.features.filter(isVisible),{scale:state.scale,
+        enabled:true,bypass:altPressed,vertexPixels:7,edgePixels:5});
+  }
+  function updateDrawingHover(world,altPressed=false) {
+    state.drawCursorWorld=world;
+    const target=drawingSnapAt(world,altPressed);
+    state.drawHover={x:-target.point.y,y:target.point.x};
+    state.drawSnap=target.kind?target:null;
+    requestDraw();
+    return target;
+  }
+  function drawMagnetMarker() {
+    if(!state.drawSnap||!["draw","cut","line","line-edit"].includes(state.tool))
+      return;
+    const p=worldToScreen(state.drawSnap.point.x,state.drawSnap.point.y);
+    ctx.save();
+    ctx.strokeStyle="#048f8a";ctx.lineWidth=2;
+    ctx.beginPath();ctx.arc(p.x,p.y,7.5,0,Math.PI*2);ctx.stroke();
+    ctx.beginPath();ctx.moveTo(p.x-11,p.y);ctx.lineTo(p.x+11,p.y);
+    ctx.moveTo(p.x,p.y-11);ctx.lineTo(p.x,p.y+11);ctx.stroke();
+    const label=(state.drawSnap.kind==="węzeł"?"WĘZEŁ":"LINIA")+
+      (state.drawSnap.code?" · "+state.drawSnap.code:"");
+    ctx.font="600 10px Segoe UI, sans-serif";
+    const width=Math.min(160,ctx.measureText(label).width+12);
+    const left=Math.max(5,Math.min(state.width-width-5,p.x+13));
+    const top=Math.max(5,Math.min(state.height-23,p.y-29));
+    ctx.fillStyle="rgba(11,88,84,.94)";ctx.fillRect(left,top,width,19);
+    ctx.fillStyle="#ffffff";ctx.fillText(label,left+6,top+13);
+    ctx.restore();
+  }
   function drawDraftPolygon() {
     if(!["draw","cut","line","line-edit"].includes(state.tool)||
        !state.drawPoints.length)return;
@@ -1616,6 +1666,7 @@
     shell.classList.toggle("drawing-objects",tool==="draw");
     if(!["draw","cut","line","line-edit"].includes(tool)){
       state.drawPoints=[];state.drawHover=null;
+      state.drawSnap=null;state.drawCursorWorld=null;
     }
     $("geometry-help").hidden=tool!=="nodes"||!state.meta;
     updateGeometryHelp();
@@ -1631,7 +1682,9 @@
     else if(tool==="nodes")
       inform("Tryb P: przeciągnij jeden z węzłów. Ctrl+Z cofa zmianę.");
     else if(["draw","cut","line","line-edit"].includes(tool))
-      inform("Klikaj punkty; Enter lub dwuklik kończy rysowanie, Esc anuluje.");
+      inform("Klikaj punkty; Enter/dwuklik kończy. Magnes G: "+
+        (state.drawMagnet?"włączony":"wyłączony")+
+        "; Alt stawia punkt obok linii bez przyciągania.");
     else if(tool==="move")inform("Tryb M: przeciągnij wybrany poligon lub całą grupę, potem potwierdź podgląd.");
     else inform(tool==="select"
       ?"Tryb zaznaczania obiektów (S).":"Tryb przesuwania mapy (H).");
@@ -2145,15 +2198,41 @@
       requestDraw();
     }finally{state.editBusy=false;updateEditState(state.edit);}
   }
+  function labelFontSize(feature,label,selected) {
+    // Keep label proportions tied to map units, not to the window pixels.
+    // Fixed 9–36px texts previously grew RELATIVELY when the map zoomed out.
+    // The cap is for readability at very high zoom; zooming OUT never
+    // increases the apparent font size.
+    const worldHeight=label.worldTextHeight!=null
+      ?label.worldTextHeight
+      :feature.code==="5310"?2.25:
+       feature.code==="5216"?1.60:
+       feature.code==="5220"||feature.code==="5230"?1.75:1.85;
+    let pixels=Math.min(label.size||16,worldHeight*state.scale);
+    // A selected object is always inspectable even when its shape is tiny.
+    // Other labels vanish below readable size instead of covering the map.
+    if(pixels<5.5)return selected?10:0;
+    return Math.min(32,pixels);
+  }
+  function labelGroups(feature) {
+    if(feature.code!=="5310")
+      return (feature.labels||[]).map(label=>[label]);
+    // GMW A1/A2 form one caption. Draw them as a single group and reserve
+    // ONE collision rectangle, otherwise A1 hid A2 of its own building.
+    // Preserve any explicitly distinct coordinates from manual positioning.
+    const groups=[];
+    for(const label of feature.labels||[]){
+      const match=groups.find(group=>
+        Math.hypot(group[0].x-label.x,group[0].y-label.y)<.001);
+      if(match)match.push(label);else groups.push([label]);
+    }
+    return groups;
+  }
   function renderLabels(features) {
-    if(!state.labels) return;
+    if(!state.labels)return;
+    const collisionBoxes=[];
     let painted=0;
-    const collisions=[];
-    // Source annotations have their own text height stored in GEO-MAP.
-    // Parcel numbers are suppressed at map overview scale, but appear
-    // when zoomed enough to read them. Building labels remain prioritized.
     const ordered=[...features].sort((a,b)=>{
-      // Active object's A1/A2 should not be hidden by competing labels.
       const priority=f=>f.id===state.active?-2:
         state.pinned.has(f.id)?-1:
         f.code==="5310"?0:
@@ -2161,64 +2240,76 @@
         f.code==="5216"?2:3;
       return priority(a)-priority(b);
     });
-    for(const feature of ordered) {
+    ctx.save();
+    ctx.textBaseline="alphabetic";
+    for(const feature of ordered){
       if(!feature.labels?.length)continue;
-      const box=feature.bbox;
-      const w=(box[2]-box[0])*state.scale;
-      const h=(box[3]-box[1])*state.scale;
+      const selected=feature.id===state.active;
+      const bbox=feature.bbox;
+      const w=(bbox[2]-bbox[0])*state.scale;
+      const h=(bbox[3]-bbox[1])*state.scale;
       const special=["7900","6900","6000","6301"].includes(feature.code);
       const building=feature.code==="5310";
-      if(!special&&!building&&(Math.max(w,h)<34||Math.min(w,h)<9))continue;
-      if(building&&Math.max(w,h)<9)continue;
-      for(const label of feature.labels){
-        if(painted>=1100)return;
-        const p=worldToScreen(label.x,label.y);
-        const lines=String(label.text).split("\n").slice(0,6);
-        const nativeSize=label.worldTextHeight;
-        const size=nativeSize!==null&&nativeSize!==undefined
-          ? Math.max(4,Math.min(50,nativeSize*state.scale))
-          : Math.max(9,Math.min(36,label.size||12));
-        const weight=label.bold?"700":"400";
-        const family=String(label.fontFamily||"Segoe UI").replace(/["'\\]/g,"");
-        ctx.font=weight+" "+size+"px '"+family+"', sans-serif";
-        const widths=lines.map(line=>ctx.measureText(line.slice(0,100)).width);
-        const maxWidth=Math.max(...widths,0);
-        const lineHeight=size*1.13;
-        const left=p.x-maxWidth/2;
-        const baseline=p.y+(label.offset||0);
-        const rect=[left-2,baseline-size-2,left+maxWidth+2,
-                    baseline+(lines.length-1)*lineHeight+4];
+      if(!selected&&!special&&!building&&
+         (Math.max(w,h)<34||Math.min(w,h)<9))continue;
+      if(!selected&&building&&Math.max(w,h)<17)continue;
+      for(const group of labelGroups(feature)){
+        if(painted>=1100){ctx.restore();return;}
+        const labelRows=[];
+        let width=0,height=0;
+        for(const label of group){
+          const size=labelFontSize(feature,label,selected);
+          if(size<=0)continue;
+          const font=(label.bold?"700":"400")+" "+size+"px '"+
+            String(label.fontFamily||"Segoe UI").replace(/["'\\]/g,"")+
+            "', sans-serif";
+          ctx.font=font;
+          const lines=String(label.text).split("\n").slice(0,6);
+          for(const line of lines){
+            const text=line.slice(0,100);
+            const lineWidth=ctx.measureText(text).width;
+            const rowHeight=size*1.18;
+            labelRows.push({label,text,font,size,lineWidth,rowHeight});
+            width=Math.max(width,lineWidth);
+            height+=rowHeight;
+          }
+        }
+        if(!labelRows.length)continue;
+        const anchor=group[0],p=worldToScreen(anchor.x,anchor.y);
+        const rect=[p.x-width/2-3,p.y-height/2-3,
+                    p.x+width/2+3,p.y+height/2+3];
         if(rect[2]<0||rect[0]>state.width||
            rect[3]<0||rect[1]>state.height)continue;
-        // Avoid pretending that a dense cadastral overview should show
-        // thousands of overlapping labels; classic Qt scales these.
-        if(collisions.some(r=>r[0]<rect[2]&&r[2]>rect[0]&&
-                              r[1]<rect[3]&&r[3]>rect[1]))continue;
-        collisions.push(rect);
-        const showSelectedLabel=feature.id===state.active&&
-          (label.field==="A1"||label.field==="A2");
-        if(showSelectedLabel){
-          // When a polygon 5310 is active, highlight BOTH corresponding
-          // description strings, not just the geometry outline.
+        // All rows of A1 and A2 share a single collision rectangle.
+        // Separately positioned labels on the same feature are NOT
+        // allowed to suppress each other.
+        if(!selected&&collisionBoxes.some(item=>
+           item.id!==feature.id&&item.rect[0]<rect[2]&&
+           item.rect[2]>rect[0]&&item.rect[1]<rect[3]&&
+           item.rect[3]>rect[1]))continue;
+        collisionBoxes.push({id:feature.id,rect});
+        if(selected&&group.some(label=>
+           label.field==="A1"||label.field==="A2")){
           ctx.fillStyle="rgba(27,150,143,.23)";
           ctx.fillRect(rect[0]-2,rect[1]-2,
-            rect[2]-rect[0]+4,rect[3]-rect[1]+4);
+                       rect[2]-rect[0]+4,rect[3]-rect[1]+4);
         }
-        ctx.textBaseline="alphabetic";
-        for(let j=0;j<lines.length;j++){
-          const line=lines[j].slice(0,100);
-          const px=p.x-widths[j]/2;
-          const py=baseline+j*lineHeight;
+        let cursor=p.y-height/2;
+        for(const row of labelRows){
+          cursor+=row.rowHeight;
+          const x=p.x-row.lineWidth/2;
+          ctx.font=row.font;
           ctx.strokeStyle=document.body.classList.contains("dark-map")
             ?"#1b2c3d":"#f8fafc";
-          ctx.lineWidth=Math.min(2.2,Math.max(.8,size*.14));
-          ctx.strokeText(line,px,py);
-          ctx.fillStyle=label.color||"#4A5056";
-          ctx.fillText(line,px,py);
+          ctx.lineWidth=Math.min(2.2,Math.max(.6,row.size*.12));
+          ctx.strokeText(row.text,x,cursor);
+          ctx.fillStyle=row.label.color||"#4A5056";
+          ctx.fillText(row.text,x,cursor);
         }
         painted++;
       }
     }
+    ctx.restore();
   }
   function draw() {
     state.scheduled=false;
@@ -2239,7 +2330,7 @@
     for(const feature of features) renderFill(feature);
     for(const feature of features) renderStroke(feature);
     renderHighlights(features);drawMoveGhost(features);drawMoveMagnet();
-    renderLabels(features);drawDraftPolygon();drawVertexTool();
+    renderLabels(features);drawDraftPolygon();drawMagnetMarker();drawVertexTool();
     $("scale-label").textContent="Podgląd: "+state.scale.toFixed(state.scale<1?3:1)+" px / jedn.";
     $("count-visible").textContent=display(features.length);
     $("render-hint").textContent=state.limited
@@ -2501,7 +2592,7 @@
     $("cursor-coords").textContent="X: "+(-world.y).toFixed(3)+
                                    "   Y: "+world.x.toFixed(3);
     if(["draw","cut","line","line-edit"].includes(state.tool)&&!state.editBusy){
-      state.drawHover={x:-world.y,y:world.x};requestDraw();
+      updateDrawingHover(world,ev.altKey);
     }
     if(!state.drag&&state.tool==="nodes"&&!state.editBusy){
       state.hoverInsert=closestEditableSegment(p);
@@ -2540,8 +2631,12 @@
     if(d.draw){
       if(!d.moved){
         const p=eventCoords(ev),world=screenToWorld(p.x,p.y);
-        const next=[Math.round(-world.y*1000)/1000,
-                    Math.round(world.x*1000)/1000];
+        // The actual click is authoritative, not a stale hover target.
+        // Alt always bypasses the magnet for the clicked point.
+        const snapped=drawingSnapAt(world,ev.altKey);
+        const next=[Math.round(-snapped.point.y*1000)/1000,
+                    Math.round(snapped.point.x*1000)/1000];
+        state.drawSnap=snapped.kind?snapped:null;
         const last=state.drawPoints[state.drawPoints.length-1];
         if(!last||Math.hypot(next[0]-last[0],next[1]-last[1])>0.003){
           if(state.drawPoints.length<500)state.drawPoints.push(next);
@@ -2616,7 +2711,10 @@
   });
   canvas.addEventListener("pointerleave",()=>{
     if(state.hoverInsert){state.hoverInsert=null;requestDraw();}
-    if(state.drawHover){state.drawHover=null;requestDraw();}
+    if(state.drawHover){
+      state.drawHover=null;state.drawSnap=null;state.drawCursorWorld=null;
+      requestDraw();
+    }
   });
   canvas.addEventListener("pointercancel",()=>{state.drag=null;state.vertexDrag=null;state.moveGhost=null;shell.classList.remove("dragging");requestDraw();});
   canvas.addEventListener("wheel",ev=>{
@@ -2718,6 +2816,11 @@
       }else selectFeature(null);
       return;
     }
+    if(!ev.ctrlKey&&!ev.metaKey&&!ev.altKey&&
+       ev.key.toLowerCase()==="g"&&
+       ["draw","cut","line","line-edit"].includes(state.tool)){
+      ev.preventDefault();toggleDrawMagnet();return;
+    }
     if(ev.key.toLowerCase()==="s")setTool("select");
     if(ev.key.toLowerCase()==="m")setTool("move");
     if(ev.key.toLowerCase()==="n")setTool("draw");
@@ -2746,6 +2849,7 @@
   link("tool-bulk-edit",openBulkEditor);
   link("tool-move",()=>setTool("move"));
   link("tool-new-polygon",()=>setTool("draw"));
+  link("tool-draw-snap",toggleDrawMagnet);
   link("tool-merge",mergePolygons);
   link("tool-split",startSplit);
   link("tool-winding",repairWinding);

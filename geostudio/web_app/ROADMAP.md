@@ -156,3 +156,53 @@ To przybliżony **zakres funkcji**, nie wskaźnik jakości/testów:
 
 Najwięcej pozostałej pracy to integracja wielu operacji na obiektach oraz pełna zgodność renderowania i formatów.
 Do pracy produkcyjnej używaj zweryfikowanej aplikacji klasycznej lub dokładnie sprawdzonej wyeksportowanej kopii MAP.
+
+
+## Etap 9 — rysowanie z magnesem i etykiety zależne od skali (PR #57, testy)
+
+- [x] Niezależny od trybu P **Magnes G** obok „Nowy poligon”
+  (domyślnie włączony); obejmuje także rysowanie linii i podziałów.
+  Przyciąga do widocznych węzłów GEO-MAP maks. **7 pikseli** i do linii
+  maks. **5 pikseli**; najbliższa krawędź nie jest przegrywana przez
+  odległy narożnik. Bez zmian geometrii istniejących obiektów.
+- [x] **Alt** chwilowo wyłącza magnes przy pojedynczym kliknięciu,
+  przełącznik G umożliwia trwałe wyłączenie. Nie przyciąga do warstw
+  wyłączonych. Wskaźnik na mapie pokazuje docelowy węzeł lub krawędź.
+- [x] Punkty są próbkowane **w chwili kliknięcia** do GEO-MAP 1 mm.
+  Przyciąganie respektuje skalę widoku, działa dla N, L i linii cięcia.
+- [x] Rozmiar napisów Canvas zależy od skali mapy, a nie stałych pikseli,
+  więc przy oddalaniu nie zasłaniają coraz mniejszych obrysów.
+  Zbyt małe opisy są ukrywane; aktywny obiekt pozostaje czytelny.
+- [x] **5310 A1 i A2 stanowią jedną grupę układu** (z zachowaniem
+  osobno przeniesionych opisów) i nie konkurują ze sobą w antykolizji.
+  A2 wielowierszowe z separatorem pionowej kreski pozostaje w całości.
+- [x] Testy helpera JS przez Node (węzeł/krawędź, Alt, widoczność),
+  test skali i grup A1/A2 oraz zachowania źródłowego MAP/CHK.
+  **Wymagany test wzrokowy na rzeczywistej mapie GEO-MAP.**
+
+### Brakujące możliwości z klasycznego GeoStudio 0.14 (Qt)
+
+Kolejność po etapie 9, porównana z implementacją w geostudio/app.py:
+
+1. **Etap 10A — pozycje i reguły etykiet**: tryb dawnego L
+   (przesuwanie A1/A2/TX bezpośrednio na mapie), edytor widoczności
+   i stylów opisów kodu Ctrl+Alt+L, zapis konfiguracji etykiet
+   obok MAP. Zwykłe renderowanie A1/A2 już istnieje.
+2. **Etap 10B — wyszukiwanie i masowa edycja**: dawne F (po ID,
+   tekście i kodzie), Ctrl+F (zamiana frazy w atrybutach) z podglądem
+   i jedną transakcją Undo, dowolny prawidłowy 4-cyfrowy kod przy
+   tworzeniu poligonów oraz linii. Ctrl+H i zbiorowe A1/A2 już działają.
+3. **Etap 11 — wydruk i eksport**: PNG/JPG/TIFF do druku, prosty DXF,
+   ustawiana skala widoku i opracowania, oprawa mapy (legenda, północ,
+   ramki i podziałki). Wymaga testów geodezyjnej orientacji X/Y.
+4. **Etap 12 — dane podkładowe**: rastry i pliki world,
+   GCP/kalibracja, przezroczystość i kolejność warstw,
+   WMS w tle, transformacja współrzędnych i eksport
+   nowego MAP w innym układzie.
+5. **Etap 13 — zaawansowana kartografia**: pełniejsze reguły
+   i symbole bibliotek LAY/CDF/SYM, desenie i style wydruku,
+   większa zgodność optyczna z klasycznym GeoStudio.
+
+Bezpieczeństwo pozostaje wymaganiem w każdym etapie:
+kopie w pamięci, ochrona innych kodów, bezpieczny eksport, Ctrl+Z.
+Przed etapem 10A test magnetu i napisów na mapie użytkownika.

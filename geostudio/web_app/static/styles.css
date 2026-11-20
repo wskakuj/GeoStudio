@@ -330,6 +330,18 @@ button:disabled { opacity:.38; cursor:not-allowed; filter:none !important; }
   .toolbar .tool-divider:nth-of-type(2) { display:flex; }
 }
 
+/* Drawing magnet is a separate, discoverable switch, not a hidden P-mode option.
+   The inactive state remains visible in the horizontally scrollable toolbar. */
+.toolbar .draw-magnet-control {
+  border:1px solid #447f77;
+  min-width:82px;
+}
+.toolbar .draw-magnet-control:not(.active) {
+  opacity:.67;
+  border-color:#4a5664;
+  color:#a8b3bf;
+}
+
 /* Stage 6A: magnetic snapping is controllable even in narrower Windows sizes.
    The whole ribbon scrolls horizontally; no geometry tool is silently hidden. */
 @media (max-width:1080px) {
