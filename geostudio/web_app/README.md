@@ -871,3 +871,67 @@ zgodności kartografii 1:1 z GEO-MAP. Wyeksportowane pliki należy sprawdzić.
   Rzeczywista płynność zależy od rozmiaru mapy, złożoności symboli,
   pamięci i wydajności komputera.
 
+
+## Etap 12 — podkłady WMS, raster i współrzędne (wersja testowa)
+
+### 12A: ortofotomapy WMS Geoportalu
+
+1. Otwórz MAP w GeoStudio 2.0 i kliknij **Podkłady WMS**.
+2. Wskaż **zweryfikowany układ EPSG mapy**. GeoStudio nie zgaduje CRS
+   na podstawie liczbowych wartości współrzędnych. Obsługiwane są
+   PL-1992 EPSG:2180 i PL-2000 EPSG:2176–2179.
+3. Wybierz standardową lub wysokorozdzielczą ortofotomapę i kliknij
+   **Pobierz warstwy**. Wskaż warstwę zgodną z EPSG, po czym
+   **Pokaż pod mapą**. Suwak reguluje przezroczystość.
+4. Obraz jest rysowany *pod* liniami, obrysami i etykietami GEO-MAP.
+   Przy zoomie i przesunięciu poprzedni obraz przesuwa się wraz z
+   geometrią; po ~420 ms bez ruchu pobierany jest nowy fragment.
+   Błędy pobrania nie usuwają poprzedniego obrazu.
+
+Obraz pochodzi z oficjalnego WMS GUGiK. Lokalny serwer zezwala tylko
+na dwa predefiniowane hostowane na HTTPS adresy Geoportalu, blokuje
+przekierowania, narzuca limity odpowiedzi i wymaga tokenu dostępu.
+Zaznaczone obiekty, atrybuty i zawartość MAP nie są wysyłane do WMS.
+W tej wersji **nie ma reprojekcji podkładu**: EPSG mapy musi zgadzać
+się z wybraną warstwą. Niepoprawny EPSG może spowodować wyświetlenie
+niepasujących danych — sprawdź położenie na znanym punkcie.
+
+### 12B: raster lokalny, GeoTIFF, world file i GCP
+
+W tym samym oknie wybierz PNG/JPG/WebP/TIFF/GeoTIFF. TIFF/GeoTIFF
+jest dekodowany przez serwer lokalny do PNG (Pillow); pliki PNG/JPG
+pozostają w pamięci przeglądarki. Limity: **48 MB plik TIFF**
+i **24 mln pikseli**. To limity bezpieczeństwa wersji testowej.
+
+- GeoTIFF: próba odczytu georeferencji i EPSG z tagów TIFF; obrazy
+  z nieobsługiwanym lub różnym EPSG nie są nakładane na mapę.
+- World file (.pgw, .jgw, .tfw, .wld): współczynniki
+  A/D/B/E/C/F, z korektą środka piksela na narożnik. Ten plik
+  nie podaje EPSG — wybierz świadomie CRS odpowiadający MAP.
+- GCP: minimum **trzy niewspółliniowe punkty** w osobnych wierszach
+  `u v X Y`, gdzie u/v są współrzędnymi piksela (od lewego górnego
+  narożnika), a X=północ/Y=wschód to współrzędne GEO-MAP w metrach.
+  W wyniku pokazywany jest RMSE dopasowania afinicznego.
+  Przed trasowaniem sprawdź kilka niezależnych punktów.
+
+Po zmianie EPSG raster skalibrowany w poprzednim układzie pozostaje
+ukryty; konieczne jest ponowne potwierdzenie georeferencji.
+Rastry w tej wersji są **tymczasowym podkładem w sesji**, nie trafiają
+do MAP i nie są jeszcze dołączane do eksportu PNG/TIFF z etapu 11.
+
+### 12C: weryfikacja PRJ i przeliczenie punktu
+
+Opcjonalnie wybierz plik .prj zawierający WKT. GeoStudio weryfikuje
+EPSG przy wysokim progu pewności; nie wnioskuje go z nazw folderów
+lub samych liczb. Przycisk **Przelicz współrzędne środka mapy**
+pokazuje X/Y środka bieżącego widoku w innym obsługiwanym EPSG.
+Przeliczenie jest *tylko podglądem punktu* — nie zmienia MAP.
+
+**Jeszcze niezaimplementowane w tym etapie:** reprojekcja całej mapy
+MAP w nowym interfejsie, trwały zapis kalibracji podkładu, rastry
+w eksporcie arkusza, kalibracja GCP bezpośrednio klikaniem parami
+na obrazie i mapie, duże GeoTIFF-y oraz pełny GeoTIFF z warstwami
+i różnymi rodzajami pikseli. Pozostają osobnym zadaniem.
+
+Do testów używaj kopii MAP. Nie zakładaj, że poprawny rezultat
+testów API oznacza sprawdzoną zgodność terenową.
