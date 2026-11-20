@@ -34,7 +34,7 @@
     drawMagnet:true,drawCursorWorld:null,copyIds:[],
     geometryPreview:null,cutIds:[],lineEditId:null,
     snapEnabled: true, sharedNodes: false, vertexDrag: null,
-    hoverInsert: null, selectedVertex: null
+    hoverInsert: null, selectedVertex: null, mapEPSG:""
   };
   // WMS is a read-only background; never part of MAP, geometry or export.
   const underlay = {
@@ -47,7 +47,9 @@
   };
   const commands = [
     {name:"Otwórz plik GEO-MAP", hint:"Ctrl+O", run:chooseMap},
-    {name:"Podkład ortofotomapy WMS (Geoportal)", hint:"Etap 12A", run:openUnderlayDialog},
+    {name:"Podkład WMS Geoportalu",hint:"Podkłady",run:openUnderlayDialog},
+    {name:"Wczytaj raster i skalibruj GCP",hint:"Podkłady",run:openRasterDialog},
+    {name:"Sprawdź układ mapy EPSG lub PRJ",hint:"Podkłady",run:openCrsDialog},
     {name:"Wybierz obiekty według kodu, A1, A2", hint:"Ctrl+H", run:openAdvancedSelection},
     {name:"Znajdź obiekt po ID, kodzie lub treści", hint:"F", run:openFindDialog},
     {name:"Zamień fragment w atrybutach z podglądem", hint:"Ctrl+F", run:openReplaceDialog},
@@ -413,7 +415,8 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
     removeUnderlay();removeRaster();
     // An EPSG choice belongs to the previously opened map and must
     // NEVER be silently reused for unrelated GEO-MAP coordinates.
-    $("underlay-epsg").value="";
+    state.mapEPSG="";
+    for(const id of ["underlay-epsg","raster-epsg","crs-epsg"])$(id).value="";
     state.meta = meta;
     updateEditState(meta);
     state.active = null; state.detail = null; state.pinned.clear();
@@ -1851,9 +1854,12 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
   }
   function updateUnderlayStatus(message) {
     $("underlay-summary").textContent=message;
-    $("underlay-chip").textContent=underlay.enabled
-      ?("WMS · EPSG:"+underlay.epsg+(raster.image&&raster.affine?" + raster":""))
-      :raster.image&&raster.affine?"Raster lokalny":"Bez podkładu";
+    const rasterReady=raster.image&&raster.affine&&raster.boundEPSG===
+      Number($("underlay-epsg").value);
+    const active=[];
+    if(underlay.enabled)active.push("WMS · EPSG:"+underlay.epsg);
+    if(rasterReady)active.push("Raster lokalny");
+    $("underlay-chip").textContent=active.join(" + ")||"Bez podkładu";
   }
   function removeUnderlay(){
     underlay.ticket++;
@@ -1904,9 +1910,7 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
       const result=await response.json();
       // A slow file read must not set the CRS of a newly opened MAP.
       if(documentToken!==state.edit?.documentToken)return;
-      const input=$("underlay-epsg");
-      input.value=String(result.epsg);
-      input.dispatchEvent(new Event("change"));
+      setMapEPSG(String(result.epsg));
       $("underlay-crs-result").textContent=
         "Zweryfikowano układ z PRJ: EPSG:"+result.epsg+
         ". Zastosuj go tylko do odpowiadającego mu pliku MAP.";
