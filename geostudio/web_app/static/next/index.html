@@ -1429,7 +1429,10 @@ function scheduleGeometry(){
   if (regionContains(state.loadedBounds, state.view)) return;
   clearTimeout(state.viewLoadTimer);
   state.viewLoadTimer = setTimeout(() => {
-    if (!regionContains(state.loadedBounds, state.view)) loadFeatures();
+    // A slow multi-page response must not trigger a duplicate request.
+    // The loadFeatures() finally block schedules the next view if needed.
+    if (!state.loading && !regionContains(state.loadedBounds, state.view))
+      loadFeatures();
   }, 190);
 }
 
