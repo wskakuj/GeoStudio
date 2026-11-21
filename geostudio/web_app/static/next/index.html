@@ -1696,7 +1696,7 @@ function renderInspector(d){
   $('#selPill').textContent = 'Zaznaczono 1 obiekt';
   $('#codePill').textContent = d.code;
   $('#objTitle').textContent = String(title).replace('||', ' ');
-  $('#objSub').innerHTML = (d.layer || 'Obiekt') + ' · <b>kod ' + d.code + '</b>';
+  $('#objSub').innerHTML = escapeAttr(d.layer || 'Obiekt') + ' · <b>kod ' + escapeAttr(d.code) + '</b>';
   $('#mArea').textContent = d.areaM2 ? (d.areaM2 / 10000).toFixed(4).replace('.', ',') + ' ha' : '—';
   $('#mVert').textContent = d.pointCount || '—';
   $('#mId').textContent = d.sourceUid || d.id;
@@ -1712,8 +1712,8 @@ function renderInspector(d){
   rows.push(['UID źródła', d.sourceUid || '']);
   const editable = editing ? new Set(['A1','A2','A3','A4','A5','A6','TX']) : new Set();
   $('#tabAttr').innerHTML = rows.map(([k, v]) => editable.has(k)
-    ? `<div class="row"><dt>${k}</dt><dd><input class="edit" data-field="${k}" value="${escapeAttr(v || '')}"></dd></div>`
-    : `<div class="row"><dt>${k}</dt><dd class="${v ? '' : 'empty'}">${v || '—'}${v ? ICON.copy : ''}</dd></div>`
+    ? `<div class="row"><dt>${escapeAttr(k)}</dt><dd><input class="edit" data-field="${escapeAttr(k)}" value="${escapeAttr(v || '')}"></dd></div>`
+    : `<div class="row"><dt>${escapeAttr(k)}</dt><dd class="${v ? '' : 'empty'}">${escapeAttr(v || '—')}${v ? ICON.copy : ''}</dd></div>`
   ).join('');
   if (editing){
     const first = $('#tabAttr input.edit');
@@ -1724,11 +1724,11 @@ function renderInspector(d){
   $('#tabLook').innerHTML = `
     <div style="padding:10px 14px 0"><div style="font-size:11px;color:var(--text-3);letter-spacing:.08em;text-transform:uppercase">Styl z pliku MAP</div></div>
     <div class="swatches">
-      <span class="sw is-on" style="background:${st.stroke || '#4A5568'}" title="obrys"></span>
-      <span class="sw" style="background:${st.hasFill ? (st.fill || '#ffffff') : '#ffffff'}" title="wypełnienie"></span>
+      <span class="sw is-on" style="background:${escapeAttr(st.stroke || '#4A5568')}" title="obrys"></span>
+      <span class="sw" style="background:${escapeAttr(st.hasFill ? (st.fill || '#ffffff') : '#ffffff')}" title="wypełnienie"></span>
     </div>
     <div class="rows">
-      <div class="row"><dt>Obrys</dt><dd>${st.stroke || '—'}</dd></div>
+      <div class="row"><dt>Obrys</dt><dd>${escapeAttr(st.stroke || '—')}</dd></div>
       <div class="row"><dt>Grubość</dt><dd>${st.strokeWidth != null ? st.strokeWidth.toFixed(1) + ' px' : '—'}</dd></div>
       <div class="row"><dt>Wypełnienie</dt><dd>${st.hasFill ? 'tak' : 'brak'}</dd></div>
       <div class="row"><dt>Krycie</dt><dd>${st.opacity != null ? Math.round(st.opacity * 100) + '%' : '—'}</dd></div>
@@ -2143,7 +2143,7 @@ function renderCommands(query){
   });
   if (q && state.meta && state.meta.loaded){
     html += `<div class="cmd__g">Znajdź obiekt</div>
-      <div class="cmd" data-find="1">${ICON.search}<span class="cmd__t">Szukaj „${q.replace(/[<>&]/g, '')}” w atrybutach</span></div>`;
+      <div class="cmd" data-find="1">${ICON.search}<span class="cmd__t">Szukaj „${escapeAttr(q)}” w atrybutach</span></div>`;
   }
   $('#paletteList').innerHTML = html || `<div class="cmd"><span class="cmd__t" style="color:var(--text-3)">Brak wyników</span></div>`;
   $('#paletteList').querySelectorAll('.cmd[data-i]').forEach(node =>
@@ -4253,7 +4253,7 @@ $('#openCatalog').onclick = async () => {
       const style = item.style || {};
       const colour = style.hasFill ? style.fill : style.stroke;
       return `<div class="catalog__row">
-        <span class="catalog__sw" style="background:${colour || '#888'};opacity:${style.hasFill ? Math.max(0.25, style.opacity || 0.5) : 1}"></span>
+        <span class="catalog__sw" style="background:${escapeAttr(colour || '#888')};opacity:${style.hasFill ? Math.max(0.25, style.opacity || 0.5) : 1}"></span>
         <span class="catalog__code">${escapeAttr(item.code)}</span>
         <span>${escapeAttr(item.layer || '')} <span class="small">· ${escapeAttr(item.a1 || '')}</span></span>
         <span class="catalog__meta">${item.count} ob.</span>
