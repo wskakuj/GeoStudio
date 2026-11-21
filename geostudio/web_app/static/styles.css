@@ -1961,3 +1961,22 @@ body[data-theme] .floating.active {
     transition:none!important;animation:none!important;transform:none!important;
   }
 }
+/* The document host owns the logo and MAP tab rail. Leave room for
+   file actions without repeating the brand inside every editor frame. */
+body[data-document-editor="true"][data-theme] .topbar {
+  grid-template-columns:minmax(0,1fr) max-content;
+}
+body[data-document-editor="true"] .topbar .identity {display:none;}
+body[data-document-editor="true"][data-theme] .topbar .header-center {
+  justify-self:start;
+  max-width:min(100%,420px);
+}
+@media(max-width:970px){
+  body[data-document-editor="true"][data-theme] .topbar {
+    grid-template-columns:minmax(0,1fr);
+  }
+  body[data-document-editor="true"][data-theme] .topbar .header-actions {
+    grid-column:1;justify-content:flex-start;
+  }
+}
+body[data-document-editor="true"] .app-shell {min-height:0;}
