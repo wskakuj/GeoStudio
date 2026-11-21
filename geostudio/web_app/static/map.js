@@ -451,7 +451,10 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
   }
   function inform(msg, isError=false) {
     htmlText($("status-message"), msg);
-    const toast = $("toast"); toast.textContent = msg;
+    const toast = $("toast");
+    const toastHost=$("raster-dialog")?.open?$("raster-dialog"):document.body;
+    if(toast.parentNode!==toastHost)toastHost.append(toast);
+    toast.textContent = msg;
     toast.style.borderColor = isError ? "#d98769" : "#3a928d";
     toast.hidden = false; clearTimeout(toastTimer);
     toastTimer = setTimeout(() => { toast.hidden = true; }, 3900);
@@ -2415,7 +2418,10 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
     ctx.restore();
   }
   function rasterInfo(message){
-    $("raster-summary").textContent=message;
+    const summary=$("raster-summary");
+    summary.hidden=false;
+    delete summary.dataset.result;
+    summary.textContent=message;
     updateUnderlayStatus($("underlay-summary").textContent);
     renderRasterLayers();
   }
@@ -2665,6 +2671,17 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
       });
     }finally{URL.revokeObjectURL(url);}
   }
+  function reportRasterPlacement(source,warning=""){
+    const ready=rasterCanShow(raster);
+    const crsMismatch=raster.epsg && raster.epsg!==Number(state.mapEPSG);
+    const title=ready?"Raster skalibrowany":crsMismatch?"Sprawdź układ współrzędnych":"Raster wymaga kalibracji";
+    const detail=ready?source:crsMismatch
+      ?"Wybierz EPSG:"+raster.epsg+" dla mapy lub skalibruj raster wizualnie."
+      :"Wybierz „Kalibruj wizualnie” lub wczytaj plik world.";
+    rasterInfo([title+" · "+raster.name,detail,warning].filter(Boolean).join(" "));
+    $("raster-summary").dataset.result=ready&&!warning?"ready":"attention";
+    inform(title+" · "+raster.name,Boolean(warning));
+  }
   async function openRasterFile(file,world=null,warning=""){
     if(!file||!state.meta)return;
     const ticket=++raster.ticket;
@@ -2700,7 +2717,7 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
       const existing=[raster,...raster.layers].find(item=>digest && item.digest===digest && item.affine);
       if(existing){
         selectRasterLayer(existing.id);raster.file=file;raster.visible=true;
-        rasterInfo("Raster ma już dopasowanie do tej mapy.");requestDraw();return;
+        reportRasterPlacement("Użyto zapisanego dopasowania do tej mapy.");requestDraw();return;
       }
       let worldAffine=raster.image?null:raster.pendingWorld;
       if(world){
@@ -2714,23 +2731,12 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
       raster.boundEPSG=null;raster.gcps=[];raster.visible=true;
       raster.opacity=.72;raster.id=++raster.serial;
       raster.name=file.name;raster.file=file;raster.digest=digest;
-      if(epsg&&epsg!==Number(state.mapEPSG)){
-        rasterInfo("GeoTIFF EPSG:"+epsg+
-          " — wybierz zgodny EPSG w Układach lub skalibruj wizualnie.");
-        return;
-      }
       if(worldAffine)raster.affine=worldAffine;
-      const previewNote=(sourceWidth!==decoded.width||sourceHeight!==decoded.height)
-        ?" Podgląd "+decoded.width+"×"+decoded.height+
-          " z oryginału "+sourceWidth+"×"+sourceHeight+
-          " (GCP w oryginalnych pikselach).":"";
-      rasterInfo((raster.affine
-        ?file.name+" — odczytano georeferencję."
-        :file.name+" — brak georeferencji. Dodaj world lub punkty GCP.")+
-        previewNote);
       if(raster.affine)showRasterIfCalibrated();
-      if(warning)inform(warning,true);
-      else if(world&&worldAffine)rasterInfo(file.name+" — dopasowano z "+world.name+".");
+      const source=worldAffine
+        ?(world?"Wczytano "+world.name+".":"Użyto wskazanego pliku world.")
+        :"Odczytano współrzędne z pliku rastra.";
+      reportRasterPlacement(source,warning);
     }catch(error){
       rasterInfo("Nie udało się otworzyć rastra: "+error.message);
       inform("Błąd rastra: "+error.message,true);
@@ -2745,6 +2751,7 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
         raster.affine=coeff;
         raster.pendingWorld=null;
         showRasterIfCalibrated();
+        reportRasterPlacement("Wczytano "+file.name+".");
       }else{
         rasterInfo("Wczytano world. Wybierz teraz obraz rastra.");
       }
@@ -6115,6 +6122,8 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
   for(const id of ["underlay-epsg","raster-epsg","crs-epsg"])
     $(id).addEventListener("change",ev=>setMapEPSG(ev.target.value));
   const rasterInput=$("underlay-raster-file");
+  $("choose-raster").onclick=()=>rasterInput.click();
+  $("choose-world").onclick=()=>$("underlay-world-file").click();
   let rasterPickerBusy=false;
   rasterInput.addEventListener("click",async ev=>{
     const api=nativeAPI();

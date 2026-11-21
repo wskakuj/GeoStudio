@@ -2010,3 +2010,9 @@ body[data-document-editor="true"] .app-shell {min-height:0;}
   .trace-heading,.trace-tools,.trace-footer { padding:6px 10px; }
   .trace-hint { display:none; }
 }
+
+#choose-raster { width:100%; min-height:52px; font-size:15px; }
+.raster-world-action { display:flex; justify-content:flex-end; margin-top:10px; }
+#choose-world { width:auto; min-height:30px; padding:4px 10px; font-size:12px; }
+#raster-summary[data-result] { border-inline-start:4px solid #b88728; }
+#raster-summary[data-result="ready"] { border-inline-start-color:#258675; }
