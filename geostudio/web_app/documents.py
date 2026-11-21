@@ -9,7 +9,7 @@ from .data import PreviewWorkspace
 from .tile_exports import TiledArchiveStore
 from .native_picker import NativeMapPicker
 
-MAX_DOCUMENTS = 4
+MAX_DOCUMENTS = 10
 
 
 @dataclass
