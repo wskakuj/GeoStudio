@@ -184,6 +184,20 @@ function traceLandUses(pixels, forest, width, height, blackWidth, tolerance=2.5)
     for(let dy=-1;dy<=1;dy++) for(let dx=-1;dx<=1;dx++) count+=dark[i+dy*width+dx];
     wall[i]=red[i] || (dark[i] && count>=blackWidth) || (forest[i*4+3] && forest[i*4]<64);
   }
+  // Heal one- or two-pixel breaks in a pen divider only when both ends
+  // have an aligned run of original red ink. Added pixels never seed a join.
+  for(let y=4;y<height-4;y++)for(let x=4;x<width-4;x++){
+    const i=y*width+x;
+    if(!red[i])continue;
+    for(const step of [1,width,width+1,width-1]){
+      if(!red[i-step]||!red[i-2*step]||red[i+step])continue;
+      const gap=red[i+2*step]?1:2;
+      const end=i+(gap+1)*step;
+      if(!red[end]||!red[end+step])continue;
+      wall[i+step]=1;
+      if(gap===2)wall[i+2*step]=1;
+    }
+  }
   // Label enclosed regions; short annotations inside a region do not split it.
   const labels=new Int32Array(size), queue=new Int32Array(size);
   const regions=[null], stride=width+1;
@@ -347,12 +361,13 @@ function openRasterTracing(item, view) {
     <div class="trace-tools">
       <label>Czarne kontury <select><option value="5">Grubsze</option><option value="3">Także cienkie</option><option value="7">Tylko bardzo grube</option></select></label>
       <label class="toolbar-checkbox" title="Alt chwilowo wyłącza przyciąganie"><input type="checkbox" class="trace-magnet"> Magnes</label>
+      <button type="button" class="button ghost trace-fit">Cały raster</button>
       <button type="button" class="button ghost trace-insert" aria-pressed="false">Dodaj węzeł</button>
       <button type="button" class="button ghost trace-delete" aria-pressed="false">Usuń węzeł</button>
     </div>
     <div class="trace-stage"><canvas tabindex="0" aria-label="Podgląd rastra i węzłów wydzielenia"></canvas></div>
     <footer class="trace-footer">
-      <p class="trace-hint">Klikaj fragmenty jednego wydzielenia lub zaznacz je prostokątem. Przeciągnij węzeł, aby poprawić obrys.</p>
+      <p class="trace-hint">Kółko myszy przybliża i oddala. Przeciągnij prawym lub środkowym przyciskiem, aby przesunąć mapę. Lewym wybieraj pola lub poprawiaj węzły.</p>
       <div class="trace-actions">
         <label>A1 wydzielenia <input class="trace-a1" autocomplete="off"></label>
         <span role="status"></span>
@@ -363,32 +378,34 @@ function openRasterTracing(item, view) {
   document.body.append(dialog);
   const canvas=dialog.querySelector("canvas"),status=dialog.querySelector("[role=status]");
   const save=dialog.querySelector(".trace-save"),close=dialog.querySelector(".trace-close");
-  const scale=Math.min(2,1500/view.width,1100/view.height);
-  canvas.width=Math.max(1,Math.round(view.width*scale));
-  canvas.height=Math.max(1,Math.round(view.height*scale));
-  const w=canvas.width,h=canvas.height,ctx=canvas.getContext("2d",{willReadFrequently:true});
-  ctx.fillStyle="white";ctx.fillRect(0,0,w,h);
-  const [a,b,c,d,e,f]=item.affine;
-  const sx=(item.sourceWidth||item.image.width)/item.image.width;
-  const sy=(item.sourceHeight||item.image.height)/item.image.height;
-  const k=view.scale*scale;
-  const px=x=>(x-view.center.x)*k+view.width*scale/2;
-  const py=y=>(y-view.center.y)*k+view.height*scale/2;
-  ctx.setTransform(d*sx*k,-a*sx*k,e*sy*k,-b*sy*k,px(f),py(-c));
-  ctx.drawImage(item.image,0,0);
-  ctx.resetTransform();
-  const source=ctx.getImageData(0,0,w,h);
-  ctx.clearRect(0,0,w,h);
-  for(const feature of view.features){
-    if(feature.layer!=="Użytki Leśne" || !feature.closed)continue;
-    ctx.beginPath();
-    for(const ring of feature.geometry){
-      ring.forEach(([x,y],i)=>i?ctx.lineTo(px(x),py(y)):ctx.moveTo(px(x),py(y)));
-      ctx.closePath();
-    }
-    ctx.fillStyle="white";ctx.fill("evenodd");ctx.strokeStyle="black";ctx.lineWidth=2;ctx.stroke();
+  const stage=canvas.parentElement,ctx=canvas.getContext("2d");
+  const analysisScale=Math.min(1,Math.sqrt(6000000/(item.image.width*item.image.height)),
+                               8192/Math.max(item.image.width,item.image.height));
+  const w=Math.max(1,Math.round(item.image.width*analysisScale));
+  const h=Math.max(1,Math.round(item.image.height*analysisScale));
+  const sx=(item.sourceWidth||item.image.width)/w,sy=(item.sourceHeight||item.image.height)/h;
+  const [a,b,c,d,e,f]=item.affine,det=a*e-b*d;
+  // Display geometry uses easting and negative northing. The affine uses
+  // original source pixels even when the decoder supplied a smaller preview.
+  const worldAt=(x,y)=>({x:d*x*sx+e*y*sy+f,y:-(a*x*sx+b*y*sy+c)});
+  const pixelAt=(x,y)=>({x:(e*(-y-c)-b*(x-f))/(det*sx),y:(a*(x-f)-d*(-y-c))/(det*sy)});
+  const extent=[[0,0],[w,0],[w,h],[0,h]].map(([x,y])=>worldAt(x,y));
+  const bounds=[Math.min(...extent.map(p=>p.x)),Math.min(...extent.map(p=>p.y)),
+                Math.max(...extent.map(p=>p.x)),Math.max(...extent.map(p=>p.y))];
+  let features=[],worker=null,analysisId=0,failure="";
+  let zoom=1,left=0,top=0,fit=1,pan=null,viewportWidth=0,viewportHeight=0;
+  const fitSheet=()=>{zoom=fit;left=(viewportWidth-w*zoom)/2;top=(viewportHeight-h*zoom)/2;};
+  function resize(){
+    const sw=Math.max(1,stage.clientWidth),sh=Math.max(1,stage.clientHeight);
+    const centerX=(viewportWidth/2-left)/zoom,centerY=(viewportHeight/2-top)/zoom;
+    const wasFit=!viewportWidth||Math.abs(zoom-fit)<.000001;
+    viewportWidth=sw;viewportHeight=sh;fit=Math.min(sw/w,sh/h);
+    const ratio=Math.min(window.devicePixelRatio||1,2);
+    canvas.width=Math.round(sw*ratio);canvas.height=Math.round(sh*ratio);
+    if(wasFit)fitSheet();
+    else{left=sw/2-centerX*zoom;top=sh/2-centerY*zoom;}
+    draw();
   }
-  const mask=ctx.getImageData(0,0,w,h).data;
   let trace,anchor=null,drag=null,busy=false;
   const selected=new Set();
   const a1=dialog.querySelector(".trace-a1");
@@ -416,16 +433,16 @@ function openRasterTracing(item, view) {
   magnet.checked=view.magnetEnabled();
   magnet.onchange=()=>{if(magnet.checked!==view.magnetEnabled())view.toggleMagnet();};
   let snapHit=null;
-  const cssScale=()=>canvas.getBoundingClientRect().width/w;
+  const cssScale=()=>zoom;
   function moveNode(ev){
     const p=position(ev), ratio=cssScale();
     let target=p;
     snapHit=null;
     if(magnet.checked&&!ev.altKey){
       // Keep subpixel MAP coordinates all the way to the object creation API.
-      const world={x:(p.x-px(0))/k,y:(p.y-py(0))/k};
-      const hit=window.GeoStudioDrawingSnap.snapPoint(world,drag.targets,{scale:k*ratio});
-      if(hit.kind){target={x:px(hit.point.x),y:py(hit.point.y)};snapHit=hit;}
+      const world=worldAt(p.x,p.y);
+      const hit=window.GeoStudioDrawingSnap.snapPoint(world,drag.targets,{scale:ratio/Math.sqrt(Math.abs(det*sx*sy))});
+      if(hit.kind){target=pixelAt(hit.point.x,hit.point.y);snapHit=hit;}
     }
     for(const vertex of drag.vertices){vertex[0]=target.x;vertex[1]=target.y;}
     draw();
@@ -445,7 +462,11 @@ function openRasterTracing(item, view) {
     }
   };
   function draw(rect){
-    ctx.putImageData(source,0,0);
+    ctx.resetTransform();ctx.clearRect(0,0,canvas.width,canvas.height);
+    if(!viewportWidth)return;
+    ctx.scale(canvas.width/viewportWidth,canvas.height/viewportHeight);
+    ctx.translate(left,top);ctx.scale(zoom,zoom);
+    ctx.drawImage(item.image,0,0,w,h);
     const visibleRings=outline?[outline]:Array.from(selected,id=>trace.shapes.get(id).points);
     for(const ring of visibleRings){
       ctx.beginPath();
@@ -472,7 +493,7 @@ function openRasterTracing(item, view) {
     }
     if(adjusted){
       ctx.beginPath();
-      adjusted.forEach(([x,y],i)=>i?ctx.lineTo(px(y),py(-x)):ctx.moveTo(px(y),py(-x)));
+      adjusted.forEach(([x,y],i)=>{const p=pixelAt(y,-x);i?ctx.lineTo(p.x,p.y):ctx.moveTo(p.x,p.y);});
       ctx.closePath();ctx.fillStyle="rgba(240,150,0,.35)";ctx.fill();
       ctx.strokeStyle="#cb7100";ctx.lineWidth=3/cssScale();ctx.stroke();
     }
@@ -486,20 +507,37 @@ function openRasterTracing(item, view) {
     if(nodeTool==="insert")status.textContent="Kliknij bok, na którym chcesz dodać węzeł.";
     if(nodeTool==="remove")status.textContent="Klikaj węzły do usunięcia. Ponowne kliknięcie narzędzia kończy usuwanie.";
     if(!outline)status.textContent="Fragmenty muszą tworzyć jeden obrys bez otworów.";
-    save.disabled=busy||!outline?.length||!a1.value.trim();
+    if(!trace)status.textContent=failure||"Rozpoznawanie pól na całym rastrze…";
+    save.disabled=busy||!trace||!outline?.length||!a1.value.trim();
   }
   function analyze(){
-    trace=traceLandUses(source.data,mask,w,h,Number(dialog.querySelector("select").value));
-    selected.clear();edited.clear();drafts.clear();syncAttributes();draw();
+    if(!worker)return;
+    trace=null;failure="";selected.clear();edited.clear();drafts.clear();outline=[];adjusted=null;
+    activeNode=null;nodeTool="";a1.value="";
+    draw();
+    worker.postMessage({threshold:Number(dialog.querySelector("select").value),id:++analysisId});
   }
   function position(event){
     const r=canvas.getBoundingClientRect();
-    return {x:Math.max(0,Math.min(w-1,(event.clientX-r.left)*w/r.width)),
-            y:Math.max(0,Math.min(h-1,(event.clientY-r.top)*h/r.height))};
+    return {x:(event.clientX-r.left-left)/zoom,y:(event.clientY-r.top-top)/zoom};
   }
+  canvas.onwheel=ev=>{
+    ev.preventDefault();if(anchor||drag||pan)return;
+    const p=position(ev),old=zoom;
+    zoom=Math.max(fit,Math.min(Math.max(16,fit*8),zoom*Math.exp(-Math.sign(ev.deltaY)*.21)));
+    left+=p.x*(old-zoom);top+=p.y*(old-zoom);draw();
+  };
+  canvas.oncontextmenu=ev=>ev.preventDefault();
+  dialog.querySelector(".trace-fit").onclick=()=>{fitSheet();draw();};
   canvas.onpointerdown=ev=>{
-    if(busy)return;
+    if(pan||anchor||drag)return;
+    if(ev.button===1||ev.button===2){
+      ev.preventDefault();canvas.setPointerCapture(ev.pointerId);
+      pan={id:ev.pointerId,x:ev.clientX,y:ev.clientY,left,top};return;
+    }
+    if(busy||!trace||ev.button!==0)return;
     const p=position(ev);
+    if(p.x<0||p.y<0||p.x>=w||p.y>=h)return;
     canvas.setPointerCapture(ev.pointerId);
     let nearest=null,distance=8/cssScale();
     for(const v of outline||[]){
@@ -533,11 +571,13 @@ function openRasterTracing(item, view) {
     }
     activeNode=nearest;
     if(nearest){
-      const targets=view.snapFeatures().slice(),parts=[];
+      const targets=features.filter(view.isVisible),parts=[];
+      for(const ring of completed)targets.push({geometry:[ring.concat([ring[0]]).map(([x,y])=>{
+        const p=worldAt(x,y);return [p.x,p.y];})],code:"5310"});
       for(let i=0;i<outline.length;i++){
         const v=outline[i],next=outline[(i+1)%outline.length];
         if(v===nearest||next===nearest)continue;
-        parts.push([v,next].map(([x,y])=>[(x-px(0))/k,(y-py(0))/k]));
+        parts.push([v,next].map(([x,y])=>{const p=worldAt(x,y);return [p.x,p.y];}));
       }
       if(parts.length)targets.push({geometry:parts,code:"5310"});
       let key=nearest.join(",");
@@ -548,6 +588,7 @@ function openRasterTracing(item, view) {
     }else if(!ev.shiftKey)anchor=p;
   };
   canvas.onpointermove=ev=>{
+    if(pan){if(ev.pointerId===pan.id){left=pan.left+ev.clientX-pan.x;top=pan.top+ev.clientY-pan.y;draw();}return;}
     if(drag){
       const p=position(ev);
       if(!drag.moved&&Math.hypot(p.x-drag.start.x,p.y-drag.start.y)*cssScale()<2)return;
@@ -555,16 +596,18 @@ function openRasterTracing(item, view) {
     }else if(anchor)draw(position(ev));
   };
   canvas.onpointercancel=()=>{
+    pan=null;
     if(drag)outline[outline.indexOf(drag.vertices[0])]=drag.previous;
     anchor=null;drag=null;snapHit=null;draw();
   };
   canvas.onpointerup=ev=>{
+    if(pan){if(pan.id===ev.pointerId)pan=null;return;}
     if(drag){if(drag.moved){moveNode(ev);edited.set(drag.key,drag.vertices[0]);activeNode=drag.vertices[0];keepDraft();}else outline[outline.indexOf(drag.vertices[0])]=drag.previous;
       drag=null;snapHit=null;draw();return;}
     if(!anchor||busy)return;
     const p=position(ev);
-    if(Math.hypot(p.x-anchor.x,p.y-anchor.y)<5){
-      const id=trace.labels[Math.floor(p.y)*w+Math.floor(p.x)];
+    if(Math.hypot(p.x-anchor.x,p.y-anchor.y)*zoom<5){
+      const id=p.x>=0&&p.y>=0&&p.x<w&&p.y<h?trace.labels[Math.floor(p.y)*w+Math.floor(p.x)]:0;
       if(!trace.shapes.has(id)){anchor=null;draw();status.textContent="Brak prostego, zamkniętego konturu. Zmień próg czerni lub powiększenie widoku.";return;}
       if(selected.has(id))selected.delete(id);else selected.add(id);
     }else{
@@ -577,7 +620,7 @@ function openRasterTracing(item, view) {
   dialog.querySelector("select").onchange=analyze;
   close.onclick=()=>dialog.close();
   dialog.oncancel=event=>{if(busy)event.preventDefault();};
-  dialog.onclose=()=>dialog.remove();
+  dialog.onclose=()=>{worker?.terminate();observer.disconnect();dialog.remove();};
   save.onclick=async()=>{
     if(busy||!outline?.length||!a1.value.trim())return;
     busy=true;save.disabled=close.disabled=a1.disabled=dialog.querySelector("select").disabled=true;
@@ -585,14 +628,14 @@ function openRasterTracing(item, view) {
     try{
       const points=outline;
       if(points.length>500)throw Error("Wspólny obrys przekracza limit 500 węzłów.");
-      const native=points.map(([x,y])=>[-(y-py(0))/k,(x-px(0))/k]);
+      const native=points.map(([x,y])=>{const p=worldAt(x,y);return [-p.y,p.x];});
       const correction=await view.add(native,a1.value.trim(),adjusted);
       if(correction){
         adjusted=correction;
         message="Pomarańczowy obrys pomija powierzchnię zajętą przez 5310. Enter zatwierdza ten obrys.";
         return;
       }
-      completed.push(adjusted?adjusted.map(([x,y])=>[px(y),py(-x)]):points);
+      completed.push(adjusted?adjusted.map(([x,y])=>{const p=pixelAt(y,-x);return [p.x,p.y];}):points);
       adjusted=null;
       for(const id of selected)trace.shapes.delete(id);
       selected.clear();outline=[];activeNode=null;nodeTool="";drafts.clear();a1.value="";
@@ -603,5 +646,46 @@ function openRasterTracing(item, view) {
       draw();if(message)status.textContent=message;
     }
   };
-  dialog.showModal();analyze();
+  const observer=new ResizeObserver(resize);
+  dialog.showModal();resize();observer.observe(stage);
+  async function prepare(){
+    try{
+      features=await view.featuresIn(bounds);
+      if(!dialog.open)return;
+      const buffer=document.createElement("canvas");buffer.width=w;buffer.height=h;
+      const g=buffer.getContext("2d",{willReadFrequently:true});
+      g.fillStyle="white";g.fillRect(0,0,w,h);g.drawImage(item.image,0,0,w,h);
+      const source=g.getImageData(0,0,w,h).data;
+      g.clearRect(0,0,w,h);
+      for(const feature of features){
+        if(feature.layer!=="Użytki Leśne"||!feature.closed)continue;
+        g.beginPath();
+        for(const ring of feature.geometry){
+          ring.forEach(([x,y],i)=>{const p=pixelAt(x,y);i?g.lineTo(p.x,p.y):g.moveTo(p.x,p.y);});
+          g.closePath();
+        }
+        g.fillStyle="white";g.fill("evenodd");g.strokeStyle="black";g.lineWidth=2;g.stroke();
+      }
+      const mask=g.getImageData(0,0,w,h).data;
+      worker=new Worker("/raster_trace.js");
+      worker.onmessage=({data})=>{
+        if(data.id!==analysisId)return;
+        trace=data.trace;failure=data.error||"";draw();
+      };
+      worker.onerror=()=>{failure="Nie udało się rozpoznać pól na rastrze.";draw();};
+      worker.postMessage({source,mask,w,h},[source.buffer,mask.buffer]);analyze();
+    }catch(error){failure="Błąd wczytywania mapy: "+error.message;draw();}
+  }
+  prepare();
+}
+
+if(typeof WorkerGlobalScope!=="undefined" && self instanceof WorkerGlobalScope){
+  let sheet;
+  self.onmessage=({data})=>{
+    if(data.source){sheet=data;return;}
+    try{
+      const trace=traceLandUses(sheet.source,sheet.mask,sheet.w,sheet.h,data.threshold);
+      self.postMessage({id:data.id,trace},[trace.labels.buffer]);
+    }catch(error){self.postMessage({id:data.id,error:"Błąd rozpoznawania: "+error.message});}
+  };
 }

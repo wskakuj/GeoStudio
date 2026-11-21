@@ -2517,7 +2517,46 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
     if(item.boundEPSG!==state.mapEPSG)return false;
     return !item.epsg||item.epsg===Number(state.mapEPSG);
   }
+  function startRasterTracing(){
+    const picker=$("trace-raster-choice");
+    const entries=[rasterEntry(),...raster.layers].filter(rasterCanShow);
+    const entry=entries.find(e=>String(e.id)===picker.value)||entries[0];
+    if(!entry){inform("Dodaj i skalibruj widoczny raster, aby wkreślać 5310.",true);return;}
+    if(state.editBusy)return;
+    const token=state.edit.documentToken;
+    let revision=state.edit.revision;
+    openRasterTracing(entry,{
+      async featuresIn(bounds){
+        const features=[];
+        await forEachExportPage(bounds,batch=>features.push(...batch));
+        return features;
+      },
+      magnetEnabled:()=>state.drawMagnet,
+      toggleMagnet:toggleDrawMagnet,
+      isVisible,
+      async add(points,a1,approved){
+        if(state.editBusy||state.edit.documentToken!==token||state.edit.revision!==revision)
+          throw Error("Mapa została zmieniona. Otwórz wykrywanie ponownie.");
+        const body={documentToken:token,revision,operation:{action:"create",code:"5310",clipRasterOverlap:true,fields:a1?{A1:a1}:{},points}};
+        const post=(path,data)=>api(path,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(data)});
+        state.editBusy=true;
+        try{
+          const preview=await post("/api/objects/preview",body);
+          if(preview.adjustedPoints&&JSON.stringify(preview.adjustedPoints)!==JSON.stringify(approved))
+            return preview.adjustedPoints;
+          const result=await post("/api/objects/apply",{...body,previewKey:preview.previewKey});
+          revision=result.revision;updateEditState(result);
+        }finally{state.editBusy=false;updateEditState(state.edit);}
+      },
+      refresh:()=>refreshEditedDocument(null)
+    });
+  }
   function renderRasterLayers(){
+    const picker=$("trace-raster-choice"),previous=picker.value;
+    const choices=[rasterEntry(),...raster.layers].filter(rasterCanShow);
+    picker.replaceChildren(...choices.map(e=>new Option(e.name,String(e.id))));
+    if(choices.some(e=>String(e.id)===previous))picker.value=previous;
+    picker.hidden=choices.length<2;
     const list=$("raster-layers-list");
     if(!list)return;
     list.replaceChildren();
@@ -2584,39 +2623,7 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
         activate.type="button";activate.addEventListener("click",()=>{
           selectRasterLayer(item.id);openVisualCalibration();
         });actions.append(activate);
-        const trace=document.createElement("button");
-        trace.type="button";trace.textContent="Wkreśl 5310";
-        const entry=item.id===raster.id?rasterEntry():raster.layers.find(layer=>layer.id===item.id);
-        trace.disabled=!entry||!rasterCanShow(entry);
-        trace.onclick=()=>{
-          if(state.editBusy||!rasterCanShow(entry))return;
-          const token=state.edit.documentToken;
-          let revision=state.edit.revision;
-          openRasterTracing(entry,{
-            width:state.width,height:state.height,scale:state.scale,center:{...state.center},
-            features:state.features,
-            magnetEnabled:()=>state.drawMagnet,
-            toggleMagnet:toggleDrawMagnet,
-            snapFeatures:()=>state.features.filter(isVisible),
-            merge:rings=>api("/api/underlay/raster/union",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({rings})}),
-            async add(points,a1,approved){
-              if(state.editBusy||state.edit.documentToken!==token||state.edit.revision!==revision)
-                throw Error("Mapa została zmieniona. Otwórz wykrywanie ponownie.");
-              const body={documentToken:token,revision,operation:{action:"create",code:"5310",clipRasterOverlap:true,fields:a1?{A1:a1}:{},points}};
-              const post=(path,data)=>api(path,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(data)});
-              state.editBusy=true;
-              try{
-                const preview=await post("/api/objects/preview",body);
-                if(preview.adjustedPoints&&JSON.stringify(preview.adjustedPoints)!==JSON.stringify(approved))
-                  return preview.adjustedPoints;
-                const result=await post("/api/objects/apply",{...body,previewKey:preview.previewKey});
-                revision=result.revision;updateEditState(result);
-              }finally{state.editBusy=false;updateEditState(state.edit);}
-            },
-            refresh:()=>refreshEditedDocument(null)
-          });
-        };
-        actions.append(trace);
+
 
       }
       const remove=document.createElement("button");remove.textContent="Usuń";remove.type="button";
@@ -6212,6 +6219,7 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
   link("tool-sidecar",()=> $("file-sidecar").click());
   link("tool-cartography",chooseCartographicLibraries);
   link("tool-carto-catalog",openCartographyCatalog);
+  link("tool-trace-5310",startRasterTracing);
   link("tool-outline-style",openOutlineStyleEditor);
   link("outline-style-close",()=>$("outline-style-dialog").close());
   link("outline-style-reset",ev=>saveOutlineStyle(ev,true));
