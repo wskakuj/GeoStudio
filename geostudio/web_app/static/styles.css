@@ -1980,3 +1980,15 @@ body[data-document-editor="true"][data-theme] .topbar .header-center {
   }
 }
 body[data-document-editor="true"] .app-shell {min-height:0;}
+/* Polished layer disclosures and background presets (CSP-safe). */
+body[data-theme] .layer-disclosure {width:27px;height:27px;border-radius:7px;}
+.layer-chevron {display:block;width:8px;height:8px;border-right:2px solid currentColor;border-bottom:2px solid currentColor;transform:rotate(-45deg);transition:transform .15s ease;}
+.layer-disclosure[aria-expanded="true"] .layer-chevron {transform:rotate(45deg) translate(-1px,-1px);}
+.map-background-presets [data-map-bg="#FFFFFF"] {--swatch:#FFFFFF;}
+.map-background-presets [data-map-bg="#F1F4F6"] {--swatch:#F1F4F6;}
+.map-background-presets [data-map-bg="#E5E7EB"] {--swatch:#E5E7EB;}
+.map-background-presets [data-map-bg="#F6F1E7"] {--swatch:#F6F1E7;}
+#render-hint:empty {display:none;}
+body[data-theme] .floating-tools {max-height:calc(100% - 28px);overflow-y:auto;scrollbar-width:thin;}
+body[data-theme] .floating {flex-shrink:0;}
+@media(prefers-reduced-motion:reduce){.layer-chevron{transition:none;}}
