@@ -54,7 +54,7 @@ def test_soft3d_tool_coverage_and_unique_gradient_ids():
     assert parser.buttons["btn-theme"]["icons"] == 2
     assert parser.buttons["btn-export"]["icons"] == 1
     assert "btn-export-label" in parser.ids
-    assert len(parser.gradients) == 58
+    assert len(parser.gradients) == 57
     assert sorted(parser.gradients) == sorted(parser.fills)
 
 
