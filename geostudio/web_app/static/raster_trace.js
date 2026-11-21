@@ -1,3 +1,66 @@
+// Trace a nearby chain of actual vector edges, including joins between objects.
+// Progress along the polygon side rules out shortcuts around closed parcels.
+function heldBoundarySide(ring,index,features,scale){
+  const held=ring[index],radius=9/scale,band=22/scale;
+  let best=null;
+  for(const step of [-1,1]){
+    const fixed=ring[(index+step+ring.length)%ring.length];
+    const dx=held[0]-fixed[0],dy=held[1]-fixed[1],length=Math.hypot(dx,dy);
+    if(length<3*radius)continue;
+    const along=p=>((p[0]-fixed[0])*dx+(p[1]-fixed[1])*dy)/length;
+    const across=p=>Math.abs((p[0]-fixed[0])*dy-(p[1]-fixed[1])*dx)/length;
+    const graph=new Map(),starts=[],ends=[];
+    function node(p){
+      const key=Math.round(p[0]*1000)+","+Math.round(p[1]*1000);
+      if(!graph.has(key))graph.set(key,{p,at:along(p),cost:Infinity,next:[],prev:null});
+      return graph.get(key);
+    }
+    for(const feature of features){
+      if(feature.bbox && (feature.bbox[2]<Math.min(held[0],fixed[0])-band||
+         feature.bbox[0]>Math.max(held[0],fixed[0])+band||
+         feature.bbox[3]<Math.min(held[1],fixed[1])-band||
+         feature.bbox[1]>Math.max(held[1],fixed[1])+band))continue;
+      for(const part of feature.geometry){
+        for(let j=0;j<(feature.closed?part.length:part.length-1);j++){
+          let a=part[j],b=part[(j+1)%part.length];
+          if(along(a)>along(b))[a,b]=[b,a];
+          const u=b[0]-a[0],v=b[1]-a[1],den=u*u+v*v;
+          if(!den||along(b)-along(a)<Math.sqrt(den)*.25||along(a)>length+radius||along(b)<-radius)continue;
+          const chain=[];
+          for(const p of [a,b])if(across(p)<=band&&along(p)>=-radius&&along(p)<=length+radius)chain.push(node(p));
+          for(const [target,list] of [[fixed,starts],[held,ends]]){
+            const f=Math.max(0,Math.min(1,((target[0]-a[0])*u+(target[1]-a[1])*v)/den));
+            const p=[a[0]+f*u,a[1]+f*v],dist=Math.hypot(p[0]-target[0],p[1]-target[1]);
+            if(dist<=radius){const n=node(p);chain.push(n);list.push([n,dist]);}
+          }
+          chain.sort((s,t)=>s.at-t.at);
+          for(let i=1;i<chain.length;i++)if(chain[i].at>chain[i-1].at)chain[i-1].next.push(chain[i]);
+        }
+      }
+    }
+    for(const [n,d] of starts)n.cost=Math.min(n.cost,4*d);
+    for(const n of [...graph.values()].sort((a,b)=>a.at-b.at)){
+      if(!Number.isFinite(n.cost))continue;
+      for(const m of n.next){
+        const cost=n.cost+Math.hypot(m.p[0]-n.p[0],m.p[1]-n.p[1])-(m.at-n.at)
+          +(m.at-n.at)*(across(n.p)+across(m.p))/(2*length);
+        if(cost<m.cost){m.cost=cost;m.prev=n;}
+      }
+    }
+    for(const [end,d] of ends){
+      const score=end.cost+4*d;
+      if(!end.prev||!Number.isFinite(score)||(best&&score>=best.score))continue;
+      const path=[];
+      for(let n=end;n;n=n.prev)path.push(n.p);
+      path.reverse();
+      if(Math.hypot(path[0][0]-fixed[0],path[0][1]-fixed[1])<.002)path.shift();
+      const point=path.pop();
+      if(!point||!path.length||path.length>200)continue;
+      best={step,point,between:path,score};
+    }
+  }
+  return best;
+}
 // Segment the visible, calibrated raster in preview-pixel coordinates.
 // Simplify between junctions, preserving the same endpoints on both sides of a cut.
 function straightenRing(points,junction,tolerance){
@@ -451,6 +514,29 @@ function openRasterTracing(item, view) {
   magnet.onchange=()=>{if(magnet.checked!==view.magnetEnabled())view.toggleMagnet();};
   let snapHit=null;
   const cssScale=()=>view.scale()*Math.sqrt(Math.abs(det*sx*sy));
+  let holdTimer=0;
+  function armHold(ev){
+    clearTimeout(holdTimer);
+    if(!magnet.checked||ev.altKey||!drag)return;
+    const current=drag;
+    holdTimer=setTimeout(()=>{
+      if(disposed||drag!==current||!magnet.checked)return;
+      const vertex=drag.vertices[0],index=outline.indexOf(vertex);
+      const ring=outline.map(([x,y])=>{const p=worldAt(x,y);return [p.x,p.y];});
+      const targets=features.filter(view.isVisible);
+      for(const saved of completed)targets.push({closed:true,geometry:[saved.map(([x,y])=>{
+        const p=worldAt(x,y);return [p.x,p.y];})]});
+      const fit=heldBoundarySide(ring,index,targets,view.scale());
+      if(!fit||outline.length+fit.between.length>500)return;
+      const endpoint=pixelAt(...fit.point);
+      vertex[0]=endpoint.x;vertex[1]=endpoint.y;
+      const extra=fit.between.map(p=>{const q=pixelAt(...p);return [q.x,q.y];});
+      if(fit.step<0)outline.splice(index,0,...extra);
+      else outline.splice(index+1,0,...extra.reverse());
+      edited.set(drag.key,vertex);activeNode=vertex;drag=null;snapHit=null;
+      keepDraft();draw();
+    },650);
+  }
   function moveNode(ev){
     const p=position(ev), ratio=cssScale();
     let target=p;
@@ -589,6 +675,7 @@ function openRasterTracing(item, view) {
       const vertex=nearest.slice();
       outline[outline.indexOf(nearest)]=vertex;
       drag={vertices:[vertex],previous:nearest,key,targets,start:p,moved:false};
+      armHold(ev);
     }else if(!ev.shiftKey)anchor=p;
   };
   canvas.onpointermove=ev=>{
@@ -596,7 +683,7 @@ function openRasterTracing(item, view) {
     if(drag){
       const p=position(ev);
       if(!drag.moved&&Math.hypot(p.x-drag.start.x,p.y-drag.start.y)*cssScale()<2)return;
-      if(!drag.moved)invalidateFit();drag.moved=true;moveNode(ev);
+      if(!drag.moved)invalidateFit();drag.moved=true;moveNode(ev);armHold(ev);
     }else if(anchor){rectEnd=position(ev);draw();}
   };
   canvas.onpointercancel=()=>{

@@ -1757,7 +1757,7 @@ class PreviewWorkspace:
 
     def move_vertex(self, fid: str, index: int, x: float, y: float,
                     *, shared: bool, document_token: str, revision: int,
-                    snap_radius: float = 0) -> dict:
+                    snap_radius: float = 0, follow=None) -> dict:
         """Move a polygon corner in an in-memory copy in one undoable transaction.
 
         Coordinates are native GEO-MAP northing X / easting Y, not browser
@@ -1794,6 +1794,21 @@ class PreviewWorkspace:
             if (type(snap_radius) not in (int, float) or
                     not isfinite(snap_radius) or not 0 <= snap_radius <= 50):
                 raise ValueError("Nieprawidłowy promień przyciągania.")
+            bends = []
+            if follow is not None:
+                if (not isinstance(follow, dict) or type(follow.get("step")) is not int
+                        or follow["step"] not in (-1, 1)
+                        or not isinstance(follow.get("points"), list)
+                        or not 1 <= len(follow["points"]) <= 200):
+                    raise ValueError("Nieprawidłowy przebieg granicy.")
+                for point in follow["points"]:
+                    if (not isinstance(point, list) or len(point) != 2
+                            or any(type(v) not in (int, float) or not isfinite(v) or abs(v)>=1e9 for v in point)):
+                        raise ValueError("Nieprawidłowe współrzędne załamania.")
+                    bends.append(tuple(round(v, 3) for v in point))
+                other_end = obj.points[(index + follow["step"]) % (len(obj.points)-1)]
+                fixed = (other_end.x, other_end.y)
+                snap_radius = 0
             snapped = None
             if snap_radius > 0:
                 candidates = self._index.nearby(x, y, snap_radius)
@@ -1817,7 +1832,7 @@ class PreviewWorkspace:
             # zoomed Canvas must not alter unrelated source coordinates.
             x, y = round(x, 3), round(y, 3)
             old = obj.points[index]
-            if hypot(old.x - x, old.y - y) < 0.0005:
+            if not bends and hypot(old.x - x, old.y - y) < 0.0005:
                 return {**self._editing_status(), "changed": False,
                         "affected": [], "object": self.details(fid)}
             plan = (linked_vertex_plan(self._doc, obj.uid, index, x, y)
@@ -1844,7 +1859,30 @@ class PreviewWorkspace:
                 # then move both vertices. Undo reverses insertion + motion.
                 for uid, (segment, corner) in insertions.items():
                     self._doc.insert_polygon_vertex(uid, segment, *corner)
-                self._doc.move_polygon_vertices(changes)
+                if hypot(old.x-x,old.y-y)>=.0005:
+                    self._doc.move_polygon_vertices(changes)
+                if bends:
+                    start, end = fixed, (x, y)
+                    if follow["step"] == 1:
+                        start, end = end, start
+                        bends.reverse()
+                    updates = []
+                    for target in self._doc.objects:
+                        if target.uid != obj.uid and not shared:
+                            continue
+                        if not target.is_closed or target.code != obj.code:
+                            continue
+                        pts = [(p.x,p.y) for p in target.points]
+                        for seg, pair in enumerate(zip(pts,pts[1:])):
+                            if pair == (start,end) or pair == (end,start):
+                                if not target.uid or self._uid_counts.get(target.uid) != 1:
+                                    raise ValueError("Niejednoznaczna wspólna granica.")
+                                updates.append((target.uid,seg,bends if pair==(start,end) else bends[::-1]))
+                    if not any(uid==obj.uid for uid,_,_ in updates):
+                        raise ValueError("Nie znaleziono dopasowywanego boku.")
+                    for uid,seg,path in reversed(updates):
+                        self._doc.insert_polygon_edge_path(uid,seg,path)
+                        changes.setdefault(uid,{})
                 if self._foreign_code_digest(self._doc, obj.code) != foreign_before:
                     raise ValueError(
                         "Przerwano edycję: wykryto zmianę rekordu innego kodu. "

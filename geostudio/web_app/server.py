@@ -647,12 +647,12 @@ def create_app(workspace: PreviewWorkspace | None = None, *,
 
     @app.patch("/api/object/{fid}/vertex")
     async def update_polygon_vertex(fid: str, request: Request):
-        payload = await edit_payload(request)
+        payload = await edit_payload(request, 32 * 1024)
         try:
             return state.move_vertex(
                 fid, payload.get("index"), payload.get("x"), payload.get("y"),
                 shared=payload.get("shared", False),
-                snap_radius=payload.get("snapRadius", 0),
+                snap_radius=payload.get("snapRadius", 0),follow=payload.get("follow"),
                 document_token=payload.get("documentToken"),
                 revision=payload.get("revision"),
             )

@@ -1494,10 +1494,7 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
       dx:Math.round(ghost.dx*1000)/1000,
       dy:Math.round(ghost.dy*1000)/1000,
       allowDetach:true,
-      // Canvas magnetic snap has already chosen the exact same-code edge.
-      // Do not perform a second, conflicting server-side correction.
-      snapDistance:ghost.snap?0:
-        Math.round(Math.min(2,Math.max(0.02,10/state.scale))*1000)/1000
+      snapDistance:0
     };
     state.editBusy=true;updateEditState(state.edit);
     try{
@@ -2084,14 +2081,10 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
     ctx.restore();
   }
   function magneticMove(ids,rawDx,rawDy) {
-    // Only snap to other polygons with the SAME native object code. Foreign
-    // layers are never targets and are never moved.
-    if(!$("opt-snap")?.checked||ids.length>100)return null;
+    if(!$("opt-snap")?.checked)return null;
     const group=new Set(ids);
-    const moving=state.features.filter(f=>group.has(f.id)&&f.closed);
-    const codes=new Set(moving.map(f=>f.code));
-    const fixed=state.features.filter(f=>!group.has(f.id)&&
-      f.closed&&codes.has(f.code));
+    const moving=state.features.filter(f=>group.has(f.id));
+    const fixed=state.features.filter(f=>!group.has(f.id)&&isVisible(f));
     if(!moving.length||!fixed.length)return null;
     const threshold=12/Math.max(.000001,state.scale);
     let best=null,movingCount=0,edgeCount=0;
@@ -2101,7 +2094,6 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
           if(++movingCount>900)return best;
           const origin=[vertex[0]+rawDy,vertex[1]-rawDx];
           for(const target of fixed){
-            if(obj.code!==target.code)continue;
             if(origin[0]<target.bbox[0]-threshold||
                origin[0]>target.bbox[2]+threshold||
                origin[1]<target.bbox[1]-threshold||
@@ -2109,7 +2101,7 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
             for(const track of target.geometry){
               for(let i=0;i<track.length;i++){
                 if(++edgeCount>35000)return best;
-                const a=track[i],b=track[(i+1)%track.length];
+                const a=track[i],b=track[i+1]||(target.closed?track[0]:a);
                 const u=b[0]-a[0],v=b[1]-a[1];
                 const div=u*u+v*v;
                 const t=div?Math.max(0,Math.min(1,(
@@ -3769,6 +3761,24 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
     });
     return touched?parts:null;
   }
+  let boundaryTimer=0;
+  function armNodeBoundary(ev){
+    clearTimeout(boundaryTimer);
+    const drag=state.vertexDrag;
+    if(!drag)return;
+    drag.follow=null;
+    if(ev.altKey||!state.snapEnabled)return;
+    boundaryTimer=setTimeout(()=>{
+      if(state.vertexDrag!==drag||state.active!==drag.fid||state.tool!=="nodes"||!state.snapEnabled)return;
+      const ring=editableVertices().map(pt=>{const w=nativeWorldPoint(pt);return [w.x,w.y];});
+      ring[drag.index]=[drag.preview.x,drag.preview.y];
+      const features=state.features.filter(f=>f.id!==drag.fid&&isVisible(f));
+      const fit=heldBoundarySide(ring,drag.index,features,state.scale);
+      if(!fit)return;
+      drag.follow=fit;drag.preview={x:fit.point[0],y:fit.point[1]};drag.snap=null;
+      requestDraw();
+    },650);
+  }
   function drawVertexTool() {
     if(state.tool!=="nodes"||!state.detail?.closed)return;
     const points=editableVertices();
@@ -3827,6 +3837,15 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
       ctx.beginPath();ctx.moveTo(p.x-4,p.y);ctx.lineTo(p.x+4,p.y);
       ctx.moveTo(p.x,p.y-4);ctx.lineTo(p.x,p.y+4);ctx.stroke();
       ctx.restore();
+    }
+    if(drag?.follow){
+      const {step,point,between}=drag.follow;
+      const fixed=nativeWorldPoint(points[(drag.index+step+points.length)%points.length]);
+      ctx.beginPath();
+      [[fixed.x,fixed.y],...between,point].forEach(([x,y],i)=>{
+        const p=worldToScreen(x,y);if(i)ctx.lineTo(p.x,p.y);else ctx.moveTo(p.x,p.y);
+      });
+      ctx.strokeStyle="#ff9d21";ctx.lineWidth=3;ctx.stroke();
     }
     if(drag?.snap){
       const p=worldToScreen(drag.preview.x,drag.preview.y);
@@ -3939,7 +3958,7 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
     }
     const before=nativeWorldPoint(editableVertices()[drag.index]);
     if(!before)return;
-    if(Math.hypot(drag.preview.x-before.x,drag.preview.y-before.y)*
+    if(!drag.follow&&Math.hypot(drag.preview.x-before.x,drag.preview.y-before.y)*
        state.scale<.5){requestDraw();return;}
     state.editBusy=true;updateEditState(state.edit);
     try {
@@ -3948,6 +3967,7 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
         method:"PATCH", headers:{"Content-Type":"application/json"},
         body:JSON.stringify({...editRequestBody(),index:drag.index,
           x:-drag.preview.y,y:drag.preview.x,shared:state.sharedNodes,
+          follow:drag.follow?{step:drag.follow.step,points:drag.follow.between.map(([x,y])=>[-y,x])}:null,
           snapRadius:state.snapEnabled?Math.min(50,11/state.scale):0})
       });
       updateEditState(response);
@@ -5585,6 +5605,17 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
     $("tool-copy").disabled=!state.meta||state.editBusy||n===0;
     $("tool-delete-objects").disabled=!state.meta||state.editBusy||n===0;
   }
+  function togglePickedFeature(fid){
+      const selection=new Set(state.pinned);
+      if(state.active)selection.add(state.active);
+      const wasSelected=selection.has(fid);
+      if(wasSelected)selection.delete(fid);else selection.add(fid);
+      state.pinned=selection;
+      const next=wasSelected?
+        (selection.has(state.active)?state.active:
+          (selection.values().next().value||null)):fid;
+      selectFeature(next);
+  }
   async function selectFeature(fid) {
     if(state.active!==fid)state.selectedVertex=null;
     state.active=fid;state.detail=null;updateDeleteNodeButton();updateInspector();
@@ -5702,6 +5733,14 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
     return {x:ev.clientX-box.left,y:ev.clientY-box.top};
   }
   canvas.addEventListener("pointerdown", ev=>{
+    if(state.tool==="nodes"&&(ev.button===2||ev.button===1)){
+      ev.preventDefault();
+      if(state.editBusy||state.drag)return;
+      const p=eventCoords(ev);
+      canvas.setPointerCapture(ev.pointerId);
+      state.drag={pointer:ev.pointerId,start:p,last:p,moved:false,pan:ev.button===1,auxNode:ev.button};
+      return;
+    }
     const rightLabel=state.tool==="select"&&ev.button===2;
     if(ev.button!==0&&ev.button!==1&&!rightLabel)return;
     if(state.drag)return;
@@ -5733,6 +5772,11 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
     if(state.tool==="move"&&ev.button===0&&!state.editBusy){
       const world=screenToWorld(p.x,p.y);
       const hits=pick(world),selected=selectedObjectIds();
+      if(ev.ctrlKey){
+        const fid=hits[0];
+        if(fid)togglePickedFeature(fid);
+        return;
+      }
       const fid=hits.find(id=>selected.includes(id))||hits[0];
       const feature=state.features.find(item=>item.id===fid);
       if(!feature||!feature.geometry?.length){
@@ -5754,6 +5798,7 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
         state.vertexDrag={fid:state.active,code:state.detail.code,
                           index,preview:world,snap:null};
         state.drag={pointer:ev.pointerId,start:p,last:p,moved:false,node:true};
+        armNodeBoundary(ev);
         requestDraw();return;
       }
     }
@@ -5796,6 +5841,7 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
         const snap=previewSnap(world);
         state.vertexDrag.preview=snap.point;
         state.vertexDrag.snap=snap.kind?snap:null;
+        armNodeBoundary(ev);
         requestDraw();
       }
     }else if(d.moved){
@@ -5811,6 +5857,19 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
     const d=state.drag;
     if(!d||ev.pointerId!==d.pointer)return;
     state.drag=null;shell.classList.remove("dragging");
+    if(d.auxNode){
+      if(!d.moved&&state.tool==="nodes"&&!state.editBusy){
+        const p=eventCoords(ev);
+        if(d.auxNode===2){
+          const edge=closestEditableSegment(p);
+          if(edge)insertVertexAtSegment(edge);
+        }else{
+          const index=closestEditableVertex(p);
+          if(index>=0){state.selectedVertex=index;deleteSelectedVertex();}
+        }
+      }else if(d.pan)scheduleViewport();
+      return;
+    }
     if(d.label){
       const moving=state.labelDrag;
       state.labelDrag=null;
@@ -5831,7 +5890,7 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
     if(d.node){
       const moving=state.vertexDrag;
       state.vertexDrag=null;requestDraw();
-      if(d.moved&&moving)commitVertexDrag(moving);
+      if((d.moved||moving?.follow)&&moving)commitVertexDrag(moving);
       else if(moving)inform("Zaznaczono węzeł "+(moving.index+1)+". Delete — usuń.");
       return;
     }
@@ -5853,15 +5912,8 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
     if(ev.ctrlKey||ev.shiftKey){
       // Ctrl/Shift-click adds or removes objects without losing the rest
       // of the multi-selection. Subsequent clicks cycle overlapping hits.
-      const selection=new Set(state.pinned);
-      if(state.active)selection.add(state.active);
-      const wasSelected=selection.has(fid);
-      if(wasSelected)selection.delete(fid);else selection.add(fid);
-      state.pinned=selection;
-      const next=wasSelected?
-        (selection.has(state.active)?state.active:
-          (selection.values().next().value||null)):fid;
-      selectFeature(next);
+      togglePickedFeature(fid);
+
     }else selectFeature(fid);
   });
   canvas.addEventListener("dblclick",ev=>{
@@ -5904,6 +5956,7 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
     const p=eventCoords(ev);
     zoomAt(Math.exp(-ev.deltaY*.00125),p.x,p.y);
   },{passive:false});
+  canvas.addEventListener("auxclick",ev=>{if(state.tool==="nodes")ev.preventDefault();});
   canvas.addEventListener("contextmenu",ev=>ev.preventDefault());
 
   const dialog=$("command-dialog"),input=$("command-input");

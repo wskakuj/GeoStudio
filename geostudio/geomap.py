@@ -391,6 +391,27 @@ class GeoMap:
         self.lines.insert(after_line, new_line)
         self._parse()
 
+    def insert_polygon_edge_path(self, uid, segment, vertices):
+        """Keep both endpoint records and insert the intermediate surveyed bends."""
+        from .interactions import polygon_is_valid
+        obj = self.by_id[uid]
+        a = obj.points[segment]
+        if not obj.is_closed or a.point_type == 0:
+            raise ValueError("Nie można dopasować ukrytego łącznika.")
+        ring = [(p.x, p.y) for p in obj.points[:-1]]
+        ring[segment + 1:segment + 1] = vertices
+        if not polygon_is_valid(ring):
+            raise ValueError("Dopasowanie spowodowałoby przecięcie obrysu.")
+        records = [i for i in range(obj.start + 1, obj.end)
+                   if POINT_RE.match(self.lines[i].rstrip(b'\r\n'))]
+        if len(records) != len(obj.points):
+            raise ValueError("Niezgodna liczba rekordów węzłów.")
+        eol = b'\r\n' if self.lines[records[segment]].endswith(b'\r\n') else b'\n'
+        at = records[segment + 1]
+        self.lines[at:at] = [
+            f'P {a.point_type}   {x:.3f}   {y:.3f}'.encode('ascii') + eol for x, y in vertices]
+        self._parse()
+
     def delete_polygon_vertices(self, removals: dict[str, set[int]]) -> None:
         """Atomically delete P records from closed GEO-MAP polygon rings.
 
