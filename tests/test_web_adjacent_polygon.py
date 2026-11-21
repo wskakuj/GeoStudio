@@ -26,7 +26,10 @@ def test_adjacent_creation_and_undo(points):
     result=ws.apply_object_operation(payload,preview_key=preview["previewKey"],**args)
     assert result["changed"]
     assert len(result["createdUids"])==1
-    assert ws.export_copy(args["document_token"])[1].startswith(source)
+    # Export intentionally recalculates the MAP header (N and CHK).
+    # Compare the original record bytes after that header instead.
+    exported=ws.export_copy(args["document_token"])[1]
+    assert exported.split(b"\n",1)[1].startswith(source.split(b"\n",1)[1])
     ws.step_history("undo",document_token=args["document_token"],
                     revision=result["revision"])
     assert ws.export_copy(args["document_token"])[1]==source
