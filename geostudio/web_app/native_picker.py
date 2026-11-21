@@ -153,7 +153,7 @@ class NativeMapPicker:
             # need a comprehensible fallback, not a silent JS bridge hang.
             raise RuntimeError(
                 "Nie udało się wyświetlić okna wyboru Windows. "
-                "Użyj przycisku Z dysku."
+                "Użyj standardowego okna wyboru pliku."
             ) from exc
         if not filename:
             return {"cancelled": True}
