@@ -209,7 +209,7 @@ function traceLandUses(pixels, forest, width, height, blackWidth, tolerance=2.5)
 function openRasterTracing(item, view) {
   const dialog=document.createElement("dialog");
   dialog.style.cssText="width:min(92vw,1100px);padding:1rem;color:inherit;background:var(--panel,#fff)";
-  dialog.innerHTML='<h2>Wkreśl 5310 z rastra</h2><p>Przeciągnij prostokąt, aby wybrać pola. Kliknij poligon i wpisz A1. Enter przechodzi do kolejnego pola. Po ostatnim wpisie możesz wskazać następny poligon. Shift i przeciągnięcie przesuwa węzeł wybranego obrysu. Przybliż mapę przed otwarciem, aby rozróżnić małe wydzielenia.</p><label>Czarne kontury <select><option value="5">Grubsze</option><option value="3">Także cienkie</option><option value="7">Tylko bardzo grube</option></select></label> <canvas style="display:block;max-width:100%;max-height:58vh;touch-action:none;cursor:crosshair;margin:.5rem auto"></canvas><div class="trace-attributes" style="max-height:18vh;overflow:auto"></div><p role="status"></p><button type="button" class="button primary">Dodaj wybrane 5310</button> <button type="button" class="button ghost">Zamknij</button>';
+  dialog.innerHTML='<h2>Wkreśl 5310 z rastra</h2><p>Zaznacz kliknięciami lub prostokątem fragmenty jednego wydzielenia. Wpisz A1 i naciśnij Enter, aby połączyć je w jeden poligon 5310. Shift i przeciągnięcie przesuwa węzeł.</p><label>Czarne kontury <select><option value="5">Grubsze</option><option value="3">Także cienkie</option><option value="7">Tylko bardzo grube</option></select></label> <canvas style="display:block;max-width:100%;max-height:58vh;touch-action:none;cursor:crosshair;margin:.5rem auto"></canvas><label>A1 wydzielenia <input class="trace-a1" autocomplete="off"></label><p role="status"></p><button type="button" class="button primary">Zatwierdź wydzielenie 5310</button> <button type="button" class="button ghost">Zamknij</button>';
   document.body.append(dialog);
   const canvas=dialog.querySelector("canvas"),status=dialog.querySelector("[role=status]");
   const [save,close]=dialog.querySelectorAll("button");
@@ -241,51 +241,35 @@ function openRasterTracing(item, view) {
   const mask=ctx.getImageData(0,0,w,h).data;
   let trace,anchor=null,drag=null,busy=false;
   const selected=new Set();
-  const attributes=dialog.querySelector(".trace-attributes");
-  const inputs=new Map();
-  let activeId=null;
+  const a1=dialog.querySelector(".trace-a1");
+  const completed=[];
   function syncAttributes(){
-    for(const [id,input] of inputs){
-      if(!selected.has(id)){input.parentElement.remove();inputs.delete(id);}
-    }
-    let firstAdded=null;
-    let ordinal=0;
-    for(const id of selected){
-      ordinal++;
-      if(!inputs.has(id)){
-        const label=document.createElement("label");
-        label.style.display="block";
-        const caption=document.createElement("span");
-        const input=document.createElement("input");
-        input.type="text";input.autocomplete="off";
-        label.append(caption,input);attributes.append(label);inputs.set(id,input);
-        input.onfocus=()=>{activeId=id;draw();};
-        input.onkeydown=ev=>{
-          if(ev.key!=="Enter"||ev.isComposing)return;
-          ev.preventDefault();ev.stopPropagation();
-          const ordered=[...inputs.values()];
-          const next=ordered[ordered.indexOf(input)+1];
-          if(next)next.focus();
-          else{canvas.tabIndex=0;canvas.focus();}
-        };
-        if(!firstAdded)firstAdded=input;
-      }
-      inputs.get(id).previousElementSibling.textContent=ordinal+". A1 ";
-    }
-    if(!selected.has(activeId))activeId=null;
-    if(firstAdded)firstAdded.focus();
+    if(!selected.size)a1.value="";
+    else a1.focus({preventScroll:true});
   }
+  a1.oninput=()=>draw();
+  a1.onkeydown=event=>{
+    if(event.key==="Enter"&&!event.isComposing){
+      event.preventDefault();event.stopPropagation();
+      if(!save.disabled)save.click();
+    }
+  };
   function draw(rect){
     ctx.putImageData(source,0,0);
     for(const id of selected){
       ctx.beginPath();
       trace.shapes.get(id).points.forEach(([x,y],i)=>i?ctx.lineTo(x,y):ctx.moveTo(x,y));
       ctx.closePath();ctx.fillStyle="rgba(0,165,180,.32)";ctx.fill();
-      ctx.strokeStyle=id===activeId?"#eb7000":"#007984";ctx.lineWidth=id===activeId?3:1;ctx.stroke();
+      ctx.strokeStyle="#007984";ctx.lineWidth=1;ctx.stroke();
+    }
+    for(const ring of completed){
+      ctx.beginPath();
+      ring.forEach(([x,y],i)=>i?ctx.lineTo(x,y):ctx.moveTo(x,y));
+      ctx.closePath();ctx.strokeStyle="#c62734";ctx.lineWidth=2;ctx.stroke();
     }
     if(rect){ctx.strokeStyle="#096ed4";ctx.strokeRect(anchor.x,anchor.y,rect.x-anchor.x,rect.y-anchor.y);}
-    status.textContent="Wybrane poligony: "+selected.size;
-    save.disabled=busy||!selected.size;
+    status.textContent="Fragmenty wydzielenia: "+selected.size+" · Dodane 5310: "+completed.length;
+    save.disabled=busy||!selected.size||!a1.value.trim();
   }
   function analyze(){
     trace=traceLandUses(source.data,mask,w,h,Number(dialog.querySelector("select").value));
@@ -334,24 +318,22 @@ function openRasterTracing(item, view) {
   dialog.oncancel=event=>{if(busy)event.preventDefault();};
   dialog.onclose=()=>dialog.remove();
   save.onclick=async()=>{
-    if(busy||!selected.size)return;
-    busy=true;save.disabled=close.disabled=dialog.querySelector("select").disabled=true;
-    for(const input of inputs.values())input.disabled=true;
-    let count=0;
+    if(busy||!selected.size||!a1.value.trim())return;
+    busy=true;save.disabled=close.disabled=a1.disabled=dialog.querySelector("select").disabled=true;
+    let message="";
     try{
-      for(const id of [...selected]){
-        const points=trace.shapes.get(id).points.map(([x,y])=>[-(y-py(0))/k,(x-px(0))/k]);
-        await view.add(points,inputs.get(id).value);
-        trace.shapes.delete(id);
-        selected.delete(id);count++;
-      }
-      await view.refresh();dialog.close();
-    }catch(error){
-      try{await view.refresh();}catch{}
-      syncAttributes();draw();status.textContent="Dodano: "+count+". "+error.message;
-    }finally{
-      for(const input of inputs.values())input.disabled=false;
-      busy=false;close.disabled=dialog.querySelector("select").disabled=false;save.disabled=!selected.size;
+      const rings=Array.from(selected,id=>trace.shapes.get(id).points);
+      const {points}=rings.length===1?{points:rings[0]}:await view.merge(rings);
+      const native=points.map(([x,y])=>[-(y-py(0))/k,(x-px(0))/k]);
+      await view.add(native,a1.value.trim());
+      completed.push(points);
+      for(const id of selected)trace.shapes.delete(id);
+      selected.clear();a1.value="";
+      await view.refresh();
+    }catch(error){message=error.message;}
+    finally{
+      busy=false;close.disabled=a1.disabled=dialog.querySelector("select").disabled=false;
+      draw();if(message)status.textContent=message;
     }
   };
   dialog.showModal();analyze();

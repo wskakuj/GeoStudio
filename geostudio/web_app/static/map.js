@@ -514,6 +514,7 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
     quality.textContent = meta.checksumValid ? "✓ CHK poprawna" : "⚠ CHK niezgodna";
     quality.classList.toggle("warning", !meta.checksumValid);
     renderLayers(); updateInspector(); fitToMap(); updateSelectionCount();
+    restoreCalibrations();
     cartographyMessage({libraries:meta.cartographicLibraries});
     inform("Wczytano " + display(meta.objectCount) +
            " obiektów. Oryginalny plik jest chroniony.");
@@ -2418,8 +2419,53 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
     updateUnderlayStatus($("underlay-summary").textContent);
     renderRasterLayers();
   }
+  let calibrationWrites=Promise.resolve();
+  function rememberCalibration(points){
+    const item=rasterEntry(), mapToken=state.edit.documentToken;
+    const settings={name:item.name,gcps:points,opacity:item.opacity,digest:item.digest};
+    const save=async()=>{
+      const json=new TextEncoder().encode(JSON.stringify(settings));
+      const header=new ArrayBuffer(4);
+      new DataView(header).setUint32(0,json.length);
+      const post=file=>api("/api/underlay/calibrations",{method:"POST",
+        headers:{"X-Map-Token":mapToken},body:new Blob(file?[header,json,file]:[header,json])});
+      if((await post(null)).needsImage){
+        if(!item.file)throw Error("Dodaj plik rastra ponownie.");
+        await post(item.file);
+      }
+    };
+    calibrationWrites=calibrationWrites.then(save).catch(error=>{
+      if(state.edit?.documentToken===mapToken)inform("Kalibracja działa w widoku, ale zapis nie powiódł się: "+error.message,true);
+    });
+  }
+  async function restoreCalibrations(){
+    const mapToken=state.edit?.documentToken;
+    const headers={"X-Map-Token":mapToken,"X-GeoStudio-Token":token};
+    try{
+      const records=await api("/api/underlay/calibrations",{headers});
+      for(const record of records){
+        if(state.edit?.documentToken!==mapToken)return;
+        const response=await documentFetch("/api/underlay/calibrations/"+record.digest,{headers});
+        if(!response.ok)throw Error("Nie można odczytać "+record.name);
+        const image=await imageFromBlob(await response.blob());
+        if(state.edit?.documentToken!==mapToken)return;
+        const existing=[raster,...raster.layers].find(item=>item.digest===record.digest);
+        if(existing?.affine)continue;
+        const entry={...record,image,id:++raster.serial,epsg:null,boundEPSG:state.mapEPSG,
+          sourceWidth:Number(response.headers.get("X-Raster-Source-Width")),
+          sourceHeight:Number(response.headers.get("X-Raster-Source-Height")),
+          file:null,visible:true,pendingWorld:null};
+        if(existing)Object.assign(existing,{affine:entry.affine,gcps:entry.gcps,boundEPSG:entry.boundEPSG,epsg:null});
+        else if(raster.image)raster.layers.push(entry);else assignRaster(entry);
+        state.geometrySnapshotValid=false;state.previewActive=false;
+        rasterInfo("Przywrócono skalibrowany raster: "+record.name);requestDraw();
+      }
+    }catch(error){
+      if(state.edit?.documentToken===mapToken)inform("Odtworzenie rastra: "+error.message,true);
+    }
+  }
   function rasterEntry(){
-    return {id:raster.id,image:raster.image,affine:raster.affine,
+    return {id:raster.id,image:raster.image,affine:raster.affine,file:raster.file,digest:raster.digest,
       epsg:raster.epsg,boundEPSG:raster.boundEPSG,
       opacity:raster.opacity,visible:raster.visible,
       name:raster.name,pendingWorld:raster.pendingWorld,
@@ -2428,7 +2474,7 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
   }
   function assignRaster(entry){
     for(const field of ["id","image","affine","epsg","boundEPSG",
-      "opacity","visible","name","pendingWorld","gcps",
+      "opacity","visible","name","pendingWorld","gcps","file","digest",
       "sourceWidth","sourceHeight"])
       raster[field]=entry[field];
     $("raster-opacity").value=Math.round(raster.opacity*100);
@@ -2540,6 +2586,7 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
           openRasterTracing(entry,{
             width:state.width,height:state.height,scale:state.scale,center:{...state.center},
             features:state.features,
+            merge:rings=>api("/api/underlay/raster/union",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({rings})}),
             async add(points,a1){
               if(state.editBusy||state.edit.documentToken!==token||state.edit.revision!==revision)
                 throw Error("Mapa została zmieniona. Otwórz wykrywanie ponownie.");
@@ -2641,15 +2688,21 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
       const sourceWidth=Number(response.headers.get("x-raster-source-width")||0);
       const sourceHeight=Number(response.headers.get("x-raster-source-height")||0);
       const decoded=await imageFromBlob(await response.blob());
+      const digest=response.headers.get('X-Raster-Digest');
       if(!sourceWidth||!sourceHeight)
         throw Error("Serwer nie podał oryginalnych wymiarów rastra.");
       if(ticket!==raster.ticket||documentToken!==state.edit?.documentToken)return;
+      const existing=[raster,...raster.layers].find(item=>digest && item.digest===digest && item.affine);
+      if(existing){
+        selectRasterLayer(existing.id);raster.file=file;raster.visible=true;
+        rasterInfo("Raster ma już dopasowanie do tej mapy.");requestDraw();return;
+      }
       if(raster.image)raster.layers.push(rasterEntry());
       raster.image=decoded;raster.affine=affine;raster.epsg=epsg;
       raster.sourceWidth=sourceWidth;raster.sourceHeight=sourceHeight;
       raster.boundEPSG=null;raster.gcps=[];raster.visible=true;
       raster.opacity=.72;raster.id=++raster.serial;
-      raster.name=file.name;
+      raster.name=file.name;raster.file=file;raster.digest=digest;
       if(epsg&&epsg!==Number(state.mapEPSG)){
         rasterInfo("GeoTIFF EPSG:"+epsg+
           " — wybierz zgodny EPSG w Układach lub skalibruj wizualnie.");
@@ -2888,6 +2941,7 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
       raster.epsg=null; // visual GCP calibrates against native MAP XY.
       raster.boundEPSG=state.mapEPSG;
       raster.visible=true;raster.pendingWorld=null;
+      rememberCalibration(points);
       rasterInfo("Wizualne GCP: "+result.count+" par, RMSE "+
         result.rmse.toFixed(3)+" m. Sprawdź położenie na innych punktach.");
       if(keepOpen)
@@ -6234,7 +6288,7 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
       $("layer-count").textContent=meta.layers.length;
       $("count-objects").textContent=display(meta.objectCount);
       $("count-vertices").textContent=display(meta.vertexCount);
-      renderLayers();fitToMap();
+      renderLayers();fitToMap();restoreCalibrations();
     }
   }).catch(err=>inform("Błąd lokalnej usługi: "+err.message,true)).finally(notifyHost);
 })();

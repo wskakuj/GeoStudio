@@ -5,6 +5,7 @@ browser and sends their bytes; the verified parser reads them in memory only.
 """
 from __future__ import annotations
 
+from hashlib import sha256
 from html import escape
 from pathlib import Path
 from urllib.parse import unquote, quote
@@ -22,6 +23,7 @@ from .data import (
 from .underlay_wms import list_layers as wms_layers, map_png as wms_map_png
 from .underlay_raster import prepare_raster, fit_gcp_payload, MAX_RASTER_BYTES
 from .underlay_crs import verified_prj_epsg, convert_point, MAX_PRJ
+from . import raster_memory
 from .tile_exports import MAX_TILE_BYTES
 from .documents import DocumentRegistry, ScopedAttribute, make_session, MAX_DOCUMENTS
 from .native_picker import (preference_file, read_appearance_preference,
@@ -390,6 +392,47 @@ def create_app(workspace: PreviewWorkspace | None = None, *,
         except (ValueError,TypeError) as exc:
             raise HTTPException(400,str(exc)) from exc
 
+    def raster_key(request):
+        meta = state.metadata()
+        if not meta.get("loaded") or request.headers.get("x-map-token") != meta.get("documentToken"):
+            raise HTTPException(409, "Aktywna mapa uległa zmianie.")
+        return meta["rasterMapKey"]
+
+    @app.get("/api/underlay/calibrations")
+    async def saved_rasters(request: Request):
+        return await run_in_threadpool(raster_memory.placements, raster_key(request))
+
+    @app.post("/api/underlay/calibrations")
+    async def save_calibration(request: Request):
+        key = raster_key(request)
+        raw = await receive(request, MAX_RASTER_BYTES + 65536)
+        length = int.from_bytes(raw[:4], "big")
+        if not 0 < length <= 65532 or len(raw) < length + 4:
+            raise HTTPException(400, "Nieprawidłowy zapis kalibracji.")
+        try:
+            settings = json.loads(raw[4:4+length])
+            return await run_in_threadpool(raster_memory.remember, key, settings, raw[4+length:])
+        except (KeyError, ValueError, TypeError) as exc:
+            raise HTTPException(400, str(exc)) from exc
+
+    @app.get("/api/underlay/calibrations/{digest}")
+    async def restore_raster(digest: str, request: Request):
+        raw = await run_in_threadpool(raster_memory.raster_bytes, raster_key(request), digest)
+        if raw is None:
+            raise HTTPException(404, "Brak zapisanego rastra.")
+        image, meta = await run_in_threadpool(prepare_raster, raw)
+        return Response(image, media_type="image/png", headers={
+            "X-Raster-Source-Width": str(meta["sourceWidth"]),
+            "X-Raster-Source-Height": str(meta["sourceHeight"])})
+
+    @app.post("/api/underlay/raster/union")
+    async def union_raster_pieces(request: Request):
+        data = await edit_payload(request, 8 * 1024 * 1024)
+        try:
+            return await run_in_threadpool(raster_memory.merged_ring, data.get("rings"))
+        except (TypeError, ValueError) as exc:
+            raise HTTPException(400, str(exc)) from exc
+
     @app.post("/api/underlay/raster/prepare")
     async def underlay_prepare_tiff(request: Request):
         """Decode a raster into a bounded PNG preview without changing MAP."""
@@ -401,6 +444,7 @@ def create_app(workspace: PreviewWorkspace | None = None, *,
         except ValueError as exc:
             raise HTTPException(400,str(exc)) from exc
         return Response(image,media_type="image/png",headers={
+            "X-Raster-Digest":sha256(payload).hexdigest(),
             "X-Raster-EPSG":str(meta["epsg"] or ""),
             "X-Raster-Affine":json.dumps(meta["coefficients"]),
             "X-Raster-Width":str(meta["width"]),

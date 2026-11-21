@@ -137,6 +137,7 @@ class PreviewWorkspace:
         self._styles: dict[str, dict] = {}
         self._label_positions: dict[str, dict] = {}
         self._source_compilation_scale = DEFAULT_SCALE
+        self._raster_map_key = ""
         self._loaded_map_sha = ""
         self._carto_cdf={}
         self._carto_lay={}
@@ -177,6 +178,11 @@ class PreviewWorkspace:
             self._objects_preview_key = ""
             self._reindex(doc, name)
             self._source_compilation_scale=detect_source_compilation_scale(doc.objects)
+            # Appended 5310 records and attribute changes preserve the map identity.
+            reference = next((o for o in doc.objects if o.points and str(o.code) != "5310"),
+                             next(o for o in doc.objects if o.points))
+            anchor = [(p.x, p.y) for p in reference.points[:3]]
+            self._raster_map_key = sha256(repr((name.casefold(), reference.code, anchor)).encode()).hexdigest()
             self._loaded_map_sha=sha256(content).hexdigest()
             self._styles = {}
             self._label_positions = {}
@@ -2284,7 +2290,7 @@ class PreviewWorkspace:
     def metadata(self) -> dict:
         with self._lock:
             return {**self._meta, **self._editing_status(),
-                'cartographicLibraries':dict(self._carto_loaded)}
+                'rasterMapKey': self._raster_map_key, 'cartographicLibraries':dict(self._carto_loaded)}
 
     def set_cartographic_library(self, filename: str, content: bytes) -> dict:
         """Load one local CP1250 GEO-MAP library without writing to disk."""
