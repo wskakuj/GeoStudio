@@ -860,7 +860,7 @@ class PreviewWorkspace:
             return self._editing_status()
 
     def topology_audit(self, document_token: str, revision: int,
-                       limit: int = 600) -> dict:
+                       limit: int = 600, *, code: str | None = None) -> dict:
         """Read-only, revision-bound audit of the current working MAP."""
         from .topology_audit import inspect_topology
         with self._lock:
@@ -872,7 +872,9 @@ class PreviewWorkspace:
             # All geometries belong to the same snapshot; no routine here
             # can mutate native P coordinates, styles or history.
             return inspect_topology(
-                self._entries, document_token=self._document_token,
+                (self._entries if code is None else tuple(
+                    entry for entry in self._entries if entry.obj.code == code)),
+                document_token=self._document_token,
                 revision=self._revision, limit=limit)
 
 
@@ -2490,9 +2492,10 @@ class PreviewWorkspace:
             fill_color = "#111111"
             opacity = 100
 
-        stroke = _color(code_style.get("stroke"), border)
-        width_default=(max(.8,min(3.,cdf.width)) if cdf and cdf.width>0
-                       else 1.)
+        stroke = _color(code_style.get("stroke"),
+                        "#FF0000" if obj.code == "5310" else border)
+        width_default=(3. if obj.code == "5310" else
+                       max(.8,min(3.,cdf.width)) if cdf and cdf.width>0 else 1.)
         width = min(12, max(.5, float(code_style.get(
             "stroke_width",width_default)))) \
             if _valid_number(code_style.get("stroke_width",width_default)) else width_default
@@ -2555,8 +2558,8 @@ class PreviewWorkspace:
                 raise ValueError("Kod nie występuje w otwartej mapie.")
             saved=self._styles.get("code:"+code,{})
             style=self._style(entry) if entry else {
-                "stroke":saved.get("stroke","#4A5056"),
-                "strokeWidth":saved.get("stroke_width",1.)
+                "stroke":saved.get("stroke","#FF0000" if code=="5310" else "#4A5056"),
+                "strokeWidth":saved.get("stroke_width",3. if code=="5310" else 1.)
             }
             return {
                 "code":code,"stroke":style["stroke"],
