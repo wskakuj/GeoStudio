@@ -1485,7 +1485,10 @@ async function loadFeatures(){
   } catch (err){
     if (token === state.viewportSeq) toast('Nie udało się wczytać geometrii: ' + err.message);
   } finally {
-    if (token === state.viewportSeq) state.loading = false;
+    if (token === state.viewportSeq){
+      state.loading = false;
+      if (!regionContains(state.loadedBounds, state.view)) scheduleGeometry();
+    }
   }
 }
 
