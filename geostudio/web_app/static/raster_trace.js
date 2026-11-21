@@ -400,13 +400,43 @@ function openRasterTracing(item, view) {
   const selected=new Set();
   const a1=panel.querySelector(".trace-a1");
   const completed=[];
-  let adjusted=null,outline=[];
+  let outline=[],fitVersion=0,fitPending=false,fitMessage="",fitError=false,nativeOutline=null,sourceOutline=null;
+  let queuedSave=false;
+  function invalidateFit(){
+    fitVersion++;fitPending=false;fitMessage="";fitError=false;nativeOutline=null;sourceOutline=null;queuedSave=false;
+  }
+  async function fitSelection(){
+    invalidateFit();
+    if(!outline?.length)return;
+    const version=fitVersion;
+    const native=outline.map(([x,y])=>{const p=worldAt(x,y);return [-p.y,p.x];});
+    fitPending=true;draw();
+    try{
+      const result=await view.fitOutline(native);
+      if(disposed||version!==fitVersion)return;
+      nativeOutline=result.points;sourceOutline=native;
+      if(result.clipped){
+        outline=result.points.map(([x,y])=>{const p=pixelAt(y,-x);return [p.x,p.y];});
+        drafts.set(selectionKey(),outline.slice());activeNode=null;
+        fitMessage="Dopasowano do istniejących 5310. Czerwony obrys pokazuje granicę do zapisu.";
+      }
+    }catch(error){
+      if(disposed||version!==fitVersion)return;
+      fitError=true;fitMessage=error.message;
+    }finally{
+      if(!disposed&&version===fitVersion){
+        fitPending=false;draw();
+        if(queuedSave&&!fitError)submit();
+        queuedSave=false;
+      }
+    }
+  }
   const edited=new Map(),drafts=new Map();
   let activeNode=null;
   const selectionKey=()=>Array.from(selected).sort((a,b)=>a-b).join(",");
   function keepDraft(){
     drafts.set(selectionKey(),outline.slice());
-    adjusted=null;
+    fitSelection();
   }
   function removeVertex(v){
     if(!v||outline.length<=3)return;
@@ -435,19 +465,13 @@ function openRasterTracing(item, view) {
     draw();
   }
   function syncAttributes(){
-    adjusted=null;
     activeNode=null;
     outline=drafts.get(selectionKey())?.slice() || selectedRasterOutline(trace,selected,w,h,edited);
     if(!selected.size)a1.value="";
     else a1.focus({preventScroll:true});
+    fitSelection();
   }
   a1.oninput=()=>draw();
-  a1.onkeydown=event=>{
-    if(event.key==="Enter"&&!event.isComposing){
-      event.preventDefault();event.stopPropagation();
-      if(!save.disabled)save.click();
-    }
-  };
   function draw(rect=rectEnd){
     if(disposed)return;
     ctx.resetTransform();ctx.clearRect(0,0,canvas.width,canvas.height);
@@ -455,7 +479,7 @@ function openRasterTracing(item, view) {
     ctx.scale(canvas.width/stage.clientWidth,canvas.height/stage.clientHeight);
     const origin=screenAt({x:0,y:0}),scale=view.scale();
     ctx.transform(d*sx*scale,-a*sx*scale,e*sy*scale,-b*sy*scale,origin.x,origin.y);
-    const visibleRings=outline?[outline]:Array.from(selected,id=>trace.shapes.get(id).points);
+    const visibleRings=fitPending||fitError?[]:outline?[outline]:Array.from(selected,id=>trace.shapes.get(id).points);
     for(const ring of visibleRings){
       ctx.beginPath();
       ring.forEach(([x,y],i)=>i?ctx.lineTo(x,y):ctx.moveTo(x,y));
@@ -463,7 +487,7 @@ function openRasterTracing(item, view) {
       ctx.strokeStyle="#ff0000";ctx.lineWidth=3/cssScale();ctx.stroke();
     }
     const radius=3.5/cssScale();
-    for(const v of outline||[]){
+    for(const v of fitPending?[]:outline||[]){
       const [x,y]=v;
       ctx.fillStyle=v===activeNode?"#ffd04a":"#fff";ctx.strokeStyle="#007984";
       ctx.fillRect(x-radius,y-radius,2*radius,2*radius);
@@ -474,13 +498,6 @@ function openRasterTracing(item, view) {
       ctx.beginPath();ctx.arc(x,y,2*radius,0,2*Math.PI);
       ctx.strokeStyle="#e47500";ctx.lineWidth=2/cssScale();ctx.stroke();
     }
-    if(adjusted){
-      ctx.beginPath();
-      adjusted.forEach(([x,y],i)=>{const p=pixelAt(y,-x);i?ctx.lineTo(p.x,p.y):ctx.moveTo(p.x,p.y);});
-      ctx.closePath();ctx.fillStyle="rgba(240,150,0,.35)";ctx.fill();
-      ctx.strokeStyle="#cb7100";ctx.lineWidth=3/cssScale();ctx.stroke();
-    }
-    save.textContent=adjusted?"Zatwierdź dopasowany obrys":"Zatwierdź wydzielenie 5310";
     if(anchor&&rect){
       const p=screenAt(anchor),q=screenAt(rect);
       ctx.setTransform(canvas.width/stage.clientWidth,0,0,canvas.height/stage.clientHeight,0,0);
@@ -489,11 +506,13 @@ function openRasterTracing(item, view) {
     status.textContent="Fragmenty wydzielenia: "+selected.size+" · Dodane 5310: "+completed.length+(snapHit?" · Magnes: "+snapHit.kind+" "+snapHit.code:"");
     if(!outline)status.textContent="Fragmenty muszą tworzyć jeden obrys bez otworów.";
     if(!trace)status.textContent=failure||"Rozpoznawanie pól na całym rastrze…";
-    save.disabled=busy||!trace||!outline?.length||!a1.value.trim();
+    if(fitPending)status.textContent="Dopasowuję granicę do istniejących 5310…";
+    else if(fitMessage)status.textContent=fitMessage;
+    save.disabled=busy||fitError||!trace||!outline?.length||!a1.value.trim();
   }
   function analyze(){
     if(!worker)return;
-    trace=null;failure="";selected.clear();edited.clear();drafts.clear();outline=[];adjusted=null;
+    trace=null;failure="";selected.clear();edited.clear();drafts.clear();outline=[];invalidateFit();
     activeNode=null;a1.value="";
     draw();
     worker.postMessage({threshold:Number(panel.querySelector("select").value),id:++analysisId});
@@ -519,7 +538,7 @@ function openRasterTracing(item, view) {
     return nearest;
   }
   function editAt(p,button){
-    if(!trace||busy||!outline?.length)return;
+    if(!trace||busy||fitPending||!outline?.length)return;
     if(button===1){removeVertex(nearestVertex(p,8));return;}
     if(button!==2||outline.length>=500)return;
     let best=10/cssScale(),at=-1,point;
@@ -552,7 +571,7 @@ function openRasterTracing(item, view) {
     const p=position(ev);
     if(p.x<0||p.y<0||p.x>=w||p.y>=h)return;
     canvas.setPointerCapture(ev.pointerId);
-    const nearest=nearestVertex(p,8);
+    const nearest=fitPending?null:nearestVertex(p,8);
     canvas.focus({preventScroll:true});
     activeNode=nearest;
     if(nearest){
@@ -577,12 +596,12 @@ function openRasterTracing(item, view) {
     if(drag){
       const p=position(ev);
       if(!drag.moved&&Math.hypot(p.x-drag.start.x,p.y-drag.start.y)*cssScale()<2)return;
-      adjusted=null;drag.moved=true;moveNode(ev);
+      if(!drag.moved)invalidateFit();drag.moved=true;moveNode(ev);
     }else if(anchor){rectEnd=position(ev);draw();}
   };
   canvas.onpointercancel=()=>{
     pan=null;rectEnd=null;
-    if(drag)outline[outline.indexOf(drag.vertices[0])]=drag.previous;
+    if(drag){outline[outline.indexOf(drag.vertices[0])]=drag.previous;fitSelection();}
     anchor=null;drag=null;snapHit=null;draw();
   };
   canvas.onpointerup=ev=>{
@@ -619,31 +638,29 @@ function openRasterTracing(item, view) {
     return true;
   }
   close.onclick=finish;
-  save.onclick=async()=>{
-    if(busy||!outline?.length||!a1.value.trim())return;
+  async function submit(){
+    if(disposed||busy||drag||fitError||!outline?.length||!a1.value.trim())return;
+    if(fitPending){queuedSave=true;return;}
+    if(!nativeOutline)return;
     busy=true;save.disabled=close.disabled=a1.disabled=panel.querySelector("select").disabled=true;
     let message="";
     try{
       const points=outline;
       if(points.length>500)throw Error("Wspólny obrys przekracza limit 500 węzłów.");
-      const native=points.map(([x,y])=>{const p=worldAt(x,y);return [-p.y,p.x];});
-      const correction=await view.add(native,a1.value.trim(),adjusted);
-      if(correction){
-        adjusted=correction;
-        message="Pomarańczowy obrys pomija powierzchnię zajętą przez 5310. Enter zatwierdza ten obrys.";
-        return;
-      }
-      completed.push(adjusted?adjusted.map(([x,y])=>{const p=pixelAt(y,-x);return [p.x,p.y];}):points);
-      adjusted=null;
+      await view.add(sourceOutline,a1.value.trim(),nativeOutline);
+      completed.push(points);
+      invalidateFit();
       for(const id of selected)trace.shapes.delete(id);
       selected.clear();outline=[];activeNode=null;drafts.clear();a1.value="";
       await view.refresh();
     }catch(error){message=error.message;}
     finally{
       busy=false;close.disabled=a1.disabled=panel.querySelector("select").disabled=false;
-      draw();if(message)status.textContent=message;
+      if(message)fitMessage=message;
+      draw();a1.focus({preventScroll:true});
     }
-  };
+  }
+  save.onclick=submit;
   const observer=new ResizeObserver(resize);
   resize();observer.observe(stage);canvas.focus({preventScroll:true});
   async function prepare(){
@@ -675,7 +692,7 @@ function openRasterTracing(item, view) {
     }catch(error){failure="Błąd wczytywania mapy: "+error.message;draw();}
   }
   prepare();
-  return {id:item.id,token:view.token,redraw:draw,close:finish};
+  return {id:item.id,token:view.token,redraw:draw,close:finish,submit};
 }
 
 if(typeof WorkerGlobalScope!=="undefined" && self instanceof WorkerGlobalScope){

@@ -2554,7 +2554,9 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
       magnetEnabled:()=>state.drawMagnet,
       toggleMagnet:toggleDrawMagnet,
       isVisible,
-      async add(points,a1,approved){
+      fitOutline:points=>api("/api/underlay/raster/fit",{method:"POST",
+        headers:{"Content-Type":"application/json"},body:JSON.stringify({documentToken:token,revision,points})}),
+      async add(points,a1,fitted){
         if(state.editBusy||state.edit.documentToken!==token||state.edit.revision!==revision)
           throw Error("Mapa została zmieniona. Otwórz wykrywanie ponownie.");
         const body={documentToken:token,revision,operation:{action:"create",code:"5310",clipRasterOverlap:true,fields:a1?{A1:a1}:{},points}};
@@ -2562,8 +2564,7 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
         state.editBusy=true;
         try{
           const preview=await post("/api/objects/preview",body);
-          if(preview.adjustedPoints&&JSON.stringify(preview.adjustedPoints)!==JSON.stringify(approved))
-            return preview.adjustedPoints;
+          if(preview.adjustedPoints && JSON.stringify(preview.adjustedPoints)!==JSON.stringify(fitted))throw Error("Granica wymaga ponownego dopasowania. Wybierz fragment ponownie.");
           const result=await post("/api/objects/apply",{...body,previewKey:preview.previewKey});
           revision=result.revision;updateEditState(result);
         }finally{state.editBusy=false;updateEditState(state.edit);}
@@ -5933,6 +5934,10 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
   document.addEventListener("keydown",ev=>{
     if(activeTrace && !document.querySelector("dialog[open]")){
       if(ev.key==="Escape"){ev.preventDefault();activeTrace.close();}
+      else if(ev.key==="Enter"&&!ev.isComposing&&!ev.repeat&&
+              (ev.target===document.body||ev.target===canvas||ev.target.matches(".trace-map-overlay,.trace-a1,.trace-save"))){
+        ev.preventDefault();activeTrace.submit();
+      }
       return;
     }
     if(state.exportAreaPicking&&ev.key==="Escape"){

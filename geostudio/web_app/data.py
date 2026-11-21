@@ -1468,6 +1468,15 @@ class PreviewWorkspace:
                           "previewKey":preview_key,"canApply":True,**adjusted,
                           **self._editing_status()}}
 
+    def fit_trace_outline(self, points, *, document_token: str, revision: int) -> dict:
+        """Read-only draft fit, independent of the edit preview/commit key."""
+        with self._lock:
+            plan = self._object_operation_plan(
+                {"action": "create", "code": "5310", "fields": {},
+                 "clipRasterOverlap": True, "points": points},
+                document_token=document_token, revision=revision)
+            return {"points": plan["coords"], "clipped": "adjustedPoints" in plan["report"]}
+
     def preview_object_operation(self, payload: dict, *,
                                  document_token: str, revision: int) -> dict:
         with self._lock:

@@ -554,6 +554,17 @@ def create_app(workspace: PreviewWorkspace | None = None, *,
         except (ValueError, KeyError) as exc:
             raise HTTPException(400, str(exc)) from exc
 
+    @app.post("/api/underlay/raster/fit")
+    async def fit_trace_outline(request: Request):
+        payload = await edit_payload(request, 256 * 1024)
+        try:
+            return state.fit_trace_outline(payload.get("points"),
+                document_token=payload.get("documentToken"), revision=payload.get("revision"))
+        except RuntimeError as exc:
+            raise HTTPException(409, str(exc)) from exc
+        except (ValueError, KeyError, TypeError) as exc:
+            raise HTTPException(400, str(exc)) from exc
+
     @app.post("/api/objects/preview")
     async def objects_preview(request: Request):
         payload = await edit_payload(request, 256 * 1024)
