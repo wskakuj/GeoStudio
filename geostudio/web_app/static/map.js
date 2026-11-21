@@ -2540,10 +2540,10 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
           openRasterTracing(entry,{
             width:state.width,height:state.height,scale:state.scale,center:{...state.center},
             features:state.features,
-            async add(points){
+            async add(points,a1){
               if(state.editBusy||state.edit.documentToken!==token||state.edit.revision!==revision)
                 throw Error("Mapa została zmieniona. Otwórz wykrywanie ponownie.");
-              const body={documentToken:token,revision,operation:{action:"create",code:"5310",fields:{},points}};
+              const body={documentToken:token,revision,operation:{action:"create",code:"5310",fields:a1?{A1:a1}:{},points}};
               const post=(path,data)=>api(path,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(data)});
               state.editBusy=true;
               try{
