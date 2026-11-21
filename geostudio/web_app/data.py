@@ -27,7 +27,8 @@ from geostudio.history import History
 from geostudio.topology_edit import linked_vertex_plan
 from geostudio.web_app.topology_safety import rings_overlap, rings_contact, ring_of, nearest_boundary_snap
 from geostudio.web_app.geometry_6a import (polygon_of, geometry_of, visible_difference,
-    shape_parts, split_simple, merge_simple, merge_multipart, rings_from_shape)
+    shape_parts, split_simple, merge_simple, merge_multipart, rings_from_shape,
+    creation_overlap)
 from geostudio.interactions import find_snap, closest_point_on_edge, polygon_is_valid
 from geostudio.library_render import (native_fill_color,parse_cdf,
     cdf_for_object,parse_lay_pen_styles,lay_for_code,parse_sym_primitives,
@@ -1406,9 +1407,24 @@ class PreviewWorkspace:
             ys=[p[1] for p in coordinates]
             center=((min(xs)+max(xs))/2,(min(ys)+max(ys))/2)
             radius=hypot(max(xs)-min(xs),max(ys)-min(ys))/2+.002
+            # The drawing cursor is snapped to the edge but the MAP format
+            # stores P records on a 1 mm grid. Rounding a projected point
+            # on a diagonal can create a sub-millimetre intersection.
+            from shapely.geometry import Polygon
+            from shapely.errors import GEOSException
+            candidate=Polygon(coordinates)
+            if not candidate.is_valid or candidate.is_empty:
+                raise ValueError("Poligon ma niepoprawny obrys lub za małe pole.")
             for other in self._index.nearby(*center,radius):
-                if other.is_closed and other.code==code and rings_overlap(
-                        coordinates,ring_of(other)):
+                if not other.is_closed or other.code!=code:
+                    continue
+                try:
+                    overlap=creation_overlap(candidate,geometry_of(other))
+                except (ValueError,GEOSException):
+                    # Keep the previous conservative check for malformed
+                    # legacy records which cannot be converted to GEOS.
+                    overlap=rings_overlap(coordinates,ring_of(other))
+                if overlap:
                     raise ValueError(
                         "Nowy poligon nakłada się na istniejący poligon tego samego kodu.")
             code_counts[code]=1
