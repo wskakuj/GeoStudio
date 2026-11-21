@@ -155,9 +155,9 @@
     $("btn-export").disabled=state.editBusy||!state.meta;
     $("btn-layout").disabled=state.editBusy||!state.meta;
     $("tool-export-baked").disabled=state.editBusy||!state.meta;
-    $("btn-export").textContent=(
+    $("btn-export-label").textContent=(
       state.edit.hasReversibleMasks||state.edit.hasVisualStyles)
-      ?"↓ Pobierz MAP + JSON":"↓ Pobierz MAP";
+      ?"Pobierz MAP + JSON":"Pobierz MAP";
     if(document.activeElement!==$("compilation-scale"))
       $("compilation-scale").value="1:"+state.edit.compilationScale;
     updateBulkButton();
@@ -3257,9 +3257,10 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
     document.body.classList.remove("dark-map");
     document.documentElement.style.setProperty("--main-bg",state.mapBackground);
     const themeButton=$("btn-theme");
-    themeButton.textContent=state.appTheme==="dark"?"☀":"☾";
+    // Keep the SVG icons mounted; CSS displays the appropriate one.
     themeButton.title=state.appTheme==="dark"
       ?"Włącz jasny motyw programu":"Włącz ciemny motyw programu";
+    themeButton.setAttribute("aria-label",themeButton.title);
     themeButton.setAttribute("aria-pressed",String(state.appTheme==="dark"));
     $("map-background-color").value=state.mapBackground;
     $("map-background-value").textContent=state.mapBackground.toUpperCase();
