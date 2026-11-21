@@ -185,6 +185,10 @@ def create_app(workspace: PreviewWorkspace | None = None, *,
     async def styles():
         return FileResponse(ROOT / "styles.css", media_type="text/css")
 
+    @app.get("/raster_trace.js")
+    async def raster_trace_js():
+        return FileResponse(ROOT / "raster_trace.js", media_type="text/javascript")
+
     @app.get("/drawing_snap.js")
     async def drawing_snap_js():
         return FileResponse(ROOT / "drawing_snap.js", media_type="text/javascript")

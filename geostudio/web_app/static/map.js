@@ -2529,6 +2529,34 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
         activate.type="button";activate.addEventListener("click",()=>{
           selectRasterLayer(item.id);openVisualCalibration();
         });actions.append(activate);
+        const trace=document.createElement("button");
+        trace.type="button";trace.textContent="Wkreśl 5310";
+        const entry=item.id===raster.id?rasterEntry():raster.layers.find(layer=>layer.id===item.id);
+        trace.disabled=!entry||!rasterCanShow(entry);
+        trace.onclick=()=>{
+          if(state.editBusy||!rasterCanShow(entry))return;
+          const token=state.edit.documentToken;
+          let revision=state.edit.revision;
+          openRasterTracing(entry,{
+            width:state.width,height:state.height,scale:state.scale,center:{...state.center},
+            features:state.features,
+            async add(points){
+              if(state.editBusy||state.edit.documentToken!==token||state.edit.revision!==revision)
+                throw Error("Mapa została zmieniona. Otwórz wykrywanie ponownie.");
+              const body={documentToken:token,revision,operation:{action:"create",code:"5310",fields:{},points}};
+              const post=(path,data)=>api(path,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(data)});
+              state.editBusy=true;
+              try{
+                const preview=await post("/api/objects/preview",body);
+                const result=await post("/api/objects/apply",{...body,previewKey:preview.previewKey});
+                revision=result.revision;updateEditState(result);
+              }finally{state.editBusy=false;updateEditState(state.edit);}
+            },
+            refresh:()=>refreshEditedDocument(null)
+          });
+        };
+        actions.append(trace);
+
       }
       const remove=document.createElement("button");remove.textContent="Usuń";remove.type="button";
       remove.addEventListener("click",()=>{
