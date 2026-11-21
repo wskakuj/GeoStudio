@@ -7,6 +7,28 @@
   "use strict";
   const $ = id => document.getElementById(id);
   const token = document.querySelector('meta[name="api-token"]').content;
+  const documentId=document.querySelector('meta[name="geostudio-document"]')?.content||"";
+  const host=()=>documentId&&window.parent!==window?window.parent.GeoStudioTabs:null;
+  if(documentId)document.body.dataset.documentEditor="true";
+  const documentFetch=(path,options={})=>{
+    if(!documentId)return window.fetch(path,options);
+    const headers=new Headers(options.headers||{});
+    headers.set("X-GeoStudio-Document",documentId);
+    return window.fetch(path,{...options,headers});
+  };
+  // Never use an unscoped desktop bridge from a document frame. The
+  // top-level bridge validates the document ID and the operation allowlist.
+  const scopedMethods=["open_map","open_libraries","save_recovery","restore_recovery",
+    "save_map","save_base_map","save_baked_map","save_tiled_export","save_generated_export"];
+  const nativeAPI=()=>{
+    if(!documentId)return window.pywebview?.api;
+    const bridge=window.parent.pywebview?.api;
+    if(typeof bridge?.document_call!=="function")return null;
+    return Object.fromEntries(scopedMethods.map(name=>[
+      name,async(...args)=>{nativePending++;try{return await bridge.document_call(documentId,name,args);}finally{nativePending--;}}
+    ]));
+  };
+  let pickerBusy=false,newDocumentOnFile=false,nativePending=0;
   const canvas = $("map-canvas"), shell = $("canvas-shell");
   // The label layer lives above the geometry canvas and never participates
   // in its bitmap zoom/pan. One CSS px means the same on every wheel tick.
@@ -100,7 +122,7 @@
   let recoveryTimer=null,recoverySavedKey='',recoveryBusy=false;
   const htmlText = (node, value) => { node.textContent = String(value); };
   const api = async (path, options={}) => {
-    const res = await fetch(path, {
+    const res = await documentFetch(path, {
       ...options,
       headers: {"X-GeoStudio-Token":token, ...(options.headers || {})},
       cache: "no-store"
@@ -168,11 +190,12 @@
     const marker=$("dirty-marker");
     marker.textContent=state.edit.dirty?"Niezapisane zmiany w pamięci":"Oryginał chroniony";
     marker.classList.toggle("unsaved",state.edit.dirty);
+    notifyHost();
     scheduleRecovery();
   }
   function scheduleRecovery() {
     clearTimeout(recoveryTimer);
-    if(!state.edit?.dirty||!window.pywebview?.api?.save_recovery)return;
+    if(!state.edit?.dirty||!nativeAPI()?.save_recovery)return;
     const tokenBefore=state.edit.documentToken;
     const revisionBefore=state.edit.revision;
     const key=tokenBefore+":"+revisionBefore;
@@ -183,7 +206,7 @@
          state.edit.revision!==revisionBefore){scheduleRecovery();return;}
       recoveryBusy=true;
       try{
-        const saved=await window.pywebview.api.save_recovery();
+        const saved=await nativeAPI().save_recovery();
         if(saved?.saved){
           recoverySavedKey=key;
           $("dirty-marker").title=
@@ -208,6 +231,16 @@
   function editRequestBody() {
     return {documentToken:state.edit?.documentToken,
             revision:state.edit?.revision};
+  }
+  function editorStatus(){
+    return {name:state.meta?.name||"Nowa mapa",loaded:!!state.meta,
+      dirty:!!state.edit?.dirty,theme:state.appTheme,
+      busy:pickerBusy||nativePending>0||state.editBusy||recoveryBusy||state.auditBusy||
+        !$("loading-overlay").hidden||
+        !!document.querySelector("dialog[open]")};
+  }
+  function notifyHost(){
+    host()?.status(documentId,editorStatus());
   }
   function confirmDiscardEdits() {
     return !state.edit?.dirty || window.confirm(
@@ -312,7 +345,7 @@
   }
   async function downloadNativeCutouts() {
     if(!state.meta||state.editBusy)return;
-    if(!window.pywebview?.api?.save_baked_map){
+    if(!nativeAPI()?.save_baked_map){
       inform("Natywny eksport wycięć wymaga okna GeoStudio w Windows. "+
              "Użyj start_web_ui.bat bez --browser.",true);
       return;
@@ -326,7 +359,7 @@
         "Nie używaj jako danych produkcyjnych przed potwierdzeniem zgodności.\n\n"+
         "Kontynuować?"))return;
     try{
-      const res=await window.pywebview.api.save_baked_map();
+      const res=await nativeAPI().save_baked_map();
       if(res&&!res.cancelled){
         window.alert("Wycięcia GEO-MAP zapisane:\n"+res.path+
           "\n\nKopia oryginalnych konturów:\n"+res.topologyPath+
@@ -341,8 +374,8 @@
       "Pozostałe zmiany geometrii i atrybutów pozostaną. "+
       "Używaj tej opcji tylko do awaryjnej kopii bazowej."))return;
     try{
-      if(window.pywebview?.api?.save_base_map){
-        const saved=await window.pywebview.api.save_base_map();
+      if(nativeAPI()?.save_base_map){
+        const saved=await nativeAPI().save_base_map();
         if(saved&&!saved.cancelled){
           inform("Zapisano kopię MAP bez wycięć: "+saved.path);
           window.alert("Bazowa kopia MAP zapisana w:\n"+saved.path+
@@ -352,7 +385,7 @@
       }
       const params=new URLSearchParams({
         documentToken:state.edit.documentToken,normalizePositive:"true"});
-      const response=await fetch("/api/export/map?"+params.toString(),{
+      const response=await documentFetch("/api/export/map?"+params.toString(),{
         headers:{"X-GeoStudio-Token":token},cache:"no-store"});
       if(!response.ok){
         const err=await response.json().catch(()=>({}));
@@ -377,8 +410,8 @@
     try {
       // WebView2 can ignore <a download> and produce no file. Use Windows
       // Save As instead, and display the real path after a successful write.
-      if(window.pywebview?.api?.save_map) {
-        const saved=await window.pywebview.api.save_map();
+      if(nativeAPI()?.save_map) {
+        const saved=await nativeAPI().save_map();
         if(saved&&!saved.cancelled){
           inform("Zapisano kopię MAP: "+saved.path+
                  " ("+display(saved.bytes)+" bajtów).");
@@ -394,7 +427,7 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
       const needsPackage=hasMasks||!!state.edit.hasVisualStyles;
       const params=new URLSearchParams({documentToken:state.edit.documentToken,
         normalizePositive:"true"});
-      const response=await fetch((needsPackage?"/api/export/package":"/api/export/map")+
+      const response=await documentFetch((needsPackage?"/api/export/package":"/api/export/map")+
         "?"+params.toString(),{
         headers:{"X-GeoStudio-Token":token},cache:"no-store"
       });
@@ -426,6 +459,7 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
   function busy(on, label) {
     $("loading-overlay").hidden = !on;
     if (label) htmlText($("loading-detail"), label);
+    notifyHost();
   }
   function display(n) { return n === undefined || n === null ? "—" : formatter.format(n); }
   function colorForLayer(layer) {
@@ -740,9 +774,9 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
       (noMatch?" Wybrane biblioteki mogą nie zawierać kodów widocznej mapy.":"");
   }
   async function chooseCartographicLibraries() {
-    if(window.pywebview?.api?.open_libraries){
+    if(nativeAPI()?.open_libraries){
       try {
-        const result=await window.pywebview.api.open_libraries();
+        const result=await nativeAPI().open_libraries();
         if(result&&!result.cancelled){
           cartographyMessage(result.status);
           inform("Załadowano biblioteki kartograficzne: "+
@@ -794,15 +828,31 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
     }finally{busy(false);$("file-library").value="";}
   }
 
-  async function chooseMap() {
-    // Do NOT hold the entire UI busy while a native dialog is open.
-    // The user can always use the independent "Z dysku" label/input,
-    // even if Tk or the pywebview JS bridge is unavailable or blocked.
-    if(window.pywebview){
-      if(window.pywebview.api?.open_map){
-        if(!confirmDiscardEdits())return;
-        try {
-          const answer=await window.pywebview.api.open_map();
+  function chooseStandardMap(newDocument=false){
+    newDocumentOnFile=newDocument;
+    $("file-map").value="";
+    $("file-map").click();
+  }
+  function showPickerFallback(){
+    if(!$("map-picker-fallback").open)$("map-picker-fallback").showModal();
+  }
+  async function chooseMap(){
+    if(pickerBusy||state.editBusy)return;
+    // On an already loaded map, open in a NEW tab. Never discard edits.
+    if(host()&&state.meta){
+      if(nativeAPI()?.open_map)return host().newMap();
+      return chooseStandardMap(true);
+    }
+    return chooseMapHere();
+  }
+  async function chooseMapHere() {
+    if(pickerBusy||state.editBusy)return;
+    if(nativeAPI()?.open_map){
+      if(!confirmDiscardEdits())return;
+      pickerBusy=true;notifyHost();
+      try {
+
+          const answer=await nativeAPI().open_map();
           if(answer&&!answer.cancelled&&answer.metadata){
             finishOpeningMap(answer.metadata);
             if(answer.metadata.topologyWarning)
@@ -810,7 +860,7 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
             if(answer.metadata.visualWarning)
               inform(answer.metadata.visualWarning,true);
             if(answer.metadata.recoveryAvailable&&
-               window.pywebview.api?.restore_recovery){
+               nativeAPI()?.restore_recovery){
               const candidate=answer.metadata.recoveryAvailable;
               const consent=window.confirm(
                 "Wykryto kopię awaryjną niezapisanych zmian z "+candidate.savedAt+
@@ -820,7 +870,7 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
               if(consent){
                 busy(true,"Odzyskiwanie zmian z kopii awaryjnej");
                 try{
-                  const restored=await window.pywebview.api.restore_recovery();
+                  const restored=await nativeAPI().restore_recovery();
                   if(restored?.restored){
                     finishOpeningMap(restored.metadata);
                     inform("Odzyskano niezapisane zmiany. "+
@@ -833,40 +883,15 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
               }
             }
           }
-        }catch(error){
-          const message=error?.message||String(error);
-          inform("Nie udało się otworzyć okna z ostatniego folderu: "+
-            message+". Kliknij Z dysku, aby wybrać mapę standardowo.",true);
-        }
-        return;
-      }
-      // Bridge might not be ready when a WebView2 window first appears.
-      // Fall back synchronously on the ORIGINAL click, preserving the
-      // user gesture needed to display the Windows file chooser.
-      $("file-map").click();
-      return;
-    }
-    if(typeof window.showOpenFilePicker==="function"){
-      if(!confirmDiscardEdits())return;
-      try{
-        const handles=await window.showOpenFilePicker({
-          id:"geostudio-map-folder",multiple:false,
-          types:[{description:"Mapa GEO-MAP",accept:{
-            "application/octet-stream":[".map"]
-          }}]
-        });
-        if(handles.length)await openMap(await handles[0].getFile(),true);
       }catch(error){
-        if(error.name==="AbortError")return;
-        // After an awaited browser call, triggering input.click() might
-        // be blocked due to loss of transient user activation. Explain
-        // that "Z dysku" is an immediate click-based alternative.
-        inform("Przeglądarka nie otworzyła wyboru pliku. "+
-          "Kliknij Z dysku, aby użyć standardowego okna.",true);
-      }
+        inform("Nie udało się otworzyć okna wyboru mapy: "+(error?.message||String(error)),true);
+        showPickerFallback();
+      }finally{pickerBusy=false;notifyHost();}
       return;
     }
-    $("file-map").click();
+    // Standard file input is synchronous on the original user gesture,
+    // and does not depend on the optional native bridge or picker API.
+    chooseStandardMap(false);
   }
 
   function populateSelectCodes() {
@@ -2164,7 +2189,7 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
     if(!file||!state.meta)return;
     const documentToken=state.edit?.documentToken;
     try{
-      const response=await fetch("/api/underlay/crs/prj",{
+      const response=await documentFetch("/api/underlay/crs/prj",{
         method:"POST",headers:{"X-GeoStudio-Token":token,
           "Content-Type":"application/octet-stream"},
         cache:"no-store",body:file
@@ -2324,7 +2349,7 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
     });
     const documentToken=state.edit?.documentToken;
     try{
-      const response=await fetch("/api/underlay/wms/map?"+params,{
+      const response=await documentFetch("/api/underlay/wms/map?"+params,{
         headers:{"X-GeoStudio-Token":token},cache:"no-store",signal:controller.signal
       });
       if(!response.ok){
@@ -2574,7 +2599,7 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
       // formats and reports ORIGINAL dimensions for GCP and world files.
       if(!/\.(tiff?|png|jpe?g|webp)$/i.test(lower))
         throw Error("Obsługiwane obrazy: PNG, JPG, WebP i TIFF.");
-      const response=await fetch("/api/underlay/raster/prepare",{
+      const response=await documentFetch("/api/underlay/raster/prepare",{
         method:"POST",headers:{"X-GeoStudio-Token":token,
           "Content-Type":"application/octet-stream"},
         body:file,cache:"no-store"
@@ -3266,6 +3291,7 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
     $("map-background-value").textContent=state.mapBackground.toUpperCase();
     document.querySelector('meta[name="theme-color"]').content=
       state.appTheme==="dark"?"#111d2d":"#f6f8fb";
+    notifyHost();
     requestDraw();
   }
   async function restoreAppearance(){
@@ -4645,14 +4671,14 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
       withRasterDpi(raw,options.format==="jpeg"?"jpeg":"png",options.dpi);
   }
   async function saveTiledArchive(ticket,filename){
-    if(window.pywebview?.api?.save_tiled_export){
+    if(nativeAPI()?.save_tiled_export){
       exportInfo("Wybierz miejsce zapisu dużej mapy ZIP…");
-      const result=await window.pywebview.api.save_tiled_export(ticket);
+      const result=await nativeAPI().save_tiled_export(ticket);
       if(!result||result.cancelled)return false;
       inform("Zapisano arkusze mapy: "+result.path+".");
       return true;
     }
-    const response=await fetch("/api/export/tiles/"+ticket+"/download",{
+    const response=await documentFetch("/api/export/tiles/"+ticket+"/download",{
       headers:{"X-GeoStudio-Token":token},cache:"no-store"
     });
     if(!response.ok){
@@ -4763,9 +4789,9 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
     return new Blob([rgb],{type:"application/octet-stream"});
   }
   async function saveSingleMosaicTiff(ticket,filename){
-    if(window.pywebview?.api?.save_tiled_export){
+    if(nativeAPI()?.save_tiled_export){
       exportInfo("Wybierz miejsce zapisu jednego pliku TIFF…");
-      const result=await window.pywebview.api.save_tiled_export(ticket);
+      const result=await nativeAPI().save_tiled_export(ticket);
       if(!result||result.cancelled)return false;
       inform("Zapisano całą mapę do jednego TIFF: "+result.path+".");
       return true;
@@ -4778,7 +4804,7 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
       suggestedName:filename,
       types:[{description:"Obraz TIFF",accept:{"image/tiff":[".tif"]}}]
     });
-    const response=await fetch("/api/export/mosaic/"+ticket+"/download",{
+    const response=await documentFetch("/api/export/mosaic/"+ticket+"/download",{
       headers:{"X-GeoStudio-Token":token},cache:"no-store"
     });
     if(!response.ok||!response.body){
@@ -4832,10 +4858,10 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
   async function downloadLayoutFile(blob,filename){
     // WebView2 may silently ignore browser-only download links. Use the same
     // native Save As mechanism as MAP for a guaranteed chosen Windows path.
-    if(window.pywebview?.api?.save_generated_export){
+    if(nativeAPI()?.save_generated_export){
       exportInfo("Wybierz miejsce zapisu w oknie systemu Windows…");
       const extension=filename.split(".").pop().toLowerCase();
-      const response=await fetch("/api/export/buffer",{
+      const response=await documentFetch("/api/export/buffer",{
         method:"POST",
         headers:{
           "X-GeoStudio-Token":token,
@@ -4851,7 +4877,7 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
         throw Error(problem.detail||"Nie udało się przygotować zapisu.");
       }
       const {ticket}=await response.json();
-      const saved=await window.pywebview.api.save_generated_export(ticket);
+      const saved=await nativeAPI().save_generated_export(ticket);
       if(!saved||saved.cancelled)return false;
       inform("Zapisano eksport: "+saved.path+" ("+display(saved.bytes)+" B).");
       return true;
@@ -4917,7 +4943,7 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
         "GeoStudio";
       if(options.format==="pdf"){
         exportInfo("Generowanie wektorowego PDF z mapą, legendą i ramką…");
-        const response=await fetch("/api/export/pdf",{
+        const response=await documentFetch("/api/export/pdf",{
           method:"POST",
           headers:{"X-GeoStudio-Token":token,
                    "Content-Type":"application/json"},
@@ -4940,7 +4966,7 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
         const query=new URLSearchParams({
           documentToken:state.edit.documentToken,
           bounds:JSON.stringify(selectedExportBounds())});
-        const response=await fetch("/api/export/dxf?"+query.toString(),{
+        const response=await documentFetch("/api/export/dxf?"+query.toString(),{
           headers:{"X-GeoStudio-Token":token},cache:"no-store"});
         if(!response.ok){
           const data=await response.json().catch(()=>({}));
@@ -6112,7 +6138,19 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
   link("layers-rasters-tab",()=>activateLayerTab("raster"));
   link("raster-layers-add",openRasterDialog);
   $("layer-search").addEventListener("input",renderLayers);
-  $("file-map").addEventListener("change",ev=>openMap(ev.target.files?.[0]));
+  $("file-map").addEventListener("change",async ev=>{
+    const file=ev.target.files?.[0], toNew=newDocumentOnFile;
+    newDocumentOnFile=false;
+    if(toNew&&host()){
+      ev.target.value="";
+      if(file)await host().openFileInNew(file);
+    }else await openMap(file);
+  });
+  link("map-picker-cancel",()=>$("map-picker-fallback").close());
+  link("map-picker-retry",()=>{
+    $("map-picker-fallback").close();
+    chooseStandardMap(!!(host()&&state.meta));
+  });
   $("file-sidecar").addEventListener("change",ev=>openStyles(ev.target.files?.[0]));
   $("file-library").addEventListener("change",ev=>openCartographicFiles(ev.target.files));
   $("file-topology").addEventListener("change",ev=>openTopologyFile(ev.target.files?.[0]));
@@ -6126,13 +6164,25 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
       const files=Array.from(ev.dataTransfer.files);
       const map=files.find(file=>file.name.toLowerCase().endsWith(".map"));
       const style=files.find(file=>file.name.toLowerCase().endsWith(".json"));
-      if(map)openMap(map).then(ok=>{if(ok&&style)openStyles(style);});
+      if(map&&host()&&state.meta)host().openFileInNew(map,style);
+      else if(map)openMap(map).then(ok=>{if(ok&&style)openStyles(style);});
       else if(style)openStyles(style);
     }
   });
 
+  if(documentId){
+    window.GeoStudioDocument={
+      status:editorStatus,openPicker:chooseMapHere,
+      openFile:async(file,style)=>{
+        if(state.meta)throw Error("Zakładka ma już otwartą mapę.");
+        const ok=await openMap(file,true);
+        if(ok&&style)await openStyles(style);
+        return ok;
+      }
+    };
+  }
   window.addEventListener("beforeunload",ev=>{
-    if(state.edit?.dirty){
+    if(!documentId&&state.edit?.dirty){
       ev.preventDefault();ev.returnValue="";
     }
   });
@@ -6158,5 +6208,5 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
       $("count-vertices").textContent=display(meta.vertexCount);
       renderLayers();fitToMap();
     }
-  }).catch(err=>inform("Błąd lokalnej usługi: "+err.message,true));
+  }).catch(err=>inform("Błąd lokalnej usługi: "+err.message,true)).finally(notifyHost);
 })();
