@@ -3,8 +3,15 @@
 function straightenRing(points,junction,tolerance){
   if(points.length<4||!tolerance)return points;
   const compare=(i,j)=>points[i][0]-points[j][0]||points[i][1]-points[j][1];
+  function structuralCorner(i){
+    const p=points[i],prev=points[(i+points.length-1)%points.length],next=points[(i+1)%points.length];
+    const ax=prev[0]-p[0],ay=prev[1]-p[1],bx=next[0]-p[0],by=next[1]-p[1];
+    const a=Math.hypot(ax,ay),b=Math.hypot(bx,by);
+    return Math.min(a,b)>=10 && Math.abs(ax*bx+ay*by)<0.4*a*b;
+  }
+  const locked=i=>junction(points[i])||structuralCorner(i);
   const anchors=[];
-  for(let i=0;i<points.length;i++)if(junction(points[i]))anchors.push(i);
+  for(let i=0;i<points.length;i++)if(locked(i))anchors.push(i);
   if(!anchors.length){
     let first=0;
     for(let i=1;i<points.length;i++)if(compare(i,first)<0)first=i;
@@ -25,18 +32,76 @@ function straightenRing(points,junction,tolerance){
     const [start,end]=segments.pop();
     const [x,y]=points[start%length],[bx,by]=points[end%length];
     const dx=bx-x,dy=by-y,den=dx*dx+dy*dy;
+    // Long printed sides often have shallow waves or a short pen notch.
+    // Score their length as well as the single worst pixel. Weight by path
+    // length so a noisy patch with many pixel corners cannot dominate the fit.
+    const lengthPx=Math.sqrt(den);
+    const band=Math.max(tolerance,Math.min(12,lengthPx*0.09));
+    const notch=Math.max(band,Math.min(25,lengthPx*0.13));
+    let outside=0,travel=0,previousDistance=0;
     let peak=-1,max=tolerance*tolerance;
     for(let i=start+1;i<end;i++){
       const [u,v]=points[i%length];
       const t=den?Math.max(0,Math.min(1,((u-x)*dx+(v-y)*dy)/den)):0;
       const d=(u-x-t*dx)**2+(v-y-t*dy)**2;
+      const previous=points[(i-1)%length];
+      const step=Math.hypot(u-previous[0],v-previous[1]);
+      const distance=Math.sqrt(d);
+      travel+=step;
+      outside+=step*((distance>band)+(previousDistance>band))/2;
+      previousDistance=distance;
       if(d>max+1e-8||(peak>=0&&Math.abs(d-max)<1e-8&&compare(i%length,peak%length)<0)){
         max=d;peak=i;
       }
     }
+    const last=points[(end-1)%length];
+    const step=Math.hypot(bx-last[0],by-last[1]);
+    travel+=step;
+    if(previousDistance>band)outside+=step/2;
+    if(max<=notch*notch && outside<=travel*0.24)continue;
     if(peak>=0){keep.add(peak%length);segments.push([start,peak],[peak,end]);}
   }
-  return keep.size<3?points:points.filter((_,i)=>keep.has(i));
+  // The recursive split can retain a bump near the end of an otherwise
+  // straight side. Revisit runs of surviving corners against the original
+  // outline and replace a supported side by its corner-to-corner chord.
+  const corners=[...keep].sort((a,b)=>a-b);
+  const removed=new Set();
+  const proposals=[];
+  for(let first=0;first<corners.length;first++){
+    for(let count=2;count<=Math.min(12,corners.length-2);count++){
+      if(locked(corners[(first+count-1)%corners.length]))break;
+      const start=corners[first],stop=corners[(first+count)%corners.length];
+      const [ax,ay]=points[start],[bx,by]=points[stop];
+      const dx=bx-ax,dy=by-ay,chord=Math.hypot(dx,dy);
+      if(chord<12)continue;
+      const band=Math.max(tolerance,Math.min(12,chord*.09));
+      let path=0,sum=0,peak=0,lastDistance=0;
+      for(let i=start;i!==stop;){
+        const next=(i+1)%length,[x,y]=points[next];
+        const along=((x-ax)*dx+(y-ay)*dy)/chord;
+        const distance=Math.hypot((x-ax)-dx*Math.max(0,Math.min(chord,along))/chord,
+                                  (y-ay)-dy*Math.max(0,Math.min(chord,along))/chord);
+        const step=Math.hypot(x-points[i][0],y-points[i][1]);
+        sum+=step*(distance+lastDistance)/2;
+        path+=step;peak=Math.max(peak,distance);lastDistance=distance;i=next;
+        if(peak>Math.max(band,Math.min(25,chord*.13)) || path>chord*1.35)break;
+      }
+      if(peak<=Math.max(band,Math.min(25,chord*.13)) && path<=chord*1.35 && sum<=path*band*.85)
+        proposals.push({first,count,chord,start,stop});
+    }
+  }
+  const ends=new Set();
+  proposals.sort((a,b)=>b.chord-a.chord ||
+    compare(compare(a.start,a.stop)<0?a.start:a.stop,compare(b.start,b.stop)<0?b.start:b.stop));
+  for(const {first,count,start,stop} of proposals){
+    if(removed.has(start)||removed.has(stop))continue;
+    const inside=[];
+    for(let k=1;k<count;k++)inside.push(corners[(first+k)%corners.length]);
+    if(inside.some(i=>ends.has(i)) || corners.length-removed.size-inside.filter(i=>!removed.has(i)).length<3)continue;
+    for(const i of inside)removed.add(i);
+    ends.add(start);ends.add(stop);
+  }
+  return corners.length<3?points:corners.filter(i=>!removed.has(i)).map(i=>points[i]);
 }
 function traceLandUses(pixels, forest, width, height, blackWidth, tolerance=2.5) {
   const size = width * height;
