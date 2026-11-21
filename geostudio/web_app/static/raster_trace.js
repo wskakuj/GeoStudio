@@ -285,9 +285,55 @@ function traceLandUses(pixels, forest, width, height, blackWidth, tolerance=2.5)
       return junction(p) || (a[0]!==b[0] && a[1]!==b[1]);
     });
     const points=fourCornerOutline(ring,tolerance) || straightenRing(corners,junction,tolerance);
-    if(points.length>=3 && points.length<=500)shapes.set(id,{points,suggested:regions[id].suggested});
+    if(points.length>=3 && points.length<=500)shapes.set(id,{points,suggested:regions[id].suggested,
+      bounds:ring.reduce(([l,t,r,b],[x,y])=>[Math.min(l,x),Math.min(t,y),Math.max(r,x),Math.max(b,y)],
+                         [width,height,0,0])});
   }
   return {labels,shapes};
+}
+// Build the perimeter from labelled pixels before straightening. Independently
+// straightened fragments can leave hairline gaps along the original shared edge.
+function selectedRasterOutline(trace,selected,width,height,edited){
+  if(!selected.size)return [];
+  if(selected.size===1){
+    const shape=trace.shapes.get(selected.values().next().value);
+    return shape.points.map(p=>edited.get(p.join(","))||p);
+  }
+  const {labels}=trace,stride=width+1,links=new Map();
+  const bounds=Array.from(selected,id=>trace.shapes.get(id).bounds);
+  const xmin=Math.max(1,Math.min(...bounds.map(b=>b[0]))-1);
+  const xmax=Math.min(width-2,Math.max(...bounds.map(b=>b[2]))+1);
+  const ymin=Math.max(1,Math.min(...bounds.map(b=>b[1]))-1);
+  const ymax=Math.min(height-2,Math.max(...bounds.map(b=>b[3]))+1);
+  let ambiguous=false;
+  function edge(a,b){
+    if(links.has(a))ambiguous=true;
+    links.set(a,b);
+  }
+  for(let y=ymin;y<=ymax;y++)for(let x=xmin;x<=xmax;x++){
+    const i=y*width+x;
+    if(!selected.has(labels[i]))continue;
+    const v=y*stride+x;
+    if(!selected.has(labels[i-width]))edge(v,v+1);
+    if(!selected.has(labels[i+1]))edge(v+1,v+stride+1);
+    if(!selected.has(labels[i+width]))edge(v+stride+1,v+stride);
+    if(!selected.has(labels[i-1]))edge(v+stride,v);
+  }
+  if(ambiguous||!links.size)return null;
+  const start=links.keys().next().value,ring=[];
+  let v=start;
+  do{
+    ring.push([v%stride,Math.floor(v/stride)]);
+    const next=links.get(v);links.delete(v);v=next;
+  }while(v!==start&&v!==undefined);
+  if(v!==start||links.size)return null;
+  const fixed=p=>edited.has(p.join(","));
+  const corners=ring.filter((p,i)=>{
+    const a=ring[(i+ring.length-1)%ring.length],b=ring[(i+1)%ring.length];
+    return (a[0]!==b[0] && a[1]!==b[1]) || fixed(p);
+  });
+  const quad=corners.some(fixed)?null:fourCornerOutline(ring,2.5);
+  return (quad||straightenRing(corners,fixed,2.5)).map(p=>edited.get(p.join(","))||p);
 }
 function openRasterTracing(item, view) {
   const dialog=document.createElement("dialog");
@@ -345,7 +391,8 @@ function openRasterTracing(item, view) {
   const selected=new Set();
   const a1=dialog.querySelector(".trace-a1");
   const completed=[];
-  let adjusted=null;
+  let adjusted=null,outline=[];
+  const edited=new Map();
   const magnet=dialog.querySelector(".trace-magnet");
   magnet.checked=view.magnetEnabled();
   magnet.onchange=()=>{if(magnet.checked!==view.magnetEnabled())view.toggleMagnet();};
@@ -366,6 +413,7 @@ function openRasterTracing(item, view) {
   }
   function syncAttributes(){
     adjusted=null;
+    outline=selectedRasterOutline(trace,selected,w,h,edited);
     if(!selected.size)a1.value="";
     else a1.focus({preventScroll:true});
   }
@@ -378,19 +426,20 @@ function openRasterTracing(item, view) {
   };
   function draw(rect){
     ctx.putImageData(source,0,0);
-    for(const id of selected){
+    const visibleRings=outline?[outline]:Array.from(selected,id=>trace.shapes.get(id).points);
+    for(const ring of visibleRings){
       ctx.beginPath();
-      trace.shapes.get(id).points.forEach(([x,y],i)=>i?ctx.lineTo(x,y):ctx.moveTo(x,y));
+      ring.forEach(([x,y],i)=>i?ctx.lineTo(x,y):ctx.moveTo(x,y));
       ctx.closePath();ctx.fillStyle="rgba(0,165,180,.32)";ctx.fill();
-      ctx.strokeStyle="#007984";ctx.lineWidth=1;ctx.stroke();
+      ctx.strokeStyle="#ff0000";ctx.lineWidth=3/cssScale();ctx.stroke();
     }
     for(const ring of completed){
       ctx.beginPath();
       ring.forEach(([x,y],i)=>i?ctx.lineTo(x,y):ctx.moveTo(x,y));
-      ctx.closePath();ctx.strokeStyle="#c62734";ctx.lineWidth=2;ctx.stroke();
+      ctx.closePath();ctx.strokeStyle="#ff0000";ctx.lineWidth=3/cssScale();ctx.stroke();
     }
     const radius=3.5/cssScale();
-    for(const id of selected)for(const [x,y] of trace.shapes.get(id).points){
+    for(const [x,y] of outline||[]){
       ctx.fillStyle="#fff";ctx.strokeStyle="#007984";
       ctx.fillRect(x-radius,y-radius,2*radius,2*radius);
       ctx.strokeRect(x-radius,y-radius,2*radius,2*radius);
@@ -409,11 +458,12 @@ function openRasterTracing(item, view) {
     save.textContent=adjusted?"Zatwierdź dopasowany obrys":"Zatwierdź wydzielenie 5310";
     if(rect){ctx.strokeStyle="#096ed4";ctx.strokeRect(anchor.x,anchor.y,rect.x-anchor.x,rect.y-anchor.y);}
     status.textContent="Fragmenty wydzielenia: "+selected.size+" · Dodane 5310: "+completed.length+(snapHit?" · Magnes: "+snapHit.kind+" "+snapHit.code:"");
-    save.disabled=busy||!selected.size||!a1.value.trim();
+    if(!outline)status.textContent="Fragmenty muszą tworzyć jeden obrys bez otworów.";
+    save.disabled=busy||!outline?.length||!a1.value.trim();
   }
   function analyze(){
     trace=traceLandUses(source.data,mask,w,h,Number(dialog.querySelector("select").value));
-    selected.clear();syncAttributes();draw();
+    selected.clear();edited.clear();syncAttributes();draw();
   }
   function position(event){
     const r=canvas.getBoundingClientRect();
@@ -425,25 +475,23 @@ function openRasterTracing(item, view) {
     const p=position(ev);
     canvas.setPointerCapture(ev.pointerId);
     let nearest=null,distance=8/cssScale();
-    for(const id of selected)for(const v of trace.shapes.get(id).points){
+    for(const v of outline||[]){
       const d=Math.hypot(v[0]-p.x,v[1]-p.y);
       if(d<distance){distance=d;nearest=v;}
     }
     if(nearest){
-      const vertices=[];
-      const targets=view.snapFeatures().slice();
-      for(const [id,shape] of trace.shapes){
-        const ring=shape.points,parts=[];
-        const moving=v=>v[0]===nearest[0]&&v[1]===nearest[1];
-        for(let i=0;i<ring.length;i++){
-          const v=ring[i],next=ring[(i+1)%ring.length];
-          if(moving(v))vertices.push(v);
-          if(!selected.has(id)||moving(v)||moving(next))continue;
-          parts.push([v,next].map(([x,y])=>[(x-px(0))/k,(y-py(0))/k]));
-        }
-        if(parts.length)targets.push({geometry:parts,code:"5310"});
+      const targets=view.snapFeatures().slice(),parts=[];
+      for(let i=0;i<outline.length;i++){
+        const v=outline[i],next=outline[(i+1)%outline.length];
+        if(v===nearest||next===nearest)continue;
+        parts.push([v,next].map(([x,y])=>[(x-px(0))/k,(y-py(0))/k]));
       }
-      drag={vertices,targets,original:nearest.slice(),start:p,moved:false};
+      if(parts.length)targets.push({geometry:parts,code:"5310"});
+      let key=nearest.join(",");
+      for(const [original,point] of edited)if(point===nearest){key=original;break;}
+      const vertex=nearest.slice();
+      outline[outline.indexOf(nearest)]=vertex;
+      drag={vertices:[vertex],previous:nearest,key,targets,start:p,moved:false};
     }else if(!ev.shiftKey)anchor=p;
   };
   canvas.onpointermove=ev=>{
@@ -454,11 +502,12 @@ function openRasterTracing(item, view) {
     }else if(anchor)draw(position(ev));
   };
   canvas.onpointercancel=()=>{
-    if(drag)for(const v of drag.vertices){v[0]=drag.original[0];v[1]=drag.original[1];}
+    if(drag)outline[outline.indexOf(drag.vertices[0])]=drag.previous;
     anchor=null;drag=null;snapHit=null;draw();
   };
   canvas.onpointerup=ev=>{
-    if(drag){if(drag.moved)moveNode(ev);drag=null;snapHit=null;draw();return;}
+    if(drag){if(drag.moved){moveNode(ev);edited.set(drag.key,drag.vertices[0]);}else outline[outline.indexOf(drag.vertices[0])]=drag.previous;
+      drag=null;snapHit=null;draw();return;}
     if(!anchor||busy)return;
     const p=position(ev);
     if(Math.hypot(p.x-anchor.x,p.y-anchor.y)<5){
@@ -477,12 +526,12 @@ function openRasterTracing(item, view) {
   dialog.oncancel=event=>{if(busy)event.preventDefault();};
   dialog.onclose=()=>dialog.remove();
   save.onclick=async()=>{
-    if(busy||!selected.size||!a1.value.trim())return;
+    if(busy||!outline?.length||!a1.value.trim())return;
     busy=true;save.disabled=close.disabled=a1.disabled=dialog.querySelector("select").disabled=true;
     let message="";
     try{
-      const rings=Array.from(selected,id=>trace.shapes.get(id).points);
-      const {points}=rings.length===1?{points:rings[0]}:await view.merge(rings);
+      const points=outline;
+      if(points.length>500)throw Error("Wspólny obrys przekracza limit 500 węzłów.");
       const native=points.map(([x,y])=>[-(y-py(0))/k,(x-px(0))/k]);
       const correction=await view.add(native,a1.value.trim(),adjusted);
       if(correction){
@@ -493,7 +542,7 @@ function openRasterTracing(item, view) {
       completed.push(adjusted?adjusted.map(([x,y])=>[px(y),py(-x)]):points);
       adjusted=null;
       for(const id of selected)trace.shapes.delete(id);
-      selected.clear();a1.value="";
+      selected.clear();outline=[];a1.value="";
       await view.refresh();
     }catch(error){message=error.message;}
     finally{

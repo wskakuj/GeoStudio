@@ -2515,8 +2515,8 @@ class PreviewWorkspace:
             fill_color = "#111111"
             opacity = 100
 
-        stroke = _color(code_style.get("stroke"), border)
-        width_default=(max(.8,min(3.,cdf.width)) if cdf and cdf.width>0
+        stroke = _color(code_style.get("stroke"), "#FF0000" if obj.code == "5310" else border)
+        width_default=(3. if obj.code == "5310" else max(.8,min(3.,cdf.width)) if cdf and cdf.width>0
                        else 1.)
         width = min(12, max(.5, float(code_style.get(
             "stroke_width",width_default)))) \
@@ -2580,8 +2580,8 @@ class PreviewWorkspace:
                 raise ValueError("Kod nie występuje w otwartej mapie.")
             saved=self._styles.get("code:"+code,{})
             style=self._style(entry) if entry else {
-                "stroke":saved.get("stroke","#4A5056"),
-                "strokeWidth":saved.get("stroke_width",1.)
+                "stroke":saved.get("stroke","#FF0000" if code=="5310" else "#4A5056"),
+                "strokeWidth":saved.get("stroke_width",3. if code=="5310" else 1.)
             }
             return {
                 "code":code,"stroke":style["stroke"],
