@@ -59,6 +59,34 @@ def geometry_of(obj):
     return geometry
 
 
+def creation_overlap(candidate, existing):
+    """Reject real area overlap; tolerate only the MAP grid's boundary sliver.
+
+    A point projected onto a diagonal edge can move up to 0.707 mm at
+    coordinate rounding. Allow at most a 1.5 mm boundary strip on BOTH
+    polygons. Do not accept duplicates, contained polygons or overlap
+    constituting a significant portion of either polygon. This check never
+    rewrites the neighboring object or changes the proposed coordinates.
+    """
+    if not candidate.intersects(existing):
+        return False
+    intersection=candidate.intersection(existing)
+    area=intersection.area
+    if area == 0:
+        return False
+    if (area >= .01 * min(candidate.area, existing.area) or
+            candidate.covers(existing) or existing.covers(candidate)):
+        return True
+    tolerance=.0015
+    # Genuine crossing beyond the grid tolerance is still rejected even
+    # when its area is tiny relative to a large parcel.
+    for shape in (candidate,existing):
+        core=shape.buffer(-tolerance)
+        if not core.is_empty and intersection.intersection(core).area > 1e-10:
+            return True
+    return False
+
+
 def rings_from_shape(shape, *, prefer_anchor=None, max_rings=256, max_vertices=50000):
     """Native X/Y closed rings; exterior CCW, holes CW.
 
