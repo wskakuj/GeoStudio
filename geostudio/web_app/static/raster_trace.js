@@ -208,11 +208,30 @@ function traceLandUses(pixels, forest, width, height, blackWidth, tolerance=2.5)
 }
 function openRasterTracing(item, view) {
   const dialog=document.createElement("dialog");
-  dialog.style.cssText="width:min(92vw,1100px);padding:1rem;color:inherit;background:var(--panel,#fff)";
-  dialog.innerHTML='<h2>Wkreśl 5310 z rastra</h2><p>Zaznacz kliknięciami lub prostokątem fragmenty jednego wydzielenia. Wpisz A1 i naciśnij Enter, aby połączyć je w jeden poligon 5310. Przeciągnij uchwyt węzła, aby poprawić obrys. Alt chwilowo wyłącza magnes.</p><label>Czarne kontury <select><option value="5">Grubsze</option><option value="3">Także cienkie</option><option value="7">Tylko bardzo grube</option></select></label> <label><input type="checkbox" class="trace-magnet"> Magnes</label> <canvas style="display:block;max-width:100%;max-height:58vh;touch-action:none;cursor:crosshair;margin:.5rem auto"></canvas><label>A1 wydzielenia <input class="trace-a1" autocomplete="off"></label><p role="status"></p><button type="button" class="button primary">Zatwierdź wydzielenie 5310</button> <button type="button" class="button ghost">Zamknij</button>';
+  dialog.className="trace-dialog";
+  dialog.setAttribute("aria-labelledby","trace-dialog-title");
+  dialog.innerHTML=`
+    <header class="trace-heading">
+      <div><h2 id="trace-dialog-title">Wkreśl 5310 z rastra</h2><span class="trace-file"></span></div>
+      <button type="button" class="select-close trace-close" aria-label="Zamknij okno">×</button>
+    </header>
+    <div class="trace-tools">
+      <label>Czarne kontury <select><option value="5">Grubsze</option><option value="3">Także cienkie</option><option value="7">Tylko bardzo grube</option></select></label>
+      <label class="toolbar-checkbox" title="Alt chwilowo wyłącza przyciąganie"><input type="checkbox" class="trace-magnet"> Magnes</label>
+    </div>
+    <div class="trace-stage"><canvas aria-label="Podgląd rastra i węzłów wydzielenia"></canvas></div>
+    <footer class="trace-footer">
+      <p class="trace-hint">Klikaj fragmenty jednego wydzielenia lub zaznacz je prostokątem. Przeciągnij węzeł, aby poprawić obrys.</p>
+      <div class="trace-actions">
+        <label>A1 wydzielenia <input class="trace-a1" autocomplete="off"></label>
+        <span role="status"></span>
+        <button type="button" class="button primary trace-save" title="Zatwierdź klawiszem Enter">Zatwierdź wydzielenie 5310</button>
+      </div>
+    </footer>`;
+  dialog.querySelector(".trace-file").textContent=item.name;
   document.body.append(dialog);
   const canvas=dialog.querySelector("canvas"),status=dialog.querySelector("[role=status]");
-  const [save,close]=dialog.querySelectorAll("button");
+  const save=dialog.querySelector(".trace-save"),close=dialog.querySelector(".trace-close");
   const scale=Math.min(2,1500/view.width,1100/view.height);
   canvas.width=Math.max(1,Math.round(view.width*scale));
   canvas.height=Math.max(1,Math.round(view.height*scale));
