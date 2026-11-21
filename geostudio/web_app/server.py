@@ -11,6 +11,7 @@ from urllib.parse import unquote, quote
 from io import BytesIO
 from zipfile import ZipFile,ZIP_STORED
 import secrets
+from contextvars import ContextVar
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
@@ -21,7 +22,8 @@ from .data import (
 from .underlay_wms import list_layers as wms_layers, map_png as wms_map_png
 from .underlay_raster import prepare_raster, fit_gcp_payload, MAX_RASTER_BYTES
 from .underlay_crs import verified_prj_epsg, convert_point, MAX_PRJ
-from .tile_exports import TiledArchiveStore, MAX_TILE_BYTES
+from .tile_exports import MAX_TILE_BYTES
+from .documents import DocumentRegistry, ScopedAttribute, make_session, MAX_DOCUMENTS
 from .native_picker import (preference_file, read_appearance_preference,
                             save_appearance_preference)
 from starlette.concurrency import run_in_threadpool
@@ -32,14 +34,23 @@ ROOT = Path(__file__).resolve().parent / "static"
 UPLOAD_CHUNK = 1024 * 1024
 
 
-def create_app(workspace: PreviewWorkspace | None = None) -> FastAPI:
+def create_app(workspace: PreviewWorkspace | None = None, *,
+               multi_document: bool = False) -> FastAPI:
     app = FastAPI(title="GeoStudio 2.0 — local preview", docs_url=None,
                   redoc_url=None, openapi_url=None)
-    state = workspace if workspace is not None else PreviewWorkspace()
+    # Preserve the standalone single-document API for existing integrations.
+    # The desktop launcher enables the tab shell; every tab is a separate
+    # workspace, history, tile store and native file picker.
+    registry = DocumentRegistry(workspace) if multi_document else None
+    base = make_session(None if multi_document else workspace)
+    current = ContextVar("geostudio_document", default=base)
+    state = ScopedAttribute(current, "workspace")
+    tiles = ScopedAttribute(current, "tile_exports")
     token = secrets.token_urlsafe(32)
-    app.state.workspace = state
+    app.state.workspace = base.workspace
     app.state.api_token = token
-    app.state.tile_exports = TiledArchiveStore(state)
+    app.state.tile_exports = base.tile_exports
+    app.state.documents = registry
 
     @app.middleware("http")
     async def local_only(request: Request, next_handler):
@@ -52,14 +63,47 @@ def create_app(workspace: PreviewWorkspace | None = None) -> FastAPI:
                 request.headers.get("x-geostudio-token", ""), token
             ):
                 return JSONResponse({"detail": "Brak dostępu."}, status_code=403)
-        response = await next_handler(request)
+        scope = None
+        if request.url.path.startswith("/api/"):
+            key = request.headers.get("x-geostudio-document")
+            if key:
+                if registry is None:
+                    return JSONResponse({"detail": "Zakładki niedostępne."}, status_code=404)
+                try:
+                    session = registry.get(key)
+                except KeyError:
+                    return JSONResponse({"detail": "Zakładka mapy została zamknięta."}, status_code=404)
+                scope = current.set(session)
+            elif registry is not None and not (
+                request.url.path.startswith("/api/documents") or
+                request.url.path == "/api/appearance"
+            ):
+                return JSONResponse({"detail": "Brak identyfikatora zakładki."}, status_code=400)
+        try:
+            response = await next_handler(request)
+        finally:
+            if scope is not None:
+                current.reset(scope)
         response.headers["Cache-Control"] = "no-store"
         response.headers["X-Content-Type-Options"] = "nosniff"
         response.headers["X-Frame-Options"] = "DENY"
         response.headers["Referrer-Policy"] = "no-referrer"
-        # Keep the existing / workspace and its strict CSP unchanged.
-        # Only the isolated /next prototype embeds its own CSS and JS.
-        if request.url.path == "/next":
+        # Only our own tab shell can frame a scoped editor. Keep cross-site
+        # framing blocked; the standalone editor retains its original policy.
+        if registry is not None and request.url.path.startswith("/document/"):
+            response.headers["X-Frame-Options"] = "SAMEORIGIN"
+            response.headers["Content-Security-Policy"] = (
+                "default-src 'self'; script-src 'self'; style-src 'self'; "
+                "img-src 'self' data: blob:; connect-src 'self'; "
+                "object-src 'none'; frame-ancestors 'self'; base-uri 'none'"
+            )
+        elif registry is not None and request.url.path == "/":
+            response.headers["Content-Security-Policy"] = (
+                "default-src 'self'; script-src 'self'; style-src 'self'; "
+                "frame-src 'self'; img-src 'self' data: blob:; connect-src 'self'; "
+                "object-src 'none'; frame-ancestors 'none'; base-uri 'none'"
+            )
+        elif request.url.path == "/next":
             response.headers["Content-Security-Policy"] = (
                 "default-src 'self'; script-src 'self' 'unsafe-inline'; "
                 "style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; "
@@ -76,9 +120,59 @@ def create_app(workspace: PreviewWorkspace | None = None) -> FastAPI:
 
     @app.get("/", response_class=HTMLResponse)
     async def index():
-        template = (ROOT / "index.html").read_text(encoding="utf-8")
+        template = (ROOT / ("tabs.html" if registry is not None else "index.html")).read_text(encoding="utf-8")
         return HTMLResponse(template.replace(
             "__GEOSTUDIO_LOCAL_TOKEN__", escape(token, quote=True)))
+
+    @app.get("/document/{document_id}", response_class=HTMLResponse)
+    async def document_editor(document_id: str):
+        if registry is None:
+            raise HTTPException(404, "Zakładki niedostępne.")
+        try:
+            registry.get(document_id)
+        except KeyError as exc:
+            raise HTTPException(404, "Zakładka mapy została zamknięta.") from exc
+        template = (ROOT / "index.html").read_text(encoding="utf-8")
+        template = template.replace(
+            "</head>", '<meta name="geostudio-document" content="' +
+            escape(document_id, quote=True) + '">\\n</head>', 1)
+        return HTMLResponse(template.replace(
+            "__GEOSTUDIO_LOCAL_TOKEN__", escape(token, quote=True)))
+
+    @app.get("/tabs.css")
+    async def tab_styles():
+        return FileResponse(ROOT / "tabs.css", media_type="text/css")
+
+    @app.get("/tabs.js")
+    async def tab_javascript():
+        return FileResponse(ROOT / "tabs.js", media_type="text/javascript")
+
+    @app.get("/api/documents")
+    async def list_documents():
+        if registry is None:
+            raise HTTPException(404, "Zakładki niedostępne.")
+        return {"documents": registry.ids(), "limit": MAX_DOCUMENTS}
+
+    @app.post("/api/documents", status_code=201)
+    async def create_document():
+        if registry is None:
+            raise HTTPException(404, "Zakładki niedostępne.")
+        try:
+            return {"id": registry.create()}
+        except ValueError as exc:
+            raise HTTPException(409, str(exc)) from exc
+
+    @app.delete("/api/documents/{document_id}")
+    async def close_document(document_id: str, discard: bool = False):
+        if registry is None:
+            raise HTTPException(404, "Zakładki niedostępne.")
+        try:
+            registry.close(document_id, discard=discard)
+        except KeyError as exc:
+            raise HTTPException(404, "Zakładka mapy została zamknięta.") from exc
+        except ValueError as exc:
+            raise HTTPException(409, str(exc)) from exc
+        return {"closed": True}
 
     @app.get("/next", response_class=HTMLResponse)
     async def next_preview():
@@ -664,7 +758,7 @@ def create_app(workspace: PreviewWorkspace | None = None) -> FastAPI:
             data=json.loads(await receive(request,64*1024))
             if not isinstance(data,dict):
                 raise ValueError("Nieprawidłowe opcje eksportu.")
-            ticket=app.state.tile_exports.begin(
+            ticket=tiles.begin(
                 data.get("documentToken"),data.get("revision"),
                 data.get("filename"),data.get("format"),
                 data.get("columns"),data.get("rows"),data.get("manifest",""))
@@ -679,7 +773,7 @@ def create_app(workspace: PreviewWorkspace | None = None) -> FastAPI:
         """One bounded browser-rendered tile, not a giant Canvas bitmap."""
         data=await receive(request,MAX_TILE_BYTES)
         try:
-            app.state.tile_exports.add(ticket,index,data)
+            tiles.add(ticket,index,data)
             return {"index":index,"stored":True}
         except RuntimeError as exc:
             raise HTTPException(409,str(exc)) from exc
@@ -691,7 +785,7 @@ def create_app(workspace: PreviewWorkspace | None = None) -> FastAPI:
     @app.post("/api/export/tiles/{ticket}/finish")
     async def finish_large_raster_export(ticket: str):
         try:
-            return app.state.tile_exports.finish(ticket)
+            return tiles.finish(ticket)
         except RuntimeError as exc:
             raise HTTPException(409,str(exc)) from exc
         except LookupError as exc:
@@ -703,7 +797,7 @@ def create_app(workspace: PreviewWorkspace | None = None) -> FastAPI:
     async def download_large_raster_export(ticket: str):
         """Browser fallback; FileResponse streams the archive from disk."""
         try:
-            filename,path=app.state.tile_exports.archive(ticket)
+            filename,path=tiles.archive(ticket)
         except RuntimeError as exc:
             raise HTTPException(409,str(exc)) from exc
         except LookupError as exc:
@@ -720,7 +814,7 @@ def create_app(workspace: PreviewWorkspace | None = None) -> FastAPI:
             data=json.loads(await receive(request,64*1024))
             if not isinstance(data,dict):
                 raise ValueError("Nieprawidłowe parametry TIFF.")
-            ticket=app.state.tile_exports.begin_mosaic(
+            ticket=tiles.begin_mosaic(
                 data.get("documentToken"),data.get("revision"),
                 data.get("filename"),data.get("width"),data.get("height"),
                 data.get("dpi"),data.get("tileWidth"),data.get("tileHeight"))
@@ -734,7 +828,7 @@ def create_app(workspace: PreviewWorkspace | None = None) -> FastAPI:
     async def add_single_tiff_part(ticket: str, index: int, request: Request):
         try:
             data=await receive(request,MAX_TILE_BYTES)
-            await run_in_threadpool(app.state.tile_exports.add_mosaic,
+            await run_in_threadpool(tiles.add_mosaic,
                                     ticket,index,data)
             return {"index":index,"stored":True}
         except RuntimeError as exc:
@@ -747,7 +841,7 @@ def create_app(workspace: PreviewWorkspace | None = None) -> FastAPI:
     @app.post("/api/export/mosaic/{ticket}/finish")
     async def complete_single_tiff(ticket: str):
         try:
-            return app.state.tile_exports.finish_mosaic(ticket)
+            return tiles.finish_mosaic(ticket)
         except RuntimeError as exc:
             raise HTTPException(409,str(exc)) from exc
         except LookupError as exc:
@@ -759,7 +853,7 @@ def create_app(workspace: PreviewWorkspace | None = None) -> FastAPI:
     async def download_single_tiff(ticket: str):
         """Stream a single TIFF/BigTIFF file from temporary disk."""
         try:
-            filename,path=app.state.tile_exports.archive(ticket)
+            filename,path=tiles.archive(ticket)
             if not filename.endswith(".tif"):
                 raise ValueError("Wybrany eksport nie jest obrazem TIFF.")
         except RuntimeError as exc:
