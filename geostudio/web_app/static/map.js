@@ -2517,7 +2517,9 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
     if(item.boundEPSG!==state.mapEPSG)return false;
     return !item.epsg||item.epsg===Number(state.mapEPSG);
   }
+  let activeTrace=null;
   function startRasterTracing(){
+    if(activeTrace){activeTrace.close();return;}
     const picker=$("trace-raster-choice");
     const entries=[rasterEntry(),...raster.layers].filter(rasterCanShow);
     const entry=entries.find(e=>String(e.id)===picker.value)||entries[0];
@@ -2525,7 +2527,25 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
     if(state.editBusy)return;
     const token=state.edit.documentToken;
     let revision=state.edit.revision;
-    openRasterTracing(entry,{
+    setTool("select",true);
+    activeTrace=openRasterTracing(entry,{
+      shell, token, worldToScreen, screenToWorld, zoomAt,
+      scale:()=>state.scale,
+      panBy(dx,dy){
+        state.center={x:state.center.x-dx/state.scale,y:state.center.y-dy/state.scale};
+        requestDraw();scheduleViewport();
+      },
+      fit(bounds){
+        const [x,y,u,v]=bounds;
+        state.center={x:(x+u)/2,y:(y+v)/2};
+        state.scale=Math.max(.000001,Math.min(3500,.92*state.width/(u-x),.92*state.height/(v-y)));
+        requestDraw();scheduleViewport(true);
+      },
+      closed(){
+        activeTrace=null;$("tool-trace-5310").classList.remove("active");
+        $("tool-trace-5310").setAttribute("aria-pressed","false");
+        canvas.focus({preventScroll:true});requestDraw();
+      },
       async featuresIn(bounds){
         const features=[];
         await forEachExportPage(bounds,batch=>features.push(...batch));
@@ -2550,6 +2570,8 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
       },
       refresh:()=>refreshEditedDocument(null)
     });
+    $("tool-trace-5310").classList.add("active");
+    $("tool-trace-5310").setAttribute("aria-pressed","true");
   }
   function renderRasterLayers(){
     const picker=$("trace-raster-choice"),previous=picker.value;
@@ -3321,8 +3343,9 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
       ?"Usuń węzeł nr "+(state.selectedVertex+1)+" (Delete)"
       :"Kliknij węzeł w trybie P, następnie naciśnij Delete";
   }
-  function setTool(tool) {
+  function setTool(tool,quiet=false) {
     if(state.editBusy)return;
+    if(activeTrace&&!activeTrace.close())return;
     state.tool=tool;
     state.hoverInsert=null;
     if(tool!=="nodes")state.selectedVertex=null;
@@ -3360,7 +3383,7 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
       inform("Tryb opisów: przeciągnij osobno A1, A2 lub TX. Esc — zaznaczanie; Ctrl+Z — cofnij.");
     else if(tool==="move")
       inform("Tryb M: przeciągnij punkt, linię, poligon albo całą grupę. Cofnij: Ctrl+Z.");
-    else inform(tool==="select"
+    else if(!quiet)inform(tool==="select"
       ?"Tryb S: zaznacz obiekt lewym przyciskiem, przesuń etykietę prawym.":"Tryb przesuwania mapy (H).");
     requestDraw();
   }
@@ -4120,6 +4143,11 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
   }
   function draw() {
     state.scheduled=false;
+    if(activeTrace&&!state.exporting){
+      const item=activeTrace.id===raster.id?raster:raster.layers.find(layer=>layer.id===activeTrace.id);
+      if(item&&rasterCanShow(item)&&activeTrace.token===state.edit?.documentToken)activeTrace.redraw();
+      else activeTrace.close();
+    }
     ctx.setTransform(state.pixelRatio,0,0,state.pixelRatio,0,0);
     ctx.clearRect(0,0,state.width,state.height);
     ctx.fillStyle=state.mapBackground;
@@ -5903,6 +5931,10 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
   });
 
   document.addEventListener("keydown",ev=>{
+    if(activeTrace && !document.querySelector("dialog[open]")){
+      if(ev.key==="Escape"){ev.preventDefault();activeTrace.close();}
+      return;
+    }
     if(state.exportAreaPicking&&ev.key==="Escape"){
       ev.preventDefault();finishExportAreaSelection(true);return;
     }
