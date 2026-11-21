@@ -197,7 +197,7 @@ def test_native_picker_failure_gives_clickable_fallback(tmp_path, monkeypatch):
         raise RuntimeError("No native picker")
     monkeypatch.setattr(NativeMapPicker, "_choose_path", fail)
     picker = NativeMapPicker(PreviewWorkspace(), settings=tmp_path / "prefs.json")
-    with pytest.raises(RuntimeError, match="Z dysku"):
+    with pytest.raises(RuntimeError, match="standardowego okna wyboru pliku"):
         picker.open_map()
 
 def test_web_buttons_and_browser_fallback_exist():
@@ -209,12 +209,12 @@ def test_web_buttons_and_browser_fallback_exist():
                     "select-apply", "select-clear"]:
         assert 'id="'+element+'"' in html
     assert 'ev.key.toLowerCase()==="h"' in js
-    assert 'window.pywebview.api?.open_map' in js
-    assert 'id="btn-open-direct"' in html
-    assert 'for="file-map"' in html
-    assert 'if(window.pywebview)' in js
-    assert 'window.pywebview.api?.open_map' in js
-    assert 'window.showOpenFilePicker' in js
-    assert 'id:"geostudio-map-folder"' in js
+    assert 'nativeAPI()?.open_map' in js
+    assert 'id="btn-open-direct"' not in html
+    assert 'id="map-picker-retry"' in html
+    assert 'id="file-map"' in html
+    assert 'showPickerFallback()' in js
+    assert '$("file-map").click()' in js
+    assert 'bridge.document_call(documentId,name,args)' in js
     assert "state.pinned=matches" in js
     assert "state.tool===\"nodes\"" in js

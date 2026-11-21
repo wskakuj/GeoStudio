@@ -866,7 +866,7 @@ class PreviewWorkspace:
             return self._editing_status()
 
     def topology_audit(self, document_token: str, revision: int,
-                       limit: int = 600) -> dict:
+                       limit: int = 600, *, code: str | None = None) -> dict:
         """Read-only, revision-bound audit of the current working MAP."""
         from .topology_audit import inspect_topology
         with self._lock:
@@ -878,7 +878,9 @@ class PreviewWorkspace:
             # All geometries belong to the same snapshot; no routine here
             # can mutate native P coordinates, styles or history.
             return inspect_topology(
-                self._entries, document_token=self._document_token,
+                (self._entries if code is None else tuple(
+                    entry for entry in self._entries if entry.obj.code == code)),
+                document_token=self._document_token,
                 revision=self._revision, limit=limit)
 
 

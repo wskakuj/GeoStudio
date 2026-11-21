@@ -4,7 +4,7 @@
   const $=id=>document.getElementById(id);
   const token=document.querySelector('meta[name="api-token"]').content;
   const tabs=new Map();
-  let active=null, limit=4, creating=false, errorTimer=null, ready=false;
+  let active=null, limit=10, creating=false, errorTimer=null, ready=false;
   async function request(path,options={}) {
     const response=await fetch(path,{...options,headers:{
       "X-GeoStudio-Token":token,...(options.headers||{})},cache:"no-store"});
@@ -137,7 +137,7 @@
   async function boot(){
     try{
       const result=await request("/api/documents");
-      limit=result.limit||4;
+      limit=result.limit||10;
       ready=true;
       for(const id of result.documents)append(id);
       if(tabs.size)select([...tabs.keys()][0]);else await newTab();

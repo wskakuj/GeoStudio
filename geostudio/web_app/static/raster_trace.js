@@ -347,8 +347,10 @@ function openRasterTracing(item, view) {
     <div class="trace-tools">
       <label>Czarne kontury <select><option value="5">Grubsze</option><option value="3">Także cienkie</option><option value="7">Tylko bardzo grube</option></select></label>
       <label class="toolbar-checkbox" title="Alt chwilowo wyłącza przyciąganie"><input type="checkbox" class="trace-magnet"> Magnes</label>
+      <button type="button" class="button ghost trace-insert" aria-pressed="false">Dodaj węzeł</button>
+      <button type="button" class="button ghost trace-delete" aria-pressed="false">Usuń węzeł</button>
     </div>
-    <div class="trace-stage"><canvas aria-label="Podgląd rastra i węzłów wydzielenia"></canvas></div>
+    <div class="trace-stage"><canvas tabindex="0" aria-label="Podgląd rastra i węzłów wydzielenia"></canvas></div>
     <footer class="trace-footer">
       <p class="trace-hint">Klikaj fragmenty jednego wydzielenia lub zaznacz je prostokątem. Przeciągnij węzeł, aby poprawić obrys.</p>
       <div class="trace-actions">
@@ -392,7 +394,24 @@ function openRasterTracing(item, view) {
   const a1=dialog.querySelector(".trace-a1");
   const completed=[];
   let adjusted=null,outline=[];
-  const edited=new Map();
+  const edited=new Map(),drafts=new Map();
+  let nodeTool="",activeNode=null;
+  const insert=dialog.querySelector(".trace-insert"),remove=dialog.querySelector(".trace-delete");
+  const selectionKey=()=>Array.from(selected).sort((a,b)=>a-b).join(",");
+  function keepDraft(){
+    drafts.set(selectionKey(),outline.slice());
+    adjusted=null;
+  }
+  function removeVertex(v){
+    if(!v||outline.length<=3)return;
+    outline.splice(outline.indexOf(v),1);activeNode=null;keepDraft();draw();
+  }
+  insert.onclick=()=>{nodeTool=nodeTool==="insert"?"":"insert";draw();};
+  remove.onclick=()=>{nodeTool=nodeTool==="remove"?"":"remove";draw();};
+  canvas.onkeydown=ev=>{
+    if(busy||drag||ev.key!=="Delete"||!activeNode)return;
+    ev.preventDefault();ev.stopPropagation();removeVertex(activeNode);
+  };
   const magnet=dialog.querySelector(".trace-magnet");
   magnet.checked=view.magnetEnabled();
   magnet.onchange=()=>{if(magnet.checked!==view.magnetEnabled())view.toggleMagnet();};
@@ -413,7 +432,8 @@ function openRasterTracing(item, view) {
   }
   function syncAttributes(){
     adjusted=null;
-    outline=selectedRasterOutline(trace,selected,w,h,edited);
+    activeNode=null;nodeTool="";
+    outline=drafts.get(selectionKey())?.slice() || selectedRasterOutline(trace,selected,w,h,edited);
     if(!selected.size)a1.value="";
     else a1.focus({preventScroll:true});
   }
@@ -439,8 +459,9 @@ function openRasterTracing(item, view) {
       ctx.closePath();ctx.strokeStyle="#ff0000";ctx.lineWidth=3/cssScale();ctx.stroke();
     }
     const radius=3.5/cssScale();
-    for(const [x,y] of outline||[]){
-      ctx.fillStyle="#fff";ctx.strokeStyle="#007984";
+    for(const v of outline||[]){
+      const [x,y]=v;
+      ctx.fillStyle=v===activeNode?"#ffd04a":"#fff";ctx.strokeStyle="#007984";
       ctx.fillRect(x-radius,y-radius,2*radius,2*radius);
       ctx.strokeRect(x-radius,y-radius,2*radius,2*radius);
     }
@@ -458,12 +479,18 @@ function openRasterTracing(item, view) {
     save.textContent=adjusted?"Zatwierdź dopasowany obrys":"Zatwierdź wydzielenie 5310";
     if(rect){ctx.strokeStyle="#096ed4";ctx.strokeRect(anchor.x,anchor.y,rect.x-anchor.x,rect.y-anchor.y);}
     status.textContent="Fragmenty wydzielenia: "+selected.size+" · Dodane 5310: "+completed.length+(snapHit?" · Magnes: "+snapHit.kind+" "+snapHit.code:"");
+    insert.disabled=busy||!outline?.length||outline.length>=500;
+    remove.disabled=busy||!outline||outline.length<=3;
+    insert.setAttribute("aria-pressed",String(nodeTool==="insert"));
+    remove.setAttribute("aria-pressed",String(nodeTool==="remove"));
+    if(nodeTool==="insert")status.textContent="Kliknij bok, na którym chcesz dodać węzeł.";
+    if(nodeTool==="remove")status.textContent="Klikaj węzły do usunięcia. Ponowne kliknięcie narzędzia kończy usuwanie.";
     if(!outline)status.textContent="Fragmenty muszą tworzyć jeden obrys bez otworów.";
     save.disabled=busy||!outline?.length||!a1.value.trim();
   }
   function analyze(){
     trace=traceLandUses(source.data,mask,w,h,Number(dialog.querySelector("select").value));
-    selected.clear();edited.clear();syncAttributes();draw();
+    selected.clear();edited.clear();drafts.clear();syncAttributes();draw();
   }
   function position(event){
     const r=canvas.getBoundingClientRect();
@@ -479,6 +506,32 @@ function openRasterTracing(item, view) {
       const d=Math.hypot(v[0]-p.x,v[1]-p.y);
       if(d<distance){distance=d;nearest=v;}
     }
+    canvas.focus({preventScroll:true});
+    if(nodeTool==="remove"){
+      if(nearest && outline.length>3){
+        if(outline.length===4)nodeTool="";
+        removeVertex(nearest);
+      }
+      return;
+    }
+    if(nodeTool==="insert"){
+      if(!outline||outline.length>=500)return;
+      let best=10/cssScale(),at=-1,point;
+      for(let i=0;i<outline.length;i++){
+        const [x,y]=outline[i],[u,v]=outline[(i+1)%outline.length];
+        const dx=u-x,dy=v-y,len=dx*dx+dy*dy;
+        if(!len)continue;
+        const f=((p.x-x)*dx+(p.y-y)*dy)/len;
+        if(f<=0||f>=1)continue;
+        const q=[x+f*dx,y+f*dy],distance=Math.hypot(p.x-q[0],p.y-q[1]);
+        if(distance<best){best=distance;at=i+1;point=q;}
+      }
+      if(at>=0){
+        outline.splice(at,0,point);activeNode=point;nodeTool="";keepDraft();draw();
+      }
+      return;
+    }
+    activeNode=nearest;
     if(nearest){
       const targets=view.snapFeatures().slice(),parts=[];
       for(let i=0;i<outline.length;i++){
@@ -506,7 +559,7 @@ function openRasterTracing(item, view) {
     anchor=null;drag=null;snapHit=null;draw();
   };
   canvas.onpointerup=ev=>{
-    if(drag){if(drag.moved){moveNode(ev);edited.set(drag.key,drag.vertices[0]);}else outline[outline.indexOf(drag.vertices[0])]=drag.previous;
+    if(drag){if(drag.moved){moveNode(ev);edited.set(drag.key,drag.vertices[0]);activeNode=drag.vertices[0];keepDraft();}else outline[outline.indexOf(drag.vertices[0])]=drag.previous;
       drag=null;snapHit=null;draw();return;}
     if(!anchor||busy)return;
     const p=position(ev);
@@ -542,7 +595,7 @@ function openRasterTracing(item, view) {
       completed.push(adjusted?adjusted.map(([x,y])=>[px(y),py(-x)]):points);
       adjusted=null;
       for(const id of selected)trace.shapes.delete(id);
-      selected.clear();outline=[];a1.value="";
+      selected.clear();outline=[];activeNode=null;nodeTool="";drafts.clear();a1.value="";
       await view.refresh();
     }catch(error){message=error.message;}
     finally{

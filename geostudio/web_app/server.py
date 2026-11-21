@@ -137,7 +137,7 @@ def create_app(workspace: PreviewWorkspace | None = None, *,
         template = (ROOT / "index.html").read_text(encoding="utf-8")
         template = template.replace(
             "</head>", '<meta name="geostudio-document" content="' +
-            escape(document_id, quote=True) + '">\\n</head>', 1)
+            escape(document_id, quote=True) + '">\n</head>', 1)
         return HTMLResponse(template.replace(
             "__GEOSTUDIO_LOCAL_TOKEN__", escape(token, quote=True)))
 
@@ -315,7 +315,7 @@ def create_app(workspace: PreviewWorkspace | None = None, *,
         """Inspect native GEO-MAP P records without modifying the map."""
         try:
             return await run_in_threadpool(
-                state.topology_audit, documentToken, revision, limit)
+                state.topology_audit, documentToken, revision, limit, code="5310")
         except RuntimeError as exc:
             raise HTTPException(409,str(exc)) from exc
         except ValueError as exc:
