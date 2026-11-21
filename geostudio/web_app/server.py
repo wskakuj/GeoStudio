@@ -57,16 +57,33 @@ def create_app(workspace: PreviewWorkspace | None = None) -> FastAPI:
         response.headers["X-Content-Type-Options"] = "nosniff"
         response.headers["X-Frame-Options"] = "DENY"
         response.headers["Referrer-Policy"] = "no-referrer"
-        response.headers["Content-Security-Policy"] = (
-            "default-src 'self'; script-src 'self'; style-src 'self'; "
-            "img-src 'self' data: blob:; connect-src 'self'; "
-            "object-src 'none'; frame-ancestors 'none'; base-uri 'none'"
-        )
+        # Keep the existing / workspace and its strict CSP unchanged.
+        # Only the isolated /next prototype embeds its own CSS and JS.
+        if request.url.path == "/next":
+            response.headers["Content-Security-Policy"] = (
+                "default-src 'self'; script-src 'self' 'unsafe-inline'; "
+                "style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; "
+                "connect-src 'self'; object-src 'none'; "
+                "frame-ancestors 'none'; base-uri 'none'"
+            )
+        else:
+            response.headers["Content-Security-Policy"] = (
+                "default-src 'self'; script-src 'self'; style-src 'self'; "
+                "img-src 'self' data: blob:; connect-src 'self'; "
+                "object-src 'none'; frame-ancestors 'none'; base-uri 'none'"
+            )
         return response
 
     @app.get("/", response_class=HTMLResponse)
     async def index():
         template = (ROOT / "index.html").read_text(encoding="utf-8")
+        return HTMLResponse(template.replace(
+            "__GEOSTUDIO_LOCAL_TOKEN__", escape(token, quote=True)))
+
+    @app.get("/next", response_class=HTMLResponse)
+    async def next_preview():
+        """Opt-in v20 appearance test. / remains the existing GeoStudio."""
+        template = (ROOT / "next" / "index.html").read_text(encoding="utf-8")
         return HTMLResponse(template.replace(
             "__GEOSTUDIO_LOCAL_TOKEN__", escape(token, quote=True)))
 
