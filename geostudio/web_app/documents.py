@@ -1,0 +1,89 @@
+"""Bounded independent MAP sessions for the classic multi-document editor."""
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from secrets import token_hex
+from threading import RLock
+
+from .data import PreviewWorkspace
+from .tile_exports import TiledArchiveStore
+from .native_picker import NativeMapPicker
+
+MAX_DOCUMENTS = 4
+
+
+@dataclass
+class DocumentSession:
+    workspace: PreviewWorkspace
+    tile_exports: TiledArchiveStore
+    native: NativeMapPicker
+    native_lock: RLock = field(default_factory=RLock)
+
+
+def make_session(workspace=None):
+    workspace = workspace if workspace is not None else PreviewWorkspace()
+    tiles = TiledArchiveStore(workspace)
+    return DocumentSession(workspace, tiles, NativeMapPicker(workspace, tile_exports=tiles))
+
+
+class DocumentRegistry:
+    def __init__(self, initial=None):
+        self._lock = RLock()
+        self._sessions = {}
+        self.initial_id = self.create(initial)
+
+    def create(self, workspace=None):
+        with self._lock:
+            if len(self._sessions) >= MAX_DOCUMENTS:
+                raise ValueError(f"Można otworzyć maksymalnie {MAX_DOCUMENTS} mapy naraz.")
+            key = token_hex(16)
+            self._sessions[key] = make_session(workspace)
+            return key
+
+    def get(self, key):
+        with self._lock:
+            session = self._sessions.get(key)
+            if session is None:
+                raise KeyError("Zakładka mapy została zamknięta.")
+            return session
+
+    def ids(self):
+        with self._lock:
+            return list(self._sessions)
+
+    def close(self, key, *, discard=False):
+        with self._lock:
+            session = self.get(key)
+            if session.workspace.editing_status().get("dirty") and not discard:
+                raise ValueError("Mapa ma niezapisane zmiany.")
+            del self._sessions[key]
+            # Any in-flight request holds its own reference to this isolated
+            # session; it can never modify a different tab.
+
+
+class DocumentNativeBridge:
+    """Only these existing, document-scoped operations reach the native picker."""
+    _ALLOWED = frozenset({"open_map", "open_libraries", "save_recovery",
+                          "restore_recovery", "save_map", "save_base_map",
+                          "save_baked_map", "save_tiled_export",
+                          "save_generated_export"})
+
+    def __init__(self, registry):
+        self._registry = registry
+
+    def document_call(self, document_id, operation, args):
+        if operation not in self._ALLOWED or not isinstance(args, list):
+            raise ValueError("Nieprawidłowa operacja natywna.")
+        session = self._registry.get(document_id)
+        with session.native_lock:
+            return getattr(session.native, operation)(*args)
+
+
+class ScopedAttribute:
+    """Resolve the session per HTTP request, including Starlette threadpool calls."""
+    def __init__(self, context, attribute):
+        self._context = context
+        self._attribute = attribute
+
+    def __getattr__(self, name):
+        return getattr(getattr(self._context.get(), self._attribute), name)
