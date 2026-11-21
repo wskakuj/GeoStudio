@@ -2035,7 +2035,6 @@ body[data-theme] .floating {flex-shrink:0;}
 #raster-summary[data-result="ready"] strong { color:#126736; }
 body[data-theme="dark"] #raster-summary[data-result="ready"] { background:#12392c; color:#d5f6df; border-color:#4eaa75; }
 body[data-theme="dark"] #raster-summary[data-result="ready"] strong { color:#93e8af; }
-.trace-tools button[aria-pressed="true"] { outline:2px solid var(--ui-accent); }
 
 .trace-stage { overflow:hidden; }
 .trace-stage canvas { display:block; width:100%; height:100%; max-width:none; max-height:none; }
