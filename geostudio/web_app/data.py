@@ -57,6 +57,14 @@ CODES = {
 LABEL_FIELDS = ("A1", "A2", "A3", "A4", "A5", "A6", "TX", "MP", "KR")
 
 
+def _inspector_fields(obj):
+    if obj.code == "5310" and obj.is_closed:
+        fields = dict.fromkeys(("A1", "A2", "A4", "A5", "A6"), "")
+        fields.update(obj.fields)
+        return fields
+    return dict(obj.fields)
+
+
 def _color(value, fallback):
     return str(value).upper() if isinstance(value, str) and HEX.fullmatch(value) else fallback
 
@@ -886,7 +894,7 @@ class PreviewWorkspace:
 
     def edit_fields(self, fid: str, changes: dict, *,
                     document_token: str, revision: int) -> dict:
-        """Edit existing fields only. Preserve all unrelated MAP source bytes."""
+        """Edit descriptive fields on the selected object."""
         with self._lock:
             if self._doc is None or self._history is None:
                 raise ValueError("Najpierw otwórz plik MAP.")
@@ -904,9 +912,10 @@ class PreviewWorkspace:
             if (not isinstance(changes, dict) or not changes or
                     len(changes) > len(LABEL_FIELDS)):
                 raise ValueError("Podaj zmiany w znanych atrybutach.")
+            fields = _inspector_fields(entry.obj)
             edits = {}
             for field, value in changes.items():
-                if field not in LABEL_FIELDS or field not in entry.obj.fields:
+                if field not in LABEL_FIELDS or field not in fields:
                     raise ValueError(f"Pole {field} nie istnieje lub nie jest edytowalne.")
                 if (not isinstance(value, str) or len(value) > 512 or
                         any(ch in value for ch in "\r\n]")):
@@ -918,7 +927,7 @@ class PreviewWorkspace:
                     raise ValueError(
                         "Ten znak nie jest obsługiwany przez kodowanie GEO-MAP CP1250."
                     ) from exc
-                if entry.obj.fields[field] != value:
+                if fields[field] != value:
                     edits[(entry.obj.uid, field)] = value
             if not edits:
                 return {**self._editing_status(), "changed": False, "object": self.details(fid)}
@@ -926,7 +935,11 @@ class PreviewWorkspace:
                 "Atrybuty obiektu " + entry.obj.code,
                 selection_before=(entry.obj.uid,),
             ):
-                self._doc.bulk_update_fields(edits)
+                existing = {key: value for key, value in edits.items() if key[1] in entry.obj.fields}
+                self._doc.bulk_update_fields(existing)
+                for (uid, field), value in edits.items():
+                    if field not in entry.obj.fields:
+                        self._doc.update_field(uid, field, value)
             self._reindex(self._doc, self._doc.filename)
             self._revision += 1
             return {**self._editing_status(), "changed": True, "object": self.details(fid)}
@@ -2877,17 +2890,18 @@ class PreviewWorkspace:
             except KeyError as exc:
                 raise LookupError("Nie znaleziono obiektu.") from exc
             obj = entry.obj
+            fields = _inspector_fields(obj)
             return {
                 "id": fid, "sourceUid": obj.uid, "code": obj.code,
                 "layer": entry.layer, "grade": entry.grade,
-                "fields": dict(obj.fields),
+                "fields": fields,
                 "pointCount": len(obj.points),
                 "points": [{"x": p.x, "y": p.y, "type": p.point_type}
                            for p in obj.points[:500]],
                 "areaM2": obj.area_m2,
                 "closed": obj.is_closed,
                 "geometryTruncated": len(obj.points) > 500,
-                "editableFields": [key for key in LABEL_FIELDS if key in obj.fields]
+                "editableFields": [key for key in LABEL_FIELDS if key in fields]
                                   if obj.uid else [],
                 "revision": self._revision,
                 "documentToken": self._document_token,
