@@ -2082,6 +2082,12 @@ class PreviewWorkspace:
                             for key in hidden_uses)):
                 raise ValueError("Nieprawidłowe filtrowanie klas użytków.")
             hidden_set=set(hidden_uses)
+            hidden_forest=options.get("hiddenForestClasses", [])
+            if (not isinstance(hidden_forest,list) or len(hidden_forest)>2000 or
+                    not all(isinstance(grade,str) and len(grade)<=120
+                            for grade in hidden_forest)):
+                raise ValueError("Nieprawidłowe filtrowanie klas leśnych.")
+            forest_set=set(hidden_forest)
             visible=options.get("visibleLayers")
             if visible is not None:
                 if (not isinstance(visible,list) or len(visible)>300 or
@@ -2094,6 +2100,9 @@ class PreviewWorkspace:
             if hidden_set:
                 features=[f for f in features if not (
                     f["layer"]=="Użytki" and f["landUse"] in hidden_set)]
+            if forest_set:
+                features=[f for f in features if not (
+                    f["layer"]=="Użytki Leśne" and f["grade"] in forest_set)]
             data=render_vector_pdf(features,options)
             base=_display_name(self._doc.filename)
             return base[:-4]+"_arkusz_wektorowy.pdf", data
