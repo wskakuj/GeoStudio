@@ -7,6 +7,7 @@ to the native bridge, and only GEO-MAP metadata is returned to the UI.
 """
 from __future__ import annotations
 
+import base64
 import json
 from hashlib import sha256
 import os
@@ -17,6 +18,32 @@ from threading import RLock
 
 from .data import MAX_MAP_BYTES, PreviewWorkspace
 from .recovery import LocalRecoveryStore
+
+
+def _raster_with_world(path: Path) -> dict:
+    suffix = path.suffix.lower()
+    short = {".png": ".pgw", ".jpg": ".jgw", ".jpeg": ".jgw",
+             ".tif": ".tfw", ".tiff": ".tfw", ".webp": ".wpw"}
+    if suffix not in short or not 0 < path.stat().st_size <= 48 * 1024 * 1024:
+        raise ValueError("Wybierz obsługiwany raster o rozmiarze do 48 MB.")
+    world = None
+    warning = ""
+    try:
+        siblings = {p.name.casefold(): p for p in path.parent.iterdir()}
+        for ext in (short[suffix], suffix + "w", ".wld"):
+            sidecar = siblings.get((path.stem + ext).casefold())
+            if sidecar is None or not sidecar.is_file():
+                continue
+            with sidecar.open("rb") as stream:
+                content = stream.read(8193)
+            if len(content) > 8192:
+                raise ValueError("Plik world przekracza 8 KB.")
+            world = {"name": sidecar.name, "text": content.decode("utf-8-sig")}
+            break
+    except (OSError, ValueError) as exc:
+        warning = f"Nie udało się odczytać pliku world. {exc}"
+    return {"name": path.name, "data": base64.b64encode(path.read_bytes()).decode("ascii"),
+            "world": world, "warning": warning}
 
 
 def preference_file() -> Path:
@@ -260,6 +287,21 @@ class NativeMapPicker:
                 json.dumps(visual,ensure_ascii=False).encode("utf-8"))
         self._workspace.mark_recovered_unsaved()
         return {"restored":True,"metadata":self._workspace.metadata()}
+
+    def open_raster(self) -> dict:
+        from tkinter import Tk, filedialog
+        root = Tk()
+        try:
+            root.withdraw()
+            root.attributes("-topmost", True)
+            filename = filedialog.askopenfilename(
+                parent=root, title="Wybierz raster",
+                initialdir=str(self._source_path.parent) if self._source_path
+                else read_last_map_directory(self._settings),
+                filetypes=(("Rastry", "*.png *.jpg *.jpeg *.webp *.tif *.tiff"),))
+        finally:
+            root.destroy()
+        return _raster_with_world(Path(filename)) if filename else {"cancelled": True}
 
     def open_libraries(self) -> dict:
         """Choose LAY/CDF/SYM with a real Windows dialog, never via JS paths."""

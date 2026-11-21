@@ -18,7 +18,7 @@
   };
   // Never use an unscoped desktop bridge from a document frame. The
   // top-level bridge validates the document ID and the operation allowlist.
-  const scopedMethods=["open_map","open_libraries","save_recovery","restore_recovery",
+  const scopedMethods=["open_map","open_raster","open_libraries","save_recovery","restore_recovery",
     "save_map","save_base_map","save_baked_map","save_tiled_export","save_generated_export"];
   const nativeAPI=()=>{
     if(!documentId)return window.pywebview?.api;
@@ -2665,7 +2665,7 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
       });
     }finally{URL.revokeObjectURL(url);}
   }
-  async function openRasterFile(file){
+  async function openRasterFile(file,world=null,warning=""){
     if(!file||!state.meta)return;
     const ticket=++raster.ticket;
     const documentToken=state.edit?.documentToken;
@@ -2702,7 +2702,13 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
         selectRasterLayer(existing.id);raster.file=file;raster.visible=true;
         rasterInfo("Raster ma już dopasowanie do tej mapy.");requestDraw();return;
       }
+      let worldAffine=raster.image?null:raster.pendingWorld;
+      if(world){
+        try{worldAffine=parseWorldFileText(world.text);}
+        catch(error){warning=world.name+" — "+error.message;}
+      }
       if(raster.image)raster.layers.push(rasterEntry());
+      raster.pendingWorld=null;
       raster.image=decoded;raster.affine=affine;raster.epsg=epsg;
       raster.sourceWidth=sourceWidth;raster.sourceHeight=sourceHeight;
       raster.boundEPSG=null;raster.gcps=[];raster.visible=true;
@@ -2713,7 +2719,7 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
           " — wybierz zgodny EPSG w Układach lub skalibruj wizualnie.");
         return;
       }
-      if(raster.pendingWorld)raster.affine=raster.pendingWorld;
+      if(worldAffine)raster.affine=worldAffine;
       const previewNote=(sourceWidth!==decoded.width||sourceHeight!==decoded.height)
         ?" Podgląd "+decoded.width+"×"+decoded.height+
           " z oryginału "+sourceWidth+"×"+sourceHeight+
@@ -2723,6 +2729,8 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
         :file.name+" — brak georeferencji. Dodaj world lub punkty GCP.")+
         previewNote);
       if(raster.affine)showRasterIfCalibrated();
+      if(warning)inform(warning,true);
+      else if(world&&worldAffine)rasterInfo(file.name+" — dopasowano z "+world.name+".");
     }catch(error){
       rasterInfo("Nie udało się otworzyć rastra: "+error.message);
       inform("Błąd rastra: "+error.message,true);
@@ -6106,8 +6114,44 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
   });
   for(const id of ["underlay-epsg","raster-epsg","crs-epsg"])
     $(id).addEventListener("change",ev=>setMapEPSG(ev.target.value));
-  $("underlay-raster-file").addEventListener("change",ev=>{
-    openRasterFile(ev.target.files?.[0]);ev.target.value="";
+  const rasterInput=$("underlay-raster-file");
+  let rasterPickerBusy=false;
+  rasterInput.addEventListener("click",async ev=>{
+    const api=nativeAPI();
+    if(!api?.open_raster)return;
+    ev.preventDefault();
+    if(rasterPickerBusy)return;
+    rasterPickerBusy=true;
+    const documentToken=state.edit?.documentToken;
+    try{
+      const result=await api.open_raster();
+      if(result.cancelled||documentToken!==state.edit?.documentToken)return;
+      const binary=atob(result.data);
+      const bytes=new Uint8Array(binary.length);
+      for(let i=0;i<binary.length;i++)bytes[i]=binary.charCodeAt(i);
+      await openRasterFile(new File([bytes],result.name),result.world,result.warning);
+    }catch(error){inform("Nie udało się wczytać rastra: "+error.message,true);}
+    finally{rasterPickerBusy=false;}
+  });
+  rasterInput.addEventListener("change",async ev=>{
+    const files=Array.from(ev.target.files||[]);
+    ev.target.value="";
+    const images=files.filter(file=>/\.(png|jpe?g|webp|tiff?)$/i.test(file.name));
+    if(images.length!==1){if(files.length)inform("Wybierz jeden raster i opcjonalnie jego plik world.",true);return;}
+    const file=images[0], name=file.name.toLowerCase();
+    const dot=name.lastIndexOf("."), stem=name.slice(0,dot), ext=name.slice(dot+1);
+    const short={png:"pgw",jpg:"jgw",jpeg:"jgw",tif:"tfw",tiff:"tfw",webp:"wpw"};
+    const sidecar=[short[ext],ext+"w","wld"].map(suffix=>
+      files.find(item=>item.name.toLowerCase()===stem+"."+suffix)).find(Boolean);
+    const documentToken=state.edit?.documentToken;
+    let world=null,warning="";
+    if(sidecar){
+      try{
+        if(sidecar.size>8192)throw Error("Plik world przekracza 8 KB.");
+        world={name:sidecar.name,text:await sidecar.text()};
+      }catch(error){warning=sidecar.name+" — "+error.message;}
+    }
+    if(documentToken===state.edit?.documentToken)await openRasterFile(file,world,warning);
   });
   $("underlay-world-file").addEventListener("change",ev=>{
     openWorldFile(ev.target.files?.[0]);ev.target.value="";

@@ -63,7 +63,7 @@ class DocumentRegistry:
 
 class DocumentNativeBridge:
     """Only these existing, document-scoped operations reach the native picker."""
-    _ALLOWED = frozenset({"open_map", "open_libraries", "save_recovery",
+    _ALLOWED = frozenset({"open_map", "open_raster", "open_libraries", "save_recovery",
                           "restore_recovery", "save_map", "save_base_map",
                           "save_baked_map", "save_tiled_export",
                           "save_generated_export"})
