@@ -479,8 +479,8 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
     removeUnderlay();removeRaster(true);
     // An EPSG choice belongs to the previously opened map and must
     // NEVER be silently reused for unrelated GEO-MAP coordinates.
-    setMapEPSG("");
     state.meta = meta;
+    setMapEPSG("");
     updateEditState(meta);
     state.active = null; state.detail = null; state.pinned.clear();
     populateSelectCodes();
@@ -2230,6 +2230,20 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
       $("underlay-crs-result").textContent="Nie udało się przeliczyć: "+error.message;
     }
   }
+  function probablePolishCRS(bounds){
+    // Canvas bounds are [west, -north, east, -south] in native metres.
+    if(!bounds || bounds.length!==4 || !bounds.every(Number.isFinite))return "";
+    const [west,top,east,bottom]=bounds;
+    const north=-top,south=-bottom;
+    if(west>east || south>north)return "";
+    if(south>=5400000 && north<=6150000){
+      const zone=Math.floor(west/1000000);
+      if(zone>=5 && zone<=8 && west>=zone*1000000+350000 && east<=zone*1000000+650000)
+        return String(2171+zone);
+    }
+    if(west>=100000 && east<=900000 && south>=100000 && north<=850000)return "2180";
+    return "";
+  }
   function setMapEPSG(value){
     // Each dialog changes the SAME per-map CRS; never reuse the EPSG of
     // a different MAP. All calibrated backgrounds must match its axes.
@@ -2239,7 +2253,11 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
     state.mapEPSG=chosen;
     for(const id of ["underlay-epsg","raster-epsg","crs-epsg"])
       $(id).value=chosen;
-    $("status-map-crs").textContent=chosen ? $("crs-epsg").selectedOptions[0].textContent : "Układ nieustalony";
+    const displayed=chosen||probablePolishCRS(state.meta?.bounds);
+    const option=Array.from($("crs-epsg").options).find(entry=>entry.value===displayed);
+    const status=$("status-map-crs");
+    status.textContent=displayed && option ? "Układ: "+option.textContent+(chosen?"":" (prawdopodobny)") : "Układ nieustalony";
+    status.title=chosen?"Układ ustawiony dla tej mapy.":"Ocena na podstawie zakresu współrzędnych całej mapy. Układ możesz potwierdzić w Podkłady → Układy EPSG.";
     if(!changed)return;
     // A visually calibrated JPG/PNG or a .world raster is positioned in
     // native MAP X/Y. Choosing an EPSG for WMS does not change these XY
@@ -6466,6 +6484,7 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
   api("/api/map").then(meta=>{
     if(meta.loaded){
       state.meta=meta;
+      setMapEPSG("");
       state.localMapCandidate=meta.objectCount<=50000&&meta.vertexCount<=750000;
       state.localMapReady=false;state.viewportFeatureCache.clear();
       updateEditState(meta);
