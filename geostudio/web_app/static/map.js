@@ -2586,6 +2586,9 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
           openRasterTracing(entry,{
             width:state.width,height:state.height,scale:state.scale,center:{...state.center},
             features:state.features,
+            magnetEnabled:()=>state.drawMagnet,
+            toggleMagnet:toggleDrawMagnet,
+            snapFeatures:()=>state.features.filter(isVisible),
             merge:rings=>api("/api/underlay/raster/union",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({rings})}),
             async add(points,a1){
               if(state.editBusy||state.edit.documentToken!==token||state.edit.revision!==revision)

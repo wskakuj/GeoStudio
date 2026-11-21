@@ -209,7 +209,7 @@ function traceLandUses(pixels, forest, width, height, blackWidth, tolerance=2.5)
 function openRasterTracing(item, view) {
   const dialog=document.createElement("dialog");
   dialog.style.cssText="width:min(92vw,1100px);padding:1rem;color:inherit;background:var(--panel,#fff)";
-  dialog.innerHTML='<h2>Wkreśl 5310 z rastra</h2><p>Zaznacz kliknięciami lub prostokątem fragmenty jednego wydzielenia. Wpisz A1 i naciśnij Enter, aby połączyć je w jeden poligon 5310. Shift i przeciągnięcie przesuwa węzeł.</p><label>Czarne kontury <select><option value="5">Grubsze</option><option value="3">Także cienkie</option><option value="7">Tylko bardzo grube</option></select></label> <canvas style="display:block;max-width:100%;max-height:58vh;touch-action:none;cursor:crosshair;margin:.5rem auto"></canvas><label>A1 wydzielenia <input class="trace-a1" autocomplete="off"></label><p role="status"></p><button type="button" class="button primary">Zatwierdź wydzielenie 5310</button> <button type="button" class="button ghost">Zamknij</button>';
+  dialog.innerHTML='<h2>Wkreśl 5310 z rastra</h2><p>Zaznacz kliknięciami lub prostokątem fragmenty jednego wydzielenia. Wpisz A1 i naciśnij Enter, aby połączyć je w jeden poligon 5310. Przeciągnij uchwyt węzła, aby poprawić obrys. Alt chwilowo wyłącza magnes.</p><label>Czarne kontury <select><option value="5">Grubsze</option><option value="3">Także cienkie</option><option value="7">Tylko bardzo grube</option></select></label> <label><input type="checkbox" class="trace-magnet"> Magnes</label> <canvas style="display:block;max-width:100%;max-height:58vh;touch-action:none;cursor:crosshair;margin:.5rem auto"></canvas><label>A1 wydzielenia <input class="trace-a1" autocomplete="off"></label><p role="status"></p><button type="button" class="button primary">Zatwierdź wydzielenie 5310</button> <button type="button" class="button ghost">Zamknij</button>';
   document.body.append(dialog);
   const canvas=dialog.querySelector("canvas"),status=dialog.querySelector("[role=status]");
   const [save,close]=dialog.querySelectorAll("button");
@@ -243,6 +243,24 @@ function openRasterTracing(item, view) {
   const selected=new Set();
   const a1=dialog.querySelector(".trace-a1");
   const completed=[];
+  const magnet=dialog.querySelector(".trace-magnet");
+  magnet.checked=view.magnetEnabled();
+  magnet.onchange=()=>{if(magnet.checked!==view.magnetEnabled())view.toggleMagnet();};
+  let snapHit=null;
+  const cssScale=()=>canvas.getBoundingClientRect().width/w;
+  function moveNode(ev){
+    const p=position(ev), ratio=cssScale();
+    let target=p;
+    snapHit=null;
+    if(magnet.checked&&!ev.altKey){
+      // Keep subpixel MAP coordinates all the way to the object creation API.
+      const world={x:(p.x-px(0))/k,y:(p.y-py(0))/k};
+      const hit=window.GeoStudioDrawingSnap.snapPoint(world,drag.targets,{scale:k*ratio});
+      if(hit.kind){target={x:px(hit.point.x),y:py(hit.point.y)};snapHit=hit;}
+    }
+    for(const vertex of drag.vertices){vertex[0]=target.x;vertex[1]=target.y;}
+    draw();
+  }
   function syncAttributes(){
     if(!selected.size)a1.value="";
     else a1.focus({preventScroll:true});
@@ -267,8 +285,19 @@ function openRasterTracing(item, view) {
       ring.forEach(([x,y],i)=>i?ctx.lineTo(x,y):ctx.moveTo(x,y));
       ctx.closePath();ctx.strokeStyle="#c62734";ctx.lineWidth=2;ctx.stroke();
     }
+    const radius=3.5/cssScale();
+    for(const id of selected)for(const [x,y] of trace.shapes.get(id).points){
+      ctx.fillStyle="#fff";ctx.strokeStyle="#007984";
+      ctx.fillRect(x-radius,y-radius,2*radius,2*radius);
+      ctx.strokeRect(x-radius,y-radius,2*radius,2*radius);
+    }
+    if(snapHit){
+      const [x,y]=drag.vertices[0];
+      ctx.beginPath();ctx.arc(x,y,2*radius,0,2*Math.PI);
+      ctx.strokeStyle="#e47500";ctx.lineWidth=2/cssScale();ctx.stroke();
+    }
     if(rect){ctx.strokeStyle="#096ed4";ctx.strokeRect(anchor.x,anchor.y,rect.x-anchor.x,rect.y-anchor.y);}
-    status.textContent="Fragmenty wydzielenia: "+selected.size+" · Dodane 5310: "+completed.length;
+    status.textContent="Fragmenty wydzielenia: "+selected.size+" · Dodane 5310: "+completed.length+(snapHit?" · Magnes: "+snapHit.kind+" "+snapHit.code:"");
     save.disabled=busy||!selected.size||!a1.value.trim();
   }
   function analyze(){
@@ -277,33 +306,52 @@ function openRasterTracing(item, view) {
   }
   function position(event){
     const r=canvas.getBoundingClientRect();
-    return {x:Math.max(0,Math.min(w-1,Math.floor((event.clientX-r.left)*w/r.width))),
-            y:Math.max(0,Math.min(h-1,Math.floor((event.clientY-r.top)*h/r.height)))};
+    return {x:Math.max(0,Math.min(w-1,(event.clientX-r.left)*w/r.width)),
+            y:Math.max(0,Math.min(h-1,(event.clientY-r.top)*h/r.height))};
   }
   canvas.onpointerdown=ev=>{
     if(busy)return;
     const p=position(ev);
     canvas.setPointerCapture(ev.pointerId);
-    if(!ev.shiftKey){anchor=p;return;}
-    let nearest=null,distance=10;
+    let nearest=null,distance=8/cssScale();
     for(const id of selected)for(const v of trace.shapes.get(id).points){
       const d=Math.hypot(v[0]-p.x,v[1]-p.y);
       if(d<distance){distance=d;nearest=v;}
     }
     if(nearest){
-      drag=[];
-      for(const shape of trace.shapes.values())for(const v of shape.points)
-        if(v[0]===nearest[0]&&v[1]===nearest[1])drag.push(v);
-    }
+      const vertices=[];
+      const targets=view.snapFeatures().slice();
+      for(const [id,shape] of trace.shapes){
+        const ring=shape.points,parts=[];
+        const moving=v=>v[0]===nearest[0]&&v[1]===nearest[1];
+        for(let i=0;i<ring.length;i++){
+          const v=ring[i],next=ring[(i+1)%ring.length];
+          if(moving(v))vertices.push(v);
+          if(!selected.has(id)||moving(v)||moving(next))continue;
+          parts.push([v,next].map(([x,y])=>[(x-px(0))/k,(y-py(0))/k]));
+        }
+        if(parts.length)targets.push({geometry:parts,code:"5310"});
+      }
+      drag={vertices,targets,original:nearest.slice(),start:p,moved:false};
+    }else if(!ev.shiftKey)anchor=p;
   };
-  canvas.onpointermove=ev=>{if(drag){const p=position(ev);for(const v of drag){v[0]=p.x;v[1]=p.y;}draw();}else if(anchor)draw(position(ev));};
-  canvas.onpointercancel=()=>{anchor=null;drag=null;draw();};
+  canvas.onpointermove=ev=>{
+    if(drag){
+      const p=position(ev);
+      if(!drag.moved&&Math.hypot(p.x-drag.start.x,p.y-drag.start.y)*cssScale()<2)return;
+      drag.moved=true;moveNode(ev);
+    }else if(anchor)draw(position(ev));
+  };
+  canvas.onpointercancel=()=>{
+    if(drag)for(const v of drag.vertices){v[0]=drag.original[0];v[1]=drag.original[1];}
+    anchor=null;drag=null;snapHit=null;draw();
+  };
   canvas.onpointerup=ev=>{
-    if(drag){drag=null;return;}
+    if(drag){if(drag.moved)moveNode(ev);drag=null;snapHit=null;draw();return;}
     if(!anchor||busy)return;
     const p=position(ev);
     if(Math.hypot(p.x-anchor.x,p.y-anchor.y)<5){
-      const id=trace.labels[p.y*w+p.x];
+      const id=trace.labels[Math.floor(p.y)*w+Math.floor(p.x)];
       if(!trace.shapes.has(id)){anchor=null;draw();status.textContent="Brak prostego, zamkniętego konturu. Zmień próg czerni lub powiększenie widoku.";return;}
       if(selected.has(id))selected.delete(id);else selected.add(id);
     }else{
