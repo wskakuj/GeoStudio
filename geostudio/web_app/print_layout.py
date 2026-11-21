@@ -387,9 +387,6 @@ def render_vector_pdf(features: Iterable[dict], options: dict) -> bytes:
         c.drawString(cx,y+8,"0")
         c.drawCentredString(cx+length/2,y+8,f"{dist/2:g}")
         c.drawRightString(cx+length,y+8,f"{dist:g} m")
-    c.setFont(font,8)
-    c.drawString(left,bottom-25,"Skala 1:" + str(o["denominator"]) +
-                 "  |  GEO-MAP X/Y  |  Wektorowy PDF")
     # A simple editable title block table below the map, sized for A0-A4.
     table=o["table"]
     if table:
