@@ -103,6 +103,55 @@ function straightenRing(points,junction,tolerance){
   }
   return corners.length<3?points:corners.filter(i=>!removed.has(i)).map(i=>points[i]);
 }
+// Try four corners only when all four sides follow the observed perimeter.
+// The shorter dimension limits the error for long, narrow fields.
+function fourCornerOutline(ring,tolerance){
+  if(ring.length<4||!tolerance)return null;
+  const n=ring.length;
+  function farthest(from){
+    const [x,y]=ring[from];
+    let far=from,max=0;
+    for(let i=0;i<n;i++){
+      const d=(ring[i][0]-x)**2+(ring[i][1]-y)**2;
+      if(d>max){max=d;far=i;}
+    }
+    return far;
+  }
+  function distance(i,start,end){
+    const [x,y]=ring[i],[a,b]=ring[start],[c,d]=ring[end];
+    const dx=c-a,dy=d-b;
+    const t=Math.max(0,Math.min(1,((x-a)*dx+(y-b)*dy)/(dx*dx+dy*dy)));
+    return Math.hypot(x-a-t*dx,y-b-t*dy);
+  }
+  function peak(start,end){
+    let far=start,max=0;
+    for(let i=(start+1)%n;i!==end;i=(i+1)%n){
+      const d=distance(i,start,end);
+      if(d>max){max=d;far=i;}
+    }
+    return far;
+  }
+  const a=farthest(0),c=farthest(a);
+  if(a===c)return null;
+  const ids=[a,peak(a,c),c,peak(c,a)];
+  if(new Set(ids).size!==4)return null;
+  const corners=ids.map(i=>ring[i]);
+  const shortest=Math.min(...corners.map(([x,y],i)=>{
+    const q=corners[(i+1)%4];return Math.hypot(q[0]-x,q[1]-y);
+  }));
+  const band=Math.min(shortest*.12,Math.max(tolerance,Math.min(6,shortest*.045)));
+  let turn=0;
+  for(let j=0;j<4;j++){
+    const [x,y]=corners[j],[u,v]=corners[(j+1)%4],[p,q]=corners[(j+2)%4];
+    const cross=(u-x)*(q-v)-(v-y)*(p-u);
+    if(!cross || turn*cross<0)return null;
+    turn=cross;
+    const start=ids[j],end=ids[(j+1)%4];
+    for(let i=(start+1)%n;i!==end;i=(i+1)%n)
+      if(distance(i,start,end)>band)return null;
+  }
+  return corners;
+}
 function traceLandUses(pixels, forest, width, height, blackWidth, tolerance=2.5) {
   const size = width * height;
   const dark = new Uint8Array(size), wall = new Uint8Array(size);
@@ -142,10 +191,14 @@ function traceLandUses(pixels, forest, width, height, blackWidth, tolerance=2.5)
     if(labels[start] || wall[start])continue;
     const id=regions.length;
     let tail=1,edge=false,tint=0,ink=0,wood=0;
+    let sumR=0,sumG=0,sumB=0,minX=width,minY=height,maxX=0,maxY=0;
     labels[start]=id;queue[0]=start;
     for(let head=0;head<tail;head++){
       const i=queue[head],x=i%width,y=Math.floor(i/width);
       edge ||= x===0 || y===0 || x===width-1 || y===height-1;
+      minX=Math.min(minX,x);maxX=Math.max(maxX,x);
+      minY=Math.min(minY,y);maxY=Math.max(maxY,y);
+      sumR+=pixels[4*i];sumG+=pixels[4*i+1];sumB+=pixels[4*i+2];
       tint+=colored[i];wood+=forest[4*i]>128?1:0;
       for(const n of [x?i-1:-1,x+1<width?i+1:-1,i-width,i+width]){
         if(n<0||n>=size)continue;
@@ -153,7 +206,7 @@ function traceLandUses(pixels, forest, width, height, blackWidth, tolerance=2.5)
         if(!labels[n]&&!wall[n]){labels[n]=id;queue[tail++]=n;}
       }
     }
-    regions.push({speck:!edge && tail<36, valid:!edge && tail>=36, suggested:tint>tail*.22||wood>tail*.5||ink>=5});
+    regions.push({area:tail,ink,minX,minY,maxX,maxY,color:[sumR/tail,sumG/tail,sumB/tail],speck:!edge && tail<36, valid:!edge && tail>=36, suggested:tint>tail*.22||wood>tail*.5||ink>=5});
   }
   // Tiny islands inside printed letters and numbers belong to the surrounding field.
   for(let i=0;i<size;i++)if(labels[i] && regions[labels[i]].speck)labels[i]=0;
@@ -166,6 +219,36 @@ function traceLandUses(pixels, forest, width, height, blackWidth, tolerance=2.5)
     for(const n of [i-1,i+1,i-width,i+width])
       if(n>=0&&n<size&&!labels[n]){labels[n]=labels[i];queue[tail++]=n;}
   }
+  // A closed loop in lettering (e.g. 0 or 8) can exceed the speck threshold
+  // at high zoom. Adjacent counters may also touch across a narrow stroke.
+  const neighbor=new Int32Array(regions.length),protectedInk=new Uint8Array(regions.length);
+  const runnerUp=new Int32Array(regions.length);
+  function note(id,other,i,j){
+    if(!id||!other||id===other)return;
+    const first=neighbor[id];
+    if(other!==first){
+      if(!first || regions[other].area>regions[first].area){
+        runnerUp[id]=first;neighbor[id]=other;
+      }else if(!runnerUp[id] || regions[other].area>regions[runnerUp[id]].area)runnerUp[id]=other;
+    }
+    if(red[i]||red[j]||(forest[4*i+3]&&forest[4*i]<64)||
+       (forest[4*j+3]&&forest[4*j]<64))protectedInk[id]=1;
+  }
+  for(let y=0;y<height-1;y++)for(let x=0;x<width-1;x++){
+    const i=y*width+x,id=labels[i];
+    if(id!==labels[i+1]){note(id,labels[i+1],i,i+1);note(labels[i+1],id,i+1,i);}
+    if(id!==labels[i+width]){note(id,labels[i+width],i,i+width);note(labels[i+width],id,i+width,i);}
+  }
+  const owner=new Int32Array(regions.length);
+  for(let id=1;id<regions.length;id++){
+    const outer=regions[neighbor[id]],inner=regions[id];
+    if(inner.valid && outer?.valid && inner.area<=outer.area*.08 &&
+       inner.minX>outer.minX && inner.maxX<outer.maxX && inner.minY>outer.minY && inner.maxY<outer.maxY &&
+       (!runnerUp[id] || regions[runnerUp[id]].area<=outer.area*.08) &&
+       !inner.ink && !protectedInk[id] &&
+       inner.color.every((value,k)=>Math.abs(value-outer.color[k])<=20))owner[id]=neighbor[id];
+  }
+  for(let i=0;i<size;i++)if(owner[labels[i]])labels[i]=owner[labels[i]];
   const borders=new Map();
   function line(id,a,b){
     if(!borders.has(id)) borders.set(id,new Map());
@@ -201,7 +284,7 @@ function traceLandUses(pixels, forest, width, height, blackWidth, tolerance=2.5)
       const a=ring[(i+ring.length-1)%ring.length],b=ring[(i+1)%ring.length];
       return junction(p) || (a[0]!==b[0] && a[1]!==b[1]);
     });
-    const points=straightenRing(corners,junction,tolerance);
+    const points=fourCornerOutline(ring,tolerance) || straightenRing(corners,junction,tolerance);
     if(points.length>=3 && points.length<=500)shapes.set(id,{points,suggested:regions[id].suggested});
   }
   return {labels,shapes};
