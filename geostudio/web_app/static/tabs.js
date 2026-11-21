@@ -89,8 +89,8 @@
     // Register before loading: the editor sends its status to its parent.
     tab.loaded=new Promise(resolve=>frame.addEventListener("load",resolve,{once:true}));
     tabs.set(id,tab);
-    $("tab-list").append(node);$("editors").append(frame);
     frame.src="/document/"+encodeURIComponent(id);
+    $("tab-list").append(node);$("editors").append(frame);
     updateControls();
     return tab;
   }
