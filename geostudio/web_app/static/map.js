@@ -479,8 +479,7 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
     removeUnderlay();removeRaster(true);
     // An EPSG choice belongs to the previously opened map and must
     // NEVER be silently reused for unrelated GEO-MAP coordinates.
-    state.mapEPSG="";
-    for(const id of ["underlay-epsg","raster-epsg","crs-epsg"])$(id).value="";
+    setMapEPSG("");
     state.meta = meta;
     updateEditState(meta);
     state.active = null; state.detail = null; state.pinned.clear();
@@ -2240,6 +2239,7 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
     state.mapEPSG=chosen;
     for(const id of ["underlay-epsg","raster-epsg","crs-epsg"])
       $(id).value=chosen;
+    $("status-map-crs").textContent=chosen ? $("crs-epsg").selectedOptions[0].textContent : "Układ nieustalony";
     if(!changed)return;
     // A visually calibrated JPG/PNG or a .world raster is positioned in
     // native MAP X/Y. Choosing an EPSG for WMS does not change these XY
