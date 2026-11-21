@@ -1881,3 +1881,83 @@ body[data-theme] .topbar .map-background-popover {
   body[data-theme] .topbar .document-meta {white-space:normal;}
   body[data-theme] .topbar .map-background-popover {left:0;right:auto;}
 }
+
+/* Soft 3D tool icons — local inline SVG, shared visual geometry.
+   Animations affect the icon only: no map repaint, layout shift or new JS. */
+body[data-theme] .soft3d-icon {
+  display:block;width:26px;height:26px;flex:0 0 26px;
+  overflow:visible;transform-origin:50% 50%;
+  transition:transform 150ms cubic-bezier(.2,.7,.25,1),filter 150ms ease;
+}
+body[data-theme] .ribbon-group .tool-glyph {
+  display:inline-flex;align-items:center;justify-content:center;
+  width:26px;height:26px;flex:0 0 26px;
+}
+body[data-theme] .ribbon-group .tool-button {
+  gap:7px;min-height:40px;padding:5px 9px;
+}
+body[data-theme] .ribbon-group .tool-button small {font-weight:550;}
+body[data-theme] .topbar .header-icon.soft3d-icon {
+  width:23px;height:23px;flex-basis:23px;
+}
+body[data-theme] .floating .soft3d-icon {
+  width:29px;height:29px;flex-basis:29px;
+}
+body[data-theme] .topology-close .soft3d-icon,
+body[data-theme] .topology-refresh .soft3d-icon {
+  width:23px;height:23px;flex-basis:23px;
+}
+body[data-theme] .topology-action-buttons .button {
+  display:inline-flex;align-items:center;justify-content:center;gap:7px;
+}
+body[data-theme] .topology-action-buttons .soft3d-icon {
+  width:22px;height:22px;flex-basis:22px;
+}
+body[data-theme="dark"] .topbar .theme-moon,
+body[data-theme="light"] .topbar .theme-sun {display:none;}
+body[data-theme] .topbar .header-control:disabled .soft3d-icon,
+body[data-theme] button:disabled .soft3d-icon {
+  filter:saturate(.4);
+}
+@media(hover:hover) and (prefers-reduced-motion:no-preference) {
+  body[data-theme] button:not(:disabled):hover .soft3d-icon,
+  body[data-theme] label.header-control:hover .soft3d-icon,
+  body[data-theme] summary.header-control:hover .soft3d-icon {
+    transform:translateY(-1px) scale(1.1);
+    filter:drop-shadow(0 2px 2px #10182735);
+  }
+  body[data-theme] button:not(:disabled):active .soft3d-icon,
+  body[data-theme] label.header-control:active .soft3d-icon,
+  body[data-theme] summary.header-control:active .soft3d-icon {
+    transform:translateY(1px) scale(.94);
+  }
+  body[data-theme] #tool-draw-snap:not(:disabled):hover .soft3d-icon {
+    transform:translateY(-1px) rotate(-8deg) scale(1.1);
+  }
+  body[data-theme] #tool-undo:not(:disabled):hover .soft3d-icon {
+    transform:rotate(-8deg) scale(1.08);
+  }
+  body[data-theme] #tool-redo:not(:disabled):hover .soft3d-icon {
+    transform:rotate(8deg) scale(1.08);
+  }
+}
+body[data-theme] .ribbon-group .tool-button.active,
+body[data-theme] .floating.active {
+  background:var(--ui-accent-soft);
+  border-color:var(--classic-focus);
+}
+body[data-theme] .floating.active {
+  box-shadow:inset 0 0 0 1px var(--classic-focus);
+}
+@media(max-width:1230px){
+  body[data-theme] .ribbon-group .tool-button {padding:5px 8px;gap:6px;}
+  body[data-theme] .ribbon-group .tool-glyph,
+  body[data-theme] .ribbon-group .soft3d-icon {
+    width:24px;height:24px;flex-basis:24px;
+  }
+}
+@media(prefers-reduced-motion:reduce) {
+  body[data-theme] .soft3d-icon {
+    transition:none!important;animation:none!important;transform:none!important;
+  }
+}
