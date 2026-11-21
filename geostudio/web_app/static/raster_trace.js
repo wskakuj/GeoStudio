@@ -243,6 +243,7 @@ function openRasterTracing(item, view) {
   const selected=new Set();
   const a1=dialog.querySelector(".trace-a1");
   const completed=[];
+  let adjusted=null;
   const magnet=dialog.querySelector(".trace-magnet");
   magnet.checked=view.magnetEnabled();
   magnet.onchange=()=>{if(magnet.checked!==view.magnetEnabled())view.toggleMagnet();};
@@ -262,6 +263,7 @@ function openRasterTracing(item, view) {
     draw();
   }
   function syncAttributes(){
+    adjusted=null;
     if(!selected.size)a1.value="";
     else a1.focus({preventScroll:true});
   }
@@ -296,6 +298,13 @@ function openRasterTracing(item, view) {
       ctx.beginPath();ctx.arc(x,y,2*radius,0,2*Math.PI);
       ctx.strokeStyle="#e47500";ctx.lineWidth=2/cssScale();ctx.stroke();
     }
+    if(adjusted){
+      ctx.beginPath();
+      adjusted.forEach(([x,y],i)=>i?ctx.lineTo(px(y),py(-x)):ctx.moveTo(px(y),py(-x)));
+      ctx.closePath();ctx.fillStyle="rgba(240,150,0,.35)";ctx.fill();
+      ctx.strokeStyle="#cb7100";ctx.lineWidth=3/cssScale();ctx.stroke();
+    }
+    save.textContent=adjusted?"Zatwierdź dopasowany obrys":"Zatwierdź wydzielenie 5310";
     if(rect){ctx.strokeStyle="#096ed4";ctx.strokeRect(anchor.x,anchor.y,rect.x-anchor.x,rect.y-anchor.y);}
     status.textContent="Fragmenty wydzielenia: "+selected.size+" · Dodane 5310: "+completed.length+(snapHit?" · Magnes: "+snapHit.kind+" "+snapHit.code:"");
     save.disabled=busy||!selected.size||!a1.value.trim();
@@ -339,7 +348,7 @@ function openRasterTracing(item, view) {
     if(drag){
       const p=position(ev);
       if(!drag.moved&&Math.hypot(p.x-drag.start.x,p.y-drag.start.y)*cssScale()<2)return;
-      drag.moved=true;moveNode(ev);
+      adjusted=null;drag.moved=true;moveNode(ev);
     }else if(anchor)draw(position(ev));
   };
   canvas.onpointercancel=()=>{
@@ -373,8 +382,14 @@ function openRasterTracing(item, view) {
       const rings=Array.from(selected,id=>trace.shapes.get(id).points);
       const {points}=rings.length===1?{points:rings[0]}:await view.merge(rings);
       const native=points.map(([x,y])=>[-(y-py(0))/k,(x-px(0))/k]);
-      await view.add(native,a1.value.trim());
-      completed.push(points);
+      const correction=await view.add(native,a1.value.trim(),adjusted);
+      if(correction){
+        adjusted=correction;
+        message="Pomarańczowy obrys pomija powierzchnię zajętą przez 5310. Enter zatwierdza ten obrys.";
+        return;
+      }
+      completed.push(adjusted?adjusted.map(([x,y])=>[px(y),py(-x)]):points);
+      adjusted=null;
       for(const id of selected)trace.shapes.delete(id);
       selected.clear();a1.value="";
       await view.refresh();

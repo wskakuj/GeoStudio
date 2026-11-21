@@ -1337,11 +1337,12 @@ class PreviewWorkspace:
         allowed_keys={
             "copy":{"action","ids","dx","dy"},
             "delete":{"action","ids"},
-            "create":{"action","code","points","fields"},
+            "create":{"action","code","points","fields","clipRasterOverlap"},
         }[action]
         if set(payload)-allowed_keys:
             raise ValueError("Nieznane pola polecenia.")
         selected=[]
+        adjusted={}
         code_counts=Counter()
         coordinates=[]
         if action in {"copy","delete"}:
@@ -1421,11 +1422,16 @@ class PreviewWorkspace:
             candidate=Polygon(coordinates)
             if not candidate.is_valid or candidate.is_empty:
                 raise ValueError("Poligon ma niepoprawny obrys lub za małe pole.")
+            obstacles=[]
             for other in self._index.nearby(*center,radius):
                 if not other.is_closed or other.code!=code:
                     continue
                 try:
-                    overlap=creation_overlap(candidate,geometry_of(other))
+                    existing=geometry_of(other)
+                    overlap=creation_overlap(candidate,existing)
+                    if overlap and code=='5310' and payload.get('clipRasterOverlap') is True:
+                        obstacles.append(existing)
+                        continue
                 except (ValueError,GEOSException):
                     # Keep the previous conservative check for malformed
                     # legacy records which cannot be converted to GEOS.
@@ -1433,6 +1439,19 @@ class PreviewWorkspace:
                 if overlap:
                     raise ValueError(
                         "Nowy poligon nakłada się na istniejący poligon tego samego kodu.")
+            if obstacles:
+                from shapely.ops import unary_union
+                free=candidate.difference(unary_union(obstacles))
+                if free.is_empty or free.area < .000001:
+                    raise ValueError("Całe zaznaczenie zajmuje już istniejący 5310.")
+                if free.geom_type!="Polygon" or free.interiors:
+                    raise ValueError("Po odjęciu istniejących 5310 powstają osobne części lub otwór. Zmień zaznaczenie.")
+                coordinates=[(round(x,3),round(y,3)) for x,y in list(free.simplify(0).exterior.coords)[:-1]]
+                fitted=Polygon(coordinates)
+                if (len(coordinates)>500 or not fitted.is_valid or not polygon_is_valid(coordinates)
+                        or any(creation_overlap(fitted,g) for g in obstacles)):
+                    raise ValueError("Nie można dopasować obrysu w dokładności MAP. Popraw węzły.")
+                adjusted={"adjustedPoints":coordinates}
             code_counts[code]=1
         canonical={"action":action,"payload":payload,
                    "documentToken":document_token,"revision":revision}
@@ -1444,7 +1463,7 @@ class PreviewWorkspace:
                           "codes":dict(sorted(code_counts.items())),
                           "vertexCount":(len(coordinates) if action=="create"
                             else sum(len(o.points) for o in selected)),
-                          "previewKey":preview_key,"canApply":True,
+                          "previewKey":preview_key,"canApply":True,**adjusted,
                           **self._editing_status()}}
 
     def preview_object_operation(self, payload: dict, *,

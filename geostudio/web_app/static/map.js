@@ -2590,14 +2590,16 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
             toggleMagnet:toggleDrawMagnet,
             snapFeatures:()=>state.features.filter(isVisible),
             merge:rings=>api("/api/underlay/raster/union",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({rings})}),
-            async add(points,a1){
+            async add(points,a1,approved){
               if(state.editBusy||state.edit.documentToken!==token||state.edit.revision!==revision)
                 throw Error("Mapa została zmieniona. Otwórz wykrywanie ponownie.");
-              const body={documentToken:token,revision,operation:{action:"create",code:"5310",fields:a1?{A1:a1}:{},points}};
+              const body={documentToken:token,revision,operation:{action:"create",code:"5310",clipRasterOverlap:true,fields:a1?{A1:a1}:{},points}};
               const post=(path,data)=>api(path,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(data)});
               state.editBusy=true;
               try{
                 const preview=await post("/api/objects/preview",body);
+                if(preview.adjustedPoints&&JSON.stringify(preview.adjustedPoints)!==JSON.stringify(approved))
+                  return preview.adjustedPoints;
                 const result=await post("/api/objects/apply",{...body,previewKey:preview.previewKey});
                 revision=result.revision;updateEditState(result);
               }finally{state.editBusy=false;updateEditState(state.edit);}
