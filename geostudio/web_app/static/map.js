@@ -425,7 +425,7 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
         return;
       }
       const hasMasks=!!state.edit.hasReversibleMasks;
-      const needsPackage=hasMasks||!!state.edit.hasVisualStyles;
+      const needsPackage=hasMasks||!!state.edit.hasVisualStyles||!!state.meta.mapEPSG;
       const params=new URLSearchParams({documentToken:state.edit.documentToken,
         normalizePositive:"true"});
       const response=await documentFetch((needsPackage?"/api/export/package":"/api/export/map")+
@@ -480,7 +480,7 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
     // An EPSG choice belongs to the previously opened map and must
     // NEVER be silently reused for unrelated GEO-MAP coordinates.
     state.meta = meta;
-    setMapEPSG("");
+    setMapEPSG(meta.mapEPSG||"");
     updateEditState(meta);
     state.active = null; state.detail = null; state.pinned.clear();
     populateSelectCodes();
@@ -2291,6 +2291,38 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
   function openRasterDialog(){
     if(!state.meta){inform("Najpierw otwórz mapę MAP.");return;}
     $("raster-dialog").showModal();
+  }
+  async function transformActiveMap(){
+    if(state.editBusy||!state.meta)return;
+    const source=Number($("crs-epsg").value),target=Number($("underlay-crs-target").value);
+    const message=$("underlay-crs-result");
+    if(!source||source===target){
+      message.textContent="Wskaż układ źródłowy otwartej mapy oraz inny układ docelowy.";
+      return;
+    }
+    const button=$("crs-transform-map");
+    button.disabled=true;state.editBusy=true;
+    message.textContent="Przeliczanie współrzędnych całej mapy…";
+    try{
+      const response=await documentFetch("/api/map/reproject",{method:"POST",
+        headers:{"Content-Type":"application/json","X-GeoStudio-Token":token},
+        body:JSON.stringify({...editRequestBody(),source,target})});
+      if(!response.ok)throw Error((await response.json()).detail||"Nie udało się przeliczyć mapy.");
+      if(documentId){
+        const {id}=await response.json();
+        host().openConverted(id);
+        message.textContent="Przeliczoną mapę otwarto w nowej zakładce.";
+      }else{
+        const url=URL.createObjectURL(await response.blob());
+        const link=document.createElement("a");
+        link.href=url;link.download=state.meta.name.replace(/\.map$/i,"")+"_EPSG"+target+".zip";
+        document.body.append(link);link.click();link.remove();
+        setTimeout(()=>URL.revokeObjectURL(url),60000);
+        message.textContent="Przygotowano kopię MAP z plikiem PRJ.";
+      }
+      $("crs-dialog").close();
+    }catch(error){message.textContent=error.message;}
+    finally{state.editBusy=false;button.disabled=false;notifyHost();}
   }
   function openCrsDialog(){
     if(!state.meta){inform("Najpierw otwórz mapę MAP.");return;}
@@ -6255,6 +6287,7 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
   link("crs-close-bottom",()=>$("crs-dialog").close());
   link("underlay-layers",loadUnderlayLayers);
   link("underlay-crs-convert",convertUnderlayCenter);
+  link("crs-transform-map",transformActiveMap);
   $("underlay-prj-file").addEventListener("change",ev=>{
     readUnderlayPrj(ev.target.files?.[0]);ev.target.value="";
   });
@@ -6484,7 +6517,7 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
   api("/api/map").then(meta=>{
     if(meta.loaded){
       state.meta=meta;
-      setMapEPSG("");
+      setMapEPSG(meta.mapEPSG||"");
       state.localMapCandidate=meta.objectCount<=50000&&meta.vertexCount<=750000;
       state.localMapReady=false;state.viewportFeatureCache.clear();
       updateEditState(meta);

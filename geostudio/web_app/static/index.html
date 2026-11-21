@@ -880,7 +880,7 @@
       <label for="underlay-prj-file">Plik PRJ (opcjonalny)</label>
       <input type="file" id="underlay-prj-file" accept=".prj">
       <div class="underlay-divider"></div>
-      <label for="underlay-crs-target">Przelicz środek widoku do układu</label>
+      <label for="underlay-crs-target">Układ docelowy</label>
       <select id="underlay-crs-target">
         <option value="2180">EPSG:2180 — PL-1992</option>
         <option value="2176">EPSG:2176 — PL-2000 strefa 5</option>
@@ -889,7 +889,8 @@
         <option value="2179">EPSG:2179 — PL-2000 strefa 8</option>
       </select>
       <button type="button" id="underlay-crs-convert" class="button ghost">Przelicz współrzędne środka mapy</button>
-      <p id="underlay-crs-result" class="select-preview" role="status">Współrzędne MAP pozostają bez zmian — to tylko podgląd punktu.</p>
+      <button type="button" id="crs-transform-map" class="button primary">Przekształć całą mapę</button>
+      <p id="underlay-crs-result" class="select-preview" role="status"></p>
     </div>
     <div class="select-actions">
       <button type="button" id="crs-close-bottom" class="button primary">Zamknij</button>

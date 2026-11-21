@@ -362,6 +362,36 @@ def create_app(workspace: PreviewWorkspace | None = None, *,
             raise HTTPException(400, "Oczekiwano obiektu JSON.")
         return payload
 
+    @app.post("/api/map/reproject")
+    async def reproject_map(request: Request):
+        payload = await edit_payload(request)
+        try:
+            copy = await run_in_threadpool(state.reprojected_copy, payload.get("source"),
+                payload.get("target"), payload.get("documentToken"), payload.get("revision"))
+            if registry is not None:
+                return {"id": registry.create(copy)}
+            from geostudio.coordinates import output_prj_text
+            key = copy.editing_status()["documentToken"]
+            if copy.editing_status()["hasReversibleMasks"]:
+                name, raw, topology = copy.export_native_cutouts(key)
+            else:
+                name, raw = copy.export_positive_copy(key)
+                topology = None
+            output = BytesIO()
+            with ZipFile(output, "w", compression=ZIP_STORED) as archive:
+                archive.writestr(name, raw)
+                archive.writestr(name[:-4]+".prj", output_prj_text(copy.map_epsg))
+                visual = copy.export_visual_sidecar(raw)
+                if visual:
+                    archive.writestr(name[:-4]+".geostudio.json", visual)
+                if topology:
+                    archive.writestr(name[:-4]+".geostudio-topology.json", topology)
+            return Response(output.getvalue(), media_type="application/zip")
+        except RuntimeError as exc:
+            raise HTTPException(409, str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from exc
+
     @app.post("/api/underlay/crs/prj")
     async def underlay_read_prj(request: Request):
         """Verify an explicitly supplied WKT .prj; never guess CRS from X/Y."""
@@ -798,6 +828,9 @@ def create_app(workspace: PreviewWorkspace | None = None, *,
         stream=BytesIO()
         with ZipFile(stream,"w",compression=ZIP_STORED) as archive:
             archive.writestr(name,content)
+            if state.map_epsg:
+                from geostudio.coordinates import output_prj_text
+                archive.writestr(name[:-4]+".prj", output_prj_text(state.map_epsg))
             if companion:
                 archive.writestr(name[:-4]+".geostudio-topology.json",companion)
             if visual:

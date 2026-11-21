@@ -8,6 +8,7 @@ No user-uploaded map is written to disk.
 """
 from __future__ import annotations
 
+from copy import deepcopy
 from collections import Counter
 from hashlib import sha256
 from dataclasses import dataclass
@@ -145,6 +146,7 @@ class PreviewWorkspace:
         self._styles: dict[str, dict] = {}
         self._label_positions: dict[str, dict] = {}
         self._source_compilation_scale = DEFAULT_SCALE
+        self.map_epsg = None
         self._raster_map_key = ""
         self._loaded_map_sha = ""
         self._carto_cdf={}
@@ -165,7 +167,7 @@ class PreviewWorkspace:
         self._geometry_preview_key = ""
         self._generated_export = None
 
-    def load_map(self, content: bytes, filename: str) -> dict:
+    def load_map(self, content: bytes, filename: str, *, epsg=None) -> dict:
         if not content or len(content) > MAX_MAP_BYTES:
             raise ValueError("Plik MAP jest pusty lub przekracza limit 512 MB.")
         name = _display_name(filename)
@@ -178,6 +180,7 @@ class PreviewWorkspace:
             raise ValueError("Plik nie zawiera geometrii do wyświetlenia.")
 
         with self._lock:
+            self.map_epsg = epsg
             self._generated_export = None
             self._revision = 0
             self._document_token = token_hex(16)
@@ -2358,6 +2361,28 @@ class PreviewWorkspace:
             name=_display_name(self._doc.filename)
             return name[:-4]+"_GeoStudio2.dxf",stream.getvalue().encode("utf-8")
 
+    def reprojected_copy(self, source, target, document_token, revision):
+        from geostudio.coordinates import MODERN_EPSG, transform_label_positions, transform_map_copy
+        with self._lock:
+            self._require_edit(document_token, revision)
+            if type(source) is not int or type(target) is not int or source not in MODERN_EPSG or target not in MODERN_EPSG:
+                raise ValueError("Wybierz źródłowy i docelowy układ MAP.")
+            if source == target:
+                raise ValueError("Wybierz inny układ docelowy.")
+            # Edits update native records in memory; serialize their current checksum.
+            if self._revision == 0 and not self._doc.checksum_valid:
+                raise ValueError("Suma kontrolna źródłowej MAP jest niezgodna.")
+            source_doc = GeoMap(self._doc.to_bytes())
+            converted = transform_map_copy(source_doc, source, target)
+            result = PreviewWorkspace()
+            name = Path(self._doc.filename).stem + f"_EPSG{target}.MAP"
+            result.load_map(converted.to_bytes(), name, epsg=target)
+            result._styles = deepcopy(self._styles)
+            result._label_positions = transform_label_positions(self._label_positions, source, target)
+            for attr in ("_carto_loaded", "_carto_cdf", "_carto_lay", "_carto_sym", "_carto_patterns"):
+                setattr(result, attr, deepcopy(getattr(self, attr)))
+            return result
+
     def export_copy(self, document_token: str) -> tuple[str, bytes]:
         """Return a valid MAP download; never write it on the server."""
         with self._lock:
@@ -2371,7 +2396,7 @@ class PreviewWorkspace:
     def metadata(self) -> dict:
         with self._lock:
             return {**self._meta, **self._editing_status(),
-                'rasterMapKey': self._raster_map_key, 'cartographicLibraries':dict(self._carto_loaded)}
+                'mapEPSG': self.map_epsg, 'rasterMapKey': self._raster_map_key, 'cartographicLibraries':dict(self._carto_loaded)}
 
     def set_cartographic_library(self, filename: str, content: bytes) -> dict:
         """Load one local CP1250 GEO-MAP library without writing to disk."""

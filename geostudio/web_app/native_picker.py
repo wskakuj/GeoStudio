@@ -190,7 +190,8 @@ class NativeMapPicker:
         if not 0 < chosen.stat().st_size <= MAX_MAP_BYTES:
             raise ValueError("Plik MAP jest pusty lub przekracza limit 512 MB.")
         raw=chosen.read_bytes()
-        meta=self._workspace.load_map(raw,chosen.name)
+        from geostudio.coordinates import detected_crs_from_prj
+        meta=self._workspace.load_map(raw,chosen.name,epsg=detected_crs_from_prj(chosen))
         metadata_path=chosen.with_suffix(".geostudio-topology.json")
         if metadata_path.is_file():
             try:
@@ -521,7 +522,11 @@ class NativeMapPicker:
             raise ValueError("Podaj inną nazwę niż mapa źródłowa.")
         # A MAP and its two companions are published as a new project;
         # never overwrite existing files when any companion is required.
-        if (burn_cutouts or visual_bytes) and chosen.exists():
+        epsg = self._workspace.metadata().get("mapEPSG")
+        prj_path = chosen.with_suffix(".prj")
+        if epsg and prj_path.exists():
+            raise ValueError("Plik PRJ o wybranej nazwie już istnieje.")
+        if (burn_cutouts or visual_bytes or epsg) and chosen.exists():
             raise ValueError("Wybierz nową nazwę MAP, aby nie nadpisać pary MAP/JSON.")
         companion=chosen.with_suffix(".geostudio-topology.json")
         visual_path=chosen.with_suffix(".geostudio.json")
@@ -553,7 +558,13 @@ class NativeMapPicker:
                     stream.write(data)
                     stream.flush()
                     os.fsync(stream.fileno())
-            if burn_cutouts or visual_bytes:
+            if epsg:
+                from geostudio.coordinates import output_prj_text
+                projection = output_prj_text(epsg)
+                with prj_path.open("x", encoding="utf-8") as stream:
+                    committed.append(prj_path)
+                    stream.write(projection)
+            if burn_cutouts or visual_bytes or epsg:
                 # Publish the companions first. The MAP is committed last.
                 if tmp_companion:
                     os.replace(tmp_companion,companion)

@@ -127,7 +127,7 @@
       if(!tabs.size)await newTab();
     }catch(e){error(e.message);tab.close.disabled=false;}
   }
-  window.GeoStudioTabs={status,newMap:()=>newTab(true),openFileInNew:(file,style)=>newTab(false,file,style)};
+  window.GeoStudioTabs={status,openConverted(id){append(id);select(id);},newMap:()=>newTab(true),openFileInNew:(file,style)=>newTab(false,file,style)};
   $("add-tab").addEventListener("click",()=>newTab());
   window.addEventListener("beforeunload",event=>{
     if([...tabs.values()].some(tab=>getStatus(tab).dirty)){
