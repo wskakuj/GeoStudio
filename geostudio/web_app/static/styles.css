@@ -1474,3 +1474,298 @@ body[data-theme="light"] button:disabled {
   .topology-panel {left:8px;right:8px;width:auto;top:9px;bottom:48px;}
   .topology-issues {gap:6px;}
 }
+
+/* Classic workspace — v20-inspired graphite / electric-blue visual layer.
+   Deliberately CSS only: map canvas geometry, pointer events, native P records,
+   labels, tooling, export and the separate /next prototype remain unchanged.
+   The existing data-theme and map-background preferences retain their meaning. */
+body[data-theme="light"] {
+  --ui-bg:#eef1f6;
+  --ui-surface:#f5f7fa;
+  --ui-surface-2:#e9edf4;
+  --ui-panel:#ffffff;
+  --ui-input:#ffffff;
+  --ui-edge:#d1d9e5;
+  --ui-ink:#162235;
+  --ui-muted:#526176;
+  --ui-accent:#1d55c5;
+  --ui-accent-soft:#e5edff;
+  --ui-hover:#edf2fa;
+  --ui-shadow:#15294516;
+  --classic-focus:#2563eb;
+  --classic-primary:#2563eb;
+  --classic-primary-hover:#1d4ed8;
+  --classic-danger:#b42332;
+}
+body[data-theme="dark"] {
+  --ui-bg:#0b1017;
+  --ui-surface:#131923;
+  --ui-surface-2:#1a2330;
+  --ui-panel:#101720;
+  --ui-input:#0b111a;
+  --ui-edge:#303c4c;
+  --ui-ink:#e9eff7;
+  --ui-muted:#a5b2c4;
+  --ui-accent:#8bb5ff;
+  --ui-accent-soft:#203858;
+  --ui-hover:#202b3a;
+  --ui-shadow:#0005;
+  --classic-focus:#7faeff;
+  --classic-primary:#3978e5;
+  --classic-primary-hover:#2866d3;
+  --classic-danger:#fda4af;
+}
+body[data-theme] {
+  font-family:"Segoe UI Variable Text","Segoe UI",system-ui,-apple-system,sans-serif;
+  color:var(--ui-ink);
+}
+body[data-theme] .topbar {
+  min-height:59px;
+  gap:10px;
+  background:var(--ui-panel);
+  border-color:var(--ui-edge);
+  box-shadow:none;
+}
+body[data-theme] .identity {gap:9px;}
+body[data-theme] .identity strong {
+  font-size:18px;font-weight:700;letter-spacing:-.035em;
+}
+body[data-theme] .mark {
+  width:34px;height:34px;transform:none;
+  border-radius:10px;border-color:var(--classic-primary);
+  background:linear-gradient(145deg,var(--classic-primary),#244888);
+  box-shadow:0 3px 9px var(--ui-shadow);
+}
+body[data-theme] .mark span {border-color:#e8f1ff;}
+body[data-theme] .brand-version {font-size:10px;margin-top:3px;letter-spacing:.07em;}
+body[data-theme] .brand-version em {
+  background:var(--ui-accent-soft);border-color:transparent;color:var(--ui-accent);
+}
+body[data-theme] .header-center #document-title {font-size:13px;font-weight:650;}
+body[data-theme] .document-meta {font-weight:600;}
+body[data-theme] .top-icon {
+  min-height:35px;
+  background:transparent;border-color:var(--ui-edge);border-radius:8px;
+  color:var(--ui-ink);
+}
+body[data-theme] .top-icon:hover {transform:none;background:var(--ui-hover);box-shadow:none;}
+body[data-theme] .button {
+  min-height:35px;padding:7px 11px;font-weight:650;border-radius:8px;
+  background:var(--ui-surface-2);color:var(--ui-ink);border-color:var(--ui-edge);
+}
+body[data-theme] .button.ghost {background:var(--ui-panel);color:var(--ui-ink);}
+body[data-theme] .button.primary {
+  color:#fff;background:var(--classic-primary);border-color:var(--classic-primary);
+  box-shadow:0 2px 8px var(--ui-shadow);
+}
+body[data-theme] .button.primary:hover {
+  background:var(--classic-primary-hover);border-color:var(--classic-primary-hover);
+}
+body[data-theme] .button.export {
+  background:var(--ui-accent-soft);border-color:var(--ui-edge);color:var(--ui-accent);
+}
+body[data-theme] .button:disabled,body[data-theme] .tool-button:disabled {
+  opacity:.48;cursor:default;box-shadow:none;
+}
+body[data-theme] #main-ribbon.toolbar {
+  background:var(--ui-panel);border-color:var(--ui-edge);
+  box-shadow:0 2px 6px var(--ui-shadow);
+}
+body[data-theme] .ribbon-tabs {gap:5px;min-height:38px;border-color:var(--ui-edge);}
+body[data-theme] .ribbon-tab {
+  color:var(--ui-muted);min-height:36px;padding:7px 13px;
+  border-radius:8px 8px 0 0;font-size:12px;font-weight:650;
+}
+body[data-theme] .ribbon-tab.active,
+body[data-theme] .ribbon-tab[aria-selected="true"] {
+  color:var(--ui-accent);background:var(--ui-accent-soft);
+  border-color:transparent;border-bottom:2px solid var(--classic-focus);
+}
+body[data-theme] .ribbon-group {border-color:var(--ui-edge);}
+body[data-theme] .ribbon-group .section-label {letter-spacing:.075em;font-weight:700;}
+body[data-theme] .ribbon-group .tool-button {
+  min-height:35px;height:auto;padding:7px 10px;
+  background:var(--ui-surface);color:var(--ui-ink);
+  border:1px solid var(--ui-edge);border-radius:8px;font-weight:600;
+}
+body[data-theme] .ribbon-group .tool-button:hover:not(:disabled) {
+  background:var(--ui-hover);border-color:var(--ui-accent);
+}
+body[data-theme] .ribbon-group .tool-glyph {color:var(--ui-accent);font-size:18px;}
+body[data-theme] .ribbon-group .tool-button small {color:var(--ui-muted);font-size:10px;}
+body[data-theme] .ribbon-group .tool-button.active,
+body[data-theme] .ribbon-group .tool-button.active:hover {
+  background:var(--ui-accent-soft);color:var(--ui-accent);
+  border-color:var(--classic-focus);box-shadow:none;font-weight:700;
+}
+body[data-theme] .toolbar-checkbox {background:var(--ui-surface);color:var(--ui-ink);}
+body[data-theme] .toolbar-checkbox input,
+body[data-theme] .layer-toggle, body[data-theme] .grade-toggle,
+body[data-theme] input[type="checkbox"], body[data-theme] input[type="radio"] {
+  accent-color:var(--classic-focus);
+}
+body[data-theme] .side-panel {
+  background:var(--ui-surface);
+  border-color:var(--ui-edge);
+  box-shadow:none;
+}
+body[data-theme] .right-panel {background:var(--ui-panel);}
+body[data-theme] .panel-head {
+  min-height:67px;padding:13px 15px;
+  background:var(--ui-panel);border-bottom:1px solid var(--ui-edge);
+}
+body[data-theme] .panel-head h2 {font-size:17px;font-weight:700;letter-spacing:-.025em;}
+body[data-theme] .panel-head .eyebrow {letter-spacing:.08em;}
+body[data-theme] .search-box {
+  height:39px;background:var(--ui-panel);border-color:var(--ui-edge);
+  border-radius:9px;box-shadow:none;
+}
+body[data-theme] .search-box:focus-within {border-color:var(--classic-focus);}
+body[data-theme] .layer-tablist {padding-top:9px;padding-bottom:7px;}
+body[data-theme] .layer-tab {
+  min-height:36px;font-size:12px;border-radius:8px;
+  background:var(--ui-surface-2);border-color:transparent;color:var(--ui-muted);
+  font-weight:650;box-shadow:none;
+}
+body[data-theme] .layer-tab.active {
+  color:var(--ui-accent);background:var(--ui-accent-soft);
+  border-color:var(--classic-focus);box-shadow:none;
+}
+body[data-theme] .layer-item {
+  margin:4px 0;border:1px solid var(--ui-edge);
+  border-radius:10px;background:var(--ui-panel);box-shadow:none;
+}
+body[data-theme] .layer-item:hover {
+  background:var(--ui-hover);border-color:var(--ui-edge);
+}
+body[data-theme] .layer-item.selected {
+  background:var(--ui-accent-soft);border-color:var(--classic-focus);
+}
+body[data-theme] .layer-row {min-height:42px;padding:3px 8px;}
+body[data-theme] .layer-name {font-weight:650;font-size:13px;}
+body[data-theme] .layer-disclosure {
+  width:28px;height:28px;background:transparent;border-color:transparent;
+}
+body[data-theme] .layer-disclosure:hover {
+  color:var(--ui-accent);background:var(--ui-accent-soft);border-color:var(--ui-edge);
+}
+body[data-theme] .landuse-list {
+  background:var(--ui-surface);border-top-color:var(--ui-edge);
+}
+body[data-theme] .landuse-row {
+  min-height:33px;background:transparent;color:var(--ui-ink);
+}
+body[data-theme] .landuse-row:nth-child(even) {background:transparent;}
+body[data-theme] .landuse-row:hover {background:var(--ui-accent-soft);}
+body[data-theme] .layer-footer {
+  background:var(--ui-panel);border-color:var(--ui-edge);box-shadow:none;
+  border-radius:10px;
+}
+body[data-theme] .inspector-title,
+body[data-theme] .inspector-section {background:var(--ui-panel);}
+body[data-theme] .inspector-section {padding:14px 16px;}
+body[data-theme] .inspector-section h3 {letter-spacing:.065em;}
+body[data-theme] .inspector-field {padding:8px 0;}
+body[data-theme] .inspector-bottom {background:var(--ui-surface);}
+body[data-theme] .statusbar {min-height:30px;font-size:11px;}
+/* Overlay chrome only: the cartographic canvas keeps its own background,
+   dimensions, zoom calculations, symbol colors and event coordinates. */
+body[data-theme] .floating-tools,
+body[data-theme] .map-chip,
+body[data-theme] .map-scale-box,
+body[data-theme] .map-bottom-left,
+body[data-theme] .map-bottom-right {
+  background:var(--ui-panel);border-color:var(--ui-edge);color:var(--ui-ink);
+  box-shadow:0 3px 12px var(--ui-shadow);border-radius:10px;
+}
+body[data-theme] .floating-tools {padding:5px;gap:3px;}
+body[data-theme] .floating {color:var(--ui-muted);border-radius:7px;}
+body[data-theme] .floating:hover {background:var(--ui-hover);color:var(--ui-ink);filter:none;}
+body[data-theme] .floating.active {
+  background:var(--ui-accent-soft);color:var(--ui-accent);
+  box-shadow:inset 0 0 0 1px var(--ui-edge);
+}
+body[data-theme] .floating-line {background:var(--ui-edge);}
+body[data-theme] .north-rose,body[data-theme] .north-rose b {color:var(--ui-accent);}
+body[data-theme] .map-chip.secondary {color:var(--ui-muted);}
+body[data-theme] .map-chip.warning {color:var(--classic-danger);}
+body[data-theme] .advanced-select-dialog,
+body[data-theme] .command-dialog,
+body[data-theme] .raster-visual-dialog {
+  border-radius:14px;background:var(--ui-panel);border-color:var(--ui-edge);
+}
+body[data-theme] .select-head,body[data-theme] .select-actions,
+body[data-theme] .command-search,body[data-theme] .command-hint {
+  background:var(--ui-surface);border-color:var(--ui-edge);
+}
+body[data-theme] .select-content input,
+body[data-theme] .select-content select,
+body[data-theme] .select-content textarea,
+body[data-theme] .inspector-edit-field input {
+  background:var(--ui-input);border-color:var(--ui-edge);color:var(--ui-ink);
+}
+body[data-theme] .select-preview {
+  color:var(--ui-accent);background:var(--ui-accent-soft);border-color:var(--ui-edge);
+}
+body[data-theme] .command-row.active,body[data-theme] .command-row:hover {
+  color:var(--ui-accent);background:var(--ui-accent-soft);
+}
+body[data-theme] .toast {
+  background:var(--ui-panel);color:var(--ui-ink);border-color:var(--classic-focus);
+  box-shadow:0 7px 28px var(--ui-shadow);
+}
+/* Stage 15 audit now uses the same theme tokens, including in dark mode. */
+body[data-theme] .topology-panel {
+  background:var(--ui-panel);color:var(--ui-ink);
+  border-color:var(--ui-edge);box-shadow:0 14px 36px var(--ui-shadow);
+  border-radius:13px;
+}
+body[data-theme] .topology-head,body[data-theme] .topology-footer {
+  background:var(--ui-surface);border-color:var(--ui-edge);
+}
+body[data-theme] .topology-head h2 {color:var(--ui-ink);}
+body[data-theme] .topology-head .eyebrow {color:var(--ui-accent);}
+body[data-theme] .topology-close,body[data-theme] .topology-refresh,
+body[data-theme] .topology-filter-row select,
+body[data-theme] .topology-action-buttons .button {
+  background:var(--ui-panel);color:var(--ui-ink);border-color:var(--ui-edge);
+}
+body[data-theme] .topology-metrics>div {
+  background:var(--ui-accent-soft);border-color:var(--ui-edge);
+}
+body[data-theme] .topology-metrics strong {color:var(--ui-accent);}
+body[data-theme] .topology-explain,body[data-theme] .topology-status,
+body[data-theme] .topology-filter-row label,body[data-theme] .topology-empty,
+body[data-theme] .topology-issue-detail,body[data-theme] .topology-issue small,
+body[data-theme] .topology-metrics small,body[data-theme] .topology-footer p {
+  color:var(--ui-muted);
+}
+body[data-theme] .topology-filter-row {border-color:var(--ui-edge);}
+body[data-theme] .topology-issue {
+  background:var(--ui-panel);color:var(--ui-ink);
+  border-top-color:var(--ui-edge);border-right-color:var(--ui-edge);
+  border-bottom-color:var(--ui-edge);box-shadow:none;
+}
+body[data-theme] .topology-issue:hover,
+body[data-theme] .topology-issue.active {background:var(--ui-hover);}
+body[data-theme] .topology-code {color:var(--ui-accent);}
+body[data-theme] .topology-action-buttons .topology-destructive {
+  color:var(--classic-danger);border-color:var(--ui-edge);
+  background:var(--ui-panel);
+}
+body[data-theme] button:focus-visible,
+body[data-theme] input:focus-visible,
+body[data-theme] select:focus-visible,
+body[data-theme] textarea:focus-visible,
+body[data-theme] summary:focus-visible {
+  outline:2px solid var(--classic-focus);outline-offset:2px;
+}
+@media(max-width:1230px) {
+  body[data-theme] .ribbon-tab {padding:7px 9px;}
+  body[data-theme] .ribbon-group .tool-button {padding:7px 8px;}
+}
+@media(prefers-reduced-motion:reduce) {
+  body[data-theme] .button,body[data-theme] .tool-button,
+  body[data-theme] .layer-item,body[data-theme] .ribbon-tab,
+  body[data-theme] .top-icon {transition:none;}
+}
