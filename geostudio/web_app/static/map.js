@@ -38,7 +38,7 @@
   const formatter = new Intl.NumberFormat("pl-PL");
   const state = {
     meta: null, features: [], visibleLayers: new Set(), hiddenGrades: new Set(),
-    hiddenLandUses:new Set(), expandedLandUses:false,
+    hiddenLandUses:new Set(), expandedLandUses:false, expandedForest:false,
     appTheme:"dark", mapBackground:"#FFFFFF",
     center: {x: 0, y: 0}, scale: 1, tool: "select",
     labels: true, grid: false, active: null, detail: null, pinned: new Set(),
@@ -173,7 +173,8 @@
     $("tool-move-offset").disabled=state.editBusy||!state.meta||!selectedObjectIds().length;
     $("tool-copy").disabled=state.editBusy||!state.meta||!selectedObjectIds().length;
     $("tool-delete-objects").disabled=state.editBusy||!state.meta||!selectedObjectIds().length;
-    $("tool-new-polygon").disabled=state.editBusy||!state.meta;
+    for(const id of ["tool-new-polygon","float-draw","float-line","float-snap"])
+      $(id).disabled=state.editBusy||!state.meta;
     $("btn-export").disabled=state.editBusy||!state.meta;
     $("btn-layout").disabled=state.editBusy||!state.meta;
     $("tool-export-baked").disabled=state.editBusy||!state.meta;
@@ -502,7 +503,7 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
     state.visibleLayers = new Set(
       meta.layers.map(layer=>layer.name).filter(name=>name!=="Graniczniki"));
     state.hiddenGrades = new Set();state.hiddenLandUses = new Set();
-    state.expandedLandUses=false; state.firstLoad = false;
+    state.expandedLandUses=false;state.expandedForest=false; state.firstLoad = false;
     $("empty-state").hidden = true;
     htmlText($("document-title"), meta.name);
     htmlText($("map-status"), meta.name);
@@ -1976,9 +1977,11 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
   function repairWinding(){return simpleGeometryAction("repair");}
   function toggleDrawMagnet() {
     state.drawMagnet=!state.drawMagnet;
-    const control=$("tool-draw-snap");
-    control.classList.toggle("active",state.drawMagnet);
-    control.setAttribute("aria-pressed",String(state.drawMagnet));
+    for(const id of ["tool-draw-snap","float-snap"]){
+      const control=$(id);
+      control.classList.toggle("active",state.drawMagnet);
+      control.setAttribute("aria-pressed",String(state.drawMagnet));
+    }
     if(!state.drawMagnet)state.drawSnap=null;
     if(state.drawCursorWorld&&["draw","cut","line","line-edit"].includes(state.tool))
       updateDrawingHover(state.drawCursorWorld,false);
@@ -3225,10 +3228,11 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
       ["select","tool-select"],["pan","tool-pan"],["nodes","tool-nodes"],
       ["move","tool-move"],["draw","tool-new-polygon"],
       ["labels","tool-label-move"],
-      ["cut","tool-split"],["line","tool-line"],["line-edit","tool-line"],
+      ["cut","tool-split"],["line","tool-line"],
       ["select","float-select"],["pan","float-pan"],["nodes","float-nodes"],
-      ["move","float-move"]
-    ])$(id).classList.toggle("active",name===tool);
+      ["move","float-move"],["draw","float-draw"],["line","float-line"]
+    ])$(id).classList.toggle("active",name===tool||
+      (name==="line"&&tool==="line-edit"));
     if(tool==="nodes"&&(!state.detail||!state.detail.closed))
       inform("Tryb P: wybierz zamknięty poligon i przeciągnij jego węzeł.");
     else if(tool==="nodes")
@@ -3242,7 +3246,7 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
     else if(tool==="move")
       inform("Tryb M: przeciągnij punkt, linię, poligon albo całą grupę. Cofnij: Ctrl+Z.");
     else inform(tool==="select"
-      ?"Tryb zaznaczania obiektów (S).":"Tryb przesuwania mapy (H).");
+      ?"Tryb S: zaznacz obiekt lewym przyciskiem, przesuń etykietę prawym.":"Tryb przesuwania mapy (H).");
     requestDraw();
   }
   function toggleLabels() {
@@ -4036,7 +4040,7 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
     updateScaleReadout();
     $("count-visible").textContent=display(features.length);
     $("render-hint").textContent=state.limited
-      ?"Zbyt wiele obiektów · przybliż mapę":"HTML Canvas · "+display(features.length)+" obiektów";
+      ?"Zbyt wiele obiektów · przybliż mapę":display(features.length)+" obiektów";
   }
   function requestDraw() {
     if(!state.scheduled){state.scheduled=true;requestAnimationFrame(draw);}
@@ -4115,6 +4119,9 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
       return [...state.exportAreaBounds];
     throw Error("Najpierw zaznacz prostokąt na mapie.");
   }
+  function updateExportFormatControls(){
+    $("layout-orientation-row").hidden=$("layout-format").value!=="pdf";
+  }
   function updateExportAreaControls(){
     const rectangle=$("layout-scope").value==="rect";
     $("layout-rectangle-tools").hidden=!rectangle;
@@ -4139,6 +4146,7 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
         .slice(0,40).map(layer=>layer.name+" | "+colorForLayer(layer.name))
         .join("\n");
     updateExportAreaControls();
+    updateExportFormatControls();
     $("layout-summary").textContent="Skala opracowania: 1:"+
       $("layout-scale").value+". Duży TIFF: jeden plik. Duże JPG/PNG: ZIP.";
     if(!$("layout-dialog").open)$("layout-dialog").showModal();
@@ -4161,7 +4169,9 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
     requestDraw();
   }
   function drawExportAreaOverlay(){
-    if(!state.meta)return;
+    // Only a temporary screen overlay while picking. Export bounds are
+    // retained for the dialog but never obscure the editable map.
+    if(!state.meta||!state.exportAreaPicking)return;
     let b=state.exportAreaBounds;
     if(state.exportAreaPicking&&state.exportAreaDrag){
       const d=state.exportAreaDrag;
@@ -4275,7 +4285,8 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
       compilationScale:state.edit?.compilationScale||5000,
       sourceCompilationScale:state.edit?.sourceCompilationScale||5000,
       visibleLayers:[...state.visibleLayers],
-      hiddenLandUses:[...state.hiddenLandUses]
+      hiddenLandUses:[...state.hiddenLandUses],
+      hiddenForestClasses:[...state.hiddenGrades]
     };
   }
   function layoutOptions(){
@@ -4306,7 +4317,7 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
     return {
       bounds,denominator,dpi,pxPerUnit,width,height,margin,head,foot,
       legend,fullWidth,fullHeight,tiled,
-      orientation:$("layout-orientation").value,
+      orientation:width>=height?"landscape":"portrait",
       title:$("layout-title").value.trim().slice(0,100)||"Mapa GEO-MAP",
       frame:$("layout-frame").checked,north:$("layout-north").checked,
       scaleBar:$("layout-scalebar").checked,
@@ -4425,13 +4436,6 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
         .format(distance)+" m",start+barPixels,ty-7*ratio);
       g.textAlign="start";
     }
-    g.font=Math.round(10*ratio)+"px sans-serif";
-    g.fillStyle="#475569";
-    g.fillText("Skala 1:"+new Intl.NumberFormat("pl-PL").format(denominator)+
-      "  •  "+dpi+" DPI",margin,head+height+opts.foot*.83);
-    g.textAlign="right";
-    g.fillText("X/Y GEO-MAP • bez transformacji współrzędnych",
-      base,head+height+opts.foot*.83);
     g.textAlign="start";
     if(opts.showLegend&&legend){
       const lx=base+8*ratio;
@@ -4997,6 +5001,9 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
           exportInfo("Anulowano zapis obrazu.");return;
         }
       }
+      // Clear successful export selection, leaving the working map intact.
+      state.exportAreaBounds=null;state.exportAreaDrag=null;state.exportAreaPicking=false;
+      $("layout-scope").value="all";updateExportAreaControls();requestDraw();
       exportInfo(print
         ?"Przekazano arkusz do okna drukowania. Wybierz skalowanie 100%."
         :"Wysłano plik do pobrania. Oryginalny MAP nie został zmieniony.");
@@ -5038,7 +5045,7 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
     state.auditBusy=true;
     $("topology-rescan").disabled=true;
     $("tool-topology-scan").disabled=true;
-    $("topology-status").textContent="Sprawdzam geometrię i topologię mapy…";
+    $("topology-status").textContent="Sprawdzam geometrię i topologię kodu 5310…";
     $("topology-issues").replaceChildren();
     $("topology-edit").disabled=true;
     $("topology-delete-duplicate").hidden=true;
@@ -5232,6 +5239,23 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
     ctx.restore();
   }
 
+  function layerDisclosure(details,expanded,onToggle,label){
+    const button=document.createElement("button");
+    button.type="button";button.className="layer-disclosure";
+    button.setAttribute("aria-controls",details.id);
+    const update=()=>{
+      details.hidden=!expanded;
+      button.setAttribute("aria-expanded",String(expanded));
+      button.setAttribute("aria-label",(expanded?"Zwiń ":"Rozwiń ")+label);
+    };
+    // CSS chevron uses currentColor and rotates with aria-expanded.
+    const arrow=document.createElement("span");arrow.className="layer-chevron";
+    arrow.setAttribute("aria-hidden","true");button.append(arrow);
+    button.addEventListener("click",()=>{
+      expanded=!expanded;onToggle(expanded);update();
+    });
+    update();return button;
+  }
   function buildLayer(name,count,filter="") {
     const item=document.createElement("div");
     item.className="layer-item";
@@ -5277,22 +5301,8 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
       const details=document.createElement("div");
       details.className="landuse-list";details.id="landuse-classes-list";
       details.hidden=!expanded;
-      const disclosure=document.createElement("button");
-      disclosure.type="button";disclosure.className="layer-disclosure";
-      disclosure.setAttribute("aria-controls",details.id);
-      disclosure.setAttribute("aria-expanded",String(expanded));
-      disclosure.setAttribute("aria-label","Rozwiń klasy użytków");
-      disclosure.textContent=expanded?"⌃":"⌄";
-      disclosure.addEventListener("click",()=>{
-        state.expandedLandUses=!state.expandedLandUses;
-        details.hidden=!state.expandedLandUses;
-        disclosure.setAttribute("aria-expanded",
-          String(state.expandedLandUses));
-        disclosure.setAttribute("aria-label",
-          state.expandedLandUses?"Zwiń klasy użytków":"Rozwiń klasy użytków");
-        disclosure.textContent=state.expandedLandUses?"⌃":"⌄";
-      });
-      row.append(disclosure);
+      row.append(layerDisclosure(details,expanded,
+        value=>{state.expandedLandUses=value;},"klasy użytków"));
       const heading=document.createElement("div");
       heading.className="landuse-list-heading";
       heading.textContent="KLASY BONITACYJNE A2 · "+landUses.length;
@@ -5327,8 +5337,12 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
     if(name==="Użytki Leśne"&&state.meta&&
        Object.keys(state.meta.forestClasses).length){
       const grades=document.createElement("div");
-      grades.className="layer-grades";
+      grades.className="layer-grades";grades.id="forest-classes-list";
+      row.append(layerDisclosure(grades,state.expandedForest||!!filter,
+        value=>{state.expandedForest=value;},"klasy użytków leśnych"));
       for(const [grade,amount] of Object.entries(state.meta.forestClasses)){
+        if(filter&&!grade.toLocaleLowerCase("pl-PL").includes(filter)&&
+           !name.toLocaleLowerCase("pl-PL").includes(filter))continue;
         const line=document.createElement("label");line.className="grade-row";
         const input=document.createElement("input");
         input.type="checkbox";input.className="grade-toggle";
@@ -5357,7 +5371,10 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
       const matchesUse=layer.name==="Użytki"&&
         (state.meta.landUseClasses||[]).some(item=>
           item.label.toLocaleLowerCase("pl-PL").includes(needle));
-      if(needle&&!matchesName&&!matchesUse)continue;
+      const matchesForest=layer.name==="Użytki Leśne"&&
+        Object.keys(state.meta.forestClasses||{}).some(grade=>
+          grade.toLocaleLowerCase("pl-PL").includes(needle));
+      if(needle&&!matchesName&&!matchesUse&&!matchesForest)continue;
       list.append(buildLayer(layer.name,layer.count,needle));found++;
     }
     if(!found){
@@ -5541,12 +5558,16 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
     return {x:ev.clientX-box.left,y:ev.clientY-box.top};
   }
   canvas.addEventListener("pointerdown", ev=>{
-    if(ev.button!==0&&ev.button!==1)return;
+    const rightLabel=state.tool==="select"&&ev.button===2;
+    if(ev.button!==0&&ev.button!==1&&!rightLabel)return;
+    if(state.drag)return;
     const p=eventCoords(ev);
     state.hoverInsert=null;
-    if(state.tool==="labels"&&ev.button===0&&!state.editBusy){
+    if(((state.tool==="labels"&&ev.button===0)||rightLabel)&&!state.editBusy){
       const hit=pickLabelAt(p);
-      if(!hit){inform("Kliknij i przeciągnij tekst A1, A2 lub TX.");return;}
+      if(!hit){if(!rightLabel)inform("Kliknij i przeciągnij tekst A1, A2 lub TX.");return;}
+      ev.preventDefault();
+      canvas.setPointerCapture(ev.pointerId);
       const label=hit.label;
       state.labelSelected={fid:hit.fid,field:hit.field};
       state.labelDrag={
@@ -5558,6 +5579,7 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
       if(state.active!==hit.fid){state.pinned.clear();selectFeature(hit.fid);}
       requestDraw();return;
     }
+    if(rightLabel)return;
     if(["draw","cut","line","line-edit"].includes(state.tool)&&
        ev.button===0&&!state.editBusy&&state.meta){
       appendDrawingPoint(ev,p);
@@ -5642,8 +5664,9 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
     d.last=p;
   });
   canvas.addEventListener("pointerup", ev=>{
-    const d=state.drag;state.drag=null;shell.classList.remove("dragging");
+    const d=state.drag;
     if(!d||ev.pointerId!==d.pointer)return;
+    state.drag=null;shell.classList.remove("dragging");
     if(d.label){
       const moving=state.labelDrag;
       state.labelDrag=null;
@@ -6058,6 +6081,8 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
   link("btn-export",downloadMapCopy);
   link("btn-layout",openLayoutDialog);
   link("layout-close",()=>$("layout-dialog").close());
+  $("layout-format").addEventListener("change",updateExportFormatControls);
+  $("layout-dialog").addEventListener("close",()=>requestDraw());
   link("layout-choose-area",beginExportAreaSelection);
   $("layout-scope").addEventListener("change",()=>{
     updateExportAreaControls();
@@ -6078,6 +6103,9 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
   link("tool-nodes",()=>setTool("nodes"));
   link("tool-delete-node",deleteSelectedVertex);
   link("float-nodes",()=>setTool("nodes"));
+  link("float-line",()=>setTool("line"));
+  link("float-draw",()=>setTool("draw"));
+  link("float-snap",toggleDrawMagnet);
   $("opt-snap").addEventListener("change",ev=>{state.snapEnabled=ev.target.checked;});
   $("opt-shared").addEventListener("change",ev=>{
     state.sharedNodes=ev.target.checked;updateGeometryHelp();
