@@ -361,8 +361,8 @@ function traceLandUses(pixels, forest, width, height, blackWidth, tolerance=2.5)
       const a=ring[(i+ring.length-1)%ring.length],b=ring[(i+1)%ring.length];
       return junction(p) || (a[0]!==b[0] && a[1]!==b[1]);
     });
-    const points=fourCornerOutline(ring,tolerance) || straightenRing(corners,junction,tolerance);
-    if(points.length>=3 && points.length<=500)shapes.set(id,{points,suggested:regions[id].suggested,
+    const points=simplifiedTracePerimeter(ring,corners,junction,tolerance,true);
+    if(points)shapes.set(id,{points,suggested:regions[id].suggested,
       bounds:ring.reduce(([l,t,r,b],[x,y])=>[Math.min(l,x),Math.min(t,y),Math.max(r,x),Math.max(b,y)],
                          [width,height,0,0])});
   }
@@ -370,6 +370,42 @@ function traceLandUses(pixels, forest, width, height, blackWidth, tolerance=2.5)
 }
 // Build the perimeter from labelled pixels before straightening. Independently
 // straightened fragments can leave hairline gaps along the original shared edge.
+// Restore the order around the perimeter when two non-neighbouring sides cross.
+function uncrossTraceRing(points){
+  if(points.length>500)return null;
+  const ring=points.slice();
+  const turn=(a,b,p)=>(b[0]-a[0])*(p[1]-a[1])-(b[1]-a[1])*(p[0]-a[0]);
+  const onSegment=(a,b,p)=>Math.abs(turn(a,b,p))<1e-9 &&
+    p[0]>=Math.min(a[0],b[0]) && p[0]<=Math.max(a[0],b[0]) &&
+    p[1]>=Math.min(a[1],b[1]) && p[1]<=Math.max(a[1],b[1]);
+  const n=ring.length;
+  if(n<3)return null;
+  // Each reversal shortens the perimeter. Bound work for heavily tangled drafts.
+  for(let pass=0;pass<=32;pass++){
+    let crossed=false,touch=false;
+    for(let i=0;i<n&&!crossed;i++){
+      const a=ring[i],b=ring[(i+1)%n];
+      if(a[0]===b[0] && a[1]===b[1])return null;
+      for(let j=i+2;j<n;j++){
+        if(i===0 && j===n-1)continue;
+        const c=ring[j],d=ring[(j+1)%n];
+        if(turn(a,b,c)*turn(a,b,d)<0 && turn(c,d,a)*turn(c,d,b)<0){
+          ring.splice(i+1,j-i,...ring.slice(i+1,j+1).reverse());
+          crossed=true;break;
+        }
+        if(onSegment(a,b,c)||onSegment(a,b,d)||onSegment(c,d,a)||onSegment(c,d,b))touch=true;
+      }
+    }
+    if(!crossed)return touch||!ring.some((p,i)=>Math.abs(turn(p,ring[(i+1)%n],ring[(i+2)%n]))>1e-9)?null:ring;
+  }
+  return null;
+}
+function simplifiedTracePerimeter(ring,corners,fixed,tolerance,allowQuad){
+  const quad=allowQuad && fourCornerOutline(ring,tolerance);
+  if(quad)return quad;
+  const simple=straightenRing(corners,fixed,tolerance);
+  return uncrossTraceRing(simple)||uncrossTraceRing(corners);
+}
 function selectedRasterOutline(trace,selected,width,height,edited){
   if(!selected.size)return [];
   if(selected.size===1){
@@ -409,8 +445,8 @@ function selectedRasterOutline(trace,selected,width,height,edited){
     const a=ring[(i+ring.length-1)%ring.length],b=ring[(i+1)%ring.length];
     return (a[0]!==b[0] && a[1]!==b[1]) || fixed(p);
   });
-  const quad=corners.some(fixed)?null:fourCornerOutline(ring,2.5);
-  return (quad||straightenRing(corners,fixed,2.5)).map(p=>edited.get(p.join(","))||p);
+  const perimeter=simplifiedTracePerimeter(ring,corners,fixed,2.5,!corners.some(fixed));
+  return perimeter?.map(p=>edited.get(p.join(","))||p);
 }
 function openRasterTracing(item, view) {
   const panel=document.createElement("section");
@@ -471,6 +507,11 @@ function openRasterTracing(item, view) {
   async function fitSelection(){
     invalidateFit();
     if(!outline?.length)return;
+    const repaired=uncrossTraceRing(outline);
+    if(repaired){
+      outline=repaired;
+      drafts.set(selectionKey(),outline.slice());
+    }
     const version=fitVersion;
     const native=outline.map(([x,y])=>{const p=worldAt(x,y);return [-p.y,p.x];});
     fitPending=true;draw();
@@ -565,11 +606,12 @@ function openRasterTracing(item, view) {
     ctx.scale(canvas.width/stage.clientWidth,canvas.height/stage.clientHeight);
     const origin=screenAt({x:0,y:0}),scale=view.scale();
     ctx.transform(d*sx*scale,-a*sx*scale,e*sy*scale,-b*sy*scale,origin.x,origin.y);
-    const visibleRings=fitPending||fitError?[]:outline?[outline]:Array.from(selected,id=>trace.shapes.get(id).points);
+    const visibleRings=fitPending?[]:outline?[outline]:Array.from(selected,id=>trace.shapes.get(id).points);
     for(const ring of visibleRings){
       ctx.beginPath();
       ring.forEach(([x,y],i)=>i?ctx.lineTo(x,y):ctx.moveTo(x,y));
-      ctx.closePath();ctx.fillStyle="rgba(0,165,180,.32)";ctx.fill();
+      ctx.closePath();
+      if(!fitError){ctx.fillStyle="rgba(0,165,180,.32)";ctx.fill();}
       ctx.strokeStyle="#ff0000";ctx.lineWidth=3/cssScale();ctx.stroke();
     }
     const radius=3.5/cssScale();
