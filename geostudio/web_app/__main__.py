@@ -28,7 +28,7 @@ def main(argv=None):
     if args.map is not None:
         workspace.load_map(args.map.read_bytes(), args.map.name)
 
-    app = create_app(workspace)
+    app = create_app(workspace, multi_document=True)
     # Bind immediately to an ephemeral loopback port. Passing an already-bound
     # socket to uvicorn avoids races with other apps and never exposes the
     # user's map files to LAN clients.
@@ -88,8 +88,8 @@ def main(argv=None):
             time.sleep(0.03)
         if not server.started:
             raise RuntimeError("Lokalny serwer nie wystartował.")
-        from .native_picker import NativeMapPicker
-        native_picker = NativeMapPicker(workspace)
+        from .documents import DocumentNativeBridge
+        native_picker = DocumentNativeBridge(app.state.documents)
         webview.create_window(
             "GeoStudio 2.0 — Podgląd",
             address, width=1480, height=940, min_size=(960, 640),

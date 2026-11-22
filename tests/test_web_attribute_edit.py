@@ -174,6 +174,7 @@ def test_browser_has_real_edit_controls_and_safe_copy_download():
     for element in ("inspector-edit-form", "tool-undo", "tool-redo",
                     "btn-export", "inspector-edit-toggle"):
         assert f'id="{element}"' in html
-    assert '/api/export/map?' in js
+    assert '"/api/export/map"' in js
+    assert '"/api/export/package"' in js
     assert 'documentToken' in js
     assert 'Ctrl+Z' in js

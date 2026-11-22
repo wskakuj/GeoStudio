@@ -1,5 +1,38 @@
 # GeoStudio 2.0 — osobny prototyp HTML
 
+## Etap 12 — poprawa interfejsu: zakładki i oddzielne podkłady
+
+Po testach wersji 12 uproszczono nawigację zgodnie ze starszym
+GeoStudio 0.14. Górny pasek **nie przewija się poziomo**. Siedem
+zakładek dzieli funkcje na **Start / Zaznaczanie / Edycja /
+Rysowanie / Kartografia / Podkłady / Eksport**. Są obsługiwane myszą,
+a po ustawieniu fokusu również strzałkami Lewo/Prawo oraz Home/End.
+Narzędzia zawsze dostępne z poziomu mapy (zaznaczanie, przesuwanie,
+węzły i zoom) pozostają na pływającym pasku; skróty klawiaturowe
+i aktualne operacje edycji nie zostały usunięte. Przy mniejszej
+szerokości przyciski w grupach zawijają się zamiast przewijać.
+
+W zakładce **Podkłady** są trzy osobne przyciski, bez jednego
+obszernego wspólnego formularza:
+
+- **WMS Geoportalu**: niezależne okno wyboru źródła, odczytu
+  warstw GetCapabilities, układu MAP i krycia. Obejmuje ortofotomapę
+  standardową, wysoką rozdzielczość i **GUGiK KIEG — działki z
+  numerami** znane ze starego interfejsu. Adres serwera widoczny
+  jest do sprawdzenia; ze względów bezpieczeństwa testowy lokalny
+  proxy nie przyjmuje własnych URL-i.
+- **Raster**: osobne okno pliku PNG/JPG/TIFF/GeoTIFF, world,
+  krycia i opcjonalnej rozwijanej sekcji GCP.
+- **Układy EPSG**: wybór układu MAP, wczytywanie PRJ i read-only
+  przeliczanie środka mapy. Układ wybrany tutaj jest synchronizowany
+  z oknami WMS i Raster. Zmiana układu ukrywa podkłady ze starą
+  georeferencją zamiast błędnie nakładać je na MAP.
+
+Bezpieczeństwo i funkcje podkładów etapu 12 pozostają bez zmian:
+źródłowa MAP jest chroniona, EPSG nie jest zgadywany z wartości
+współrzędnych, a etykiety A1/A2 nadal skalują się z geometrią.
+
+
 Nowy interfejs testowy działa **równolegle** z obecnym GeoStudio/PySide6.
 
 ## Uruchomienie w Windows
@@ -338,8 +371,8 @@ podłączenia tych samych bibliotek i testów na tej samej wersji mapy.
 
 ## Celowo NIEZAIMPLEMENTOWANE w tym etapie
 
-- Usuwanie węzłów, rysowanie nowych poligonów, zapisywanie oryginału MAP,
-  import WMS, eksport wielkoformatowy, pełne renderowanie symboli
+- Nadpisywanie oryginału MAP, import WMS, eksport wielkoformatowy,
+  pełne renderowanie symboli
   .SYM/.LAY/.CDF, raster i georeferencja.
 - PixiJS/WebGL: Canvas 2D jest pierwszym rendererem do sprawdzenia
   geometrii, orientacji i kontroli na prawdziwych plikach. Rendering
@@ -355,8 +388,10 @@ przy przygotowywaniu dokumentacji geodezyjnej.
 ## Dlaczego bezpiecznie?
 
 Python wczytuje wybrane pliki do pamięci, nie przyjmuje ścieżek plików
-przez API i nie oferuje endpointu zapisu MAP. Oryginalne PySide6
-uruchamiasz nadal przez start_windows.bat.
+przez HTTP API i nie oferuje serwerowego endpointu zapisu MAP do dysku.
+W natywnym oknie pywebview użytkownik wybiera ścieżkę **Zapisz jako**;
+oryginalny plik wejściowy nie może zostać nadpisany.
+Oryginalne PySide6 uruchamiasz nadal przez start_windows.bat.
 
 ## Sposób testowania
 
@@ -366,3 +401,732 @@ uruchamiasz nadal przez start_windows.bat.
 Dla lokalnego testu bez pywebview:
 
     python -m geostudio.web_app --browser
+
+
+## Test 5A/5B — przesuwanie, nowe poligony i zapis Windows
+
+- **M**: przeciągnij jeden lub wiele zaznaczonych poligonów; wyświetli się
+  podgląd przed zatwierdzeniem. **Ctrl+Shift+M**: dokładne przesunięcie X/Y.
+  Wspólne granice ze statycznym poligonem tego samego kodu blokują ruch,
+  dopóki nie zaznaczysz świadomego rozłączenia. W wersji 6A/6B
+  poligony tego samego kodu mogą nachodzić na siebie: dolny ma
+  odwracalną maskę, bez utraty oryginalnych punktów.
+- **Przyciąganie do granicy** (domyślnie zaznaczone): dla małych odchyleń
+  snapuje całą grupę do bliskiej krawędzi; nie wykonuje automatycznej
+  operacji unii ani rozpuszczenia poligonów. Wyłącz, aby podać dokładne X/Y.
+- **Ctrl+D**: skopiuj zaznaczone poligony. Każda kopia ma nowy :ID, zachowuje
+  pierwotny kod, styl, atrybuty i flagi P; Ctrl+D umieszcza kopię obok
+  i aktywuje M, aby można było od razu przeciągnąć ją myszą.
+- **Ctrl+Delete**: usuń obiekty z zaznaczenia po potwierdzeniu.
+- **N**: rysuj nowy poligon kliknięciami. **Enter** lub dwuklik kończy obrys,
+  **Esc** anuluje. Wybierz kod i opcjonalne A1/A2, kliknij
+  **Sprawdź obrys**, potem **Utwórz poligon**.
+- **Pobierz kopię**: w aplikacji Windows otwiera natywne **Zapisz jako**,
+  z wyborem katalogu i końcową pełną ścieżką pliku. W samodzielnej
+  przeglądarce używa systemu pobierania przeglądarki (zazwyczaj
+  **Pobrane**, skrót Ctrl+J) i nie zapisuje automatycznie w katalogu MAP.
+- Jeśli pasek narzędzi nie mieści się w oknie, przewijaj poziomo po
+  sekcjach **Projekt / Nawigacja / Widok mapy / Edycja węzłów**.
+
+Operacje pozostają na osobnej gałęzi testowej. Zweryfikuj eksportowane
+pliki MAP w klasycznym programie przed wykorzystaniem do pracy.
+
+
+## Etap 6A — odwracalne wycinanie i geometria (test)
+
+1. **Przesuwanie (M)**: gdy nałożysz poligon na drugi poligon tego samego
+   kodu, GeoStudio 2.0 obliczy obrys widocznej części tego drugiego jako
+   różnicę geometryczną. Jego oryginalne wierzchołki pozostają zachowane.
+   Kiedy odsuniesz górny poligon, dolny odzyskuje obrys. Ctrl+Z/Y obejmuje
+   zarówno ruch, jak i kolejność nakładania. Początkowa wspólna granica
+   niezaznaczonego sąsiada nadal domyślnie chroniona przed rozłączeniem.
+2. **Magnetyczne przyciąganie**: pomarańczowy znacznik węzła/krawędzi.
+   Przyciąganie działa tylko do NIEZAZNACZONYCH poligonów TEGO SAMEGO KODU.
+   Wyłączyć można „Przyciąganie” w narzędziach geometrii.
+3. **Ctrl+D**: zaznacz poligon, naciśnij skrót; kopia pojawi się obok,
+   będzie zaznaczona i od razu aktywuje się M. Następnie przeciągnij kopię
+   myszą. Ctrl+K -> „Kopiuj z dokładnym przesunięciem” pozostaje dostępne.
+4. **Pole +**: zaznacz poligon (np. 5310/A1=xd/A2=So03) i kliknij
+   narzędzie. Zapisana kopia MAP będzie miała w tym obiekcie dodatni
+   zwrot obrysu, a powierzchnia w klasycznym GEO-MAP powinna być dodatnia.
+   Nowe poligony mają orientację dodatnią już przy tworzeniu.
+5. **Scal** (Ctrl+Shift+G): w etapie 6B wynik może zawierać
+   kilka rozłącznych wysp lub styk tylko w węźle. Jedna grupa ma jeden
+   :ID, ten sam kod oraz jednakowe A1/A2. Powierzchnia jest sumowana.
+6. **Podziel** (Ctrl+Shift+X): wybierz jeden poligon, klikaj linię cięcia
+   zaczynając i kończąc poza jego obrysem, Enter/dwuklik, podgląd,
+   zatwierdzenie. Podział tworzy nowe ID.
+7. **L**: narysuj linię, Enter/dwuklik otwiera formularz kodu i A1/A2.
+   **Shift+L** po zaznaczeniu linii pozwala narysować jej nowy przebieg.
+
+**UWAGA O EKSPORCIE:** odwracalny widok wycięć jest funkcją GeoStudio 2.0,
+nie natywną zmianą geometrii w MAP. Natywne Windows **Zapisz jako**
+tworzy plik MAP zawierający bazowe wierzchołki oraz dodatkowy plik
+\`.geostudio-topology.json\` (zapisany z taką samą nazwą bazową).
+**Zachowaj i otwieraj oba pliki razem**. Sam plik MAP otwarty w
+klasycznym GEO-MAP w tym etapie pokaże poligony bazowe, bez odwracalnej
+maski. Klasyczna zgodność trwale wyciętej geometrii to przyszły etap 6B.
+Nie stosuj masek z 6A jako dokumentacji ewidencyjnej bez walidacji.
+
+Przy scalaniu i podziale zachowywane są atrybuty pierwszego obiektu,
+ale wartości powierzchni ewidencyjnych w polach A4/A6 nie są automatycznie
+aktualizowane — należy je sprawdzić ręcznie w klasycznym programie.
+To samo dotyczy specyficznych kodów i stylów używających nietypowych
+wieloczęściowych rekordów P0, których nie zmieniamy w tym etapie.
+
+
+## Etap 6B — natywne kontury MAP i automatycznie dodatnie pola (test)
+
+**Scalanie:** Zaznacz dwa lub więcej poligonów **jednego kodu i o
+jednakowych A1/A2**. Ctrl+Shift+G / „Scal” tworzy jeden rekord
+GEO-MAP (jedno :ID) również wtedy, gdy poszczególne wyspy nie mają
+wspólnej krawędzi ani wierzchołka, albo dotykają się tylko punktem.
+Wiele konturów jest zapisywanych osobnymi komponentami z flagą końca
+komponentu **P 0**. Nie dodajemy sztucznych odcinków łączących wyspy.
+Działa Cofnij/Ponów. Wartości ewidencyjne A4/A6 pozostają do sprawdzenia.
+
+**Dodatnie pola automatycznie:** Rysowanie nowych obrysów, kopiowanie
+prostych obrysów oraz zapisywanie MAP w natywnym Windows **Zapisz jako**
+stosuje dodatnią orientację prostych, zamkniętych poligonów niezależnie
+od kierunku kliknięć. Dotyczy to również prostych starych poligonów
+w nowej zapisywanej kopii. Źródłowy MAP nadal jest chroniony.
+Dla wieloczęściowych obiektów orientacja poszczególnych obrysów pozostaje
+odpowiednia: obwody zewnętrzne dodatnie, otwory ujemne.
+Przycisk „Pole + (stare)” to wyłącznie pomocnicza ręczna naprawa
+oryginalnego obrysu w pamięci.
+
+**Dwa tryby eksportu Windows:**
+
+- **„Pobierz kopię”**: zapisuje zwykły MAP, normalizuje dodatnią
+  orientację prostych obrysów, a odwracalne nałożenia zachowuje przez
+  plik \`.geostudio-topology.json\` v1 (bez wycinania źródłowych konturów).
+- **„Zapisz wycięcia 6B”**: oblicza prawdziwe różnice geometryczne
+  nakładających się poligonów **tego samego kodu** i zapisuje ich
+  obcięte obrysy (wieloczęściowe kontury i otwory) w nowej kopii
+  GEO-MAP \`.MAP\`. Zachowuje wszystkie kody nieobjęte maską.
+  Jednocześnie zapisuje powiązany SHA256 plik
+  \`.geostudio-topology.json\` v2 z oryginalnymi rekordami P.
+  Przy ponownym otwarciu obu plików w GeoStudio 2.0 program odtwarza
+  **oryginalne, niewycięte kontury** w pamięci i nakłada maski ponownie.
+  Odczyt bez JSON pokazuje wycięte kontury zapisane w MAP.
+
+**Bezpieczeństwo:** eksport 6B wymaga nowej nazwy (nie nadpisuje
+istniejącej pary), przygotowuje oba pliki przed zatwierdzeniem i
+sprawdza CHK, liczbę wierszy, identyfikatory, sumę powierzchni oraz
+poprawność otworów po zakodowaniu z dokładnością do 1 mm.
+Nie usuwa obiektu całkowicie przykrytego — taki eksport jest blokowany,
+aby nie utracić jego :ID. Obsługa tego przypadku pozostaje na 6C.
+Zachowaj **oba pliki**, najlepiej dodatkowo osobną kopię oryginału.
+
+**Ograniczenie zgodności:** implementacja flag P0 i kierunku obrysu
+wynika z konwencji parsera GEO-MAP, ale wymaga jeszcze ręcznego
+testu otwarcia i sprawdzenia obiektów wieloczęściowych oraz otworów w
+klasycznym programie GEO-MAP. Nie traktuj eksportu 6B jako zweryfikowanej
+dokumentacji ewidencyjnej. Podział złożonych otworów,
+automatyczne wartości A4/A6 i eksport obiektów całkowicie zakrytych
+nie są jeszcze obsługiwane.
+
+**Test Windows:**
+1. Zaznacz dwa budynki 5310 o tych samych A1/A2, nieprzylegające do
+   siebie lub stykające się w jednym węźle; kliknij **Scal**.
+2. Obejrzyj wieloczęściowy obrys i powierzchnię, wykonaj Cofnij/Ponów.
+3. Narysuj drugi poligon wewnątrz pierwszego, przesuń górny (M),
+   kliknij „Zapisz wycięcia 6B”. Zapisz nowy MAP + JSON.
+4. Sprawdź wycięty obiekt w klasycznym GEO-MAP, w tym powierzchnię.
+5. Otwórz ponownie zapisany MAP w GeoStudio 2.0 razem z JSON:
+   pełny obrys dolnego poligonu powinien zostać odtworzony,
+   a wycięcie ponownie obliczone i pokazane na ekranie.
+6. Sprawdź dodatnią powierzchnię nowo narysowanego poligonu przy
+   zwykłym „Pobierz kopię”. Nie trzeba używać przycisku „Pole +”.
+
+
+## Etap 7 — kartografia LAY/CDF/SYM, natywne etykiety i automatyczne wycięcia
+
+### Etykiety A1/A2 po scaleniu GEO-MAP 5310
+
+Klasyczny GEO-MAP używa **osobnych rekordów L 1/L 2/L 3**
+dla położenia natywnych napisów. Samo zachowanie A1/A2 nie wystarcza.
+W scaleniu jednego kodu i identycznych atrybutów GeoStudio:
+- zachowuje rekordy L z obiektu zachowanego jako :ID i pierwszy
+  punkt/referencyjną wyspę tak stabilnie, jak pozwala wynik unii;
+- jeśli brak części L, pobiera zgodne rekordy z pozostałych scalanych
+  poligonów przed ich usunięciem;
+- gdy żadna część nie posiada L, tworzy pełny zestaw w formacie
+  zaobserwowanym w oryginalnym GEO-MAP v8;
+- nowo narysowane poligony 5310 z A1/A2 również otrzymują L.
+Nie zmienia się kod, wartość A1/A2 ani niezaznaczone obiekty.
+**Do ręcznego sprawdzenia w klasycznym GEO-MAP**, szczególnie
+złożone obiekty rozłączne — rekordy L zawierają także informacje
+o zakotwiczeniu napisów i mogą wymagać dodatkowego dopasowania.
+
+### Zwykłe „Pobierz MAP” zapisuje wycięcia automatycznie
+
+Przy nakładaniu poligonów tego samego kodu i zapisaniu:
+- W **Windows** standardowe „Pobierz MAP” otwiera Zapisz jako,
+  automatycznie zapisuje wynikowe obrysy z otworami do pliku
+  \`.MAP\` i obok \`.geostudio-topology.json\` v2;
+- W **przeglądarce** przy obecnych maskach jeden plik ZIP
+  zawiera oba pliki MAP oraz JSON. Rozpakuj obydwa do jednego folderu,
+  otwórz MAP, a następnie kliknij **„Odtwórz kontury”** i wskaż
+  `.geostudio-topology.json`. To przywraca pełne obrysy do dalszej edycji.
+- Bez masek powstaje zwykły MAP z dodatnio zorientowanymi
+  prostymi obrysami; bez konieczności użycia „Pole +”.
+- Zachowano zaawansowane **„Zapisz wycięcia 6B”** (ręczne
+  wymuszenie zapisu). Dostępny jest też awaryjny eksport
+  bazowej kopii bez wycięć, gdy złożony przypadek jest
+  celowo blokowany, np. całkowite przykrycie obiektu.
+
+Natywne P 0 / otwory wymagają nadal porównania w klasycznym GEO-MAP.
+Gdy obiekt jest całkowicie zakryty, eksport 6B nie usuwa jego :ID
+ani nie próbuje niebezpiecznie zapisać pustego poligonu — zwraca błąd.
+
+### Biblioteki kartograficzne
+
+Kliknij **LAY/CDF/SYM** w sekcji Projekt.
+W oknie Windows wskaż pliki bibliotek (maksymalnie 1 plik każdego
+typu, 8 MB na plik); w trybie przeglądarki otwiera się
+systemowe okno wyboru plików.
+
+Biblioteki są wczytywane w pamięci jako **CP1250**, bez modyfikacji
+ich zawartości i bez zapisywania w źródłowym MAP. Można ładować je
+przed mapą lub już po otwarciu; status pokazuje liczbę rozpoznanych
+wpisów w LAY/CDF/SYM.
+
+- **LAY** — znane definicje linii (np. identyfikator 2.008),
+  bez dorabiania niezrozumianych stylów;
+- **CDF** — kolory wypełnienia i obrysu, grubość obrysu,
+  prosty szraf 0–8 zgodny z wcześniejszym rendererem Qt;
+- **SYM** — zweryfikowane wzory kreskowane z katalogu 400x
+  oraz linie/okręgi prostych symboli punktowych.
+- Oryginalne kolory z MAP, klasoużytki leśne, wyjątek 5230
+  z A1=dr/droga oraz ręczne jawne style nadal zachowują
+  pierwszeństwo zgodne z wcześniejszym modelem GeoStudio.
+
+**Zakres celowo częściowy:** SYM ma też złożone komendy O/T,
+łuki i makra; w tym etapie nie udajemy, że renderujemy
+niezweryfikowane instrukcje. Dokładna zgodność z klasycznym GEO-MAP
+wymaga dostarczenia tych samych bibliotek używanych przez program,
+testów wielu kodów oraz oceny wydruków w tej samej skali.
+
+
+## Etap 8 — stabilizacja, natywne etykiety GMW, odzyskiwanie i Windows
+
+### Zgodność z klasycznym GEO-MAP (odkryta na rzeczywistych test.MAP)
+
+W GMW 10.52 poligon z wieloma osobnymi konturami P 0 ma dodatkowe
+**końcowe \`P 1\`, które ponownie wskazuje pierwszy punkt całego obiektu**,
+już po zamknięciu ostatniej części. Sam komplet L 1/L 2/L 3 nie
+wystarczył: GEO-MAP nie pokazywał etykiet 5310 A1=l,
+A2=So120|II-0.3. Plik poprawiony w GMW różnił się właśnie
+tym końcowym rekordem. W tym etapie zapis multipart dodaje taki
+rekord, a parser rozpoznaje go jako domknięcie obiektu, nie jako
+dodatkową krawędź geometrii. Testy regresji nie zawierają
+prywatnych fragmentów z rzeczywistej mapy użytkownika, tylko
+syntetyczny równoważny przypadek.
+
+### Przesuwanie wielu poligonów
+
+Tryb **M** przesuwa cały poligon albo wszystkie zaznaczone przez
+Ctrl+H poligony po przeciągnięciu jednego z nich. Po puszczeniu
+przycisku myszy przesunięcie odbywa się **bez formularza i okna
+zatwierdzenia**, z aktywnym magnetycznym przyciąganiem do granic
+obiektów tego samego kodu i z dozwolonym rozłączeniem dotychczas
+wspólnej granicy. Serwer nadal sprawdza revision/documentToken,
+topologię, liczbę wybranych węzłów oraz niezmienność wszystkich
+pozostałych obiektów. Cała grupa stanowi jedną operację Ctrl+Z.
+Ręczny dialog \`Ctrl+Shift+M\` pozostaje dla liczbowego DX/DY.
+
+### Automatyczne migawki awaryjne — tylko aplikacja Windows
+
+Po edycji kopia stanu aktualnej mapy oraz odwracalnych nakładań
+zapisywana jest po krótkim opóźnieniu do
+\`%LOCALAPPDATA%\GeoStudio2\recovery\`. Oryginalna mapa nie jest
+nadpisywana. Zapis idzie przez pliki tymczasowe, fsync i atomową
+podmianę manifestu na końcu. Manifest zawiera SHA256 oryginalnej
+mapy, kopii roboczej i topologii; niekompletne pliki są ignorowane.
+
+Po awaryjnym zamknięciu wybierz **ten sam plik MAP przez „Otwórz MAP”
+(w natywnym oknie plików)**. Jeśli źródło nadal jest identyczne,
+GeoStudio zapyta, czy przywrócić sesję. Po odtworzeniu dokument jest
+oznaczony jako niezapisany; zapisz go jako **nową kopię MAP**.
+Migawka nie przenosi pełnej historii Undo — odzyskuje bieżący
+stan MAP oraz priorytet odwracalnych masek. To funkcja testowa;
+**nie zastępuje ręcznego Zapisz jako**, zwłaszcza dla danych
+produkcyjnych. W zwykłej przeglądarce automatyczne migawki na
+dysku nie są jeszcze dostępne.
+
+### Duże mapy
+
+Parser i eksport mają regresję z mapą 112 tys. linii, testy
+niezmienności źródła, checksum CHK oraz konturów wieloczęściowych.
+Indeks obiektów pozwala żądaniom małego viewportu uniknąć
+ponownego skanowania całej mapy przy przesuwaniu i powiększaniu.
+Historia Undo nadal ma ograniczoną pamięć, a renderer
+limituje liczbę geometrii przesyłanych jednorazowo.
+
+### Biblioteki LAY/CDF/SYM
+
+Po wybraniu bibliotek, przy kartografii pojawia się informacja
+\`CDF: zastosowania/dopasowania\`, analogicznie dla LAY i SYM.
+Wczytane LAY może teraz wpływać także na kolor linii z zapisu
+Windows COLORREF (BGR); jawny obrys CDF ma pierwszeństwo.
+Zera oznaczają, że aktualnie widoczna część mapy nie zawiera
+rozpoznanych kodów lub ich reguł renderer nie stosuje — nie
+oznacza to błędnego importu. **Graniczniki domyślnie są ukryte**,
+więc SYM może być niewidoczny. Włącz tę warstwę w lewym panelu.
+Złożone makra SYM, wszystkie desenie i pełna zgodność
+wydruku nadal nie są zaimplementowane.
+
+### Instalator Windows x64 — wersja testowa
+
+Pipeline \`Windows GeoStudio2 preview installer\` buduje pakiet
+**portable** przez PyInstaller i instalator **per-user**
+przez Inno Setup 6, bez uprawnień administratora.
+Po przejściu workflow pliki dostępne są jako GitHub Actions
+Artifacts na stronie przebiegu workflow PR — instalator nie
+jest oficjalnym podpisanym wydaniem.
+
+Lokalne komendy na Windows z Pythonem 3.12 i Inno Setup 6:
+
+\`\`\`powershell
+cd C:\GeoStudio-2-preview
+.\tools\windows\build.ps1
+# Samodzielny folder portable bez Inno Setup:
+.\tools\windows\build.ps1 -SkipInstaller
+\`\`\`
+
+Build trafia do \`dist/GeoStudio2\`, a instalator do
+\`dist/installer\`. WebView2 Runtime musi być dostępny
+w systemie; instalator preview go nie doinstalowuje.
+W razie problemów w pierwszej kolejności użyj
+\`.\start_web_ui.bat\`, który uruchamia tę samą aplikację
+ze środowiska Pythona.
+
+Przed akceptacją: użyj testowego scalania i eksportu w
+klasycznym GEO-MAP, przesuń grupy 5310 oraz 5216, przeprowadź
+restart po edycji i odtwórz sesję, porównaj wygląd LAY/CDF/SYM
+z rzeczywistymi bibliotekami, przetestuj instalator na
+Windows 11. Gałąź jest draft i **nie modyfikuje main**.
+
+
+## Etap 9 (testowy): precyzyjne rysowanie i etykiety 5310
+
+Przy **Nowy poligon (N)** jest widoczny nowy przełącznik
+**Magnes G**. Magnes jest domyślnie włączony. Podczas rysowania
+N (nowy poligon), L (linia), Shift+L (zmiana przebiegu linii)
+i podziałów zapewnia precyzyjne przyciąganie tylko wtedy, gdy
+kursor znajduje się blisko widocznej geometrii:
+
+- do węzła: maksymalnie 7 pikseli od kursora;
+- do odcinka (rzut prostopadły): maksymalnie 5 pikseli;
+- punkt jest zawsze zapisywany po zaokrągleniu do siatki 0,001 m;
+- na mapie jest widoczna mała ramka „WĘZEŁ” lub „LINIA” z kodem obiektu;
+- **Alt podczas kliknięcia** omija przyciąganie tylko dla tego punktu;
+- **G** w trakcie rysowania lub przycisk Magnes przełącza je trwale;
+- ukryte warstwy nie są celami magnesu;
+- magnes nie zmienia żadnych węzłów istniejących poligonów ani linii.
+
+To oddzielny mechanizm od przyciągania edycji węzłów P i
+przesuwania grup M. Warto pracować na większym przybliżeniu,
+gdy w obszarze jest bardzo wiele nakładających się obiektów.
+
+Napisy A1/A2 budynków 5310 zachowują wspólny punkt zaczepienia:
+**są układane razem**, zamiast ukrywać A2 po wyświetleniu A1.
+Ręcznie rozdzielone pozycje nadal pozostają niezależne.
+Wielowierszowy opis A2 rozdzielany pionowymi kreskami
+jest rysowany w całości, jeżeli etykieta może zostać pokazana.
+
+Przy oddaleniu czcionka **maleje proporcjonalnie do mapy**.
+Gdy stałaby się nieczytelna, jest ukrywana, zamiast zasłaniać
+cały widok wielkimi napisami. Opis aktywnego obiektu nadal
+można odczytać, a jego pola A1 i A2 widać w Inspektorze.
+Przy dużym zbliżeniu czcionka ma ograniczoną maksymalną
+wielkość dla wygody czytania.
+
+### Zalecane próby
+
+1. Wczytaj mapę z kodami 5310, powiększ kilka budynków z A2
+   zawierającym separator pionowej kreski. Oba podpisy powinny
+   się pojawić bez wzajemnego przesłaniania.
+2. Powoli oddalaj mapę. Wszystkie napisy nie powinny stawać
+   się większe w stosunku do geometrii; małe opisy znikną.
+3. Narysuj N wzdłuż istniejącej granicy, obserwuj WĘZEŁ/LINIA,
+   kliknij punkt. Następny punkt przytrzymaj Alt blisko tej
+   samej krawędzi — powinien dać się postawić obok.
+4. Wyłącz Magnes G, powtórz rysowanie i sprawdź, że nic nie
+   przyciąga. Użyj Ctrl+Z, zapisz nową kopię MAP i sprawdź
+   jej węzły w klasycznym GEO-MAP.
+
+Brak pełnej identyczności kartograficznej względem starego Qt:
+w ROADMAP.md opisano priorytety: przesuwanie etykiet i ich
+reguły, wyszukiwanie/zamiana, eksport obrazu/DXF, WMS/rastry,
+transformacje i kompletna kartografia LAY/CDF/SYM.
+
+
+## Etap 10A — niezależne opisy, skale i płynne nawigowanie (draft)
+
+### Napisy 5310 — osobno A1 i A2
+
+**A1 i A2 to dwa osobne opisy, nie jeden blok tekstu**. Każdy ma
+własne położenie i możliwość edycji.
+
+- **Alt+L** lub **Przesuń napisy** — złap jeden widoczny opis A1, A2 lub
+  TX i przeciągnij myszą. Po puszczeniu zapisuje się jedną operacją
+  historii: Ctrl+Z / Ctrl+Y. Żaden punkt natywnej MAP nie jest zmieniany.
+- **Ctrl+Alt+L** lub **Styl opisów** — kod GEO-MAP, a następnie oddzielnie
+  A1, A2 lub TX: widoczność, rozmiar, kolor i pogrubienie.
+  Zmiana stylu A1 nie ukrywa A2. Starsze pliki, które celowo
+  deklarują całkiem inny zestaw opisów, nadal zachowują swoje reguły.
+- Czcionki nie są już mikroskopijne przy zwykłym przybliżeniu.
+  Wielkość reaguje na zmianę skali widoku i skali opracowania.
+  Opisy bardzo małych obiektów przy przeglądzie całej mapy są
+  upraszczane/ukrywane; aktywny obiekt pozostaje opisany.
+
+**Ważne:** własne przesunięcia i formatowanie opisów nie są częścią
+natywnej geometrii MAP. Windows przy Zapisz jako zapisuje
+obok nowego MAP również **\`nazwa.geostudio.json\`** zawierający
+pozycje, kolory i ustawienia skali; dodatkowo, jeśli używane
+są odwracalne wycięcia, zapisuje plik topologii JSON.
+Zachowaj wszystkie pliki razem. Przy standardowym otwarciu
+w Windows GeoStudio automatycznie weryfikuje sumę SHA256 i
+importuje zgodny JSON. Klasyczny GEO-MAP czyta nadal
+swoje natywne rekordy L/P — nie interpretuje nowych pozycji
+z pliku GeoStudio. W przeglądarce przy własnych ustawieniach
+pobierasz ZIP MAP+JSON, a po otwarciu mapy wskazujesz
+JSON przyciskiem Style JSON.
+
+Kopie awaryjne GeoStudio 2.0 Windows uwzględniają również
+odrębne pozycje opisów i skalę opracowania.
+
+### Współrzędne i dwie skale z GeoStudio 0.14
+
+W dolnym lewym rogu widoku znajdują się:
+- **X / Y GEO-MAP** — bieżące współrzędne kursora (X północ,
+  Y wschód) z dokładnością 0,001 m; program nie zgaduje EPSG.
+- **Skala widoku 1:N** — wpisz np. 1:2000, wybierz z listy
+  albo Ctrl+M i Enter. Jest to *przybliżona* skala ekranu,
+  wyliczana przy standardowym 96 CSS DPI. Zmienia zoom,
+  nie modyfikuje żadnych danych MAP.
+- **Skala opracowania 1:N** — wpisz np. 1:5000, wybierz z listy
+  albo Ctrl+F5 i Enter. Zmienia relatywny rozmiar tekstów;
+  nie zmienia geometrii, CRS ani współrzędnych.
+  Skala źródłowa jest odczytywana z tekstu legendy mapy,
+  jeśli istnieje, inaczej domyślna 1:5000.
+
+Przycisk dokładnego przesunięcia poligonów X/Y oraz jego
+Ctrl+Shift+M zostały usunięte z widocznego interfejsu;
+całe grupy przesuwaj myszą w trybie **M**.
+
+### Rysowanie bez przerywania szkicu
+
+- **Esc** cofa tylko ostatnio postawiony węzeł szkicu;
+  nie kończy nagle wkreślania.
+- Po utworzeniu co najmniej trzech punktów przy aktywnym
+  Magnesie G, zbliż do **pierwszego** węzła (maks. 10 pikseli).
+  Pokaże się napis „DOMKNIJ POLIGON”. Jedno kliknięcie
+  kończy rysowanie, otwiera standardowe okno kod/A1/A2
+  i natychmiast sprawdza geometrię. Potem można zatwierdzić
+  obiekt w MAP. Nie są omijane walidacje 5B.
+- **Alt** pozwala kliknąć obok pierwszego punktu bez domknięcia.
+  **S** przełącza na zaznaczanie, a **Enter** nadal kończy
+  otwarty szkic ręcznie.
+
+### Płynny zoom przy dużych mapach
+
+Podczas kółka myszy/panoramowania Canvas zachowuje ostatnią
+poprawnie narysowaną klatkę i natychmiast transformuje ją
+do nowej skali. Nowy wynik indeksu GIS podmienia podgląd,
+gdy jest gotowy. W efekcie nie pojawia się biała przerwa,
+a istniejące narzędzia rysunkowe pozostają aktywne.
+To optymalizacja wizualna: podczas oczekiwania widoczny jest
+przeskalowany podgląd, który może być chwilowo nieostry.
+
+**Do ręcznego sprawdzenia:** osobne A1/A2 przy skali 1:5000
+i 1:1000, pozycja po Zapisz jako i ponownym otwarciu MAP+JSON,
+cofanie Ctrl+Z, przyciąganie pierwszego węzła/Alt, Esc,
+oraz płynność na mapach o kilku tysiącach obiektów.
+
+
+## Etap 10B — F, Ctrl+F i płynne mapy lokalne (draft)
+
+**Znajdź (F)** — wpisz samo czterocyfrowe oznaczenie kodu, ID obiektu lub fragment tekstu w A1/A2/A3–A6/TX/MP/KR. Możesz przeszukać wszystkie atrybuty i ID jednocześnie. Wyniki dotyczą całej mapy, nie tylko ekranu. Kliknij wynik, aby ustawić obiekt w centrum mapy i go zaznaczyć. Przy ponad 120 wynikach lista jest celowo skrócona, a licznik to pokazuje. Zawęź kod/tekst lub użyj Ctrl+H do masowego filtrowania.
+
+**Zamień (Ctrl+F)** — wybierz pole atrybutu, fragment do wyszukania i zamiennik, także pusty. Możesz włączyć rozróżnianie wielkości liter oraz zawęzić kod. Zakres domyślny to zaznaczone obiekty, a cała mapa wymaga świadomego wyboru. Zanim zatwierdzisz, kliknij Sprawdź zmiany; dostaniesz sumę wystąpień, obiektów i pierwszych 16 par przed / po. Jedno Ctrl+Z cofa wszystkie zmiany; Ctrl+Y przywraca. Oryginalny MAP nie jest nadpisywany. Walidacja chroni CP1250, 512 bajtów, unikalne ID, pola istniejące i maksymalnie 5000 modyfikowanych obiektów.
+
+**Stała wielkość opisów** — A1, A2 i TX mają tę samą wielkość w pikselach CSS przy różnych poziomach przybliżenia. Ich rozmiar można świadomie zmieniać w stylach i osobnej skali opracowania. Bardzo odległe etykiety mogą znikać, żeby nie przesłaniać całej mapy, ale nie zmieniają wielkości podczas zoomu. A1 i A2 pozostają osobnymi napisami z osobnym przeciąganiem.
+
+**Płynniejszy zoom** — w MAP do 12 tys. obiektów i 150 tys. wierzchołków cała geometria jest pobierana raz. Kolejne ruchy kółka i pan są wyłącznie lokalnym rysowaniem Canvas: bez pobierania i czekania na backend po każdej zmianie kadru. Edycje obiektów i zmiany stylów wciąż pobierają aktualne dane. Większe mapy zostają przy systemie indeksowanych kadrów. Płynność FPS zależy od liczby widocznych obiektów i możliwości komputera.
+
+**Sprawdź:** na MOKRA WIEŚ.MAP szybko przybliżaj/oddalaj, obserwuj wielkość A1/A2; wyszukaj 5310 i fragment A2; kliknij znaleziony obiekt. Użyj Ctrl+H, potem Ctrl+F, testowej zamiany A2 i Ctrl+Z, a na końcu zapisz nową kopię MAP i sprawdź w klasycznym GEO-MAP.
+
+
+## Etap 11 — eksport arkusza i wydruk (wersja testowa)
+
+Po wczytaniu MAP kliknij **Eksport / druk** (Ctrl+P). Dostępne są:
+
+- **PNG, JPG, TIFF:** wybór bieżącego widoku lub całej mapy, skali 1:N
+  i rozdzielczości 96/150/300 DPI. Arkusz może zawierać tytuł, ramkę,
+  strzałkę północy, legendę warstw widocznych na mapie i podziałkę liniową.
+  TIFF jest kodowany bez kompresji (RGB, jeden pasek).
+- **DXF:** natywne współrzędne X/Y z MAP; linie i obrysy jako edytowalne
+  LWPOLYLINE, punkty jako POINT, A1/A2 jako osobne TEXT. DXF obejmuje całą
+  mapę — nie jest rastrowym obrazem ani wierną kopią bibliotek SYM/LAY/CDF.
+- **Drukuj mapę:** otwiera systemowy dialog druku z przygotowanym arkuszem.
+  Aby zachować skalę, ustaw **100% bez automatycznego dopasowania** i dobierz
+  rozmiar papieru do wymiarów arkusza. Przeglądarka i sterownik drukarki
+  mogą mimo tego zastosować własne marginesy — wydruk kontrolny i
+  porównanie podziałki są wymagane.
+
+W natywnym oknie Windows eksport obrazów i DXF używa bezpiecznego
+**Zapisz jako**. W trybie `--browser` plik trafia do standardowych pobrań.
+Oryginalny MAP nie jest nadpisywany. Współrzędne traktowane są jako metry
+w skali 1:N; nie jest automatycznie wykrywane EPSG.
+
+Wydruk nie zastępuje jeszcze geodezyjnego składu arkuszy i nie gwarantuje
+zgodności kartografii 1:1 z GEO-MAP. Wyeksportowane pliki należy sprawdzić.
+
+### Dodatkowe poprawki interakcji
+
+- Etykiety A1/A2/TX zachowują tę samą **wielkość w pikselach na ekranie**
+  podczas zoomu. Płynny podgląd powiększa wyłącznie geometrię, a napisy
+  są nakładane ponownie. Skala opracowania może osobno zmieniać
+  rozmiar opisów zgodnie z ustawieniem użytkownika.
+- **B** dodaje/usuwa obiekt z bloku. **Esc**, pusty obszar mapy lub
+  **Odznacz** na wstążce odznacza całą grupę.
+- **M** przesuwa zaznaczone punkty, linie, wieloboki lub ich kombinacje.
+  Edycja zachowuje surowe rekordy P, identyfikatory, atrybuty, niezmienione
+  obiekty i historię Ctrl+Z.
+- Limit importu MAP zwiększono do 512 MiB. Do 50 tys. obiektów /
+  750 tys. wierzchołków używany jest lokalny bufor geometrii. Większe
+  mapy korzystają z indeksu przestrzennego i płynnego podglądu klatki.
+  Limit pojedynczego żądania widoku podniesiono do 100 tys. obiektów;
+  eksport odczytuje całą mapę **partiami**, bez ucinania do tej liczby.
+  Rzeczywista płynność zależy od rozmiaru mapy, złożoności symboli,
+  pamięci i wydajności komputera.
+
+
+## Etap 12 — podkłady WMS, raster i współrzędne (wersja testowa)
+
+### 12A: ortofotomapy WMS Geoportalu
+
+1. Otwórz MAP w GeoStudio 2.0 i kliknij **Podkłady WMS**.
+2. Wskaż **zweryfikowany układ EPSG mapy**. GeoStudio nie zgaduje CRS
+   na podstawie liczbowych wartości współrzędnych. Obsługiwane są
+   PL-1992 EPSG:2180 i PL-2000 EPSG:2176–2179.
+3. Wybierz standardową lub wysokorozdzielczą ortofotomapę i kliknij
+   **Pobierz warstwy**. Wskaż warstwę zgodną z EPSG, po czym
+   **Pokaż pod mapą**. Suwak reguluje przezroczystość.
+4. Obraz jest rysowany *pod* liniami, obrysami i etykietami GEO-MAP.
+   Przy zoomie i przesunięciu poprzedni obraz przesuwa się wraz z
+   geometrią; po ~420 ms bez ruchu pobierany jest nowy fragment.
+   Błędy pobrania nie usuwają poprzedniego obrazu.
+
+Obraz pochodzi z oficjalnego WMS GUGiK. Lokalny serwer zezwala tylko
+na dwa predefiniowane hostowane na HTTPS adresy Geoportalu, blokuje
+przekierowania, narzuca limity odpowiedzi i wymaga tokenu dostępu.
+Zaznaczone obiekty, atrybuty i zawartość MAP nie są wysyłane do WMS.
+W tej wersji **nie ma reprojekcji podkładu**: EPSG mapy musi zgadzać
+się z wybraną warstwą. Niepoprawny EPSG może spowodować wyświetlenie
+niepasujących danych — sprawdź położenie na znanym punkcie.
+
+### 12B: raster lokalny, GeoTIFF, world file i GCP
+
+W tym samym oknie wybierz PNG/JPG/WebP/TIFF/GeoTIFF. TIFF/GeoTIFF
+jest dekodowany przez serwer lokalny do PNG (Pillow); pliki PNG/JPG
+pozostają w pamięci przeglądarki. Limity: **48 MB plik TIFF**
+i **24 mln pikseli**. To limity bezpieczeństwa wersji testowej.
+
+- GeoTIFF: próba odczytu georeferencji i EPSG z tagów TIFF; obrazy
+  z nieobsługiwanym lub różnym EPSG nie są nakładane na mapę.
+- World file (.pgw, .jgw, .tfw, .wld): współczynniki
+  A/D/B/E/C/F, z korektą środka piksela na narożnik. Ten plik
+  nie podaje EPSG — wybierz świadomie CRS odpowiadający MAP.
+- GCP: minimum **trzy niewspółliniowe punkty** w osobnych wierszach
+  `u v X Y`, gdzie u/v są współrzędnymi piksela (od lewego górnego
+  narożnika), a X=północ/Y=wschód to współrzędne GEO-MAP w metrach.
+  W wyniku pokazywany jest RMSE dopasowania afinicznego.
+  Przed trasowaniem sprawdź kilka niezależnych punktów.
+
+Po zmianie EPSG raster skalibrowany w poprzednim układzie pozostaje
+ukryty; konieczne jest ponowne potwierdzenie georeferencji.
+Rastry w tej wersji są **tymczasowym podkładem w sesji**, nie trafiają
+do MAP i nie są jeszcze dołączane do eksportu PNG/TIFF z etapu 11.
+
+### 12C: weryfikacja PRJ i przeliczenie punktu
+
+Opcjonalnie wybierz plik .prj zawierający WKT. GeoStudio weryfikuje
+EPSG przy wysokim progu pewności; nie wnioskuje go z nazw folderów
+lub samych liczb. Przycisk **Przelicz współrzędne środka mapy**
+pokazuje X/Y środka bieżącego widoku w innym obsługiwanym EPSG.
+Przeliczenie jest *tylko podglądem punktu* — nie zmienia MAP.
+
+**Jeszcze niezaimplementowane w tym etapie:** reprojekcja całej mapy
+MAP w nowym interfejsie, trwały zapis kalibracji podkładu, rastry
+w eksporcie arkusza, kalibracja GCP bezpośrednio klikaniem parami
+na obrazie i mapie, duże GeoTIFF-y oraz pełny GeoTIFF z warstwami
+i różnymi rodzajami pikseli. Pozostają osobnym zadaniem.
+
+Do testów używaj kopii MAP. Nie zakładaj, że poprawny rezultat
+testów API oznacza sprawdzoną zgodność terenową.
+
+
+## Etap 12 — odświeżanie WMS, zakładka Rastry, ostre wektory i wizualne GCP (20.11.2026)
+
+- **WMS**: po każdej zmianie kamery (zoom lub pan) planowany jest
+  nowy GetMap dla zasięgu nowego widoku; wcześniejsze żądania są
+  anulowane i nie nadpisują nowszych. Rozdzielczość żądanego obrazu
+  uwzględnia DPR ekranu (w granicach 2048 px na wymiar / 3 mln px).
+  Poprzedni obraz pozostaje **tymczasowo** jako podkład do chwili pobrania
+  nowego; zależność od czasu odpowiedzi serwera oznacza, że chwilowe
+  przeskalowanie starej ortofotomapy może wystąpić. Same wektory i
+  A1/A2 pozostają przez cały czas ostre.
+- **Ostrość i nawigacja**: usunięto skalowanie poprzedniego obrazu
+  Canvas podczas przybliżania. Każdy kadr wektorowy jest rysowany
+  ponownie w aktualnych współrzędnych ekranowych. Dla typowych MAP
+  wczytanych w całości nie ma kolejnych zapytań HTTP przy zoomie;
+  duże MAP korzystają z poszerzonego bufora i zachowywania wcześniej
+  pobranych obiektów. Na bardzo dużych mapach nowy obszar, którego
+  jeszcze nie pobrano, może pojawić się dopiero po odpowiedzi serwera.
+  Przyspieszono wykrywanie kolizji etykiet przez indeks komórkowy.
+- **Warstwy mapy → Rastry**: drugi panel obok Wektorów pokazuje źródło
+  WMS i kilka obrazów lokalnych (PNG, JPG, WebP, TIFF/GeoTIFF).
+  Można je indywidualnie ukrywać/pokazywać, zmieniać krycie, usuwać,
+  wybierać do kalibracji; podkłady nadal nie modyfikują MAP.
+- **Wizualna kalibracja GCP**: tak jak w Qt wybieramy najpierw punkt
+  na obrazku, potem klikamy odpowiadający mu punkt w głównym widoku
+  MAP. Okno jest niemodalne (mapę można w tym czasie przesuwać i
+  przybliżać), lista pokazuje numerowane pary. Wymagane minimum trzy
+  niewspółliniowe pary; dopasowanie afiniczne wylicza RMSE.
+  Na obrazie można przybliżać kółkiem i przesuwać prawym przyciskiem.
+  Ręczne wpisywanie X/Y usunięto z interfejsu. Zwykły JPG/PNG
+  kalibrowany do natywnych współrzędnych MAP nie wymaga wyboru EPSG.
+  GeoTIFF z automatyczną georeferencją wymaga potwierdzonego zgodnego
+  EPSG; alternatywnie można go skalibrować wizualnie.
+- **Ograniczenia testowe**: podkłady pozostają w pamięci bieżącej sesji.
+  Kalibracje i rastry nie trafiają jeszcze do wyeksportowanego arkusza
+  ani nie są zapisywane do projektu. Wysoki wynik RMSE lub złe
+  rozmieszczenie punktów wymaga poprawienia par przed pracą.
+  Ostateczną zgodność ortofotomapy i rastrów należy sprawdzić na
+  charakterystycznych punktach terenowych.
+
+
+## Etap 12 — łatwiejsza kalibracja GCP po testach (2026-11-20)
+
+Kalibracja wymaga kliknięcia punktu na obrazie i odpowiadającego mu
+punktu w głównym widoku MAP. **Nie ma już przycisku „Wybierz odpowiednik
+na mapie”**: po wskazaniu piksela automatycznie przechodzimy do punktu
+na mapie. Jeśli drugi klik na obrazie nastąpi przed wyborem na mapie,
+zastępuje aktualnie oczekujący piksel — nie tworzy dodatkowej pary.
+
+Numerowane, już zapisane pary można **chwycić i przeciągnąć zarówno na
+rastrze, jak i na mapie**. Po puszczeniu uchwytu, jeżeli raster miał
+obliczoną transformację i pozostały minimum trzy pary, program ponownie
+oblicza transformację i błąd RMSE. Jeżeli par jest mniej, raster jest
+ukrywany do czasu ponownego dopasowania. Można też anulować oczekującą
+parę, usunąć ostatnią parę oraz ręcznie ponownie obliczyć dopasowanie.
+Rolka nadal przybliża w stronę kursora. Nowe pozycje przechowywane są
+w oryginalnych pikselach źródła, również dla rastra z mniejszym
+podglądem niż oryginalny plik.
+
+## Etap 13A — diagnostyka i podgląd kartografii LAY/CDF/SYM
+
+W zakładce **Kartografia** obok importu **LAY/CDF/SYM** jest
+**Podgląd stylów**. Wczytując prawdziwe biblioteki GEO-MAP, można
+sprawdzić dla przykładowego obiektu każdego kodu mapy jego kolor
+obrysu, grubość, kreskowanie, wypełnienie i proste symbole punktowe,
+jak również które biblioteki dopasowano i faktycznie zastosowano.
+Przedstawiany jest obiekt reprezentatywny dla danego kodu, a nie
+obietnica identycznego wyglądu wszystkich jego wariantów A1/A2.
+Wszelkie nierozpoznane instrukcje SYM, LAY i nietypowe desenie CDF
+są oznaczane, nie interpretowane zgadywaniem.
+
+To pierwsza część odtwarzania pełnej kartografii. Wciąż nie istnieje
+wierny interpreter dowolnych makr O/T/łuków SYM i wszystkich linii
+LAY; nie należy na tej podstawie deklarować zgodności kartograficznej
+1:1 z GEO-MAP. Import jest odczytowy, a źródłowy MAP nienaruszony.
+
+**Kartografia 13A — gęstość CDF:** desenie 1/2 wykorzystują siatkę 8×8 i pokrycie odpowiednio 50% (odpowiednik Qt.Dense4Pattern) oraz 37,5% (Qt.Dense5Pattern). Pozostałe obsługiwane desenie 3–8 wykorzystują siatkę 8 px zgodną z kierunkami kresek używanymi w klasycznym rendererze Qt. Indeksy CDF 9–16 pozostają oznaczone jako niewspierane, zamiast pokazywać niezweryfikowany wzór.
+
+
+## Poprawki rysowania, obrysów i rastrów po etapie 13A (2026-11-20)
+
+- **Szybkie N**: punkt rysowania jest nanoszony już przy **pointerdown**
+  (bez czekania na pointerup); magnes szuka kandydatów tylko w pasie
+  do 12 pikseli od kursora zamiast badać wszystkie segmenty MAP.
+  Nadal obowiązują dotychczasowe progi 7/5 px, zamykanie pierwszym
+  punktem, Enter i Alt bypass. Status punktów nie wyświetla za każdym
+  razem nachodzącego na mapę powiadomienia.
+- **Tworzenie poligonu**: po domknięciu aktywne jest pole A1, a
+  naciśnięcie Enter powoduje automatyczny, chroniony preflight i zapis
+  transakcyjny. Osobny przycisk "Sprawdź obrys" jest ukryty. Błędy
+  walidacji wyświetlane są w tym samym formularzu; geometria nie jest
+  usuwana przy błędzie. Po powodzeniu kod obiektu zostaje zapamiętany,
+  pola A1/A2 są czyszczone, tryb N **pozostaje aktywny**. Klawisz S
+  lub inne narzędzie kończy sesję.
+- **Kartografia → Styl obrysu**: dla dowolnego kodu obecnego w
+  otwartym MAP (np. 5310) wybierz kolor #RRGGBB oraz grubość
+  0,5–12 px. Zmiana jest wspólna dla istniejących i kolejnych
+  poligonów tego kodu w danej mapie, umożliwia przywrócenie wzorca,
+  Ctrl+Z/Ctrl+Y i zapis do opcjonalnego JSON wizualnego przy
+  pobieraniu kopii. Oryginał MAP nie jest zmieniany.
+- **Opisy 5310**: etykiety A1 i A2 nie są pomijane na podstawie
+  kolizji z innymi tekstami, limitu zwykłych napisów ani wielkości
+  obiektu na ekranie. Mogą fizycznie nachodzić na siebie przy bardzo
+  gęstych budynkach — zgodnie z wyborem użytkownika.
+- **WMS + skalibrowany JPG**: wybór EPSG bieżącej mapy dla WMS nie
+  unieważnia kalibracji wizualnej JPG/PNG czy world względem tej samej
+  natywnej przestrzeni MAP X/Y. Warstwy zachowują niezależne przełączniki
+  widoczności i krycia. GeoTIFF z deklarowanym EPSG nadal wymaga
+  faktycznie zgodnego układu.
+
+Uwaga: wizualne style kodów zapisują się jako towarzyszący MAP
+sidecar, a nie jako stała preferencja globalna dla dowolnych innych map.
+
+
+## Etap 14A — wielkoformatowy PDF, edytowalna oprawa i pełniejszy DXF
+
+**PDF wektorowy A0–A4 / format automatyczny:** w oknie
+**Eksport → Arkusz / druk** wybierz PDF, skalę 1:N, obszar
+(bieżący kadr lub całą mapę) oraz format papieru i orientację.
+Zamiast tworzyć bitmapę o dziesiątkach milionów pikseli,
+serwer buduje stronę PDF z wektorowych linii, wypełnień
+i odrębnych napisów. Mianownik skali określa fizyczny rozmiar
+geometrii na stronie. Jeśli mapa nie mieści się na wybranym
+formacie, pojawia się błąd — **nie jest po cichu skalowana**.
+Format automatyczny dopasowuje papier do potrzebnej powierzchni,
+przy limicie 1700 mm. Drukuj gotowy PDF przy **100%** skali.
+
+**Edytowalna legenda i tabelka:** przed eksportem możesz wprowadzić
+i przestawić pozycje w polu `Nazwa | #RRGGBB`,
+a także pozycje metryki `Pole | wartość`. Ramka i obrys są
+regulowane kolorem oraz grubością od 0,1 do 2,5 mm.
+Zmiany dotyczą wygenerowanego PDF, a nie źródłowego MAP.
+PNG/JPG/TIFF zachowują dotychczasową procedurę eksportu;
+personalizowana oprawa PDF nie zmienia ich wyglądu.
+
+**DXF R2010:** nadal zachowuje współrzędne GEO-MAP w metrach,
+warstwy geometrii `G####` i edytowalne linie. Dodano
+odrębne warstwy napisów `G####_A1`, `G####_A2`, `G####_TX`,
+uwzględnianie ręcznie ustawionych pozycji napisów,
+prawdziwe kolory RGB i przybliżone grubości oraz jednolite
+wypełnienia dla prostych, jednoczęściowych poligonów.
+Zachowany jest identyfikator oryginału jako metadane XDATA.
+Nieznane wzory linii i złożone maskowania wieloobrysowe
+nie są jeszcze wiernie kodowane w DXF.
+
+**Kod GEO-MAP 5214:** w interfejsie warstwa nazywa się
+**Linia obrębu**, bez wypełnienia powierzchniowego.
+Można tworzyć i edytować ją jako linię oraz regulować jej
+obrys w Kartografii. DXF zapisuje ją na warstwie `G5214`
+jako polilinię.
+
+**Edycja:** w oknie „Nowy obiekt” pole **A1** automatycznie
+otrzymuje fokus po otwarciu. **Delete** usuwa wybrane
+obiekty od razu bez potwierdzenia, ale nadal przechodzi
+bezpieczny preflight i działa **Ctrl+Z**. W trybie węzłów
+Delete usuwa wybrany węzeł, a przy braku wskazanego węzła
+zaznaczony obiekt.
+
+**Pozostało na etap 14B:** wielostronicowe kafelkowanie A0/A1,
+ekranowy edytor rozmieszczenia elementów oprawy metodą przeciągnij
+i upuść, różne warianty kreskowań CAD oraz pełne makra symboli.

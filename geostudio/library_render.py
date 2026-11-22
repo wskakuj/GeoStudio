@@ -26,9 +26,20 @@ class SymbolPrimitive:
     parameters: tuple[float, ...]
 
 
-def parse_cdf(path: str | Path) -> dict[str,CDFStyle]:
+def _library_lines(source: str | Path | bytes) -> list[str]:
+    """Both desktop libraries and browser-selected in-memory CP1250 libraries.
+
+    Never interpret arbitrary library text as executable instructions.
+    """
+    raw=source if isinstance(source,bytes) else Path(source).read_bytes()
+    if len(raw)>8*1024*1024:
+        raise ValueError("Biblioteka GEO-MAP jest większa niż 8 MB.")
+    return raw.decode("cp1250",errors="replace").splitlines()
+
+
+def parse_cdf(path: str | Path | bytes) -> dict[str,CDFStyle]:
     styles = {}
-    for line in Path(path).read_bytes().decode('cp1250', errors='replace').splitlines():
+    for line in _library_lines(path):
         line=line.strip()
         if not line or line.startswith(';'):
             continue
@@ -89,11 +100,11 @@ def native_fill_color(style: str) -> tuple[int,int,int] | None:
     return (n&255,(n>>8)&255,(n>>16)&255)
 
 
-def parse_sym_primitives(path: str | Path) -> dict[str,list[SymbolPrimitive]]:
+def parse_sym_primitives(path: str | Path | bytes) -> dict[str,list[SymbolPrimitive]]:
     """Load simple primitives; keep O/T/arc instructions for future renderers."""
     result={}
     current=None
-    for line in Path(path).read_bytes().decode('cp1250',errors='replace').splitlines():
+    for line in _library_lines(path):
         if line.startswith('*') and len(line)>4 and line[1:5].isdigit():
             current=line[1:5]
             result[current]=[]
@@ -131,7 +142,7 @@ class LAYPenStyle:
     width_mm: float
 
 
-def parse_lay_pen_styles(path: str | Path) -> dict[str,LAYPenStyle]:
+def parse_lay_pen_styles(path: str | Path | bytes) -> dict[str,LAYPenStyle]:
     """Parse named GEO-MAP overlay codes without modifying the .LAY library.
 
     Standard rows:  5220 32768 2.008 1 standard 2.5 ...
@@ -139,7 +150,7 @@ def parse_lay_pen_styles(path: str | Path) -> dict[str,LAYPenStyle]:
     its own line-pattern definition. Only known 008 is drawn dashed.
     """
     result={}
-    for line in Path(path).read_bytes().decode('cp1250',errors='replace').splitlines():
+    for line in _library_lines(path):
         if not line.strip() or line.lstrip().startswith((';','*')):
             continue
         match=re.match(r'^\s*([0-9?]{4})\s+(\d+)\s+([0-9]+\.[0-9]+)\s+\d+\s+\S+\s+([\d.]+)',line)
@@ -181,7 +192,7 @@ def simple_point_circles(primitives: list[SymbolPrimitive]) -> list[tuple[float,
     return result
 
 
-def parse_sym_line_patterns(path: str | Path) -> dict[str,tuple[float,...]]:
+def parse_sym_line_patterns(path: str | Path | bytes) -> dict[str,tuple[float,...]]:
     """Read confirmed 400x/401x catalogue dash/gap sequences in SYM.
 
     Examples from GEO-MAP's standard library:
@@ -191,7 +202,7 @@ def parse_sym_line_patterns(path: str | Path) -> dict[str,tuple[float,...]]:
     """
     result={}
     current=None
-    for line in Path(path).read_bytes().decode('cp1250','replace').splitlines():
+    for line in _library_lines(path):
         m=re.match(r'^\*(40\d{2})\s',line)
         if m:
             current=m.group(1)

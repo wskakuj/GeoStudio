@@ -7,70 +7,166 @@
   <meta name="theme-color" content="#111a2b">
   <title>GeoStudio 2.0 — Podgląd</title>
   <link rel="stylesheet" href="/styles.css">
+  <script defer src="/raster_trace.js"></script>
+  <script defer src="/drawing_snap.js"></script>
+  <script defer src="/sheet.js"></script>
   <script defer src="/map.js"></script>
 </head>
-<body>
+<body data-theme="dark">
   <div class="app-shell">
     <header class="topbar">
       <div class="identity">
         <div class="mark" aria-hidden="true"><span></span><span></span><span></span></div>
-        <div><strong>GeoStudio</strong><span class="brand-version">2.0 <em>ETAP 4B · A1/A2 — TEST</em></span></div>
+        <div class="brand-copy"><strong>GeoStudio <span class="brand-number">2.0</span></strong><span class="brand-version">Edytor map GEO-MAP</span></div>
       </div>
-      <div class="header-center"><span class="top-kicker">OBSZAR ROBOCZY</span>
-        <span id="document-title">Nowy projekt</span>
-        <span id="dirty-marker" class="document-meta">Oryginał chroniony</span>
+      <div class="header-center">
+        <svg class="header-icon " viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 7a2 2 0 0 1 2-2h5l2 2h7a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z"/></svg>
+        <div class="header-document">
+          <span id="document-title">Nowy projekt</span>
+          <span id="dirty-marker" class="document-meta" role="status">Oryginał chroniony</span>
+        </div>
       </div>
       <div class="header-actions">
-        <button id="btn-command" class="top-icon" title="Polecenia (Ctrl+K)" aria-label="Wyszukaj polecenie">⌕ <kbd>⌘ K</kbd></button>
-        <button id="btn-theme" class="top-icon" title="Przełącz jasny/ciemny wygląd">◐</button>
-        <button id="btn-export" class="button export" disabled title="Pobierz oddzielny plik MAP">↓ Pobierz kopię</button>
-        <label id="btn-open-direct" class="button ghost direct-open" for="file-map"
-          title="Zawsze dostępny wybór pliku, niezależny od pywebview">▱ Z dysku</label>
-        <button id="btn-open" class="button primary"><span class="button-icon">↗</span> Otwórz MAP</button>
+        <div class="header-action-group header-preferences" role="group" aria-label="Ustawienia interfejsu">
+          <button id="btn-command" class="top-icon header-control" title="Polecenia (Ctrl+K)" aria-label="Wyszukaj polecenie"><svg class="soft3d-icon header-icon" viewBox="0 0 40 40" aria-hidden="true" focusable="false"><defs><linearGradient id="gs-soft3d-1" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#b7a0fa"/><stop offset=".55" stop-color="#8051d2"/><stop offset="1" stop-color="#51339d"/></linearGradient></defs><ellipse cx="20" cy="36.5" rx="15" ry="2" fill="#101827" opacity=".18"/><rect x="3" y="6" width="34" height="30" rx="9" fill="#51339d"/><rect x="3" y="2" width="34" height="30" rx="9" fill="url(#gs-soft3d-1)" stroke="#51339d" stroke-width=".6"/><path d="M6 11Q6 5 12 5h16" stroke="#fff" stroke-opacity=".4" stroke-width="1.35" fill="none" stroke-linecap="round"/><g transform="translate(8 5)"><g fill="none" stroke="#fff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="10" cy="10" r="6.5"/><path d="m15 15 6 6"/></g></g></svg><kbd>Ctrl K</kbd></button>
+          <button id="btn-theme" class="top-icon header-control" type="button" title="Włącz jasny motyw programu" aria-label="Włącz jasny motyw programu" aria-pressed="true"><svg class="soft3d-icon header-icon theme-sun" viewBox="0 0 40 40" aria-hidden="true" focusable="false"><defs><linearGradient id="gs-soft3d-2" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#ffd37a"/><stop offset=".55" stop-color="#c88b20"/><stop offset="1" stop-color="#91600e"/></linearGradient></defs><ellipse cx="20" cy="36.5" rx="15" ry="2" fill="#101827" opacity=".18"/><rect x="3" y="6" width="34" height="30" rx="9" fill="#91600e"/><rect x="3" y="2" width="34" height="30" rx="9" fill="url(#gs-soft3d-2)" stroke="#91600e" stroke-width=".6"/><path d="M6 11Q6 5 12 5h16" stroke="#fff" stroke-opacity=".4" stroke-width="1.35" fill="none" stroke-linecap="round"/><g transform="translate(8 5)"><g fill="none" stroke="#fff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4.5"/><path d="M12 1v3m0 16v3M1 12h3m16 0h3M4 4l2 2m12 12 2 2M4 20l2-2M18 6l2-2"/></g></g></svg><svg class="soft3d-icon header-icon theme-moon" viewBox="0 0 40 40" aria-hidden="true" focusable="false"><defs><linearGradient id="gs-soft3d-3" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#b7a0fa"/><stop offset=".55" stop-color="#8051d2"/><stop offset="1" stop-color="#51339d"/></linearGradient></defs><ellipse cx="20" cy="36.5" rx="15" ry="2" fill="#101827" opacity=".18"/><rect x="3" y="6" width="34" height="30" rx="9" fill="#51339d"/><rect x="3" y="2" width="34" height="30" rx="9" fill="url(#gs-soft3d-3)" stroke="#51339d" stroke-width=".6"/><path d="M6 11Q6 5 12 5h16" stroke="#fff" stroke-opacity=".4" stroke-width="1.35" fill="none" stroke-linecap="round"/><g transform="translate(8 5)"><g fill="none" stroke="#fff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M20 15A9 9 0 1 1 9 3a8 8 0 0 0 11 12Z" fill="#fff" fill-opacity=".35"/></g></g></svg><span class="header-optional">Motyw</span></button>
+          <details id="map-background-menu" class="map-background-menu">
+            <summary class="top-icon header-control" aria-label="Wybierz kolor tła mapy" title="Kolor tła mapy — niezależny od motywu programu"><svg class="soft3d-icon header-icon" viewBox="0 0 40 40" aria-hidden="true" focusable="false"><defs><linearGradient id="gs-soft3d-58" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#52cbd9"/><stop offset=".55" stop-color="#098ca4"/><stop offset="1" stop-color="#075a76"/></linearGradient></defs><ellipse cx="20" cy="36.5" rx="15" ry="2" fill="#101827" opacity=".18"/><rect x="3" y="6" width="34" height="30" rx="9" fill="#075a76"/><rect x="3" y="2" width="34" height="30" rx="9" fill="url(#gs-soft3d-58)" stroke="#075a76" stroke-width=".6"/><path d="M6 11Q6 5 12 5h16" stroke="#fff" stroke-opacity=".4" stroke-width="1.35" fill="none" stroke-linecap="round"/><g transform="translate(8 5)"><g fill="none" stroke="#fff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="3"/><path d="m4 20 16-16"/></g></g></svg><span class="header-optional">Tło mapy</span></summary>
+            <div class="map-background-popover" role="group" aria-label="Kolor tła mapy">
+            <strong>Kolor tła mapy</strong>
+            <p>Nie zmienia motywu programu ani kolorów obiektów.</p>
+            <label for="map-background-color">Własny kolor</label>
+            <div class="map-background-edit">
+              <input id="map-background-color" type="color" value="#FFFFFF"
+                aria-label="Wybierz dowolny kolor tła mapy">
+              <output id="map-background-value" for="map-background-color">#FFFFFF</output>
+            </div>
+            <div class="map-background-presets" aria-label="Przykładowe kolory">
+              <button type="button" data-map-bg="#FFFFFF" title="Białe tło">Biały</button>
+              <button type="button" data-map-bg="#F1F4F6" title="Jasnoszare tło">Jasnoszary</button>
+              <button type="button" data-map-bg="#E5E7EB" title="Szare tło">Szary</button>
+              <button type="button" data-map-bg="#F6F1E7" title="Ciepłe tło">Kremowy</button>
+            </div>
+          </div>
+          </details>
+        </div>
+        <div class="header-action-group header-files" role="group" aria-label="Operacje plikowe">
+          <button id="btn-layout" class="button ghost header-control" disabled title="Eksport PNG, JPG, TIFF i DXF, skala, legenda i wydruk"><svg class="soft3d-icon header-icon" viewBox="0 0 40 40" aria-hidden="true" focusable="false"><defs><linearGradient id="gs-soft3d-4" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#a8b9ce"/><stop offset=".55" stop-color="#62788f"/><stop offset="1" stop-color="#3e526a"/></linearGradient></defs><ellipse cx="20" cy="36.5" rx="15" ry="2" fill="#101827" opacity=".18"/><rect x="3" y="6" width="34" height="30" rx="9" fill="#3e526a"/><rect x="3" y="2" width="34" height="30" rx="9" fill="url(#gs-soft3d-4)" stroke="#3e526a" stroke-width=".6"/><path d="M6 11Q6 5 12 5h16" stroke="#fff" stroke-opacity=".4" stroke-width="1.35" fill="none" stroke-linecap="round"/><g transform="translate(8 5)"><g fill="none" stroke="#fff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M7 8V3h10v5M7 17H4V9h16v8h-3M7 14h10v7H7ZM16 11h1"/></g></g></svg><span>Eksport / druk</span></button>
+          <button id="btn-export" class="button export header-control" disabled title="Zapisz MAP z rzeczywistymi wycięciami automatycznie, z plikiem odtworzenia oryginału"><svg class="soft3d-icon header-icon" viewBox="0 0 40 40" aria-hidden="true" focusable="false"><defs><linearGradient id="gs-soft3d-5" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#77b7ff"/><stop offset=".55" stop-color="#2876db"/><stop offset="1" stop-color="#184a9c"/></linearGradient></defs><ellipse cx="20" cy="36.5" rx="15" ry="2" fill="#101827" opacity=".18"/><rect x="3" y="6" width="34" height="30" rx="9" fill="#184a9c"/><rect x="3" y="2" width="34" height="30" rx="9" fill="url(#gs-soft3d-5)" stroke="#184a9c" stroke-width=".6"/><path d="M6 11Q6 5 12 5h16" stroke="#fff" stroke-opacity=".4" stroke-width="1.35" fill="none" stroke-linecap="round"/><g transform="translate(8 5)"><g fill="none" stroke="#fff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12m-5-5 5 5 5-5M4 16v4h16v-4"/></g></g></svg><span id="btn-export-label">Pobierz MAP</span></button>
+          <button id="btn-open" class="button primary header-control"><svg class="soft3d-icon header-icon" viewBox="0 0 40 40" aria-hidden="true" focusable="false"><defs><linearGradient id="gs-soft3d-6" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#77b7ff"/><stop offset=".55" stop-color="#2876db"/><stop offset="1" stop-color="#184a9c"/></linearGradient></defs><ellipse cx="20" cy="36.5" rx="15" ry="2" fill="#101827" opacity=".18"/><rect x="3" y="6" width="34" height="30" rx="9" fill="#184a9c"/><rect x="3" y="2" width="34" height="30" rx="9" fill="url(#gs-soft3d-6)" stroke="#184a9c" stroke-width=".6"/><path d="M6 11Q6 5 12 5h16" stroke="#fff" stroke-opacity=".4" stroke-width="1.35" fill="none" stroke-linecap="round"/><g transform="translate(8 5)"><g fill="none" stroke="#fff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7V5a2 2 0 0 1 2-2h5l3 3h6a2 2 0 0 1 2 2v1M3 7h16l3 3-3 10H3Z"/></g></g></svg><span>Otwórz MAP</span></button>
+        </div>
       </div>
     </header>
 
-    <div class="toolbar">
-      <div class="tool-section">
-        <span class="section-label">PROJEKT</span>
-        <div class="tool-row">
-          <button class="tool-button" id="tool-open"><span class="tool-glyph">▱</span>Otwórz</button>
-          <button class="tool-button" id="tool-sidecar"><span class="tool-glyph">◈</span>Style JSON</button>
-          <button class="tool-button" id="tool-undo" disabled title="Cofnij (Ctrl+Z)"><span class="tool-glyph">↶</span>Cofnij</button>
-          <button class="tool-button" id="tool-redo" disabled title="Ponów (Ctrl+Y)"><span class="tool-glyph">↷</span>Ponów</button>
-        </div>
+    <div class="toolbar" id="main-ribbon" aria-label="Narzędzia GeoStudio">
+      <div class="ribbon-tabs" role="tablist" aria-label="Zakładki narzędzi" aria-orientation="horizontal">
+<button type="button" role="tab" id="ribbon-tab-start" data-ribbon-tab="start" aria-controls="ribbon-panel-start" aria-selected="true" tabindex="0" class="ribbon-tab active" title="Mapa i historia">Start</button>
+<button type="button" role="tab" id="ribbon-tab-select" data-ribbon-tab="select" aria-controls="ribbon-panel-select" aria-selected="false" tabindex="-1" class="ribbon-tab" title="Wybór i wyszukiwanie">Zaznaczanie</button>
+<button type="button" role="tab" id="ribbon-tab-edit" data-ribbon-tab="edit" aria-controls="ribbon-panel-edit" aria-selected="false" tabindex="-1" class="ribbon-tab" title="Zmiany i atrybuty">Edycja</button>
+<button type="button" role="tab" id="ribbon-tab-draw" data-ribbon-tab="draw" aria-controls="ribbon-panel-draw" aria-selected="false" tabindex="-1" class="ribbon-tab" title="Tworzenie i operacje">Rysowanie</button>
+<button type="button" role="tab" id="ribbon-tab-cartography" data-ribbon-tab="cartography" aria-controls="ribbon-panel-cartography" aria-selected="false" tabindex="-1" class="ribbon-tab" title="Opisy i style mapy">Kartografia</button>
+<button type="button" role="tab" id="ribbon-tab-underlay" data-ribbon-tab="underlay" aria-controls="ribbon-panel-underlay" aria-selected="false" tabindex="-1" class="ribbon-tab" title="WMS, raster i układy">Podkłady</button>
+<button type="button" role="tab" class="ribbon-tab" id="ribbon-tab-insert" data-ribbon-tab="insert" aria-controls="ribbon-panel-insert" aria-selected="false" tabindex="-1">Wstawianie</button>
+<button type="button" role="tab" id="ribbon-tab-export" data-ribbon-tab="export" aria-controls="ribbon-panel-export" aria-selected="false" tabindex="-1" class="ribbon-tab" title="Wydruk i kopie">Eksport</button>
+<button type="button" role="tab" id="ribbon-tab-topology" data-ribbon-tab="topology" aria-controls="ribbon-panel-topology" aria-selected="false" tabindex="-1" class="ribbon-tab" title="Kontrola błędów geometrii i topologii">Kontrola mapy</button>
       </div>
-      <span class="tool-divider"></span>
-      <div class="tool-section">
-        <span class="section-label">NAWIGACJA</span>
-        <div class="tool-row">
-          <button class="tool-button active" id="tool-select"><span class="tool-glyph">↖</span>Zaznacz <small>S</small></button>
-          <button class="tool-button" id="tool-pan"><span class="tool-glyph">✥</span>Przesuń <small>H</small></button>
-          <button class="tool-button" id="tool-nodes" title="Edycja węzłów poligonu (P)"><span class="tool-glyph">⬡</span>Węzły <small>P</small></button>
-          <button class="tool-button" id="tool-advanced-select" title="Zaznacz według kodu i atrybutów (Ctrl+H)"><span class="tool-glyph">⌕</span>Filtruj <small>Ctrl+H</small></button>
-          <button class="tool-button" id="tool-bulk-edit" disabled title="Zmień A1/A2 wielu zaznaczonych obiektów"><span class="tool-glyph">✎</span>Zbiorowo <small>A1/A2</small></button>
-          <button class="tool-button" id="tool-delete-node" disabled title="Zaznacz węzeł i usuń go (Delete)"><span class="tool-glyph">⊖</span>Usuń węzeł <small>Del</small></button>
-          <button class="tool-button" id="tool-fit"><span class="tool-glyph">⛶</span>Dopasuj</button>
-        </div>
-      </div>
-      <span class="tool-divider"></span>
-      <div class="tool-section">
-        <span class="section-label">WIDOK MAPY</span>
-        <div class="tool-row">
-          <button class="tool-button active" id="tool-labels"><span class="tool-glyph">Aa</span>Etykiety</button>
-          <button class="tool-button" id="tool-grid"><span class="tool-glyph">▦</span>Siatka</button>
-        </div>
-      </div>
-      <span class="tool-divider"></span>
-      <div class="tool-section geometry-options">
-        <span class="section-label">EDYCJA WĘZŁÓW</span>
-        <div class="tool-row">
-          <label class="toolbar-checkbox" title="Przyciągaj do wszystkich linii i graniczników mapy"><input type="checkbox" id="opt-snap" checked> Przyciąganie</label>
-          <label class="toolbar-checkbox" title="Przemieszczaj wspólne węzły WYŁĄCZNIE obiektów o tym samym kodzie"><input type="checkbox" id="opt-shared"> Wspólne węzły (ten sam kod)</label>
-        </div>
-      </div>
-      <div class="toolbar-fill"></div>
-      <div class="safe-state"><span class="state-dot"></span> ORYGINAŁ CHRONIONY · EDYCJA W PAMIĘCI</div>
+      <div class="ribbon-panels"><div id="ribbon-panel-start" class="ribbon-panel active" data-ribbon-panel="start" role="tabpanel" aria-labelledby="ribbon-tab-start" >
+<section class="ribbon-group" aria-label="PLIKI"><span class="section-label">PLIKI</span><div class="tool-row"><button class="tool-button" id="tool-open"><span class="tool-glyph" aria-hidden="true"><svg class="soft3d-icon " viewBox="0 0 40 40" aria-hidden="true" focusable="false"><defs><linearGradient id="gs-soft3d-7" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#ffd37a"/><stop offset=".55" stop-color="#c88b20"/><stop offset="1" stop-color="#91600e"/></linearGradient></defs><ellipse cx="20" cy="36.5" rx="15" ry="2" fill="#101827" opacity=".18"/><rect x="3" y="6" width="34" height="30" rx="9" fill="#91600e"/><rect x="3" y="2" width="34" height="30" rx="9" fill="url(#gs-soft3d-7)" stroke="#91600e" stroke-width=".6"/><path d="M6 11Q6 5 12 5h16" stroke="#fff" stroke-opacity=".4" stroke-width="1.35" fill="none" stroke-linecap="round"/><g transform="translate(8 5)"><g fill="none" stroke="#fff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7V5a2 2 0 0 1 2-2h5l3 3h6a2 2 0 0 1 2 2v1M3 7h16l3 3-3 10H3Z"/></g></g></svg></span>Otwórz</button>
+
+</div></section>
+<section class="ribbon-group" aria-label="HISTORIA"><span class="section-label">HISTORIA</span><div class="tool-row"><button class="tool-button" id="tool-undo" disabled title="Cofnij (Ctrl+Z)"><span class="tool-glyph" aria-hidden="true"><svg class="soft3d-icon " viewBox="0 0 40 40" aria-hidden="true" focusable="false"><defs><linearGradient id="gs-soft3d-10" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#77b7ff"/><stop offset=".55" stop-color="#2876db"/><stop offset="1" stop-color="#184a9c"/></linearGradient></defs><ellipse cx="20" cy="36.5" rx="15" ry="2" fill="#101827" opacity=".18"/><rect x="3" y="6" width="34" height="30" rx="9" fill="#184a9c"/><rect x="3" y="2" width="34" height="30" rx="9" fill="url(#gs-soft3d-10)" stroke="#184a9c" stroke-width=".6"/><path d="M6 11Q6 5 12 5h16" stroke="#fff" stroke-opacity=".4" stroke-width="1.35" fill="none" stroke-linecap="round"/><g transform="translate(8 5)"><g fill="none" stroke="#fff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M8 4 3 9l5 5M3 9h11a6 6 0 0 1 0 12"/></g></g></svg></span>Cofnij</button>
+<button class="tool-button" id="tool-redo" disabled title="Ponów (Ctrl+Y)"><span class="tool-glyph" aria-hidden="true"><svg class="soft3d-icon " viewBox="0 0 40 40" aria-hidden="true" focusable="false"><defs><linearGradient id="gs-soft3d-11" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#77b7ff"/><stop offset=".55" stop-color="#2876db"/><stop offset="1" stop-color="#184a9c"/></linearGradient></defs><ellipse cx="20" cy="36.5" rx="15" ry="2" fill="#101827" opacity=".18"/><rect x="3" y="6" width="34" height="30" rx="9" fill="#184a9c"/><rect x="3" y="2" width="34" height="30" rx="9" fill="url(#gs-soft3d-11)" stroke="#184a9c" stroke-width=".6"/><path d="M6 11Q6 5 12 5h16" stroke="#fff" stroke-opacity=".4" stroke-width="1.35" fill="none" stroke-linecap="round"/><g transform="translate(8 5)"><g fill="none" stroke="#fff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><g transform="translate(24 0) scale(-1 1)"><path d="M8 4 3 9l5 5M3 9h11a6 6 0 0 1 0 12"/></g></g></g></svg></span>Ponów</button></div></section>
+<section class="ribbon-group" aria-label="WIDOK"><span class="section-label">WIDOK</span><div class="tool-row"><button class="tool-button" id="tool-fit"><span class="tool-glyph" aria-hidden="true"><svg class="soft3d-icon " viewBox="0 0 40 40" aria-hidden="true" focusable="false"><defs><linearGradient id="gs-soft3d-12" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#52cbd9"/><stop offset=".55" stop-color="#098ca4"/><stop offset="1" stop-color="#075a76"/></linearGradient></defs><ellipse cx="20" cy="36.5" rx="15" ry="2" fill="#101827" opacity=".18"/><rect x="3" y="6" width="34" height="30" rx="9" fill="#075a76"/><rect x="3" y="2" width="34" height="30" rx="9" fill="url(#gs-soft3d-12)" stroke="#075a76" stroke-width=".6"/><path d="M6 11Q6 5 12 5h16" stroke="#fff" stroke-opacity=".4" stroke-width="1.35" fill="none" stroke-linecap="round"/><g transform="translate(8 5)"><g fill="none" stroke="#fff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 3H3v6m12-6h6v6M3 15v6h6m12-6v6h-6M8 8h8v8H8Z"/></g></g></svg></span>Dopasuj</button>
+<button class="tool-button" id="tool-grid"><span class="tool-glyph" aria-hidden="true"><svg class="soft3d-icon " viewBox="0 0 40 40" aria-hidden="true" focusable="false"><defs><linearGradient id="gs-soft3d-13" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#a8b9ce"/><stop offset=".55" stop-color="#62788f"/><stop offset="1" stop-color="#3e526a"/></linearGradient></defs><ellipse cx="20" cy="36.5" rx="15" ry="2" fill="#101827" opacity=".18"/><rect x="3" y="6" width="34" height="30" rx="9" fill="#3e526a"/><rect x="3" y="2" width="34" height="30" rx="9" fill="url(#gs-soft3d-13)" stroke="#3e526a" stroke-width=".6"/><path d="M6 11Q6 5 12 5h16" stroke="#fff" stroke-opacity=".4" stroke-width="1.35" fill="none" stroke-linecap="round"/><g transform="translate(8 5)"><g fill="none" stroke="#fff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="1"/><path d="M9 3v18m6-18v18M3 9h18M3 15h18"/></g></g></svg></span>Siatka</button></div></section>
+</div>
+<div id="ribbon-panel-select" class="ribbon-panel" data-ribbon-panel="select" role="tabpanel" aria-labelledby="ribbon-tab-select" hidden>
+<section class="ribbon-group" aria-label="NAWIGACJA"><span class="section-label">NAWIGACJA</span><div class="tool-row"><button class="tool-button active" id="tool-select"><span class="tool-glyph" aria-hidden="true"><svg class="soft3d-icon " viewBox="0 0 40 40" aria-hidden="true" focusable="false"><defs><linearGradient id="gs-soft3d-14" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#77b7ff"/><stop offset=".55" stop-color="#2876db"/><stop offset="1" stop-color="#184a9c"/></linearGradient></defs><ellipse cx="20" cy="36.5" rx="15" ry="2" fill="#101827" opacity=".18"/><rect x="3" y="6" width="34" height="30" rx="9" fill="#184a9c"/><rect x="3" y="2" width="34" height="30" rx="9" fill="url(#gs-soft3d-14)" stroke="#184a9c" stroke-width=".6"/><path d="M6 11Q6 5 12 5h16" stroke="#fff" stroke-opacity=".4" stroke-width="1.35" fill="none" stroke-linecap="round"/><g transform="translate(8 5)"><g fill="none" stroke="#fff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 3 21 14l-9 1-4 8Z" fill="#fff" stroke-linejoin="round"/></g></g></svg></span>Zaznacz <small>S</small></button>
+<button class="tool-button" id="tool-pan"><span class="tool-glyph" aria-hidden="true"><svg class="soft3d-icon " viewBox="0 0 40 40" aria-hidden="true" focusable="false"><defs><linearGradient id="gs-soft3d-15" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#52cbd9"/><stop offset=".55" stop-color="#098ca4"/><stop offset="1" stop-color="#075a76"/></linearGradient></defs><ellipse cx="20" cy="36.5" rx="15" ry="2" fill="#101827" opacity=".18"/><rect x="3" y="6" width="34" height="30" rx="9" fill="#075a76"/><rect x="3" y="2" width="34" height="30" rx="9" fill="url(#gs-soft3d-15)" stroke="#075a76" stroke-width=".6"/><path d="M6 11Q6 5 12 5h16" stroke="#fff" stroke-opacity=".4" stroke-width="1.35" fill="none" stroke-linecap="round"/><g transform="translate(8 5)"><g fill="none" stroke="#fff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2v20M2 12h20M8 6l4-4 4 4M18 8l4 4-4 4M8 18l4 4 4-4M6 8l-4 4 4 4"/></g></g></svg></span>Przesuń <small>H</small></button></div></section>
+<section class="ribbon-group" aria-label="WYSZUKIWANIE"><span class="section-label">WYSZUKIWANIE</span><div class="tool-row"><button class="tool-button" id="tool-find" title="Wyszukaj po ID, kodzie lub dowolnej treści (F)"><span class="tool-glyph" aria-hidden="true"><svg class="soft3d-icon " viewBox="0 0 40 40" aria-hidden="true" focusable="false"><defs><linearGradient id="gs-soft3d-16" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#b7a0fa"/><stop offset=".55" stop-color="#8051d2"/><stop offset="1" stop-color="#51339d"/></linearGradient></defs><ellipse cx="20" cy="36.5" rx="15" ry="2" fill="#101827" opacity=".18"/><rect x="3" y="6" width="34" height="30" rx="9" fill="#51339d"/><rect x="3" y="2" width="34" height="30" rx="9" fill="url(#gs-soft3d-16)" stroke="#51339d" stroke-width=".6"/><path d="M6 11Q6 5 12 5h16" stroke="#fff" stroke-opacity=".4" stroke-width="1.35" fill="none" stroke-linecap="round"/><g transform="translate(8 5)"><g fill="none" stroke="#fff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="10" cy="10" r="6.5"/><path d="m15 15 6 6"/></g></g></svg></span>Znajdź <small>F</small></button>
+<button class="tool-button" id="tool-advanced-select" title="Zaznacz według kodu i atrybutów (Ctrl+H)"><span class="tool-glyph" aria-hidden="true"><svg class="soft3d-icon " viewBox="0 0 40 40" aria-hidden="true" focusable="false"><defs><linearGradient id="gs-soft3d-17" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#b7a0fa"/><stop offset=".55" stop-color="#8051d2"/><stop offset="1" stop-color="#51339d"/></linearGradient></defs><ellipse cx="20" cy="36.5" rx="15" ry="2" fill="#101827" opacity=".18"/><rect x="3" y="6" width="34" height="30" rx="9" fill="#51339d"/><rect x="3" y="2" width="34" height="30" rx="9" fill="url(#gs-soft3d-17)" stroke="#51339d" stroke-width=".6"/><path d="M6 11Q6 5 12 5h16" stroke="#fff" stroke-opacity=".4" stroke-width="1.35" fill="none" stroke-linecap="round"/><g transform="translate(8 5)"><g fill="none" stroke="#fff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 4h18l-7 9v6l-4 2v-8Z"/><path d="M7 7h10"/></g></g></svg></span>Filtruj <small>Ctrl+H</small></button>
+<button class="tool-button" id="tool-clear-selection" title="Odznacz wszystkie obiekty z bloku (Esc)"><span class="tool-glyph" aria-hidden="true"><svg class="soft3d-icon " viewBox="0 0 40 40" aria-hidden="true" focusable="false"><defs><linearGradient id="gs-soft3d-18" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#a8b9ce"/><stop offset=".55" stop-color="#62788f"/><stop offset="1" stop-color="#3e526a"/></linearGradient></defs><ellipse cx="20" cy="36.5" rx="15" ry="2" fill="#101827" opacity=".18"/><rect x="3" y="6" width="34" height="30" rx="9" fill="#3e526a"/><rect x="3" y="2" width="34" height="30" rx="9" fill="url(#gs-soft3d-18)" stroke="#3e526a" stroke-width=".6"/><path d="M6 11Q6 5 12 5h16" stroke="#fff" stroke-opacity=".4" stroke-width="1.35" fill="none" stroke-linecap="round"/><g transform="translate(8 5)"><g fill="none" stroke="#fff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" stroke-dasharray="3 3"/><path d="m8 8 8 8m0-8-8 8"/></g></g></svg></span>Odznacz <small>Esc</small></button></div></section>
+</div>
+<div id="ribbon-panel-edit" class="ribbon-panel" data-ribbon-panel="edit" role="tabpanel" aria-labelledby="ribbon-tab-edit" hidden>
+<section class="ribbon-group" aria-label="PRZESUWANIE"><span class="section-label">PRZESUWANIE</span><div class="tool-row"><button class="tool-button" id="tool-move" title="Przeciągaj wybrane obiekty: punkty, linie i poligony (M)"><span class="tool-glyph" aria-hidden="true"><svg class="soft3d-icon " viewBox="0 0 40 40" aria-hidden="true" focusable="false"><defs><linearGradient id="gs-soft3d-19" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#ffc477"/><stop offset=".55" stop-color="#cf791a"/><stop offset="1" stop-color="#9e4b0c"/></linearGradient></defs><ellipse cx="20" cy="36.5" rx="15" ry="2" fill="#101827" opacity=".18"/><rect x="3" y="6" width="34" height="30" rx="9" fill="#9e4b0c"/><rect x="3" y="2" width="34" height="30" rx="9" fill="url(#gs-soft3d-19)" stroke="#9e4b0c" stroke-width=".6"/><path d="M6 11Q6 5 12 5h16" stroke="#fff" stroke-opacity=".4" stroke-width="1.35" fill="none" stroke-linecap="round"/><g transform="translate(8 5)"><g fill="none" stroke="#fff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="8" y="8" width="8" height="8" rx="1"/><path d="M12 2v4m-2-2 2-2 2 2M12 18v4m-2-2 2 2 2-2M2 12h4m-2-2-2 2 2 2M18 12h4m-2-2 2 2-2 2"/></g></g></svg></span>Obiekty <small>M</small></button>
+<button class="tool-button" id="tool-nodes" title="Edycja węzłów poligonu (P)"><span class="tool-glyph" aria-hidden="true"><svg class="soft3d-icon " viewBox="0 0 40 40" aria-hidden="true" focusable="false"><defs><linearGradient id="gs-soft3d-20" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#ffc477"/><stop offset=".55" stop-color="#cf791a"/><stop offset="1" stop-color="#9e4b0c"/></linearGradient></defs><ellipse cx="20" cy="36.5" rx="15" ry="2" fill="#101827" opacity=".18"/><rect x="3" y="6" width="34" height="30" rx="9" fill="#9e4b0c"/><rect x="3" y="2" width="34" height="30" rx="9" fill="url(#gs-soft3d-20)" stroke="#9e4b0c" stroke-width=".6"/><path d="M6 11Q6 5 12 5h16" stroke="#fff" stroke-opacity=".4" stroke-width="1.35" fill="none" stroke-linecap="round"/><g transform="translate(8 5)"><g fill="none" stroke="#fff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 18 8 5l13 4-4 12Z"/><rect x="2.2" y="16.2" width="3.6" height="3.6" rx=".55" fill="#fff" stroke="none"/><rect x="6.2" y="3.2" width="3.6" height="3.6" rx=".55" fill="#fff" stroke="none"/><rect x="19.2" y="7.2" width="3.6" height="3.6" rx=".55" fill="#fff" stroke="none"/><rect x="15.2" y="19.2" width="3.6" height="3.6" rx=".55" fill="#fff" stroke="none"/></g></g></svg></span>Węzły <small>P</small></button>
+<button class="tool-button" id="tool-delete-node" disabled title="Zaznacz węzeł i usuń go (Delete)"><span class="tool-glyph" aria-hidden="true"><svg class="soft3d-icon " viewBox="0 0 40 40" aria-hidden="true" focusable="false"><defs><linearGradient id="gs-soft3d-21" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#ff9b9e"/><stop offset=".55" stop-color="#d94d5f"/><stop offset="1" stop-color="#a52538"/></linearGradient></defs><ellipse cx="20" cy="36.5" rx="15" ry="2" fill="#101827" opacity=".18"/><rect x="3" y="6" width="34" height="30" rx="9" fill="#a52538"/><rect x="3" y="2" width="34" height="30" rx="9" fill="url(#gs-soft3d-21)" stroke="#a52538" stroke-width=".6"/><path d="M6 11Q6 5 12 5h16" stroke="#fff" stroke-opacity=".4" stroke-width="1.35" fill="none" stroke-linecap="round"/><g transform="translate(8 5)"><g fill="none" stroke="#fff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 18 8 4l13 5-4 11Z"/><rect x="2.2" y="16.2" width="3.6" height="3.6" rx=".55" fill="#fff" stroke="none"/><rect x="6.2" y="2.2" width="3.6" height="3.6" rx=".55" fill="#fff" stroke="none"/><rect x="19.2" y="7.2" width="3.6" height="3.6" rx=".55" fill="#fff" stroke="none"/><circle cx="17" cy="20" r="4"/><path d="M15 20h4"/></g></g></svg></span>Usuń węzeł <small>Del</small></button><button id="tool-move-offset" type="button" hidden style="display:none" aria-hidden="true" tabindex="-1">Δ X/Y</button></div></section>
+<section class="ribbon-group" aria-label="ATRYBUTY"><span class="section-label">ATRYBUTY</span><div class="tool-row"><button class="tool-button" id="tool-replace-phrase" title="Znajdź i zamień fragment w wybranym polu, z podglądem i Ctrl+Z (Ctrl+F)"><span class="tool-glyph" aria-hidden="true"><svg class="soft3d-icon " viewBox="0 0 40 40" aria-hidden="true" focusable="false"><defs><linearGradient id="gs-soft3d-22" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#b7a0fa"/><stop offset=".55" stop-color="#8051d2"/><stop offset="1" stop-color="#51339d"/></linearGradient></defs><ellipse cx="20" cy="36.5" rx="15" ry="2" fill="#101827" opacity=".18"/><rect x="3" y="6" width="34" height="30" rx="9" fill="#51339d"/><rect x="3" y="2" width="34" height="30" rx="9" fill="url(#gs-soft3d-22)" stroke="#51339d" stroke-width=".6"/><path d="M6 11Q6 5 12 5h16" stroke="#fff" stroke-opacity=".4" stroke-width="1.35" fill="none" stroke-linecap="round"/><g transform="translate(8 5)"><g fill="none" stroke="#fff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 7h18l-4-4m4 4-4 4M21 17H3l4-4m-4 4 4 4"/></g></g></svg></span>Zamień <small>Ctrl+F</small></button>
+<button class="tool-button" id="tool-bulk-edit" disabled title="Zmień A1/A2 wielu zaznaczonych obiektów"><span class="tool-glyph" aria-hidden="true"><svg class="soft3d-icon " viewBox="0 0 40 40" aria-hidden="true" focusable="false"><defs><linearGradient id="gs-soft3d-23" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#ffc477"/><stop offset=".55" stop-color="#cf791a"/><stop offset="1" stop-color="#9e4b0c"/></linearGradient></defs><ellipse cx="20" cy="36.5" rx="15" ry="2" fill="#101827" opacity=".18"/><rect x="3" y="6" width="34" height="30" rx="9" fill="#9e4b0c"/><rect x="3" y="2" width="34" height="30" rx="9" fill="url(#gs-soft3d-23)" stroke="#9e4b0c" stroke-width=".6"/><path d="M6 11Q6 5 12 5h16" stroke="#fff" stroke-opacity=".4" stroke-width="1.35" fill="none" stroke-linecap="round"/><g transform="translate(8 5)"><g fill="none" stroke="#fff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="12" height="15" rx="1"/><path d="M6 7h6M6 10h4"/><g transform="translate(5 6) scale(.75)"><path d="m4 16-1 5 5-1L21 7l-4-4ZM14 6l4 4"/></g></g></g></svg></span>Zbiorowo <small>A1/A2</small></button></div></section>
+<section class="ribbon-group" aria-label="OBIEKTY"><span class="section-label">OBIEKTY</span><div class="tool-row"><button class="tool-button" id="tool-copy" title="Kopiuj zaznaczone poligony (Ctrl+D)"><span class="tool-glyph" aria-hidden="true"><svg class="soft3d-icon " viewBox="0 0 40 40" aria-hidden="true" focusable="false"><defs><linearGradient id="gs-soft3d-24" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#77b7ff"/><stop offset=".55" stop-color="#2876db"/><stop offset="1" stop-color="#184a9c"/></linearGradient></defs><ellipse cx="20" cy="36.5" rx="15" ry="2" fill="#101827" opacity=".18"/><rect x="3" y="6" width="34" height="30" rx="9" fill="#184a9c"/><rect x="3" y="2" width="34" height="30" rx="9" fill="url(#gs-soft3d-24)" stroke="#184a9c" stroke-width=".6"/><path d="M6 11Q6 5 12 5h16" stroke="#fff" stroke-opacity=".4" stroke-width="1.35" fill="none" stroke-linecap="round"/><g transform="translate(8 5)"><g fill="none" stroke="#fff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="13" height="14" rx="2"/><rect x="9" y="8" width="12" height="13" rx="2"/><path d="M12 15h6m-3-3v6"/></g></g></svg></span>Kopiuj obok <small>Ctrl+D</small></button>
+<button class="tool-button" id="tool-delete-objects" title="Usuń wybrane obiekty (Ctrl+Delete)"><span class="tool-glyph" aria-hidden="true"><svg class="soft3d-icon " viewBox="0 0 40 40" aria-hidden="true" focusable="false"><defs><linearGradient id="gs-soft3d-25" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#ff9b9e"/><stop offset=".55" stop-color="#d94d5f"/><stop offset="1" stop-color="#a52538"/></linearGradient></defs><ellipse cx="20" cy="36.5" rx="15" ry="2" fill="#101827" opacity=".18"/><rect x="3" y="6" width="34" height="30" rx="9" fill="#a52538"/><rect x="3" y="2" width="34" height="30" rx="9" fill="url(#gs-soft3d-25)" stroke="#a52538" stroke-width=".6"/><path d="M6 11Q6 5 12 5h16" stroke="#fff" stroke-opacity=".4" stroke-width="1.35" fill="none" stroke-linecap="round"/><g transform="translate(8 5)"><g fill="none" stroke="#fff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6h16M9 6V3h6v3M6 6l1 15h10l1-15M10 10v7m4-7v7"/></g></g></svg></span>Usuń obiekty</button></div></section>
+<section class="ribbon-group geometry-options" aria-label="Opcje węzłów"><span class="section-label">PRZYCIĄGANIE WĘZŁÓW</span><div class="tool-row"><label class="toolbar-checkbox" title="Przyciągaj do wszystkich linii i graniczników mapy"><input type="checkbox" id="opt-snap" checked> Przyciąganie</label><label class="toolbar-checkbox" title="Przemieszczaj wspólne węzły WYŁĄCZNIE obiektów o tym samym kodzie"><input type="checkbox" id="opt-shared"> Wspólne węzły (ten sam kod)</label></div></section>
+</div>
+<div id="ribbon-panel-draw" class="ribbon-panel" data-ribbon-panel="draw" role="tabpanel" aria-labelledby="ribbon-tab-draw" hidden>
+<section class="ribbon-group" aria-label="TWORZENIE"><span class="section-label">TWORZENIE</span><div class="tool-row"><button class="tool-button" id="tool-new-polygon" title="Narysuj nowy poligon (N)"><span class="tool-glyph" aria-hidden="true"><svg class="soft3d-icon " viewBox="0 0 40 40" aria-hidden="true" focusable="false"><defs><linearGradient id="gs-soft3d-26" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#72d694"/><stop offset=".55" stop-color="#269950"/><stop offset="1" stop-color="#176433"/></linearGradient></defs><ellipse cx="20" cy="36.5" rx="15" ry="2" fill="#101827" opacity=".18"/><rect x="3" y="6" width="34" height="30" rx="9" fill="#176433"/><rect x="3" y="2" width="34" height="30" rx="9" fill="url(#gs-soft3d-26)" stroke="#176433" stroke-width=".6"/><path d="M6 11Q6 5 12 5h16" stroke="#fff" stroke-opacity=".4" stroke-width="1.35" fill="none" stroke-linecap="round"/><g transform="translate(8 5)"><g fill="none" stroke="#fff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 8 14 3 21 10 18 20 8 21 3 15Z"/><rect x="2.2" y="6.2" width="3.6" height="3.6" rx=".55" fill="#fff" stroke="none"/><rect x="12.2" y="1.2" width="3.6" height="3.6" rx=".55" fill="#fff" stroke="none"/><rect x="19.2" y="8.2" width="3.6" height="3.6" rx=".55" fill="#fff" stroke="none"/><rect x="16.2" y="18.2" width="3.6" height="3.6" rx=".55" fill="#fff" stroke="none"/><rect x="6.2" y="19.2" width="3.6" height="3.6" rx=".55" fill="#fff" stroke="none"/><rect x="1.2" y="13.2" width="3.6" height="3.6" rx=".55" fill="#fff" stroke="none"/></g></g></svg></span>Nowy poligon <small>N</small></button>
+<button class="tool-button" id="tool-line" title="Narysuj linię (L), edytuj istniejącą (Shift+L)"><span class="tool-glyph" aria-hidden="true"><svg class="soft3d-icon " viewBox="0 0 40 40" aria-hidden="true" focusable="false"><defs><linearGradient id="gs-soft3d-27" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#72d694"/><stop offset=".55" stop-color="#269950"/><stop offset="1" stop-color="#176433"/></linearGradient></defs><ellipse cx="20" cy="36.5" rx="15" ry="2" fill="#101827" opacity=".18"/><rect x="3" y="6" width="34" height="30" rx="9" fill="#176433"/><rect x="3" y="2" width="34" height="30" rx="9" fill="url(#gs-soft3d-27)" stroke="#176433" stroke-width=".6"/><path d="M6 11Q6 5 12 5h16" stroke="#fff" stroke-opacity=".4" stroke-width="1.35" fill="none" stroke-linecap="round"/><g transform="translate(8 5)"><g fill="none" stroke="#fff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 19 10 6 16 15 21 4"/><rect x="1.2" y="17.2" width="3.6" height="3.6" rx=".55" fill="#fff" stroke="none"/><rect x="8.2" y="4.2" width="3.6" height="3.6" rx=".55" fill="#fff" stroke="none"/><rect x="14.2" y="13.2" width="3.6" height="3.6" rx=".55" fill="#fff" stroke="none"/><rect x="19.2" y="2.2" width="3.6" height="3.6" rx=".55" fill="#fff" stroke="none"/></g></g></svg></span>Linia</button>
+<button type="button" class="tool-button" id="tool-trace-5310" title="Wkreśl wydzielenia z całego skalibrowanego rastra"><span class="tool-glyph" aria-hidden="true"><svg class="soft3d-icon" viewBox="0 0 40 40" focusable="false"><rect x="3" y="4" width="34" height="32" rx="8" fill="#166e78"/><path d="m10 13 15-4 6 17-18 4z" fill="#47bda9" stroke="white" stroke-width="2"/><path d="m12 23 16-5" stroke="#ffdf81" stroke-width="2"/><g fill="white"><circle cx="10" cy="13" r="2.5"/><circle cx="25" cy="9" r="2.5"/><circle cx="31" cy="26" r="2.5"/><circle cx="13" cy="30" r="2.5"/></g></svg></span>Auto Wkreślanie</button><select id="trace-raster-choice" aria-label="Raster do wkreślania" hidden></select><button class="tool-button active draw-magnet-control" id="tool-draw-snap" aria-pressed="true" title="Magnes przy rysowaniu: przyciąga tylko do bardzo bliskich węzłów i linii (G w trybie rysowania). Przytrzymaj Alt, aby chwilowo wyłączyć."><span class="tool-glyph" aria-hidden="true"><svg class="soft3d-icon " viewBox="0 0 40 40" aria-hidden="true" focusable="false"><defs><linearGradient id="gs-soft3d-28" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#ff9b9e"/><stop offset=".55" stop-color="#d94d5f"/><stop offset="1" stop-color="#a52538"/></linearGradient></defs><ellipse cx="20" cy="36.5" rx="15" ry="2" fill="#101827" opacity=".18"/><rect x="3" y="6" width="34" height="30" rx="9" fill="#a52538"/><rect x="3" y="2" width="34" height="30" rx="9" fill="url(#gs-soft3d-28)" stroke="#a52538" stroke-width=".6"/><path d="M6 11Q6 5 12 5h16" stroke="#fff" stroke-opacity=".4" stroke-width="1.35" fill="none" stroke-linecap="round"/><g transform="translate(8 5)"><g fill="none" stroke="#fff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 4h6v11a3 3 0 0 0 6 0V4h6v11a9 9 0 0 1-18 0Z" fill="#fff" fill-opacity=".28"/><path d="M3 9h6m6 0h6"/></g></g></svg></span>Magnes <small>G</small></button></div></section>
+<section class="ribbon-group" aria-label="POLIGONY"><span class="section-label">POLIGONY</span><div class="tool-row"><button class="tool-button" id="tool-merge" title="Scal wybrane poligony tego samego kodu (Ctrl+Shift+G)"><span class="tool-glyph" aria-hidden="true"><svg class="soft3d-icon " viewBox="0 0 40 40" aria-hidden="true" focusable="false"><defs><linearGradient id="gs-soft3d-29" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#6bd5c6"/><stop offset=".55" stop-color="#168e80"/><stop offset="1" stop-color="#086257"/></linearGradient></defs><ellipse cx="20" cy="36.5" rx="15" ry="2" fill="#101827" opacity=".18"/><rect x="3" y="6" width="34" height="30" rx="9" fill="#086257"/><rect x="3" y="2" width="34" height="30" rx="9" fill="url(#gs-soft3d-29)" stroke="#086257" stroke-width=".6"/><path d="M6 11Q6 5 12 5h16" stroke="#fff" stroke-opacity=".4" stroke-width="1.35" fill="none" stroke-linecap="round"/><g transform="translate(8 5)"><g fill="none" stroke="#fff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="12" height="12" rx="2"/><rect x="9" y="9" width="12" height="12" rx="2" fill="#fff" fill-opacity=".25"/><path d="M12 15h6m-3-3v6"/></g></g></svg></span>Scal</button>
+<button class="tool-button" id="tool-split" title="Narysuj linię podziału jednego poligonu (Ctrl+Shift+X)"><span class="tool-glyph" aria-hidden="true"><svg class="soft3d-icon " viewBox="0 0 40 40" aria-hidden="true" focusable="false"><defs><linearGradient id="gs-soft3d-30" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#ffc477"/><stop offset=".55" stop-color="#cf791a"/><stop offset="1" stop-color="#9e4b0c"/></linearGradient></defs><ellipse cx="20" cy="36.5" rx="15" ry="2" fill="#101827" opacity=".18"/><rect x="3" y="6" width="34" height="30" rx="9" fill="#9e4b0c"/><rect x="3" y="2" width="34" height="30" rx="9" fill="url(#gs-soft3d-30)" stroke="#9e4b0c" stroke-width=".6"/><path d="M6 11Q6 5 12 5h16" stroke="#fff" stroke-opacity=".4" stroke-width="1.35" fill="none" stroke-linecap="round"/><g transform="translate(8 5)"><g fill="none" stroke="#fff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="1"/><path d="M12 1v22" stroke-dasharray="2.5 2.5"/><path d="m8 9-3 3 3 3m8-6 3 3-3 3"/></g></g></svg></span>Podziel</button>
+<button class="tool-button" id="tool-winding" title="Ręczna naprawa starych rekordów; podczas Zapisz jako wszystkie proste poligony otrzymują dodatni obrys automatycznie"><span class="tool-glyph" aria-hidden="true"><svg class="soft3d-icon " viewBox="0 0 40 40" aria-hidden="true" focusable="false"><defs><linearGradient id="gs-soft3d-31" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#72d694"/><stop offset=".55" stop-color="#269950"/><stop offset="1" stop-color="#176433"/></linearGradient></defs><ellipse cx="20" cy="36.5" rx="15" ry="2" fill="#101827" opacity=".18"/><rect x="3" y="6" width="34" height="30" rx="9" fill="#176433"/><rect x="3" y="2" width="34" height="30" rx="9" fill="url(#gs-soft3d-31)" stroke="#176433" stroke-width=".6"/><path d="M6 11Q6 5 12 5h16" stroke="#fff" stroke-opacity=".4" stroke-width="1.35" fill="none" stroke-linecap="round"/><g transform="translate(8 5)"><g fill="none" stroke="#fff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v10M7 12h10"/></g></g></svg></span>Pole + (stare)</button></div></section>
+</div>
+<div id="ribbon-panel-cartography" class="ribbon-panel" data-ribbon-panel="cartography" role="tabpanel" aria-labelledby="ribbon-tab-cartography" hidden>
+<section class="ribbon-group" aria-label="ETYKIETY"><span class="section-label">ETYKIETY</span><div class="tool-row"><button class="tool-button active" id="tool-labels"><span class="tool-glyph" aria-hidden="true"><svg class="soft3d-icon " viewBox="0 0 40 40" aria-hidden="true" focusable="false"><defs><linearGradient id="gs-soft3d-32" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#b7a0fa"/><stop offset=".55" stop-color="#8051d2"/><stop offset="1" stop-color="#51339d"/></linearGradient></defs><ellipse cx="20" cy="36.5" rx="15" ry="2" fill="#101827" opacity=".18"/><rect x="3" y="6" width="34" height="30" rx="9" fill="#51339d"/><rect x="3" y="2" width="34" height="30" rx="9" fill="url(#gs-soft3d-32)" stroke="#51339d" stroke-width=".6"/><path d="M6 11Q6 5 12 5h16" stroke="#fff" stroke-opacity=".4" stroke-width="1.35" fill="none" stroke-linecap="round"/><g transform="translate(8 5)"><g fill="none" stroke="#fff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 20 9 4l6 16M5 14h8M17 14q4-3 4 1v5m-4-3h4"/></g></g></svg></span>Etykiety</button>
+<button class="tool-button" id="tool-label-move" title="Przesuwanie pojedynczych opisów A1/A2/TX myszą (tryb L)"><span class="tool-glyph" aria-hidden="true"><svg class="soft3d-icon " viewBox="0 0 40 40" aria-hidden="true" focusable="false"><defs><linearGradient id="gs-soft3d-33" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#b7a0fa"/><stop offset=".55" stop-color="#8051d2"/><stop offset="1" stop-color="#51339d"/></linearGradient></defs><ellipse cx="20" cy="36.5" rx="15" ry="2" fill="#101827" opacity=".18"/><rect x="3" y="6" width="34" height="30" rx="9" fill="#51339d"/><rect x="3" y="2" width="34" height="30" rx="9" fill="url(#gs-soft3d-33)" stroke="#51339d" stroke-width=".6"/><path d="M6 11Q6 5 12 5h16" stroke="#fff" stroke-opacity=".4" stroke-width="1.35" fill="none" stroke-linecap="round"/><g transform="translate(8 5)"><g fill="none" stroke="#fff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 15 7 4l4 11M5 11h4M12 12h9m-4-4 4 4-4 4M5 21h16"/></g></g></svg></span>Przesuń napisy <small>L</small></button>
+<button class="tool-button" id="tool-label-config" title="Ustaw widoczność, rozmiar i kolor osobno dla A1/A2 według kodu (Ctrl+Alt+L)"><span class="tool-glyph" aria-hidden="true"><svg class="soft3d-icon " viewBox="0 0 40 40" aria-hidden="true" focusable="false"><defs><linearGradient id="gs-soft3d-34" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#b7a0fa"/><stop offset=".55" stop-color="#8051d2"/><stop offset="1" stop-color="#51339d"/></linearGradient></defs><ellipse cx="20" cy="36.5" rx="15" ry="2" fill="#101827" opacity=".18"/><rect x="3" y="6" width="34" height="30" rx="9" fill="#51339d"/><rect x="3" y="2" width="34" height="30" rx="9" fill="url(#gs-soft3d-34)" stroke="#51339d" stroke-width=".6"/><path d="M6 11Q6 5 12 5h16" stroke="#fff" stroke-opacity=".4" stroke-width="1.35" fill="none" stroke-linecap="round"/><g transform="translate(8 5)"><g fill="none" stroke="#fff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M2 17 7 4l5 13M4 12h6M14 6h8m-8 6h8m-8 6h8"/><circle cx="17" cy="6" r="1.9"/><circle cx="20" cy="12" r="1.9"/><circle cx="16" cy="18" r="1.9"/></g></g></svg></span>Styl opisów</button></div></section>
+<section class="ribbon-group" aria-label="Obrysy poligonów"><span class="section-label">OBRYSY</span><div class="tool-row">
+<button class="tool-button" id="tool-outline-style" title="Kolor i grubość obrysu według kodu, np. 5310"><span class="tool-glyph" aria-hidden="true"><svg class="soft3d-icon " viewBox="0 0 40 40" aria-hidden="true" focusable="false"><defs><linearGradient id="gs-soft3d-35" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#ffc477"/><stop offset=".55" stop-color="#cf791a"/><stop offset="1" stop-color="#9e4b0c"/></linearGradient></defs><ellipse cx="20" cy="36.5" rx="15" ry="2" fill="#101827" opacity=".18"/><rect x="3" y="6" width="34" height="30" rx="9" fill="#9e4b0c"/><rect x="3" y="2" width="34" height="30" rx="9" fill="url(#gs-soft3d-35)" stroke="#9e4b0c" stroke-width=".6"/><path d="M6 11Q6 5 12 5h16" stroke="#fff" stroke-opacity=".4" stroke-width="1.35" fill="none" stroke-linecap="round"/><g transform="translate(8 5)"><g fill="none" stroke="#fff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7 12 3 20 7v10l-8 4-8-4Z" stroke-width="2.8" fill="#fff" fill-opacity=".16"/></g></g></svg></span>Styl obrysu</button>
+</div></section>
+<section class="ribbon-group" aria-label="Biblioteki kartograficzne"><span class="section-label">BIBLIOTEKI</span><div class="tool-row"><button class="tool-button" id="tool-cartography" title="Wczytaj oryginalne biblioteki kartograficzne LAY, CDF i SYM"><span class="tool-glyph" aria-hidden="true"><svg class="soft3d-icon " viewBox="0 0 40 40" aria-hidden="true" focusable="false"><defs><linearGradient id="gs-soft3d-36" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#ffd37a"/><stop offset=".55" stop-color="#c88b20"/><stop offset="1" stop-color="#91600e"/></linearGradient></defs><ellipse cx="20" cy="36.5" rx="15" ry="2" fill="#101827" opacity=".18"/><rect x="3" y="6" width="34" height="30" rx="9" fill="#91600e"/><rect x="3" y="2" width="34" height="30" rx="9" fill="url(#gs-soft3d-36)" stroke="#91600e" stroke-width=".6"/><path d="M6 11Q6 5 12 5h16" stroke="#fff" stroke-opacity=".4" stroke-width="1.35" fill="none" stroke-linecap="round"/><g transform="translate(8 5)"><g fill="none" stroke="#fff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 4h5v16H3ZM9 3h5v17H9ZM15 5l4-1 4 15-4 1Z"/></g></g></svg></span>LAY/CDF/SYM</button><button class="tool-button" id="tool-carto-catalog" title="Sprawdź faktyczne kolory, desenie, kreski i symbole z bibliotek dla kodów MAP"><span class="tool-glyph" aria-hidden="true"><svg class="soft3d-icon " viewBox="0 0 40 40" aria-hidden="true" focusable="false"><defs><linearGradient id="gs-soft3d-37" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#b7a0fa"/><stop offset=".55" stop-color="#8051d2"/><stop offset="1" stop-color="#51339d"/></linearGradient></defs><ellipse cx="20" cy="36.5" rx="15" ry="2" fill="#101827" opacity=".18"/><rect x="3" y="6" width="34" height="30" rx="9" fill="#51339d"/><rect x="3" y="2" width="34" height="30" rx="9" fill="url(#gs-soft3d-37)" stroke="#51339d" stroke-width=".6"/><path d="M6 11Q6 5 12 5h16" stroke="#fff" stroke-opacity=".4" stroke-width="1.35" fill="none" stroke-linecap="round"/><g transform="translate(8 5)"><g fill="none" stroke="#fff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/><path d="m15 18 2 2 3-4"/></g></g></svg></span>Podgląd stylów</button><button class="tool-button" id="tool-sidecar"><span class="tool-glyph" aria-hidden="true"><svg class="soft3d-icon " viewBox="0 0 40 40" aria-hidden="true" focusable="false"><defs><linearGradient id="gs-soft3d-8" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#b7a0fa"/><stop offset=".55" stop-color="#8051d2"/><stop offset="1" stop-color="#51339d"/></linearGradient></defs><ellipse cx="20" cy="36.5" rx="15" ry="2" fill="#101827" opacity=".18"/><rect x="3" y="6" width="34" height="30" rx="9" fill="#51339d"/><rect x="3" y="2" width="34" height="30" rx="9" fill="url(#gs-soft3d-8)" stroke="#51339d" stroke-width=".6"/><path d="M6 11Q6 5 12 5h16" stroke="#fff" stroke-opacity=".4" stroke-width="1.35" fill="none" stroke-linecap="round"/><g transform="translate(8 5)"><g fill="none" stroke="#fff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 3h10l4 4v14H5ZM14 3v5h5"/><path d="m10 10-3 3 3 3m4-6 3 3-3 3"/></g></g></svg></span>Import stylów JSON</button><span id="cartography-status" class="ribbon-status" title="Załadowane biblioteki kartograficzne">Brak bibliotek</span></div></section>
+</div>
+<div id="ribbon-panel-underlay" class="ribbon-panel" data-ribbon-panel="underlay" role="tabpanel" aria-labelledby="ribbon-tab-underlay" hidden>
+<section class="ribbon-group" aria-label="Podkłady mapowe"><span class="section-label">ŹRÓDŁA PODKŁADU</span><div class="tool-row">
+<button class="tool-button" id="tool-underlay" title="Otwórz niezależne okno WMS"><span class="tool-glyph" aria-hidden="true"><svg class="soft3d-icon " viewBox="0 0 40 40" aria-hidden="true" focusable="false"><defs><linearGradient id="gs-soft3d-38" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#52cbd9"/><stop offset=".55" stop-color="#098ca4"/><stop offset="1" stop-color="#075a76"/></linearGradient></defs><ellipse cx="20" cy="36.5" rx="15" ry="2" fill="#101827" opacity=".18"/><rect x="3" y="6" width="34" height="30" rx="9" fill="#075a76"/><rect x="3" y="2" width="34" height="30" rx="9" fill="url(#gs-soft3d-38)" stroke="#075a76" stroke-width=".6"/><path d="M6 11Q6 5 12 5h16" stroke="#fff" stroke-opacity=".4" stroke-width="1.35" fill="none" stroke-linecap="round"/><g transform="translate(8 5)"><g fill="none" stroke="#fff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="m3 8 9-5 9 5-9 5ZM3 12l9 5 9-5M3 16l9 5 9-5"/></g></g></svg></span>Mapy WMS</button>
+<button class="tool-button" id="tool-raster" title="Dodaj raster PNG, JPG, TIFF lub GeoTIFF"><span class="tool-glyph" aria-hidden="true"><svg class="soft3d-icon " viewBox="0 0 40 40" aria-hidden="true" focusable="false"><defs><linearGradient id="gs-soft3d-39" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#72d694"/><stop offset=".55" stop-color="#269950"/><stop offset="1" stop-color="#176433"/></linearGradient></defs><ellipse cx="20" cy="36.5" rx="15" ry="2" fill="#101827" opacity=".18"/><rect x="3" y="6" width="34" height="30" rx="9" fill="#176433"/><rect x="3" y="2" width="34" height="30" rx="9" fill="url(#gs-soft3d-39)" stroke="#176433" stroke-width=".6"/><path d="M6 11Q6 5 12 5h16" stroke="#fff" stroke-opacity=".4" stroke-width="1.35" fill="none" stroke-linecap="round"/><g transform="translate(8 5)"><g fill="none" stroke="#fff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8" cy="8" r="2"/><path d="m3 18 6-6 4 4 4-6 4 6"/></g></g></svg></span>Raster</button>
+<button class="tool-button" id="tool-crs" title="Sprawdź układ mapy z PRJ albo przelicz punkt"><span class="tool-glyph" aria-hidden="true"><svg class="soft3d-icon " viewBox="0 0 40 40" aria-hidden="true" focusable="false"><defs><linearGradient id="gs-soft3d-40" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#77b7ff"/><stop offset=".55" stop-color="#2876db"/><stop offset="1" stop-color="#184a9c"/></linearGradient></defs><ellipse cx="20" cy="36.5" rx="15" ry="2" fill="#101827" opacity=".18"/><rect x="3" y="6" width="34" height="30" rx="9" fill="#184a9c"/><rect x="3" y="2" width="34" height="30" rx="9" fill="url(#gs-soft3d-40)" stroke="#184a9c" stroke-width=".6"/><path d="M6 11Q6 5 12 5h16" stroke="#fff" stroke-opacity=".4" stroke-width="1.35" fill="none" stroke-linecap="round"/><g transform="translate(8 5)"><g fill="none" stroke="#fff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c5 5 5 13 0 18-5-5-5-13 0-18M5 7h14M5 17h14"/></g></g></svg></span>Układy EPSG</button>
+</div></section>
+<p class="ribbon-help">Podkłady rysowane są pod geometrią i nie zmieniają pliku MAP.</p>
+</div>
+<div id="ribbon-panel-insert" class="ribbon-panel" data-ribbon-panel="insert" role="tabpanel" aria-labelledby="ribbon-tab-insert" hidden>
+  <div class="ribbon-group"><div class="section-label">Elementy arkusza</div><div class="tool-row">
+    <button type="button" class="tool-button" data-sheet="compartment">Numer oddziału · 6900</button>
+    <button type="button" class="tool-button" data-sheet="title">Tytuł mapy</button>
+    <button type="button" class="tool-button" data-sheet="compass">Róża kierunków</button>
+    <button type="button" class="tool-button" data-sheet="credits">Wykonawca</button>
+    <button type="button" class="tool-button" data-sheet="symbols">Legenda oznaczeń</button>
+    <button type="button" class="tool-button" data-sheet="species">Legenda gatunków</button>
+  </div></div>
+  <div class="ribbon-group"><div class="section-label">Oznaczenie na mapie</div><div class="tool-row"><select id="sheet-sign" aria-label="Oznaczenie na mapie">
+<option value="conifer">Płazowina iglasta · 1431</option>
+<option value="deciduous">Płazowina liściasta · 1432</option>
+<option value="clearcut">Zrąb · 5200</option>
+<option value="marsh">Bagno · 1461 + 2613</option>
+<option value="power">Linia energetyczna · 2364</option>
+<option value="gas">Gazociąg · 5741 + 2613</option>
+<option value="boundary">Granice lasów · 5200</option>
+<option value="path">Ścieżki · 4588</option>
+<option value="shared">Współwłasność z ALP · 5219</option>
+</select><label>Wielkość <input type="range" id="sheet-size-factor" min="0.5" max="3" step="0.1" value="1"><output id="sheet-size-value">100%</output></label><button type="button" id="sheet-place-sign" class="tool-button">Wstawiaj znak</button></div></div>
+  <div class="ribbon-group"><div class="section-label">Wybrany element</div><div class="tool-row">
+    <button type="button" class="tool-button" id="sheet-edit" disabled>Tekst i czcionka</button>
+    <button type="button" class="tool-button" id="sheet-remove" disabled>Usuń</button>
+  </div></div>
+</div>
+<div id="ribbon-panel-export" class="ribbon-panel" data-ribbon-panel="export" role="tabpanel" aria-labelledby="ribbon-tab-export" hidden>
+<section class="ribbon-group" aria-label="WYCIĘCIA GEO-MAP"><span class="section-label">WYCIĘCIA GEO-MAP</span><div class="tool-row"><button class="tool-button" id="tool-export-baked" disabled title="Eksperymentalny: zapisz rzeczywiste wycięcia do MAP wraz z plikiem do ich odtworzenia"><span class="tool-glyph" aria-hidden="true"><svg class="soft3d-icon " viewBox="0 0 40 40" aria-hidden="true" focusable="false"><defs><linearGradient id="gs-soft3d-41" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#a8b9ce"/><stop offset=".55" stop-color="#62788f"/><stop offset="1" stop-color="#3e526a"/></linearGradient></defs><ellipse cx="20" cy="36.5" rx="15" ry="2" fill="#101827" opacity=".18"/><rect x="3" y="6" width="34" height="30" rx="9" fill="#3e526a"/><rect x="3" y="2" width="34" height="30" rx="9" fill="url(#gs-soft3d-41)" stroke="#3e526a" stroke-width=".6"/><path d="M6 11Q6 5 12 5h16" stroke="#fff" stroke-opacity=".4" stroke-width="1.35" fill="none" stroke-linecap="round"/><g transform="translate(8 5)"><g fill="none" stroke="#fff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 3h10l4 4v14H5ZM14 3v5h5"/><path d="M8 13h8m-4-4v8M7 19h10"/></g></g></svg></span>Zapisz wycięcia <small>6B</small></button><button class="tool-button" id="tool-topology" title="Po otwarciu wyciętej mapy MAP w przeglądarce wczytaj jej JSON z odwracalną topologią"><span class="tool-glyph" aria-hidden="true"><svg class="soft3d-icon " viewBox="0 0 40 40" aria-hidden="true" focusable="false"><defs><linearGradient id="gs-soft3d-9" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#6bd5c6"/><stop offset=".55" stop-color="#168e80"/><stop offset="1" stop-color="#086257"/></linearGradient></defs><ellipse cx="20" cy="36.5" rx="15" ry="2" fill="#101827" opacity=".18"/><rect x="3" y="6" width="34" height="30" rx="9" fill="#086257"/><rect x="3" y="2" width="34" height="30" rx="9" fill="url(#gs-soft3d-9)" stroke="#086257" stroke-width=".6"/><path d="M6 11Q6 5 12 5h16" stroke="#fff" stroke-opacity=".4" stroke-width="1.35" fill="none" stroke-linecap="round"/><g transform="translate(8 5)"><g fill="none" stroke="#fff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="m3 8 9-5 9 5-9 5ZM3 12l9 5 9-5M3 16l9 5 9-5"/><path d="m16 18 3 3 3-3"/></g></g></svg></span>Odtwórz kontury</button></div></section>
+<section class="ribbon-group" aria-label="Formaty wyjściowe"><span class="section-label">PLIKI WYNIKOWE</span><div class="tool-row">
+<button class="tool-button" id="tool-layout-ribbon"><span class="tool-glyph" aria-hidden="true"><svg class="soft3d-icon " viewBox="0 0 40 40" aria-hidden="true" focusable="false"><defs><linearGradient id="gs-soft3d-42" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#a8b9ce"/><stop offset=".55" stop-color="#62788f"/><stop offset="1" stop-color="#3e526a"/></linearGradient></defs><ellipse cx="20" cy="36.5" rx="15" ry="2" fill="#101827" opacity=".18"/><rect x="3" y="6" width="34" height="30" rx="9" fill="#3e526a"/><rect x="3" y="2" width="34" height="30" rx="9" fill="url(#gs-soft3d-42)" stroke="#3e526a" stroke-width=".6"/><path d="M6 11Q6 5 12 5h16" stroke="#fff" stroke-opacity=".4" stroke-width="1.35" fill="none" stroke-linecap="round"/><g transform="translate(8 5)"><g fill="none" stroke="#fff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M7 8V3h10v5M7 17H4V9h16v8h-3M7 14h10v7H7ZM16 11h1"/></g></g></svg></span>Arkusz / druk</button>
+<button class="tool-button" id="tool-map-copy-ribbon"><span class="tool-glyph" aria-hidden="true"><svg class="soft3d-icon " viewBox="0 0 40 40" aria-hidden="true" focusable="false"><defs><linearGradient id="gs-soft3d-43" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#77b7ff"/><stop offset=".55" stop-color="#2876db"/><stop offset="1" stop-color="#184a9c"/></linearGradient></defs><ellipse cx="20" cy="36.5" rx="15" ry="2" fill="#101827" opacity=".18"/><rect x="3" y="6" width="34" height="30" rx="9" fill="#184a9c"/><rect x="3" y="2" width="34" height="30" rx="9" fill="url(#gs-soft3d-43)" stroke="#184a9c" stroke-width=".6"/><path d="M6 11Q6 5 12 5h16" stroke="#fff" stroke-opacity=".4" stroke-width="1.35" fill="none" stroke-linecap="round"/><g transform="translate(8 5)"><g fill="none" stroke="#fff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12m-5-5 5 5 5-5M4 16v4h16v-4"/></g></g></svg></span>Pobierz MAP</button></div></section>
+</div>
+<div id="ribbon-panel-topology" class="ribbon-panel" data-ribbon-panel="topology"
+     role="tabpanel" aria-labelledby="ribbon-tab-topology" hidden>
+  <section class="ribbon-group" aria-label="Kontrola topologii">
+    <span class="section-label">GEOMETRIA I TOPOLOGIA</span>
+    <div class="tool-row">
+      <button class="tool-button" id="tool-topology-scan" type="button"
+        title="Przeanalizuj aktualną mapę bez zmiany jej danych">
+        <span class="tool-glyph" aria-hidden="true"><svg class="soft3d-icon " viewBox="0 0 40 40" aria-hidden="true" focusable="false"><defs><linearGradient id="gs-soft3d-44" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#b7a0fa"/><stop offset=".55" stop-color="#8051d2"/><stop offset="1" stop-color="#51339d"/></linearGradient></defs><ellipse cx="20" cy="36.5" rx="15" ry="2" fill="#101827" opacity=".18"/><rect x="3" y="6" width="34" height="30" rx="9" fill="#51339d"/><rect x="3" y="2" width="34" height="30" rx="9" fill="url(#gs-soft3d-44)" stroke="#51339d" stroke-width=".6"/><path d="M6 11Q6 5 12 5h16" stroke="#fff" stroke-opacity=".4" stroke-width="1.35" fill="none" stroke-linecap="round"/><g transform="translate(8 5)"><g fill="none" stroke="#fff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2 21 6v6c0 5-4 8-9 10-5-2-9-5-9-10V6ZM7 12l3 3 7-7"/></g></g></svg></span>Kontrola poligonów
+      </button>
+      
+    </div>
+  </section>
+  <p class="ribbon-help">Kod 5310: duplikaty, nakładki, szczeliny, błędne kontury i węzły.
+    Analiza nie modyfikuje pliku MAP.</p>
+</div></div>
     </div>
 
     <div class="workspace">
@@ -79,15 +175,26 @@
           <div><div class="eyebrow">STRUKTURA DANYCH</div><h2>Warstwy mapy</h2></div>
           <span id="layer-count" class="small-count">0</span>
         </div>
-        <div class="panel-padding">
-          <label class="search-box"><span>⌕</span>
-            <input type="search" id="layer-search" placeholder="Filtruj warstwy…" autocomplete="off">
-            <kbd>/</kbd>
-          </label>
+        <div class="layer-tablist" role="tablist" aria-label="Rodzaj warstw">
+          <button class="layer-tab active" id="layers-vectors-tab" role="tab" aria-selected="true" aria-controls="vectors-layer-panel">Wektory</button>
+          <button class="layer-tab" id="layers-rasters-tab" role="tab" aria-selected="false" aria-controls="rasters-layer-panel">Rastry <span id="raster-layer-count">0</span></button>
         </div>
-        <div class="layer-section-header"><span>WIDOCZNOŚĆ</span><button id="layers-all" class="subtle-link">Pokaż wszystkie</button></div>
-        <div id="layers-list" class="layers-list">
-          <div class="panel-placeholder">Otwórz plik .MAP, aby zobaczyć warstwy i klasoużytki.</div>
+        <div id="vectors-layer-panel" class="layer-tab-panel" role="tabpanel" aria-labelledby="layers-vectors-tab">
+          <div class="panel-padding">
+            <label class="search-box"><span>⌕</span>
+              <input type="search" id="layer-search" placeholder="Szukaj warstw i użytków…" autocomplete="off">
+              <kbd>/</kbd>
+            </label>
+          </div>
+          <div class="layer-section-header"><span>WIDOCZNOŚĆ</span><button id="layers-all" class="subtle-link">Pokaż wszystkie</button></div>
+          <div id="layers-list" class="layers-list">
+            <div class="panel-placeholder">Otwórz plik .MAP, aby zobaczyć warstwy i rodzaje użytków.</div>
+          </div>
+        </div>
+        <div id="rasters-layer-panel" class="layer-tab-panel" role="tabpanel" aria-labelledby="layers-rasters-tab" hidden>
+          <div class="layer-section-header"><span>PODKŁADY I OBRAZY</span><button type="button" id="raster-layers-add" class="subtle-link">+ Dodaj raster</button></div>
+          <div id="raster-layers-list" class="raster-layers-list" aria-live="polite"></div>
+          <p class="raster-layers-help">Zaznacz, aby pokazać lub ukryć. Suwak ustawia krycie bez zmieniania pliku MAP.</p>
         </div>
         <div class="layer-footer">
           <div class="mini-stat"><span>Obiekty</span><strong id="count-objects">—</strong></div>
@@ -98,31 +205,101 @@
 
       <main class="canvas-shell" id="canvas-shell">
         <canvas id="map-canvas" aria-label="Mapa GEO-MAP. Użyj kółka myszy, aby przybliżyć." tabindex="0"></canvas>
+        <canvas id="map-labels-canvas" aria-hidden="true"></canvas>
+        <aside id="topology-panel" class="topology-panel" hidden
+              aria-label="Kontrola poprawności mapy">
+          <header class="topology-head">
+            <div>
+              <div class="eyebrow">KONTROLA KODU 5310</div>
+              <h2>Kontrola mapy</h2>
+            </div>
+            <button type="button" id="topology-close" class="topology-close"
+              aria-label="Zamknij kontrolę mapy" title="Zamknij panel"><svg class="soft3d-icon " viewBox="0 0 40 40" aria-hidden="true" focusable="false"><defs><linearGradient id="gs-soft3d-46" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#a8b9ce"/><stop offset=".55" stop-color="#62788f"/><stop offset="1" stop-color="#3e526a"/></linearGradient></defs><ellipse cx="20" cy="36.5" rx="15" ry="2" fill="#101827" opacity=".18"/><rect x="3" y="6" width="34" height="30" rx="9" fill="#3e526a"/><rect x="3" y="2" width="34" height="30" rx="9" fill="url(#gs-soft3d-46)" stroke="#3e526a" stroke-width=".6"/><path d="M6 11Q6 5 12 5h16" stroke="#fff" stroke-opacity=".4" stroke-width="1.35" fill="none" stroke-linecap="round"/><g transform="translate(8 5)"><g fill="none" stroke="#fff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="m6 6 12 12M18 6 6 18"/></g></g></svg></button>
+          </header>
+          <div class="topology-body">
+            <p class="topology-explain">Analiza obejmuje wyłącznie obiekty kodu 5310. Wyniki są wskazówkami do sprawdzenia.
+              Nakładki i luki mogą być zamierzone. Różne kody GEO-MAP nie są
+              automatycznie ze sobą łączone.</p>
+            <div class="topology-metrics">
+              <div><strong id="topology-found">—</strong><small>Zgłoszenia</small></div>
+              <div><strong id="topology-checked">—</strong><small>Sprawdzono</small></div>
+            </div>
+            <p id="topology-status" class="topology-status" role="status"
+               aria-live="polite">Uruchom „Sprawdź mapę”, aby wyszukać problemy.</p>
+            <div class="topology-filter-row">
+              <label for="topology-filter">Rodzaj</label>
+              <select id="topology-filter">
+                <option value="all">Wszystkie problemy</option>
+                <option value="duplicate">Duplikaty</option>
+                <option value="overlap">Nakładki poligonów</option>
+                <option value="gap">Szczeliny</option>
+                <option value="open">Niezamknięte obrysy</option>
+                <option value="invalid">Błędne geometrie</option>
+                <option value="node">Niezgodne węzły</option>
+              </select>
+              <button type="button" id="topology-rescan" class="topology-refresh"
+                title="Uruchom analizę dla aktualnej wersji mapy"><svg class="soft3d-icon " viewBox="0 0 40 40" aria-hidden="true" focusable="false"><defs><linearGradient id="gs-soft3d-47" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#b7a0fa"/><stop offset=".55" stop-color="#8051d2"/><stop offset="1" stop-color="#51339d"/></linearGradient></defs><ellipse cx="20" cy="36.5" rx="15" ry="2" fill="#101827" opacity=".18"/><rect x="3" y="6" width="34" height="30" rx="9" fill="#51339d"/><rect x="3" y="2" width="34" height="30" rx="9" fill="url(#gs-soft3d-47)" stroke="#51339d" stroke-width=".6"/><path d="M6 11Q6 5 12 5h16" stroke="#fff" stroke-opacity=".4" stroke-width="1.35" fill="none" stroke-linecap="round"/><g transform="translate(8 5)"><g fill="none" stroke="#fff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M20 8a9 9 0 1 0 1 7M20 3v6h-6"/></g></g></svg></button>
+            </div>
+            <div id="topology-issues" class="topology-issues" aria-live="polite">
+              <p class="topology-empty">Lista pojawi się po sprawdzeniu mapy.</p>
+            </div>
+          </div>
+          <footer class="topology-footer">
+            <p id="topology-action-hint">Kliknij wynik, aby przybliżyć obszar
+              i zaznaczyć powiązany obiekt.</p>
+            <div class="topology-action-buttons">
+              <button type="button" id="topology-edit" class="button ghost"
+                disabled><svg class="soft3d-icon " viewBox="0 0 40 40" aria-hidden="true" focusable="false"><defs><linearGradient id="gs-soft3d-48" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#ffc477"/><stop offset=".55" stop-color="#cf791a"/><stop offset="1" stop-color="#9e4b0c"/></linearGradient></defs><ellipse cx="20" cy="36.5" rx="15" ry="2" fill="#101827" opacity=".18"/><rect x="3" y="6" width="34" height="30" rx="9" fill="#9e4b0c"/><rect x="3" y="2" width="34" height="30" rx="9" fill="url(#gs-soft3d-48)" stroke="#9e4b0c" stroke-width=".6"/><path d="M6 11Q6 5 12 5h16" stroke="#fff" stroke-opacity=".4" stroke-width="1.35" fill="none" stroke-linecap="round"/><g transform="translate(8 5)"><g fill="none" stroke="#fff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 18 8 5l13 4-4 12Z"/><rect x="2.2" y="16.2" width="3.6" height="3.6" rx=".55" fill="#fff" stroke="none"/><rect x="6.2" y="3.2" width="3.6" height="3.6" rx=".55" fill="#fff" stroke="none"/><rect x="19.2" y="7.2" width="3.6" height="3.6" rx=".55" fill="#fff" stroke="none"/><rect x="15.2" y="19.2" width="3.6" height="3.6" rx=".55" fill="#fff" stroke="none"/></g></g></svg>Edytuj węzły</button>
+              <button type="button" id="topology-delete-duplicate"
+                class="button ghost topology-destructive" hidden
+                title="Usuwa wyłącznie drugi, wskazany duplikat; Ctrl+Z przywraca"><svg class="soft3d-icon " viewBox="0 0 40 40" aria-hidden="true" focusable="false"><defs><linearGradient id="gs-soft3d-49" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#ff9b9e"/><stop offset=".55" stop-color="#d94d5f"/><stop offset="1" stop-color="#a52538"/></linearGradient></defs><ellipse cx="20" cy="36.5" rx="15" ry="2" fill="#101827" opacity=".18"/><rect x="3" y="6" width="34" height="30" rx="9" fill="#a52538"/><rect x="3" y="2" width="34" height="30" rx="9" fill="url(#gs-soft3d-49)" stroke="#a52538" stroke-width=".6"/><path d="M6 11Q6 5 12 5h16" stroke="#fff" stroke-opacity=".4" stroke-width="1.35" fill="none" stroke-linecap="round"/><g transform="translate(8 5)"><g fill="none" stroke="#fff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6h16M9 6V3h6v3M6 6l1 15h10l1-15M10 10v7m4-7v7"/></g></g></svg>
+                Usuń duplikat
+              </button>
+            </div>
+          </footer>
+        </aside>
+        <div id="underlay-chip" class="underlay-chip">Bez podkładu</div>
         <div class="map-top-left">
           <div class="map-chip"><span class="map-chip-dot"></span><span id="map-status">Brak wczytanej mapy</span></div>
           <div id="checksum-badge" class="map-chip secondary" hidden></div>
         </div>
         <div class="floating-tools" aria-label="Narzędzia mapy">
-          <button id="float-select" class="floating active" title="Zaznacz (S)">↖</button>
-          <button id="float-pan" class="floating" title="Przesuń (H)">✥</button>
-          <button id="float-nodes" class="floating" title="Edycja węzłów (P)">⬡</button>
+          <button id="float-select" class="floating active" title="Zaznacz (S)"><svg class="soft3d-icon " viewBox="0 0 40 40" aria-hidden="true" focusable="false"><defs><linearGradient id="gs-soft3d-50" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#77b7ff"/><stop offset=".55" stop-color="#2876db"/><stop offset="1" stop-color="#184a9c"/></linearGradient></defs><ellipse cx="20" cy="36.5" rx="15" ry="2" fill="#101827" opacity=".18"/><rect x="3" y="6" width="34" height="30" rx="9" fill="#184a9c"/><rect x="3" y="2" width="34" height="30" rx="9" fill="url(#gs-soft3d-50)" stroke="#184a9c" stroke-width=".6"/><path d="M6 11Q6 5 12 5h16" stroke="#fff" stroke-opacity=".4" stroke-width="1.35" fill="none" stroke-linecap="round"/><g transform="translate(8 5)"><g fill="none" stroke="#fff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 3 21 14l-9 1-4 8Z" fill="#fff" stroke-linejoin="round"/></g></g></svg></button>
+          <button id="float-pan" class="floating" title="Przesuń (H)"><svg class="soft3d-icon " viewBox="0 0 40 40" aria-hidden="true" focusable="false"><defs><linearGradient id="gs-soft3d-51" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#52cbd9"/><stop offset=".55" stop-color="#098ca4"/><stop offset="1" stop-color="#075a76"/></linearGradient></defs><ellipse cx="20" cy="36.5" rx="15" ry="2" fill="#101827" opacity=".18"/><rect x="3" y="6" width="34" height="30" rx="9" fill="#075a76"/><rect x="3" y="2" width="34" height="30" rx="9" fill="url(#gs-soft3d-51)" stroke="#075a76" stroke-width=".6"/><path d="M6 11Q6 5 12 5h16" stroke="#fff" stroke-opacity=".4" stroke-width="1.35" fill="none" stroke-linecap="round"/><g transform="translate(8 5)"><g fill="none" stroke="#fff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2v20M2 12h20M8 6l4-4 4 4M18 8l4 4-4 4M8 18l4 4 4-4M6 8l-4 4 4 4"/></g></g></svg></button>
+          <button id="float-move" class="floating" title="Przesuwanie punktów, linii i poligonów (M)"><svg class="soft3d-icon " viewBox="0 0 40 40" aria-hidden="true" focusable="false"><defs><linearGradient id="gs-soft3d-52" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#ffc477"/><stop offset=".55" stop-color="#cf791a"/><stop offset="1" stop-color="#9e4b0c"/></linearGradient></defs><ellipse cx="20" cy="36.5" rx="15" ry="2" fill="#101827" opacity=".18"/><rect x="3" y="6" width="34" height="30" rx="9" fill="#9e4b0c"/><rect x="3" y="2" width="34" height="30" rx="9" fill="url(#gs-soft3d-52)" stroke="#9e4b0c" stroke-width=".6"/><path d="M6 11Q6 5 12 5h16" stroke="#fff" stroke-opacity=".4" stroke-width="1.35" fill="none" stroke-linecap="round"/><g transform="translate(8 5)"><g fill="none" stroke="#fff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="8" y="8" width="8" height="8" rx="1"/><path d="M12 2v4m-2-2 2-2 2 2M12 18v4m-2-2 2 2 2-2M2 12h4m-2-2-2 2 2 2M18 12h4m-2-2 2 2-2 2"/></g></g></svg></button>
+          <button id="float-nodes" class="floating" title="Edycja węzłów (P)"><svg class="soft3d-icon " viewBox="0 0 40 40" aria-hidden="true" focusable="false"><defs><linearGradient id="gs-soft3d-53" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#ffc477"/><stop offset=".55" stop-color="#cf791a"/><stop offset="1" stop-color="#9e4b0c"/></linearGradient></defs><ellipse cx="20" cy="36.5" rx="15" ry="2" fill="#101827" opacity=".18"/><rect x="3" y="6" width="34" height="30" rx="9" fill="#9e4b0c"/><rect x="3" y="2" width="34" height="30" rx="9" fill="url(#gs-soft3d-53)" stroke="#9e4b0c" stroke-width=".6"/><path d="M6 11Q6 5 12 5h16" stroke="#fff" stroke-opacity=".4" stroke-width="1.35" fill="none" stroke-linecap="round"/><g transform="translate(8 5)"><g fill="none" stroke="#fff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 18 8 5l13 4-4 12Z"/><rect x="2.2" y="16.2" width="3.6" height="3.6" rx=".55" fill="#fff" stroke="none"/><rect x="6.2" y="3.2" width="3.6" height="3.6" rx=".55" fill="#fff" stroke="none"/><rect x="19.2" y="7.2" width="3.6" height="3.6" rx=".55" fill="#fff" stroke="none"/><rect x="15.2" y="19.2" width="3.6" height="3.6" rx=".55" fill="#fff" stroke="none"/></g></g></svg></button>
+          <button id="float-line" class="floating" title="Rysuj linię (L)" aria-label="Rysuj linię (L)"><svg class="soft3d-icon " viewBox="0 0 40 40" aria-hidden="true" focusable="false"><defs><linearGradient id="gs-soft3d-59" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#72d694"/><stop offset=".55" stop-color="#269950"/><stop offset="1" stop-color="#176433"/></linearGradient></defs><ellipse cx="20" cy="36.5" rx="15" ry="2" fill="#101827" opacity=".18"/><rect x="3" y="6" width="34" height="30" rx="9" fill="#176433"/><rect x="3" y="2" width="34" height="30" rx="9" fill="url(#gs-soft3d-59)" stroke="#176433" stroke-width=".6"/><path d="M6 11Q6 5 12 5h16" stroke="#fff" stroke-opacity=".4" stroke-width="1.35" fill="none" stroke-linecap="round"/><g transform="translate(8 5)"><g fill="none" stroke="#fff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 19 10 6 16 15 21 4"/><rect x="1.2" y="17.2" width="3.6" height="3.6" rx=".55" fill="#fff" stroke="none"/><rect x="8.2" y="4.2" width="3.6" height="3.6" rx=".55" fill="#fff" stroke="none"/><rect x="14.2" y="13.2" width="3.6" height="3.6" rx=".55" fill="#fff" stroke="none"/><rect x="19.2" y="2.2" width="3.6" height="3.6" rx=".55" fill="#fff" stroke="none"/></g></g></svg></button>
+          <button id="float-draw" class="floating" title="Rysuj poligon (N)" aria-label="Rysuj poligon (N)"><svg class="soft3d-icon " viewBox="0 0 40 40" aria-hidden="true" focusable="false"><defs><linearGradient id="gs-soft3d-60" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#72d694"/><stop offset=".55" stop-color="#269950"/><stop offset="1" stop-color="#176433"/></linearGradient></defs><ellipse cx="20" cy="36.5" rx="15" ry="2" fill="#101827" opacity=".18"/><rect x="3" y="6" width="34" height="30" rx="9" fill="#176433"/><rect x="3" y="2" width="34" height="30" rx="9" fill="url(#gs-soft3d-60)" stroke="#176433" stroke-width=".6"/><path d="M6 11Q6 5 12 5h16" stroke="#fff" stroke-opacity=".4" stroke-width="1.35" fill="none" stroke-linecap="round"/><g transform="translate(8 5)"><g fill="none" stroke="#fff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 8 14 3 21 10 18 20 8 21 3 15Z"/><rect x="2.2" y="6.2" width="3.6" height="3.6" rx=".55" fill="#fff" stroke="none"/><rect x="12.2" y="1.2" width="3.6" height="3.6" rx=".55" fill="#fff" stroke="none"/><rect x="19.2" y="8.2" width="3.6" height="3.6" rx=".55" fill="#fff" stroke="none"/><rect x="16.2" y="18.2" width="3.6" height="3.6" rx=".55" fill="#fff" stroke="none"/><rect x="6.2" y="19.2" width="3.6" height="3.6" rx=".55" fill="#fff" stroke="none"/><rect x="1.2" y="13.2" width="3.6" height="3.6" rx=".55" fill="#fff" stroke="none"/></g></g></svg></button>
+          <button id="float-snap" class="floating active" aria-pressed="true" title="Magnes rysowania (G)" aria-label="Magnes rysowania (G)"><svg class="soft3d-icon " viewBox="0 0 40 40" aria-hidden="true" focusable="false"><defs><linearGradient id="gs-soft3d-61" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#ff9b9e"/><stop offset=".55" stop-color="#d94d5f"/><stop offset="1" stop-color="#a52538"/></linearGradient></defs><ellipse cx="20" cy="36.5" rx="15" ry="2" fill="#101827" opacity=".18"/><rect x="3" y="6" width="34" height="30" rx="9" fill="#a52538"/><rect x="3" y="2" width="34" height="30" rx="9" fill="url(#gs-soft3d-61)" stroke="#a52538" stroke-width=".6"/><path d="M6 11Q6 5 12 5h16" stroke="#fff" stroke-opacity=".4" stroke-width="1.35" fill="none" stroke-linecap="round"/><g transform="translate(8 5)"><g fill="none" stroke="#fff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 4h6v11a3 3 0 0 0 6 0V4h6v11a9 9 0 0 1-18 0Z" fill="#fff" fill-opacity=".28"/><path d="M3 9h6m6 0h6"/></g></g></svg></button>
           <span class="floating-line"></span>
-          <button id="float-plus" class="floating" title="Przybliż">+</button>
-          <button id="float-minus" class="floating" title="Oddal">−</button>
-          <button id="float-fit" class="floating" title="Dopasuj mapę">⛶</button>
+          <button id="float-plus" class="floating" title="Przybliż"><svg class="soft3d-icon " viewBox="0 0 40 40" aria-hidden="true" focusable="false"><defs><linearGradient id="gs-soft3d-54" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#77b7ff"/><stop offset=".55" stop-color="#2876db"/><stop offset="1" stop-color="#184a9c"/></linearGradient></defs><ellipse cx="20" cy="36.5" rx="15" ry="2" fill="#101827" opacity=".18"/><rect x="3" y="6" width="34" height="30" rx="9" fill="#184a9c"/><rect x="3" y="2" width="34" height="30" rx="9" fill="url(#gs-soft3d-54)" stroke="#184a9c" stroke-width=".6"/><path d="M6 11Q6 5 12 5h16" stroke="#fff" stroke-opacity=".4" stroke-width="1.35" fill="none" stroke-linecap="round"/><g transform="translate(8 5)"><g fill="none" stroke="#fff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="10" cy="10" r="7"/><path d="m15 15 6 6M6 10h8m-4-4v8"/></g></g></svg></button>
+          <button id="float-minus" class="floating" title="Oddal"><svg class="soft3d-icon " viewBox="0 0 40 40" aria-hidden="true" focusable="false"><defs><linearGradient id="gs-soft3d-55" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#77b7ff"/><stop offset=".55" stop-color="#2876db"/><stop offset="1" stop-color="#184a9c"/></linearGradient></defs><ellipse cx="20" cy="36.5" rx="15" ry="2" fill="#101827" opacity=".18"/><rect x="3" y="6" width="34" height="30" rx="9" fill="#184a9c"/><rect x="3" y="2" width="34" height="30" rx="9" fill="url(#gs-soft3d-55)" stroke="#184a9c" stroke-width=".6"/><path d="M6 11Q6 5 12 5h16" stroke="#fff" stroke-opacity=".4" stroke-width="1.35" fill="none" stroke-linecap="round"/><g transform="translate(8 5)"><g fill="none" stroke="#fff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="10" cy="10" r="7"/><path d="m15 15 6 6M6 10h8"/></g></g></svg></button>
+          <button id="float-fit" class="floating" title="Dopasuj mapę"><svg class="soft3d-icon " viewBox="0 0 40 40" aria-hidden="true" focusable="false"><defs><linearGradient id="gs-soft3d-56" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#52cbd9"/><stop offset=".55" stop-color="#098ca4"/><stop offset="1" stop-color="#075a76"/></linearGradient></defs><ellipse cx="20" cy="36.5" rx="15" ry="2" fill="#101827" opacity=".18"/><rect x="3" y="6" width="34" height="30" rx="9" fill="#075a76"/><rect x="3" y="2" width="34" height="30" rx="9" fill="url(#gs-soft3d-56)" stroke="#075a76" stroke-width=".6"/><path d="M6 11Q6 5 12 5h16" stroke="#fff" stroke-opacity=".4" stroke-width="1.35" fill="none" stroke-linecap="round"/><g transform="translate(8 5)"><g fill="none" stroke="#fff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 3H3v6m12-6h6v6M3 15v6h6m12-6v6h-6M8 8h8v8H8Z"/></g></g></svg></button>
         </div>
-        <div class="map-scale-box" id="map-scale-box"><span class="north-rose">N <b>▲</b></span><span id="scale-label">Skala podglądu: —</span></div>
-        <div class="map-bottom-left"><span class="coordinate-dot"></span><span id="cursor-coords">X: — &nbsp; Y: —</span></div>
-        <div class="map-bottom-right" id="render-hint">Odczyt geometrii GEO-MAP</div>
+        <div class="map-scale-box" id="map-scale-box">
+          <span class="north-rose">N <b>▲</b></span>
+          <label class="scale-control">Widok
+            <input id="view-scale" type="text" list="scale-presets" value="1:5000" title="Przybliżona skala widoku 1:N (Ctrl+M). Enter zatwierdza.">
+          </label>
+          <datalist id="scale-presets"><option value="1:500"><option value="1:1000"><option value="1:2000"><option value="1:5000"><option value="1:10000"><option value="1:25000"></datalist>
+          <label class="scale-control">Opracowanie
+            <input id="compilation-scale" type="text" list="compilation-presets" value="1:5000" title="Skala opracowania 1:N (Ctrl+F5). Zmienia wielkość etykiet, nie współrzędne.">
+          </label>
+          <datalist id="compilation-presets"><option value="1:500"><option value="1:1000"><option value="1:2000"><option value="1:5000"><option value="1:10000"></datalist>
+          <span id="scale-label" hidden>—</span>
+        </div>
+        <div class="map-bottom-left" title="Współrzędne GEO-MAP: X — północ, Y — wschód; jednostki mapy w metrach. Brak zgadywania EPSG.">
+          <span class="coordinate-dot"></span><span id="cursor-coords">X: —  Y: —</span>
+        </div>
+        <div class="map-bottom-right" id="render-hint"></div>
         <div class="geometry-help" id="geometry-help" hidden>Tryb P: kliknij węzeł, następnie Delete, aby go usunąć; przeciągnij, żeby przesunąć; dwuklik na krawędzi dodaje punkt.</div>
         <div id="empty-state" class="empty-state">
           <div class="welcome-logo">◈</div>
           <div class="eyebrow">NOWA GENERACJA EDYTORA</div>
           <h1>Twoja mapa.<br><span>Nowa perspektywa.</span></h1>
-          <p>Wczytaj prawdziwy plik GEO-MAP i sprawdź nowoczesny widok warstw, etykiet oraz parametrów obiektów. Oryginał pozostaje nienaruszony.</p>
+          <p>Wczytaj plik GEO-MAP i sprawdź nowoczesny widok warstw, etykiet oraz parametrów obiektów. Oryginał pozostaje nienaruszony.</p>
           <button id="empty-open" class="button primary large">↗ &nbsp; Otwórz plik .MAP</button>
           <div class="empty-sub">Możesz też przeciągnąć plik na okno</div>
-          <div class="hint-chips"><span>GEO-MAP v8</span><span>HTML5 Canvas</span><span>Python Core</span></div>
         </div>
         <div id="loading-overlay" class="loading-overlay" hidden>
           <div class="spinner"></div><h3>Wczytywanie geometrii…</h3>
@@ -168,12 +345,14 @@
     <footer class="statusbar">
       <span class="footer-active">●</span>
       <span id="status-message">GeoStudio 2.0 gotowe — otwórz mapę GEO-MAP</span>
-      <div class="statusbar-right"><span id="selection-count">Zaznaczonych: 0</span><span>Układ: X / Y GEO-MAP</span><span>TESTOWE 2.0</span></div>
+      <div class="statusbar-right"><span id="selection-count">Zaznaczonych: 0</span><span id="status-map-crs">Układ nieustalony</span></div>
     </footer>
   </div>
 
   <input id="file-map" type="file" accept=".map,.MAP" hidden>
   <input id="file-sidecar" type="file" accept=".json" hidden>
+  <input id="file-library" type="file" accept=".lay,.cdf,.sym,.LAY,.CDF,.SYM" multiple hidden>
+  <input id="file-topology" type="file" accept=".geostudio-topology.json,.json" hidden>
   <dialog id="select-dialog" class="advanced-select-dialog">
     <form id="select-form" autocomplete="off">
       <div class="select-head">
@@ -245,11 +424,518 @@
       </div>
     </form>
   </dialog>
+  <dialog id="move-dialog" class="advanced-select-dialog bulk-dialog">
+    <form id="move-form" autocomplete="off">
+      <div class="select-head">
+        <div>
+          <div class="eyebrow">ETAP 5A · PRZESUWANIE GEOMETRII</div>
+          <h2>Przesuń wybrane poligony</h2>
+        </div>
+        <button type="button" id="move-close" class="select-close" aria-label="Zamknij">×</button>
+      </div>
+      <div class="select-content">
+        <p class="select-explain" id="move-selection-description">Wybierz poligony na mapie lub przez Ctrl+H.</p>
+        <div class="select-grid">
+          <div><label for="move-dx">Przesunięcie X — północ [m]</label>
+            <input id="move-dx" type="text" inputmode="decimal" value="0" required>
+          </div>
+          <div><label for="move-dy">Przesunięcie Y — wschód [m]</label>
+            <input id="move-dy" type="text" inputmode="decimal" value="0" required>
+          </div>
+        </div>
+        <label class="bulk-checkbox-line" for="move-snap">
+          <input type="checkbox" id="move-snap" checked>
+          <span><strong>Przyciąganie do granicy (0,5 m)</strong><small>Dopasuj położenie całej grupy do najbliższej krawędzi tego samego kodu</small></span>
+        </label>
+        <label class="bulk-checkbox-line" for="move-detach">
+          <input id="move-detach" type="checkbox">
+          <span><strong>Zezwól na rozłączenie wspólnej granicy</strong>
+            <small>Domyślnie blokujemy przesuwanie poligonu, jeżeli sąsiad tego samego kodu zostaje na miejscu</small>
+          </span>
+        </label>
+        <p class="select-explain">Przesuwane są tylko jawnie wybrane obiekty. Pozostałe poligony — także innych kodów — nie są modyfikowane. Zmiany można cofnąć jednym Ctrl+Z; oryginalna mapa pozostaje nietknięta.</p>
+        <p id="move-summary" class="select-preview" role="status">Kliknij „Sprawdź przesunięcie”.</p>
+        <div id="move-samples" class="bulk-samples" hidden></div>
+      </div>
+      <div class="select-actions">
+        <button id="move-preview" type="button" class="button ghost">Sprawdź przesunięcie</button>
+        <button id="move-apply" type="submit" class="button primary" disabled>Przesuń poligony</button>
+      </div>
+    </form>
+  </dialog>
+  <dialog id="copy-dialog" class="advanced-select-dialog bulk-dialog">
+    <form id="copy-form" autocomplete="off">
+      <div class="select-head">
+        <div><div class="eyebrow">ETAP 5B · KOPIOWANIE OBIEKTÓW</div>
+          <h2>Kopiuj zaznaczone poligony</h2>
+        </div>
+        <button id="copy-close" type="button" class="select-close" aria-label="Zamknij">×</button>
+      </div>
+      <div class="select-content">
+        <p id="copy-selection-description" class="select-explain">Zaznacz poligony.</p>
+        <div class="select-grid">
+          <div><label for="copy-dx">Przesunięcie kopii X [m]</label>
+            <input id="copy-dx" type="text" inputmode="decimal" value="0,000" required>
+          </div>
+          <div><label for="copy-dy">Przesunięcie kopii Y [m]</label>
+            <input id="copy-dy" type="text" inputmode="decimal" value="20,000" required>
+          </div>
+        </div>
+        <p class="select-explain">Oryginały pozostają bez zmian. Każda kopia otrzyma nowy, unikalny identyfikator :ID. Zachowamy kod, styl, atrybuty i punkty P. Nakładanie na obiekty tego samego kodu jest blokowane.</p>
+        <p class="select-preview" id="copy-summary" role="status">Sprawdź kopie przed zatwierdzeniem.</p>
+      </div>
+      <div class="select-actions">
+        <button id="copy-preview" type="button" class="button ghost">Sprawdź kopie</button>
+        <button id="copy-apply" type="submit" class="button primary" disabled>Utwórz kopie</button>
+      </div>
+    </form>
+  </dialog>
+  <dialog id="create-dialog" class="advanced-select-dialog bulk-dialog">
+    <form id="create-form" autocomplete="off">
+      <div class="select-head">
+        <div><div class="eyebrow">ETAP 5B · NOWY OBIEKT</div>
+          <h2>Utwórz nowy poligon</h2>
+        </div>
+        <button id="create-close" type="button" class="select-close" aria-label="Zamknij">×</button>
+      </div>
+      <div class="select-content">
+        <p id="create-selection-description" class="select-explain">Kliknij na mapie co najmniej 3 punkty.</p>
+        <p class="select-explain">Magnes G: węzły 7 px, linie 5 px; przytrzymaj <kbd>Alt</kbd>, aby postawić punkt tuż obok granicy. Przełącznik znajduje się obok „Nowy poligon”.</p>
+        <div class="select-grid">
+          <div><label for="create-code">Kod GEO-MAP</label>
+            <select id="create-code">
+              <option value="5310">5310 — budynek</option>
+              <option value="5230">5230 — użytek</option>
+              <option value="5220">5220 — użytek</option>
+              <option value="5216">5216 — działka</option>
+            </select>
+          </div>
+          <div><label for="create-a1">A1 (opcjonalne)</label>
+            <input id="create-a1" type="text" maxlength="512" placeholder="Np. b" autofocus>
+          </div>
+          <div><label for="create-a2">A2 (opcjonalne)</label>
+            <input id="create-a2" type="text" maxlength="512" placeholder="Np. bud. mieszk.">
+          </div>
+        </div>
+        <p class="select-explain">Enter tworzy i sprawdza poligon automatycznie. Po zapisaniu nadal rysujesz następny poligon (N); do zaznaczania wrócisz klawiszem S. Oryginalny MAP pozostaje nienaruszony.</p>
+        <p class="select-preview" id="create-summary" role="status">Wpisz A1 i naciśnij Enter, aby utworzyć poligon.</p>
+      </div>
+      <div class="select-actions">
+        <button id="create-back" type="button" class="button ghost">Wróć do rysowania</button>
+        <button id="create-preview" type="button" class="button ghost" hidden aria-hidden="true" tabindex="-1">Sprawdź obrys</button>
+        <button id="create-apply" type="submit" class="button primary">Utwórz poligon <small>Enter</small></button>
+      </div>
+    </form>
+  </dialog>
+  <dialog id="line-dialog" class="advanced-select-dialog bulk-dialog">
+    <form id="line-form" autocomplete="off">
+      <div class="select-head">
+        <div><div class="eyebrow">ETAP 6 · LINIE</div>
+          <h2 id="line-dialog-title">Nowa linia</h2>
+        </div>
+        <button id="line-close" type="button" class="select-close" aria-label="Zamknij">×</button>
+      </div>
+      <div class="select-content">
+        <p id="line-count" class="select-explain">Narysuj linię co najmniej 2 punktami.</p>
+        <div class="select-grid">
+          <div><label for="line-code">Kod nowej linii</label>
+            <select id="line-code">
+              <option value="5214">5214 — linia obrębu</option>
+              <option value="6900">6900 — linia</option>
+              <option value="6000">6000 — oprawa/linia</option>
+              <option value="6301">6301 — linia</option>
+              <option value="2364">2364 — linia</option>
+            </select>
+          </div>
+          <div><label for="line-a1">A1 (opcjonalne)</label>
+            <input id="line-a1" type="text" maxlength="512">
+          </div>
+          <div><label for="line-a2">A2 (opcjonalne)</label>
+            <input id="line-a2" type="text" maxlength="512">
+          </div>
+        </div>
+        <p id="line-summary" class="select-preview" role="status">Sprawdź linię.</p>
+      </div>
+      <div class="select-actions">
+        <button id="line-back" type="button" class="button ghost">Popraw punkty</button>
+        <button id="line-preview" type="button" class="button ghost">Sprawdź linię</button>
+        <button id="line-apply" type="submit" class="button primary" disabled>Utwórz linię</button>
+      </div>
+    </form>
+  </dialog>
+  <dialog id="split-dialog" class="advanced-select-dialog bulk-dialog">
+    <form id="split-form">
+      <div class="select-head">
+        <div><div class="eyebrow">ETAP 6 · PODZIAŁ</div>
+          <h2>Podziel poligon linią</h2>
+        </div>
+        <button id="split-close" type="button" class="select-close" aria-label="Zamknij">×</button>
+      </div>
+      <div class="select-content">
+        <p class="select-explain">Rysuj linię przez wybrany poligon. Jej początek i koniec powinny wychodzić poza obrys. Podział jest jedną operacją Cofnij/Ponów.</p>
+        <p id="split-summary" class="select-preview" role="status">Sprawdź podział.</p>
+      </div>
+      <div class="select-actions">
+        <button id="split-back" type="button" class="button ghost">Popraw linię</button>
+        <button id="split-preview" type="button" class="button ghost">Sprawdź podział</button>
+        <button id="split-apply" type="submit" class="button primary" disabled>Podziel poligon</button>
+      </div>
+    </form>
+  </dialog>
+  <dialog id="label-settings-dialog" class="advanced-select-dialog bulk-dialog">
+    <form id="label-settings-form" autocomplete="off">
+      <div class="select-head">
+        <div><div class="eyebrow">ETAP 10A · KARTOGRAFIA</div><h2>Wygląd opisów według kodu</h2></div>
+        <button id="label-settings-close" type="button" class="select-close" aria-label="Zamknij">×</button>
+      </div>
+      <div class="select-content">
+        <p class="select-explain">A1 i A2 są niezależne. Te ustawienia obowiązują dla wszystkich obiektów danego kodu w GeoStudio. Położenie pojedynczego napisu zmienisz narzędziem L.</p>
+        <div class="select-grid">
+          <div><label for="label-settings-code">Kod GEO-MAP</label><input id="label-settings-code" type="text" maxlength="4" pattern="[0-9]{4}" required value="5310"></div>
+          <div><label for="label-settings-field">Pole opisu</label><select id="label-settings-field">
+            <option value="A1">A1</option><option value="A2">A2</option><option value="TX">TX</option>
+          </select></div>
+          <div><label for="label-settings-size">Wielkość etykiety</label><input id="label-settings-size" type="number" min="8" max="36" step="1" value="16" required></div>
+          <div><label for="label-settings-color">Kolor</label><input id="label-settings-color" type="color" value="#CC202C"></div>
+        </div>
+        <label class="bulk-checkbox-line"><input type="checkbox" id="label-settings-visible" checked> Pokaż ten opis</label>
+        <label class="bulk-checkbox-line"><input type="checkbox" id="label-settings-bold" checked> Pogrubienie</label>
+        <p class="select-preview" id="label-settings-summary" role="status">Ustawienia nie zmieniają natywnego MAP; zapisują się w pliku stylów.</p>
+      </div>
+      <div class="select-actions">
+        <button id="label-settings-cancel" type="button" class="button ghost">Anuluj</button>
+        <button id="label-settings-save" type="submit" class="button primary">Zastosuj styl</button>
+      </div>
+    </form>
+  </dialog>
+  <dialog id="find-dialog" class="advanced-select-dialog bulk-dialog">
+    <form id="find-form" autocomplete="off">
+      <div class="select-head">
+        <div><div class="eyebrow">ETAP 10B · WYSZUKIWANIE</div><h2>Znajdź obiekt na mapie</h2></div>
+        <button id="find-close" type="button" class="select-close" aria-label="Zamknij">×</button>
+      </div>
+      <div class="select-content">
+        <p class="select-explain">Przeszukuje całą mapę, nie tylko widoczny fragment. Kliknij wynik, aby wskazać i przybliżyć obiekt.</p>
+        <div class="select-grid">
+          <div><label for="find-code">Kod GEO-MAP (opcjonalnie)</label>
+            <input id="find-code" maxlength="4" pattern="[0-9]{4}" inputmode="numeric" placeholder="Np. 5310"></div>
+          <div><label for="find-field">Szukaj w polu</label>
+            <select id="find-field"><option value="*">Wszystkie pola i ID</option>
+              <option value="ID">ID obiektu</option>
+              <option value="A1">A1</option><option value="A2">A2</option>
+              <option value="A3">A3</option><option value="A4">A4</option>
+              <option value="A5">A5</option><option value="A6">A6</option>
+              <option value="TX">TX</option><option value="MP">MP</option>
+              <option value="KR">KR</option>
+            </select></div>
+        </div>
+        <label for="find-value">ID, oznaczenie lub fragment opisu</label>
+        <input id="find-value" maxlength="160" placeholder="Np. So120, B-01, dr…">
+        <label for="find-match">Dopasowanie</label>
+        <select id="find-match">
+          <option value="contains">Zawiera tekst (bez rozróżniania wielkości liter)</option>
+          <option value="exact">Dokładna wartość</option>
+        </select>
+        <p id="find-summary" class="select-preview" role="status">Wpisz wartość albo sam kod i wybierz Szukaj.</p>
+        <div class="geostudio-find-results" id="find-results" role="list" aria-label="Wyniki wyszukiwania"></div>
+      </div>
+      <div class="select-actions">
+        <button id="find-select-all" type="button" class="button ghost" disabled>Zaznacz pokazane</button>
+        <button id="find-submit" type="submit" class="button primary">Szukaj</button>
+      </div>
+    </form>
+  </dialog>
+  <dialog id="replace-dialog" class="advanced-select-dialog bulk-dialog">
+    <form id="replace-form" autocomplete="off">
+      <div class="select-head">
+        <div><div class="eyebrow">ETAP 10B · MASOWA EDYCJA</div><h2>Znajdź i zamień frazę</h2></div>
+        <button id="replace-close" type="button" class="select-close" aria-label="Zamknij">×</button>
+      </div>
+      <div class="select-content">
+        <p class="select-explain">Zmienia tylko istniejące pole wskazanych obiektów. Najpierw zobaczysz przykłady „przed → po”, a całą operację cofniesz jednym Ctrl+Z. MAP źródłowa jest chroniona.</p>
+        <div class="select-grid">
+          <div><label for="replace-field">Pole do zamiany</label>
+            <select id="replace-field"><option value="A1">A1</option>
+              <option value="A2" selected>A2</option><option value="A3">A3</option>
+              <option value="A4">A4</option><option value="A5">A5</option>
+              <option value="A6">A6</option><option value="TX">TX</option>
+              <option value="MP">MP</option><option value="KR">KR</option></select></div>
+          <div><label for="replace-scope">Zakres</label>
+            <select id="replace-scope"><option value="selection" selected>Tylko zaznaczone obiekty</option>
+              <option value="all">Cała mapa (świadomy wybór)</option></select></div>
+        </div>
+        <div class="select-grid">
+          <div><label for="replace-needle">Znajdź fragment</label>
+            <input id="replace-needle" required maxlength="160" placeholder="Np. So120"></div>
+          <div><label for="replace-replacement">Zamień na</label>
+            <input id="replace-replacement" maxlength="512" placeholder="Nowa wartość (może być pusta)"></div>
+        </div>
+        <label for="replace-code">Ogranicz do kodu (opcjonalnie)</label>
+        <input id="replace-code" maxlength="4" pattern="[0-9]{4}" inputmode="numeric" placeholder="Np. 5310">
+        <label class="bulk-checkbox-line"><input id="replace-case" type="checkbox"> Rozróżniaj wielkość liter</label>
+        <p id="replace-summary" class="select-preview" role="status">Podgląd jest wymagany przed każdą zamianą.</p>
+        <div id="replace-examples" class="geostudio-find-results" role="list" aria-label="Przykłady zamiany"></div>
+      </div>
+      <div class="select-actions">
+        <button id="replace-preview" type="button" class="button ghost">Sprawdź zmiany</button>
+        <button id="replace-apply" type="submit" class="button primary" disabled>Zastosuj zamianę</button>
+      </div>
+    </form>
+  </dialog>
+  <dialog id="layout-dialog" class="advanced-select-dialog bulk-dialog layout-dialog">
+    <form id="layout-form">
+      <div class="select-head">
+        <div><div class="eyebrow">ETAP 14B · EKSPORT MAPY</div>
+          <h2>Arkusz mapy</h2></div>
+        <button type="button" id="layout-close" class="select-close" aria-label="Zamknij">×</button>
+      </div>
+      <div class="select-content">
+        <p class="select-explain">Wybierz całą mapę albo przeciągnij na mapie prostokąt do eksportu. PNG, JPG i TIFF zapisują całą mapę w jednym pliku. Przybliżenie ekranu nie zmienia zakresu eksportu.</p>
+        <div class="select-grid">
+          <div><label for="layout-format">Format</label><select id="layout-format">
+            <option value="png">PNG — bezstratny</option>
+            <option value="jpeg">JPG — wysoka jakość</option>
+            <option value="tiff">TIFF — bez kompresji</option>
+            <option value="pdf">PDF — wektorowy arkusz A0–A4</option>
+            <option value="dxf">DXF — edytowalna geometria</option>
+          </select></div>
+          <div><label for="layout-scope">Zakres mapy</label><select id="layout-scope">
+            <option value="all" selected>Cała mapa</option>
+            <option value="rect">Prostokąt zaznaczony na mapie</option>
+          </select></div>
+          <div><label for="layout-scale">Skala opracowania (1:N)</label>
+            <input type="number" id="layout-scale" value="5000" min="10" max="100000000" step="1" required></div>
+          <div><label for="layout-dpi">Rozdzielczość</label><select id="layout-dpi">
+            <option value="96">96 DPI — podgląd</option>
+            <option value="150">150 DPI — dokument</option>
+            <option value="300" selected>300 DPI — druk</option>
+            <option value="600">600 DPI — wysoka ostrość (większy plik)</option>
+          </select></div>
+        </div>
+        <div id="layout-rectangle-tools" class="layout-rectangle-tools" hidden>
+          <button id="layout-choose-area" type="button" class="button ghost">▧ Zaznacz prostokąt na mapie</button>
+          <span id="layout-area-status" role="status">Nie wybrano jeszcze obszaru.</span>
+        </div>
+        <div class="select-grid layout-orientation-row" id="layout-orientation-row" hidden>
+          <div><label for="layout-orientation">Orientacja arkuszy</label>
+            <select id="layout-orientation">
+              <option value="landscape">Pozioma</option>
+              <option value="portrait">Pionowa</option>
+            </select>
+          </div>
+        </div>
+        <div hidden><label for="layout-paper">Papier PDF</label>
+          <select id="layout-paper">
+            <option value="auto" selected>Automatyczny</option>
+            <option value="A0">A0</option><option value="A1">A1</option>
+            <option value="A2">A2</option><option value="A3">A3</option>
+            <option value="A4">A4</option>
+          </select>
+        </div>
+        <label for="layout-title">Tytuł arkusza</label>
+        <input type="text" id="layout-title" maxlength="100" value="Mapa GEO-MAP" placeholder="Tytuł opracowania">
+        
+        <details class="layout-editor-details" hidden>
+          <summary>Edytowalna legenda i oprawa PDF</summary>
+          <p class="select-explain">Jedna pozycja legendy w wierszu: <strong>Nazwa | #RRGGBB</strong>. Możesz zmieniać opisy, kolory, kolejność i usuwać wiersze. Tabelka: <strong>Pole | wartość</strong>.</p>
+          <label for="layout-legend-rows">Pozycje legendy</label>
+          <textarea id="layout-legend-rows" rows="5" spellcheck="false" placeholder="Działki | #426A88&#10;Linia obrębu | #704E93"></textarea>
+          <label for="layout-table-rows">Tabela opisowa / metryka arkusza</label>
+          <textarea id="layout-table-rows" rows="4" spellcheck="false" placeholder="Obręb | Przykładowy&#10;Opracował | GeoStudio"></textarea>
+          <div class="select-grid">
+            <div><label for="layout-frame-color">Kolor ramki PDF</label>
+              <input id="layout-frame-color" type="color" value="#263C4D"></div>
+            <div><label for="layout-frame-width">Grubość ramki (mm)</label>
+              <input id="layout-frame-width" type="number" min="0.1" max="2.5" step="0.1" value="0.3"></div>
+          </div>
+        </details>
+        <p id="layout-summary" class="select-preview" role="status">Wybierz format, zakres i DPI. Skala opracowania jest pobierana z bieżącej mapy.</p>
+      </div>
+      <div class="select-actions">
+        <button id="layout-print" type="button" class="button ghost">Drukuj mapę</button>
+        <button id="layout-export" type="submit" class="button primary">Eksportuj plik</button>
+      </div>
+    </form>
+  </dialog>
+  <!-- Stage 12: distinct task-focused dialogs, no sprawling shared form. -->
+  <dialog id="underlay-dialog" class="advanced-select-dialog bulk-dialog layer-source-dialog">
+    <div class="select-head">
+      <div><div class="eyebrow">PODKŁADY · WMS</div><h2>Podgląd WMS — podkład mapy</h2></div>
+      <button type="button" id="underlay-close" class="select-close" aria-label="Zamknij WMS">×</button>
+    </div>
+    <div class="select-content">
+      <p class="select-explain">Wybierz usługę, pobierz listę jej warstw i wskaż układ zgodny z Twoją mapą. Obraz zostanie wyświetlony <strong>pod</strong> obiektami.</p>
+      <label for="underlay-preset">Źródło danych</label>
+      <select id="underlay-preset">
+        <option value="standard">Geoportal — ortofotomapa standardowa</option>
+        <option value="high">Geoportal — ortofotomapa wysokiej rozdzielczości</option>
+        <option value="kieg">GUGiK — działki ewidencyjne i numery</option>
+      </select>
+      <label for="underlay-url">Adres WMS (oficjalny serwer GUGiK)</label>
+      <input id="underlay-url" readonly type="text" value="https://mapy.geoportal.gov.pl/wss/service/PZGIK/ORTO/WMS/StandardResolution" title="W tej wersji testowej dostępne są oficjalne adresy Geoportalu">
+      <div class="underlay-layer-line">
+        <label for="underlay-layer">Warstwa WMS</label>
+        <button type="button" id="underlay-layers" class="button ghost">Pobierz warstwy</button>
+      </div>
+      <select id="underlay-layer"><option value="">Kliknij „Pobierz warstwy”…</option></select>
+      <label for="underlay-epsg">Układ MAP</label>
+      <select id="underlay-epsg"><option value="" selected>Wybierz układ MAP…</option>
+<option value="2180">EPSG:2180 — PL-1992</option>
+<option value="2176">EPSG:2176 — PL-2000 strefa 5</option>
+<option value="2177">EPSG:2177 — PL-2000 strefa 6</option>
+<option value="2178">EPSG:2178 — PL-2000 strefa 7</option>
+<option value="2179">EPSG:2179 — PL-2000 strefa 8</option></select>
+      <p class="underlay-dialog-hint">Nie znasz EPSG? Użyj „Układy EPSG” w zakładce Podkłady i wczytaj plik PRJ.</p>
+      <label for="underlay-opacity">Krycie podkładu: <strong id="underlay-opacity-value">75%</strong></label>
+      <input id="underlay-opacity" type="range" min="0" max="100" value="75" step="5">
+      <p id="underlay-summary" class="select-preview" role="status">Wybierz źródło i pobierz warstwy WMS.</p>
+    </div>
+    <div class="select-actions">
+      <button type="button" id="underlay-remove" class="button ghost">Usuń WMS z widoku</button>
+      <button type="button" id="underlay-show" class="button primary">Pokaż wybraną warstwę</button>
+      <button type="button" id="underlay-close-bottom" class="button ghost">Zamknij</button>
+    </div>
+  </dialog>
+  <dialog id="raster-dialog" class="advanced-select-dialog bulk-dialog layer-source-dialog">
+    <div class="select-head">
+      <div><div class="eyebrow">PODKŁADY · RASTER</div><h2>Raster i kalibracja GCP</h2></div>
+      <button type="button" id="raster-close" class="select-close" aria-label="Zamknij Raster">×</button>
+    </div>
+    <div class="select-content">
+      <select id="raster-epsg" hidden aria-label="Układ MAP" tabindex="-1"><option value="" selected>Nieustalony</option>
+<option value="2180">EPSG:2180</option><option value="2176">EPSG:2176</option>
+<option value="2177">EPSG:2177</option><option value="2178">EPSG:2178</option><option value="2179">EPSG:2179</option></select>
+      <button type="button" class="button primary" id="choose-raster">Wybierz plik rastrowy…</button>
+      <input type="file" hidden id="underlay-raster-file" multiple accept=".png,.jpg,.jpeg,.webp,.tif,.tiff,.pgw,.jgw,.tfw,.wpw,.wld,.pngw,.jpgw,.jpegw,.tifw,.tiffw,.webpw">
+      <p id="raster-summary" class="select-preview" role="status" hidden></p>
+      <label for="raster-opacity">Krycie rastra: <strong id="raster-opacity-value">72%</strong></label>
+      <input id="raster-opacity" type="range" min="0" max="100" value="72" step="5">
+      <button type="button" class="button ghost raster-calibrate-launch" id="raster-calibrate">Kalibruj wizualnie — kliknij punkty na obrazie i mapie</button>
+      <div class="raster-world-action">
+        <button type="button" class="button ghost" id="choose-world">Wczytaj plik world…</button>
+        <input type="file" hidden id="underlay-world-file" accept=".pgw,.jgw,.tfw,.wpw,.wld,.pngw,.jpgw,.jpegw,.tifw,.tiffw,.webpw">
+      </div>
+    </div>
+    <div class="select-actions">
+      <button type="button" class="button ghost" id="raster-remove">Usuń raster z widoku</button>
+      <button type="button" class="button primary" id="raster-close-bottom">Zamknij</button>
+    </div>
+  </dialog>
+  <dialog id="outline-style-dialog" class="advanced-select-dialog bulk-dialog layer-source-dialog">
+    <form id="outline-style-form">
+      <div class="select-head">
+        <div><div class="eyebrow">KARTOGRAFIA · OBRYSY</div><h2>Styl linii lub obrysu według kodu</h2></div>
+        <button type="button" id="outline-style-close" class="select-close" aria-label="Zamknij">×</button>
+      </div>
+      <div class="select-content">
+        <p class="select-explain">Ustaw kolor i grubość linii wszystkich poligonów wybranego kodu (np. 5310). Będzie też używany przy kolejnych poligonach tego kodu. Zmiany są w kopii roboczej GeoStudio, nie w oryginalnym MAP. Ctrl+Z cofa.</p>
+        <label for="outline-style-code">Kod GEO-MAP</label>
+        <select id="outline-style-code"></select>
+        <div class="select-grid">
+          <div><label for="outline-style-color">Kolor obrysu</label>
+            <input id="outline-style-color" type="color" value="#34485B"></div>
+          <div><label for="outline-style-width">Grubość (piksele ekranu / eksportu)</label>
+            <input id="outline-style-width" type="number" min="0.5" max="12" step="0.5" value="1" required></div>
+        </div>
+        <p id="outline-style-summary" class="select-preview" role="status">Ustawienia będą zastosowane do całego kodu.</p>
+      </div>
+      <div class="select-actions">
+        <button type="button" id="outline-style-reset" class="button ghost">Przywróć domyślne</button>
+        <button type="submit" id="outline-style-apply" class="button primary">Zapisz styl obrysu</button>
+      </div>
+    </form>
+  </dialog>
+  <dialog id="cartography-catalog-dialog" class="advanced-select-dialog bulk-dialog cartography-catalog-dialog">
+    <div class="select-head">
+      <div><div class="eyebrow">ETAP 13 · KARTOGRAFIA GEO-MAP</div><h2>Podgląd stylów LAY / CDF / SYM</h2></div>
+      <button type="button" id="carto-catalog-close" class="select-close" aria-label="Zamknij podgląd stylów">×</button>
+    </div>
+    <div class="select-content">
+      <p class="select-explain">Wyświetlane style pochodzą z aktualnie załadowanych bibliotek oraz rzeczywistych obiektów MAP. Każda karta przedstawia <strong>przykładowy obiekt danego kodu</strong>; reguły CDF zależne od A1/A2 mogą dawać inny wygląd pozostałych obiektów. Nierozpoznane instrukcje są oznaczane zamiast przybliżane.</p>
+      <label for="carto-catalog-filter">Wyszukaj kod lub warstwę</label>
+      <input id="carto-catalog-filter" type="search" autocomplete="off" placeholder="Np. 5310 albo Budynki">
+      <p id="carto-catalog-summary" role="status" class="select-preview">Otwórz mapę, aby zobaczyć katalog.</p>
+      <div id="carto-catalog-list" class="carto-catalog-list" aria-live="polite"></div>
+    </div>
+    <div class="select-actions">
+      <button type="button" id="carto-catalog-refresh" class="button ghost">Odśwież katalog</button>
+      <button type="button" id="carto-catalog-close-bottom" class="button primary">Zamknij</button>
+    </div>
+  </dialog>
+  <dialog id="raster-visual-dialog" class="raster-visual-dialog" aria-label="Wizualna kalibracja obrazu">
+    <div class="select-head">
+      <div><div class="eyebrow">PODKŁADY · KALIBRACJA WIZUALNA</div><h2>Dopasuj punkty obrazu i mapy</h2></div>
+      <button type="button" id="raster-visual-close" class="select-close" aria-label="Zamknij kalibrację">×</button>
+    </div>
+    <div class="visual-calibration-body">
+      <p class="select-explain">Kliknij punkt na obrazie, a następnie jego odpowiednik na mapie — bez dodatkowego przycisku. Ponowne kliknięcie obrazu zastępuje oczekujący punkt. Istniejące punkty można przeciągać na obrazie i na mapie. Zalecane 6–10 par rozmieszczonych po całym rastrze.</p>
+      <canvas id="raster-gcp-canvas" width="450" height="270" aria-label="Kliknij punkt charakterystyczny na rastrowym obrazie"></canvas>
+      <div class="visual-calibration-actions">
+        <button type="button" id="raster-gcp-cancel" class="button ghost" disabled>Anuluj oczekujący punkt</button>
+        <button type="button" id="raster-gcp-undo" class="button ghost">Usuń ostatnią parę</button>
+      </div>
+      <p class="select-preview" id="raster-visual-status" role="status">Najpierw kliknij punkt na obrazie.</p>
+      <div id="raster-gcp-pairs" class="visual-gcp-pairs" aria-live="polite"></div>
+      <div class="visual-calibration-actions">
+        <button type="button" id="raster-gcp-apply" class="button primary" disabled>Oblicz dopasowanie i nałóż raster</button>
+        <button type="button" id="raster-gcp-fit" class="button ghost">Dopasuj podgląd obrazu</button>
+      </div>
+    </div>
+  </dialog>
+  <dialog id="crs-dialog" class="advanced-select-dialog bulk-dialog layer-source-dialog">
+    <div class="select-head">
+      <div><div class="eyebrow">PODKŁADY · WSPÓŁRZĘDNE</div><h2>Układ współrzędnych mapy</h2></div>
+      <button type="button" id="crs-close" class="select-close" aria-label="Zamknij układy">×</button>
+    </div>
+    <div class="select-content">
+      <p class="select-explain">Ustaw znany układ MAP albo odczytaj go z odpowiadającego mapie pliku PRJ. GeoStudio nie zgaduje EPSG na podstawie współrzędnych.</p>
+      <label for="crs-epsg">Układ MAP</label>
+      <select id="crs-epsg"><option value="" selected>Wybierz układ MAP…</option>
+<option value="2180">EPSG:2180 — PL-1992</option>
+<option value="2176">EPSG:2176 — PL-2000 strefa 5</option>
+<option value="2177">EPSG:2177 — PL-2000 strefa 6</option>
+<option value="2178">EPSG:2178 — PL-2000 strefa 7</option>
+<option value="2179">EPSG:2179 — PL-2000 strefa 8</option></select>
+      <label for="underlay-prj-file">Plik PRJ (opcjonalny)</label>
+      <input type="file" id="underlay-prj-file" accept=".prj">
+      <div class="underlay-divider"></div>
+      <label for="underlay-crs-target">Układ docelowy</label>
+      <select id="underlay-crs-target">
+        <option value="2180">EPSG:2180 — PL-1992</option>
+        <option value="2176">EPSG:2176 — PL-2000 strefa 5</option>
+        <option value="2177">EPSG:2177 — PL-2000 strefa 6</option>
+        <option value="2178">EPSG:2178 — PL-2000 strefa 7</option>
+        <option value="2179">EPSG:2179 — PL-2000 strefa 8</option>
+      </select>
+      <button type="button" id="underlay-crs-convert" class="button ghost">Przelicz współrzędne środka mapy</button>
+      <button type="button" id="crs-transform-map" class="button primary">Przekształć całą mapę</button>
+      <p id="underlay-crs-result" class="select-preview" role="status"></p>
+    </div>
+    <div class="select-actions">
+      <button type="button" id="crs-close-bottom" class="button primary">Zamknij</button>
+    </div>
+  </dialog>
   <dialog id="command-dialog" class="command-dialog">
     <div class="command-search"><span>⌕</span><input id="command-input" type="search" placeholder="Wpisz polecenie lub nazwę…" autocomplete="off"><kbd>ESC</kbd></div>
     <div id="command-results" class="command-results"></div>
     <div class="command-hint">↑ ↓ wybierz polecenie &nbsp; • &nbsp; Enter uruchom &nbsp; • &nbsp; Esc zamknij</div>
   </dialog>
   <div id="toast" role="status" class="toast" hidden></div>
+  <dialog id="map-picker-fallback" class="advanced-select-dialog">
+    <div class="select-head"><div><span class="eyebrow">OTWIERANIE MAPY</span><h2>Wybierz plik MAP</h2></div></div>
+    <div class="select-content"><p class="select-explain">Systemowe okno wyboru plików nie zadziałało. Użyj standardowego wyboru pliku.</p></div>
+    <div class="select-actions"><button type="button" id="map-picker-cancel" class="button ghost">Anuluj</button><button type="button" id="map-picker-retry" class="button primary">Wybierz plik</button></div>
+  </dialog>
+<dialog id="sheet-number-dialog" class="advanced-select-dialog bulk-dialog"><form method="dialog">
+<div class="dialog-head"><h2>Numer oddziału</h2></div>
+<label>Numer <input id="sheet-number" maxlength="24" required autocomplete="off"></label><label>Wysokość tekstu <input id="sheet-number-size" type="number" min="6" max="72" step="1" value="12"></label>
+<div class="dialog-actions"><button type="button" id="sheet-number-cancel" class="button ghost">Anuluj</button><button value="save" class="button primary">Wstaw 6900</button></div></form></dialog>
+<dialog id="sheet-text-dialog" class="advanced-select-dialog"><form method="dialog"><label>Tekst na mapie<br><textarea id="sheet-lines" rows="10" cols="46" maxlength="1500"></textarea></label><p>Formatowanie obejmie zaznaczony tekst. Bez zaznaczenia obejmie cały element.</p>
+<div class="tool-row"><label>Krój <select id="sheet-font"><option value="">Wybierz</option><option>Arial</option><option>Times New Roman</option><option>Georgia</option><option>Verdana</option><option>Courier New</option><option>Calibri</option><option>Cambria</option><option>Tahoma</option><option>Trebuchet MS</option><option>Palatino Linotype</option><option>Garamond</option><option>Century Gothic</option><option>Franklin Gothic Medium</option><option>Book Antiqua</option><option>Arial</option><option>Times New Roman</option><option>Georgia</option><option>Verdana</option><option>Courier New</option></select></label>
+<label>Rozmiar <input type="number" min="4" max="144" id="sheet-size" style="width:5em"></label>
+<button type="button" id="sheet-bold"><b>Pogrubienie</b></button>
+<button type="button" id="sheet-italic"><i>Kursywa</i></button></div>
+<canvas id="sheet-sample" width="410" height="200" aria-label="Podgląd formatowania"></canvas>
+<div><button value="cancel">Anuluj</button> <button value="save">Zapisz</button></div></form></dialog>
 </body>
 </html>
