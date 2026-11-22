@@ -29,6 +29,11 @@ $Executable = Join-Path $Repo "dist/GeoStudio2/GeoStudio2.exe"
 if (-not (Test-Path $Executable)) { throw "Missing packaged executable: $Executable" }
 & $Executable --help | Out-Null
 if ($LASTEXITCODE -ne 0) { throw "Packaged EXE failed smoke test: --help" }
+# --help writes to a redirected stdout, so it never exercises the no-console
+# path that a double-clicked --windowed EXE hits. --selftest starts the server
+# with sys.stdout/stderr set to None and expects HTTP 200.
+& $Executable --selftest | Out-Null
+if ($LASTEXITCODE -ne 0) { throw "Packaged EXE failed headless self-test (no console)." }
 
 if (-not $SkipInstaller) {
     $Iscc = Join-Path ([Environment]::GetFolderPath("ProgramFilesX86")) "Inno Setup 6/ISCC.exe"
