@@ -74,6 +74,15 @@
     enabled:false, image:null, bounds:null, opacity:.75, preset:"standard",
     layer:"", epsg:null, ticket:0, timer:null, abort:null, visible:true, loading:false
   };
+  // Wiele podkładów WMS naraz: każdy ma własny obraz, krycie i widoczność.
+  const underlays = [];
+  let underlaySerial = 0;
+  function underlayTitle(item){
+    return "WMS: "+item.title+(item.layer&&item.title.indexOf(item.layer)<0?" ("+item.layer+")":"");
+  }
+  function activeUnderlay(){
+    return underlays.find(item=>item.id===underlay.activeId)||underlays[underlays.length-1]||null;
+  }
   const raster = {
     image:null,affine:null,epsg:null,boundEPSG:null,opacity:.72,name:"",
     sourceWidth:0,sourceHeight:0,
@@ -2369,14 +2378,29 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
     if(rasterReady)active.push("Raster lokalny");
     $("underlay-chip").textContent=active.join(" + ")||"Bez podkładu";
   }
-  function removeUnderlay(){
-    underlay.ticket++;
-    clearTimeout(underlay.timer);
+  function removeUnderlay(id){
+    // Bez id: czyścimy cały stos. Z id: tylko wskazany podkład.
+    const targets=id?underlays.filter(item=>item.id===id):[...underlays];
+    for(const item of targets){
+      item.ticket++;clearTimeout(item.timer);
+      if(item.abort)item.abort.abort();
+    }
+    if(id){
+      const index=underlays.findIndex(item=>item.id===id);
+      if(index>=0)underlays.splice(index,1);
+      if(underlay.activeId===id)underlay.activeId=underlays[underlays.length-1]?.id||null;
+    }else{
+      underlays.length=0;underlay.activeId=null;
+    }
+    underlay.ticket++;clearTimeout(underlay.timer);
     if(underlay.abort)underlay.abort.abort();
-    underlay.abort=null;underlay.enabled=false;underlay.loading=false;
-    underlay.image=null;underlay.bounds=null;underlay.layer="";
-    underlay.epsg=null;
-    if($("underlay-summary"))updateUnderlayStatus("Podkład usunięty. MAP pozostaje niezmieniony.");
+    underlay.abort=null;underlay.loading=false;
+    underlay.image=null;underlay.bounds=null;
+    underlay.enabled=underlays.length>0;
+    if(!underlay.enabled){underlay.layer="";underlay.epsg=null;}
+    if($("underlay-summary"))
+      updateUnderlayStatus(targets.length>1?"Usunięto podkłady WMS.":
+        "Podkład usunięty. MAP pozostaje niezmieniony.");
     renderRasterLayers();
     if(state.meta){state.previewActive=false;state.geometrySnapshotValid=false;requestDraw();}
   }
@@ -2617,7 +2641,9 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
             height:Math.max(128,Math.min(2048,height))};
   }
   function scheduleUnderlayRefresh(immediate=false){
-    if(!underlay.enabled||!state.meta||!underlay.visible)return;
+    if(!underlay.enabled||!state.meta)return;
+    const current=activeUnderlay();
+    if(current&&!current.visible)return;
     // A zoom changes the desired BBOX: invalidate any old request now,
     // not after a later debounced request has started.
     underlay.ticket++;
@@ -2633,8 +2659,9 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
     const controller=new AbortController();underlay.abort=controller;
     const bounds=boundsFromViewport(.09);
     const size=underlayRequestDimensions(bounds);
+    const current=activeUnderlay()||underlay;
     const params=new URLSearchParams({
-      preset:underlay.preset,layer:underlay.layer,epsg:String(underlay.epsg),
+      preset:current.preset,layer:current.layer,epsg:String(current.epsg),
       xmin:String(bounds[0]),ymin:String(bounds[1]),
       xmax:String(bounds[2]),ymax:String(bounds[3]),
       width:String(size.width),height:String(size.height)
@@ -2661,7 +2688,10 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
       }finally{URL.revokeObjectURL(url);}
       if(!underlay.enabled||id!==underlay.ticket||
          documentToken!==state.edit?.documentToken)return;
-      underlay.image=image;underlay.bounds=bounds;underlay.loading=false;
+      const target=activeUnderlay();
+      if(target){target.image=image;target.bounds=bounds;target.loading=false;}
+      else{underlay.image=image;underlay.bounds=bounds;}
+      underlay.loading=false;
       requestDraw();renderRasterLayers();
       updateUnderlayStatus("WMS ostry dla aktualnego kadru.");
     }catch(error){
@@ -2685,25 +2715,42 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
       inform("Wybierz układ EPSG, który jest zgodny z MAP i warstwą WMS.",true);
       return;
     }
-    // No automatic CRS guessing: user explicitly chooses it per MAP.
+    const preset=$("underlay-preset").value;
+    const title=option.textContent||layer;
+    // Ten sam preset+warstwa+układ = odświeżenie istniejącego podkładu,
+    // inny = NOWA warstwa na stosie (poprzednie zostają).
+    let item=underlays.find(entry=>entry.preset===preset&&entry.layer===layer&&
+                                   entry.epsg===epsg);
+    if(!item){
+      item={id:"wms"+(++underlaySerial),preset,layer,epsg,title,
+            image:null,bounds:null,opacity:Number($("underlay-opacity").value)/100||.75,
+            visible:true,loading:false,ticket:0,timer:null,abort:null};
+      underlays.push(item);
+    }else{
+      item.visible=true;
+      item.image=null;item.bounds=null;
+    }
+    underlay.activeId=item.id;
     underlay.enabled=true;
-    underlay.preset=$("underlay-preset").value;
-    underlay.layer=layer;underlay.epsg=epsg;
-    underlay.image=null;underlay.bounds=null;underlay.visible=true;
+    underlay.preset=preset;underlay.layer=layer;underlay.epsg=epsg;
     updateUnderlayStatus("Pobieranie obrazu dla EPSG:"+epsg+"…");
     renderRasterLayers();
     scheduleUnderlayRefresh(true);
   }
   function paintUnderlay(){
-    if(!underlay.enabled||!underlay.visible||!underlay.image||!underlay.bounds)return;
-    const bounds=underlay.bounds;
-    const top=worldToScreen(bounds[0],bounds[1]);
-    const bottom=worldToScreen(bounds[2],bounds[3]);
-    ctx.save();ctx.globalAlpha=underlay.opacity;
-    ctx.imageSmoothingEnabled=true;ctx.imageSmoothingQuality="high";
-    ctx.drawImage(underlay.image,top.x,top.y,
-                  bottom.x-top.x,bottom.y-top.y);
-    ctx.restore();
+    if(!underlay.enabled)return;
+    // Rysujemy po kolei wszystkie włączone podkłady WMS.
+    for(const item of underlays){
+      if(!item.visible||!item.image||!item.bounds)continue;
+      const bounds=item.bounds;
+      const top=worldToScreen(bounds[0],bounds[1]);
+      const bottom=worldToScreen(bounds[2],bounds[3]);
+      ctx.save();ctx.globalAlpha=item.opacity;
+      ctx.imageSmoothingEnabled=true;ctx.imageSmoothingQuality="high";
+      ctx.drawImage(item.image,top.x,top.y,
+                    bottom.x-top.x,bottom.y-top.y);
+      ctx.restore();
+    }
   }
   function rasterInfo(message){
     const summary=$("raster-summary");
@@ -2869,10 +2916,11 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
     if(!list)return;
     list.replaceChildren();
     const items=[];
-    if(underlay.enabled)items.push({kind:"wms",id:"wms",
-      title:"WMS: "+($("underlay-preset").selectedOptions[0]?.textContent||"Geoportal"),
-      visible:underlay.visible,opacity:underlay.opacity,
-      status:underlay.loading?"Odświeżanie obrazu…":underlay.image?"Połączono":"Ładowanie…"});
+    for(const item of underlays)
+      items.push({kind:"wms",id:item.id,title:underlayTitle(item),
+        visible:item.visible,opacity:item.opacity,
+        status:item.loading?"Odświeżanie obrazu…":
+          item.image?"Połączono":"Ładowanie…"});
     for(const item of [...raster.layers,...(raster.image?[rasterEntry()]:[])])
       items.push({kind:"raster",id:item.id,title:item.name,
         visible:item.visible,opacity:item.opacity,
@@ -2890,9 +2938,17 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
       checkbox.checked=item.visible;checkbox.setAttribute("aria-label","Widoczność "+item.title);
       checkbox.addEventListener("change",()=>{
         if(item.kind==="wms"){
-          underlay.visible=checkbox.checked;
-          if(underlay.visible)scheduleUnderlayRefresh(true);
-          else{underlay.ticket++;clearTimeout(underlay.timer);if(underlay.abort)underlay.abort.abort();}
+          const target=underlays.find(entry=>entry.id===item.id);
+          if(target){
+            target.visible=checkbox.checked;
+            if(target.visible){
+              underlay.activeId=target.id;
+              scheduleUnderlayRefresh(true);
+            }else{
+              target.ticket++;clearTimeout(target.timer);
+              if(target.abort)target.abort.abort();
+            }
+          }
         }else {
           const target=item.id===raster.id?raster:raster.layers.find(x=>x.id===item.id);
           if(target)target.visible=checkbox.checked;
@@ -2911,6 +2967,8 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
       slider.addEventListener("input",()=>{
         const value=Number(slider.value)/100;
         if(item.kind==="wms"){
+          const target=underlays.find(entry=>entry.id===item.id);
+          if(target)target.opacity=value;
           underlay.opacity=value;
           $("underlay-opacity").value=slider.value;
           $("underlay-opacity-value").textContent=slider.value+"%";
@@ -2936,7 +2994,7 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
       }
       const remove=document.createElement("button");remove.textContent="Usuń";remove.type="button";
       remove.addEventListener("click",()=>{
-        if(item.kind==="wms")removeUnderlay();
+        if(item.kind==="wms")removeUnderlay(item.id);
         else if(item.id===raster.id)removeRaster();
         else{
           raster.layers=raster.layers.filter(x=>x.id!==item.id);
@@ -4488,7 +4546,7 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
     ctx.fillStyle=state.mapBackground;
     ctx.fillRect(0,0,state.width,state.height);
     state.hasVisibleUnderlay=!!(
-      (underlay.enabled&&underlay.visible&&underlay.image)||
+      (underlay.enabled&&underlays.some(item=>item.visible&&item.image))||
       [...raster.layers,...(raster.image?[rasterEntry()]:[])]
         .some(item=>rasterCanShow(item)));
     paintUnderlay();paintRaster();drawGrid();
