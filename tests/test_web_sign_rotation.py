@@ -69,3 +69,23 @@ def test_workspace_rejects_bad_angle(kind, angle):
     with pytest.raises(ValueError):
         ws.set_sheet_items([item], document_token=status["documentToken"],
                            revision=status["revision"])
+
+
+def test_group_selection_sets_the_sheet_item_for_the_rotate_handle():
+    """Po zaznaczeniu całego znaku musi być ustawiony element arkusza,
+    inaczej nie pojawia się uchwyt obrotu ani suwak."""
+    from pathlib import Path
+    source = Path("geostudio/web_app/static/map.js").read_text(encoding="utf-8")
+    assert "selectedSheet=group.itemId;" in source
+    # Klawisze [ i ] jako zawsze dostępna droga obrotu.
+    assert 'ev.key!=="["&&ev.key!=="]"' in source
+    assert "const step=ev.shiftKey?15:5;" in source
+
+
+def test_wms_layer_button_reports_state_with_colours():
+    from pathlib import Path
+    js = Path("geostudio/web_app/static/map.js").read_text(encoding="utf-8")
+    css = Path("geostudio/web_app/static/styles.css").read_text(encoding="utf-8")
+    assert "function wmsLayersState(" in js
+    assert 'wmsLayersState("ok"' in js and 'wmsLayersState("error"' in js
+    assert "#underlay-layers.is-ok" in css and "#underlay-layers.is-error" in css

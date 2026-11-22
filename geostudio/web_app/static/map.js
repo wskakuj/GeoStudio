@@ -2253,11 +2253,27 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
     renderRasterLayers();
     if(state.meta){state.previewActive=false;state.geometrySnapshotValid=false;requestDraw();}
   }
+  function wmsLayersState(state,text){
+    // Zielono = pobrane, czerwono = błąd, szaro = w toku.
+    const button=$("underlay-layers"),summary=$("underlay-summary");
+    if(button){
+      button.classList.toggle("is-ok",state==="ok");
+      button.classList.toggle("is-error",state==="error");
+      button.classList.toggle("is-busy",state==="busy");
+      button.textContent=state==="ok"?"Warstwy pobrane":
+        state==="error"?"Nie udało się pobrać":"Pobieranie…";
+    }
+    if(summary){
+      summary.classList.toggle("is-ok",state==="ok");
+      summary.classList.toggle("is-error",state==="error");
+      summary.textContent=text;
+    }
+  }
   async function loadUnderlayLayers(){
     const preset=$("underlay-preset").value;
     const options=$("underlay-layer");
     options.replaceChildren(new Option("Wczytywanie warstw Geoportalu…",""));
-    $("underlay-summary").textContent="Pobieranie listy warstw WMS…";
+    wmsLayersState("busy","Pobieranie listy warstw WMS…");
     try{
       const response=await api("/api/underlay/wms/layers?preset="+encodeURIComponent(preset));
       if($("underlay-preset").value!==preset)return;
@@ -2268,12 +2284,12 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
         options.add(choice);
       }
       if(!options.options.length)throw Error("Brak warstw obsługujących polskie EPSG.");
-      $("underlay-summary").textContent=
-        "Wybierz rzeczywisty EPSG otwartej MAP, a następnie włącz podkład.";
+      wmsLayersState("ok","Pobrano "+options.options.length+" warstw. "+
+        "Wybierz rzeczywisty EPSG otwartej MAP, a następnie włącz podkład.");
     }catch(error){
       if($("underlay-preset").value!==preset)return;
       options.replaceChildren(new Option("Nie udało się pobrać warstw",""));
-      $("underlay-summary").textContent=error.message;
+      wmsLayersState("error",error.message);
       inform("Błąd WMS: "+error.message,true);
     }
   }
@@ -5803,6 +5819,9 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
         state.active=fid;state.detail=null;state.selectedVertex=null;
         state.pinned=new Set(group.members.filter(id=>id!==fid));
         state.sheetGroup={itemId:group.itemId,members:group.members};
+        // Bez tego nie pojawia się uchwyt obrotu ani suwak „Obrót”:
+        // zaznaczenie szło ścieżką grupy i nie ustawiało selectedSheet.
+        selectedSheet=group.itemId;
         updateDeleteNodeButton();updateSelectionCount();requestDraw();
         await refreshSheetGroupSelection(group);
         return;
@@ -6149,6 +6168,25 @@ inform("Klikaj mapę, aby wstawiać kolejne oznaczenia. Naciśnij Esc lub wybier
     requestDraw();
   },true);
   $("sheet-remove").addEventListener("click",()=>saveSheet(sheetItems().filter(i=>i.id!==selectedSheet)));
+  // Awaryjna, zawsze dostępna droga obrotu: klawisze [ i ] na zaznaczonym znaku.
+  window.addEventListener("keydown",ev=>{
+    if(ev.target instanceof HTMLInputElement||ev.target instanceof HTMLTextAreaElement)return;
+    if(ev.key!=="["&&ev.key!=="]")return;
+    const item=sheetItems().find(i=>i.id===selectedSheet);
+    if(!item||!rotatableSigns.has(item.kind))return;
+    ev.preventDefault();
+    const step=ev.shiftKey?15:5;
+    const delta=ev.key==="]"?step:-step;
+    item.angle=(((Number(item.angle||0)+delta)+180)%360+360)%360-180;
+    $("sheet-rotate").value=String(Math.round(item.angle));
+    $("sheet-rotate-value").value=Math.round(item.angle)+"°";
+    requestDraw();
+    clearTimeout(rotateCommit);
+    rotateCommit=setTimeout(()=>{
+      const current=sheetItems().find(i=>i.id===selectedSheet);
+      if(current)saveSheet(sheetItems().map(i=>i.id===current.id?current:i));
+    },400);
+  });
   let rotateCommit=null;
   $("sheet-rotate").addEventListener("input",e=>{
     const item=sheetItems().find(i=>i.id===selectedSheet);
