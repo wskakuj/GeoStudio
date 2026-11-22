@@ -6161,6 +6161,21 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
     }
   }
 
+  // Twardy reset stanów przeciągania: jeśli pointerup gdzieś zginie
+  // (ramka, alt-tab, utrata przechwycenia), mapa zostawała zablokowana.
+  function resetTransientDrags(){
+    if(state.labelDrag)Object.assign(state.labelDrag.label,state.labelDrag.origin);
+    state.drag=null;state.labelDrag=null;state.anchorDrag=null;
+    state.vertexDrag=null;state.moveGhost=null;state.sheetRotate=null;
+    state.blockRectDrag=null;state.blockRectPicking=false;
+    shell.classList.remove("dragging");
+    try{canvas.releasePointerCapture?.(0);}catch(_){}
+    requestDraw();
+  }
+  window.addEventListener("blur",()=>{if(state.drag||state.labelDrag||state.anchorDrag)resetTransientDrags();});
+  document.addEventListener("visibilitychange",()=>{
+    if(document.hidden&&(state.drag||state.labelDrag||state.anchorDrag))resetTransientDrags();
+  });
   function eventCoords(ev){
     const box=canvas.getBoundingClientRect();
     return {x:ev.clientX-box.left,y:ev.clientY-box.top};
@@ -6376,6 +6391,13 @@ inform("Klikaj mapę, aby wstawiać kolejne oznaczenia. Naciśnij Esc lub wybier
     await setLeaderAnchor(selected,{north:-world.y,east:world.x});
   },true);
   window.addEventListener("keydown",ev=>{
+    if(ev.key==="Escape"&&(state.drag||state.labelDrag||state.anchorDrag||state.editBusy)){
+      resetTransientDrags();
+      state.editBusy=false;state.editBusySince=0;
+      updateEditState(state.edit);
+      inform("Odblokowano mapę.");
+      return;
+    }
     if(!state.leaderMode||!state.edit)return;
     if(ev.target instanceof HTMLInputElement||ev.target instanceof HTMLTextAreaElement)return;
     const key=ev.key.toLowerCase();
@@ -6452,7 +6474,7 @@ inform("Klikaj mapę, aby wstawiać kolejne oznaczenia. Naciśnij Esc lub wybier
           anchor:[drag.point.north,drag.point.east],
           documentToken:state.edit.documentToken,revision:state.edit.revision})});
       updateEditState(result);
-      await refreshEditedDocument(state.active);
+      scheduleViewport(true);
       inform(drag.snap?"Kotwica przyciągnięta do drugiej etykiety.":"Przesunięto punkt zaczepienia wysięgnika.");
     }catch(error){
       inform("Nie przesunięto kotwicy: "+error.message,true);
@@ -6642,7 +6664,10 @@ inform("Klikaj mapę, aby wstawiać kolejne oznaczenia. Naciśnij Esc lub wybier
     }
     const rightLabel=state.tool==="select"&&ev.button===2;
     if(ev.button!==0&&ev.button!==1&&!rightLabel)return;
-    if(state.drag)return;
+    if(state.drag){
+      // Poprzednie przeciąganie nie zostało zamknięte — czyścimy i działamy dalej.
+      resetTransientDrags();
+    }
     const p=eventCoords(ev);
     state.hoverInsert=null;
     if((((state.tool==="labels"||state.leaderMode)&&ev.button===0)||rightLabel)&&!state.editBusy){
