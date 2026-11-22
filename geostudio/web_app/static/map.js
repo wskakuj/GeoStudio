@@ -7141,9 +7141,12 @@ inform("Klikaj mapę, aby wstawiać kolejne oznaczenia. Naciśnij Esc lub wybier
     readUnderlayPrj(ev.target.files?.[0]);ev.target.value="";
   });
   link("underlay-show",applyUnderlay);
-  link("underlay-remove",removeUnderlay);
+  link("underlay-remove",()=>removeUnderlay());
   $("underlay-preset").addEventListener("change",()=>{
-    removeUnderlay();showWmsPresetAddress();loadUnderlayLayers();
+    // Zmiana źródła tylko odświeża listę warstw — wczytane podkłady zostają,
+    // żeby można było dołożyć kolejną warstwę z innego serwisu.
+    showWmsPresetAddress();
+    loadUnderlayLayers();
   });
   for(const id of ["underlay-epsg","raster-epsg","crs-epsg"])
     $(id).addEventListener("change",ev=>setMapEPSG(ev.target.value));
