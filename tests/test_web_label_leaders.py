@@ -161,7 +161,8 @@ def test_anchor_clicked_on_map_lands_where_clicked():
     feature = next(f for f in features if f["code"] == "5310"
                    and not any(item.get("leader") for item in f["labels"]))
     west, south, east, north = feature["bbox"]
-    click = [(south + north) / 2, (west + east) / 2]      # [północ, wschód]
+    # bbox = [zachód, -północ, wschód, -południe]
+    click = [-(south + north) / 2, (west + east) / 2]      # [północ, wschód]
     workspace.set_label_leader(feature["id"], 2, True, click, True,
                                document_token=status["documentToken"],
                                revision=status["revision"])
@@ -197,12 +198,15 @@ def test_label_position_and_leader_survive_map_save():
     feature = next(f for f in features if f["code"] == "5310"
                    and not any(item.get("leader") for item in f["labels"]))
     west, south, east, north = feature["bbox"]
-    click = [(south + north) / 2, (west + east) / 2]
+    # bbox = [zachód, -północ, wschód, -południe]
+    click = [-(south + north) / 2, (west + east) / 2]
     workspace.set_label_leader(feature["id"], 2, True, click, True,
                                document_token=status["documentToken"],
                                revision=status["revision"])
     status = workspace.editing_status()
-    workspace.move_label(feature["id"], "A1", click[0] + 8, click[1] + 12,
+    # Przesuwamy w obrębie poligonu: offset z pliku jest używany tylko wtedy,
+    # gdy napis wypada wewnątrz obrysu.
+    workspace.move_label(feature["id"], "A1", click[0] + 2, click[1] + 3,
                          document_token=status["documentToken"],
                          revision=status["revision"])
     reopened = PreviewWorkspace()
@@ -211,8 +215,8 @@ def test_label_position_and_leader_survive_map_save():
     changed = next(f for f in updated if f["id"] == feature["id"])
     label = next(l for l in changed["labels"] if l["field"] == "A1")
     assert label["manuallyPlaced"] is True
-    assert abs(label["x"] - (click[1] + 12)) < 0.5
-    assert abs(-label["y"] - (click[0] + 8)) < 0.5
+    assert abs(label["x"] - (click[1] + 3)) < 0.5
+    assert abs(-label["y"] - (click[0] + 2)) < 0.5
     assert label["leader"] is not None
 
 

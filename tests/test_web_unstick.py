@@ -34,3 +34,23 @@ def test_anchor_drag_does_not_reload_the_document():
     block = JS[start:start + 900]
     assert "refreshEditedDocument" not in block
     assert "scheduleViewport(true);" in block
+
+
+def test_leader_mode_does_not_hijack_the_tool():
+    """Tryb wysięgników jest nakładką — nie może ustawiać state.tool."""
+    assert 'if(state.leaderMode)state.tool="labels";' not in JS
+    assert "Tryb wysięgników NIE przejmuje narzędzia" in JS
+
+
+def test_leader_mode_miss_falls_through_to_normal_click():
+    assert "W trybie wysięgników pudło w etykietę NIE blokuje mapy" in JS
+
+
+def test_s_key_toggles_leader_mode():
+    assert 'if(ev.key.toLowerCase()!=="s"||!state.edit)return;' in JS
+    assert "toggleLeaderMode();" in JS
+
+
+def test_all_visible_wms_layers_refresh():
+    assert "const targets=underlays.filter(item=>item.visible);" in JS
+    assert "async function refreshUnderlayItem(" in JS
