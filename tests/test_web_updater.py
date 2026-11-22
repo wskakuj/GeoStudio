@@ -162,3 +162,14 @@ def test_update_dialog_is_compact(tmp_path):
     assert "Pobrać i zainstalować teraz" not in tabs
     assert ".update-card" in css and ".update-actions" in css
     assert "Pobierz i zainstaluj" in tabs
+
+
+def test_update_script_searches_registry_hives_and_drives(tmp_path):
+    script = updater.build_update_script(
+        "https://example.com/setup.exe", tmp_path / "setup.exe", "2.0.13")
+    # Instalacja bywa na innym dysku (np. D:\GeoStudio), więc czytamy rejestr.
+    assert "HKCU:\\Software" in script
+    assert "HKLM:\\Software" in script and "WOW6432Node" in script
+    assert "DisplayIcon" in script and "UninstallString" in script
+    assert "From-Registry" in script and "From-Drives" in script
+    assert "DriveType -eq 'Fixed'" in script

@@ -44,7 +44,7 @@ def is_newer(latest: str, current: str) -> bool:
 
 # Musi być zgodna z pyproject.toml; używana, gdy metadane pakietu nie są
 # spakowane (PyInstaller kopiuje je przez --copy-metadata geostudio-pl).
-FALLBACK_VERSION = "2.0.12"
+FALLBACK_VERSION = "2.0.13"
 
 
 def current_version() -> str:
@@ -228,26 +228,62 @@ try {
     $installer = Start-Process -FilePath $target -ArgumentList '/SILENT', '/CLOSEAPPLICATIONS' -PassThru
     $installer.WaitForExit()
 
-    # Sciezka instalacji bywa inna (starsza wersja mogla wybrac inny katalog),
-    # wiec szukamy: rejestr -> typowa lokalizacja -> skan Programow.
+    # Sciezka instalacji bywa inna (u Ciebie np. D:\GeoStudio), wiec czytamy
+    # rejestr: InstallLocation, DisplayIcon i UninstallString, a potem szukamy
+    # po dyskach. Katalog z instalatora NIE jest wyznacznikiem.
     $exe = $null
-    $uninstall = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\{A755B3EB-320E-4139-8A44-FA5FB6912C9A}_is1'
-    for ($attempt = 0; $attempt -lt 10 -and -not $exe; $attempt++) {
-        if (Test-Path $uninstall) {
-            $location = (Get-ItemProperty $uninstall -ErrorAction SilentlyContinue).InstallLocation
-            if ($location) {
-                $candidate = Join-Path $location 'GeoStudio2.exe'
-                if (Test-Path $candidate) { $exe = $candidate }
+    $appId = '{A755B3EB-320E-4139-8A44-FA5FB6912C9A}_is1'
+    $roots = @(
+        'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall',
+        'HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall',
+        'HKLM:\Software\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall'
+    )
+
+    function From-Registry {
+        foreach ($root in $roots) {
+            $key = Join-Path $root $appId
+            if (-not (Test-Path $key)) { continue }
+            $entry = Get-ItemProperty $key -ErrorAction SilentlyContinue
+            if (-not $entry) { continue }
+            if ($entry.InstallLocation) {
+                $candidate = Join-Path $entry.InstallLocation 'GeoStudio2.exe'
+                if (Test-Path $candidate) { return $candidate }
+            }
+            if ($entry.DisplayIcon) {
+                $icon = ($entry.DisplayIcon -split ',')[0].Trim('"', ' ')
+                if ($icon -like '*GeoStudio2.exe' -and (Test-Path $icon)) { return $icon }
+            }
+            if ($entry.UninstallString) {
+                $folder = Split-Path (($entry.UninstallString -replace '"', '').Trim()) -Parent
+                if ($folder) {
+                    $candidate = Join-Path $folder 'GeoStudio2.exe'
+                    if (Test-Path $candidate) { return $candidate }
+                }
             }
         }
-        if (-not $exe) {
-            $candidate = Join-Path $env:LOCALAPPDATA 'Programs\GeoStudio2\GeoStudio2.exe'
-            if (Test-Path $candidate) { $exe = $candidate }
+        return $null
+    }
+
+    function From-Drives {
+        # Tylko dyski lokalne — skan dysków sieciowych mógłby trwać minutami.
+        $drives = [System.IO.DriveInfo]::GetDrives() |
+            Where-Object { $_.DriveType -eq 'Fixed' -and $_.IsReady }
+        foreach ($drive in $drives) {
+            foreach ($name in @('GeoStudio', 'GeoStudio2', 'GeoStudio 2.0')) {
+                $candidate = Join-Path $drive.Root $name
+                $hit = Join-Path $candidate 'GeoStudio2.exe'
+                if (Test-Path $hit) { return $hit }
+            }
+            $found = Get-ChildItem ($drive.Root + 'GeoStudio*') -Filter 'GeoStudio2.exe' `
+                -Recurse -Depth 2 -ErrorAction SilentlyContinue | Select-Object -First 1
+            if ($found) { return $found.FullName }
         }
-        if (-not $exe) {
-            $found = Get-ChildItem (Join-Path $env:LOCALAPPDATA 'Programs') -Filter 'GeoStudio2.exe' -Recurse -Depth 2 -ErrorAction SilentlyContinue | Select-Object -First 1
-            if ($found) { $exe = $found.FullName }
-        }
+        return $null
+    }
+
+    for ($attempt = 0; $attempt -lt 12 -and -not $exe; $attempt++) {
+        $exe = From-Registry
+        if (-not $exe) { $exe = From-Drives }
         if (-not $exe) { Start-Sleep -Milliseconds 500 }
     }
 
