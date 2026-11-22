@@ -101,7 +101,7 @@ class _MapHistoryTarget:
 class GeoStudioWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self._base_title = 'GeoStudio v0.14 — eksperymentalny edytor GEO-MAP'
+        self._base_title = 'GeoStudio v0.15 — eksperymentalny edytor GEO-MAP'
         self.setWindowTitle(self._base_title)
         self.resize(1500, 900)
         self.settings = QSettings('GeoStudio', 'GeoStudio')
@@ -399,7 +399,7 @@ class GeoStudioWindow(QMainWindow):
     def _update_dirty_title(self):
         mark = ' *' if self.history.is_dirty else ''
         self.setWindowTitle(getattr(self, '_base_title',
-                                    'GeoStudio v0.14') + mark)
+                                    'GeoStudio v0.15') + mark)
         if hasattr(self, 'workspace'):
             self.workspace.set_document(
                 self.doc.filename if self.doc else None, dirty=self.history.is_dirty)
@@ -1864,7 +1864,7 @@ class GeoStudioWindow(QMainWindow):
             # Entries refer to the lines of the previous document.
             self._label_history = None
             self.history.clear()
-            self._base_title = 'GeoStudio v0.14 — '+Path(file).name
+            self._base_title = 'GeoStudio v0.15 — '+Path(file).name
             self._append_current_map_tab()
             self.status.showMessage(
                 ('Przywrócono jedną sesję roboczą. ' if recovered else
@@ -1977,7 +1977,7 @@ class GeoStudioWindow(QMainWindow):
             self.layers_tree.clear()
             self.props.clear()
             self.workspace.map_tabs_frame.hide()
-            self._base_title = 'GeoStudio v0.14 — eksperymentalny edytor GEO-MAP'
+            self._base_title = 'GeoStudio v0.15 — eksperymentalny edytor GEO-MAP'
             self._update_dirty_title()
             self._update_wms_attribution()
             self.status.showMessage('Wszystkie mapy zamknięte. Otwórz plik MAP (Ctrl+O).')

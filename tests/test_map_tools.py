@@ -24,7 +24,7 @@ from geostudio.map_tools import MapView
 SIGNALS = ("coordinate", "canvas_click", "canvas_context", "point_for_polygon",
            "polygon_hover", "finish_polygon", "undo_polygon_point", "cancel_action",
            "vertex_hover", "vertex_commit", "edge_insert", "label_press",
-           "label_move", "label_drop", "zoom_changed")
+           "label_move", "label_drop", "zoom_changed", "selection_rectangle")
 
 
 @pytest.fixture(scope="module")
@@ -86,7 +86,7 @@ def wheel(view, x, y, delta, modifiers=Qt.NoModifier):
 def test_all_signals_are_preserved():
     for name in SIGNALS:
         assert hasattr(MapView, name), name
-    assert len([n for n in SIGNALS if hasattr(MapView, n)]) == 15
+    assert len([n for n in SIGNALS if hasattr(MapView, n)]) == 16
 
 
 def test_initial_state_and_swapped_map_axes(view):
@@ -185,6 +185,8 @@ def test_left_click_selects_with_modifiers(view):
     seen = []
     view.canvas_click.connect(lambda *args: seen.append(args))
     press(view, 50, 60, Qt.LeftButton, Qt.AltModifier | Qt.ControlModifier)
+    assert seen == []  # selection waits until release so a drag can become a box
+    release(view, 50, 60, Qt.LeftButton, Qt.AltModifier | Qt.ControlModifier)
     assert len(seen) == 1
     x, y, alt, ctrl = seen[0]
     assert (alt, ctrl) == (True, True)

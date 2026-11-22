@@ -1,0 +1,48 @@
+name: Windows release
+on:
+  push:
+    branches: [main]
+    paths:
+      - "geostudio/**"
+      - "assets/**"
+      - "pyproject.toml"
+      - ".github/workflows/release.yml"
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  build:
+    if: github.event_name == 'workflow_dispatch' || startsWith(github.event.head_commit.message, 'release: v0.15.0')
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install GeoStudio and packaging tools
+        run: python -m pip install -e . pyinstaller pillow
+      - name: Prepare Windows icon
+        shell: pwsh
+        run: |
+          @'
+          from PIL import Image
+          icon = Image.open("assets/geostudio-icon.png").convert("RGBA")
+          icon.save("assets/geostudio-icon.ico", sizes=[(16,16),(24,24),(32,32),(48,48),(64,64),(128,128),(256,256)])
+          '@ | python -
+      - name: Build one-file Windows application
+        run: >-
+          python -m PyInstaller --noconfirm --clean --onefile --windowed
+          --name GeoStudio --icon assets/geostudio-icon.ico
+          --collect-all PySide6 --collect-all ezdxf --collect-all pyproj
+          --collect-submodules geostudio
+          --add-data "assets/geostudio-icon.png;assets"
+          packaging/launch.py
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v0.15.0
+          target_commitish: main
+          name: GeoStudio v0.15.0
+          prerelease: true
+          generate_release_notes: true
+          files: dist/GeoStudio.exe
