@@ -118,3 +118,12 @@ def test_start_update_launches_powershell(monkeypatch, tmp_path):
     assert calls and calls[0][0] == "powershell"
     assert "-STA" in calls[0]
     assert "https://example.com/setup.exe" in calls[0][-1]
+
+
+def test_update_script_relaunches_the_app_after_install(tmp_path):
+    script = updater.build_update_script(
+        "https://example.com/setup.exe", tmp_path / "setup.exe", "v2.0.9")
+    # Instalator cicho, czekamy na koniec i uruchamiamy program.
+    assert "WaitForExit()" in script
+    assert "Programs" in script and "GeoStudio2.exe" in script
+    assert "Start-Process -FilePath $exe" in script
