@@ -1604,8 +1604,9 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
         await refreshEditedDocument(state.active);
         const snap=result.snapApplied?" · przyciągnięto do granicy":
           ghost.snap?" · magnes: "+ghost.snap.kind:"";
+        const cut=result.hasReversibleMasks?" Wycięto fragmenty poligonów pod spodem.":"";
         inform("Przesunięto "+display(result.movedObjects)+
-          (result.movedObjects===1?" obiekt":" obiektów")+snap+
+          (result.movedObjects===1?" obiekt":" obiektów")+snap+cut+
           ". Cofnij: Ctrl+Z.");
       }
     }catch(error){
