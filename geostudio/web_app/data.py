@@ -2218,6 +2218,13 @@ class PreviewWorkspace:
                 "object": self.details(fid),
             }
 
+    def mark_saved(self) -> None:
+        """The current document and its sidecars reached the disk."""
+        with self._lock:
+            if self._history is None or self._doc is None:
+                raise ValueError("Brak dokumentu do oznaczenia jako zapisany.")
+            self._history.mark_saved()
+
     def mark_recovered_unsaved(self) -> None:
         """Recovered session has not been saved as a new MAP by the user."""
         with self._lock:
