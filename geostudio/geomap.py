@@ -682,6 +682,38 @@ class GeoMap:
         self.lines[positions[0]:positions[-1]+1]=written
         self._parse()
 
+    def set_label_offset(self, uid: str, slot: int, dx: float, dy: float) -> int:
+        """Zapisuje przesunięcie napisu w natywnym rekordzie L.
+
+        ``dx, dy`` są względne wobec punktu bazowego poligonu — tak jak
+        pozostałe pola rekordu. Reszta (flagi, kotwica) zostaje bez zmian.
+        """
+        if uid not in self.by_id:
+            raise LookupError(uid)
+        if slot not in (1, 2, 3):
+            raise ValueError("Slot etykiety musi być 1, 2 albo 3.")
+        obj = self.by_id[uid]
+        for index in range(obj.start, obj.end):
+            raw = self.lines[index]
+            parsed = parse_label_record(raw)
+            if not parsed or parsed["slot"] != slot:
+                continue
+            numbers = [float(dx), float(dy), parsed["rotation"],
+                       parsed["scale"], float(parsed["flags"])]
+            if parsed["anchor"]:
+                numbers.extend([float(parsed["anchor"][0]),
+                                float(parsed["anchor"][1])])
+            text = " ".join(
+                (f"{value:.0f}" if index_of == 4 else
+                 f"{value:.3f}" if index_of < 2 else
+                 f"{value:.7f}" if index_of in (2, 3) else f"{value:.3f}")
+                for index_of, value in enumerate(numbers))
+            eol = b"\r\n" if raw.endswith(b"\r\n") else b"\n"
+            self.lines[index] = ("L " + str(slot) + " " + text).encode("ascii") + eol
+            self._parse()
+            return 1
+        return 0
+
     def set_label_leader(self, uid: str, slot: int, enabled: bool,
                          anchor: tuple[float, float] | None = None,
                          prefer_left: bool | None = None) -> int:

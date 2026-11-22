@@ -7,6 +7,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent))
 
 from geostudio.geomap import parse_label_record  # noqa: E402
+from geostudio.web_app.data import PreviewWorkspace  # noqa: E402
 
 
 def test_left_leader_flags_133_and_shared_anchor():
@@ -184,3 +185,30 @@ def test_edit_lock_has_watchdog():
     js = Path("geostudio/web_app/static/map.js").read_text(encoding="utf-8")
     assert "editBusySince" in js
     assert "odblokowano edycję" in js
+
+
+def test_label_position_and_leader_survive_map_save():
+    """Pozycja A1/A2 i kotwica muszą być w samym MAP, nie tylko w JSON."""
+    workspace = _map_with_label()
+    status = workspace.editing_status()
+    features = workspace.viewport((0, -1e6, 1e6, 1e6), limit=3000)["features"]
+    feature = next(f for f in features if f["code"] == "5310"
+                   and not any(item.get("leader") for item in f["labels"]))
+    west, south, east, north = feature["bbox"]
+    click = [(south + north) / 2, (west + east) / 2]
+    workspace.set_label_leader(feature["id"], 2, True, click, True,
+                               document_token=status["documentToken"],
+                               revision=status["revision"])
+    status = workspace.editing_status()
+    workspace.move_label(feature["id"], "A1", click[0] + 8, click[1] + 12,
+                         document_token=status["documentToken"],
+                         revision=status["revision"])
+    reopened = PreviewWorkspace()
+    reopened.load_map(workspace._doc.to_bytes(), "02.MAP")
+    updated = reopened.viewport((0, -1e6, 1e6, 1e6), limit=3000)["features"]
+    changed = next(f for f in updated if f["id"] == feature["id"])
+    label = next(l for l in changed["labels"] if l["field"] == "A1")
+    assert label["manuallyPlaced"] is True
+    assert abs(label["x"] - (click[1] + 12)) < 0.5
+    assert abs(-label["y"] - (click[0] + 8)) < 0.5
+    assert label["leader"] is not None
