@@ -116,3 +116,14 @@ def map_file(tmp_path: Path, simple_map: bytes) -> Path:
     path = tmp_path / "PRZYKLAD.MAP"
     path.write_bytes(simple_map)
     return path
+
+
+@pytest.fixture(autouse=True)
+def _clear_wms_cache():
+    """Cache podkładów nie może przeciekać między testami."""
+    try:
+        from geostudio.web_app import underlay_wms
+        underlay_wms.clear_cache()
+    except Exception:
+        pass
+    yield

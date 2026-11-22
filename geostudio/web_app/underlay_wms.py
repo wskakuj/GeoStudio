@@ -7,7 +7,10 @@ No MAP data or selected geometry is sent to the provider.
 """
 from __future__ import annotations
 
+from collections import OrderedDict
 from functools import lru_cache
+import http.client
+import threading
 from io import BytesIO
 from urllib.error import HTTPError, URLError
 from urllib.request import HTTPRedirectHandler, Request, build_opener
@@ -34,23 +37,110 @@ class NoRedirect(HTTPRedirectHandler):
         return None
 
 
+_CONNECTIONS: dict[str, "http.client.HTTPSConnection"] = {}
+_CONNECTION_LOCK = threading.Lock()
+
+
+def _connection(host: str) -> "http.client.HTTPSConnection":
+    """Połączenie TLS z utrzymaniem (keep-alive) — bez nowego handshake
+    przy każdym przesunięciu mapy."""
+    with _CONNECTION_LOCK:
+        conn = _CONNECTIONS.get(host)
+        if conn is None:
+            conn = http.client.HTTPSConnection(host, timeout=15)
+            _CONNECTIONS[host] = conn
+        return conn
+
+
+def _drop_connection(host: str) -> None:
+    with _CONNECTION_LOCK:
+        conn = _CONNECTIONS.pop(host, None)
+    if conn is not None:
+        try:
+            conn.close()
+        except Exception:
+            pass
+
+
 def _download(url: str, max_bytes: int) -> bytes:
     parsed = urlsplit(url)
     if parsed.scheme != "https" or parsed.hostname not in {"mapy.geoportal.gov.pl", "integracja.gugik.gov.pl", "integracja02.gugik.gov.pl"} or parsed.port not in (None, 443):
         raise ValueError("Dozwolone są wyłącznie oficjalne usługi Geoportalu.")
     if parsed.username or parsed.password:
         raise ValueError("Nieprawidłowy adres usługi.")
-    req = Request(url, headers={"User-Agent": "GeoStudio-2-WMS/12A", "Accept": "image/png, application/xml, text/xml"})
-    try:
-        with build_opener(NoRedirect).open(req, timeout=15) as reply:
-            if urlsplit(reply.geturl()).hostname != parsed.hostname:
+    host = parsed.hostname
+    path = parsed.path + ("?" + parsed.query if parsed.query else "")
+    headers = {"User-Agent": "GeoStudio-2-WMS/12A",
+               "Accept": "image/png, application/xml, text/xml",
+               "Connection": "keep-alive"}
+    last: Exception | None = None
+    for attempt in range(2):
+        try:
+            conn = _connection(host)
+            conn.request("GET", path, headers=headers)
+            reply = conn.getresponse()
+            if reply.status in (301, 302, 303, 307, 308):
                 raise ValueError("Usługa przekierowała na niezaufany adres.")
+            if reply.status >= 400:
+                raise RuntimeError("Geoportal zwrócił błąd " + str(reply.status) + ".")
             content = reply.read(max_bytes + 1)
-    except (HTTPError, URLError, TimeoutError, OSError) as exc:
-        raise RuntimeError("Nie można pobrać danych WMS z Geoportalu.") from exc
-    if len(content) > max_bytes:
-        raise ValueError("Odpowiedź WMS przekracza limit rozmiaru.")
-    return content
+            if len(content) > max_bytes:
+                raise ValueError("Odpowiedź WMS przekracza limit rozmiaru.")
+            return content
+        except (http.client.HTTPException, OSError, TimeoutError) as exc:
+            # Zerwane połączenie keep-alive: nowe i jedna ponowna próba.
+            last = exc
+            _drop_connection(host)
+            if attempt:
+                break
+    raise RuntimeError("Nie można pobrać danych WMS z Geoportalu.") from last
+
+
+_CACHE: "OrderedDict[tuple, bytes]" = OrderedDict()
+_CACHE_BYTES = 0
+_CACHE_LIMIT = 48 * 1024 * 1024
+_CACHE_MAX_ENTRIES = 96
+_CACHE_LOCK = threading.Lock()
+
+
+def _cache_key(preset, layer, epsg, xmin, ymin, xmax, ymax, width, height):
+    return (preset, layer, epsg,
+            round(xmin, 2), round(ymin, 2), round(xmax, 2), round(ymax, 2),
+            width, height)
+
+
+def _cache_get(key):
+    with _CACHE_LOCK:
+        value = _CACHE.get(key)
+        if value is not None:
+            _CACHE.move_to_end(key)
+        return value
+
+
+def _cache_put(key, value: bytes) -> None:
+    global _CACHE_BYTES
+    with _CACHE_LOCK:
+        if key in _CACHE:
+            _CACHE_BYTES -= len(_CACHE[key])
+        _CACHE[key] = value
+        _CACHE_BYTES += len(value)
+        _CACHE.move_to_end(key)
+        while (_CACHE and (_CACHE_BYTES > _CACHE_LIMIT or
+                           len(_CACHE) > _CACHE_MAX_ENTRIES)):
+            _, dropped = _CACHE.popitem(last=False)
+            _CACHE_BYTES -= len(dropped)
+
+
+def cache_stats() -> dict:
+    with _CACHE_LOCK:
+        return {"entries": len(_CACHE), "bytes": _CACHE_BYTES}
+
+
+def clear_cache() -> None:
+    global _CACHE_BYTES
+    with _CACHE_LOCK:
+        _CACHE.clear()
+        _CACHE_BYTES = 0
 
 
 def _preset(name: str) -> str:
@@ -115,13 +205,19 @@ def map_png(preset: str, layer: str, epsg: int,
         raise ValueError("Wybrana warstwa nie obsługuje tego EPSG.")
     # Canvas world (horizontal=easting, vertical=-northing) -> GEO-MAP X/Y.
     bounds = WMSBounds(min_x=-ymax, min_y=xmin, max_x=-ymin, max_y=xmax)
+    key = _cache_key(preset, layer, epsg, xmin, ymin, xmax, ymax, width, height)
+    cached = _cache_get(key)
+    if cached is not None:
+        return cached
     if parcel:
-        return _parcel_image(layer, epsg, bounds, width, height)
-    url = getmap_url(base, layer, f"EPSG:{epsg}", bounds, width, height,
-                     version="1.1.1")
-    content = _download(url, MAX_WMS_BYTES)
-    if not content.startswith(b"\x89PNG\r\n\x1a\n"):
-        raise ValueError("WMS zwrócił dane inne niż obraz PNG; sprawdź warstwę i EPSG.")
+        content = _parcel_image(layer, epsg, bounds, width, height)
+    else:
+        url = getmap_url(base, layer, f"EPSG:{epsg}", bounds, width, height,
+                         version="1.1.1")
+        content = _download(url, MAX_WMS_BYTES)
+        if not content.startswith(b"\x89PNG\r\n\x1a\n"):
+            raise ValueError("WMS zwrócił dane inne niż obraz PNG; sprawdź warstwę i EPSG.")
+    _cache_put(key, content)
     return content
 
 
