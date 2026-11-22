@@ -117,7 +117,9 @@ def test_underlay_is_behind_vectors_and_not_in_export():
 def test_kieg_classic_source_preset_is_explicitly_allowlisted(stubbed_wms):
     """Classic WMS dialog also offered GUGiK KIEG parcel boundaries/numbers."""
     data=underlay_wms.list_layers("kieg")
-    assert data["layers"][0]["id"]=="ortho"  # Fixture simulates capabilities.
+    # The KIEG preset pins the parcel layers and numbers instead of trusting
+    # whatever the capabilities document lists first.
+    assert data["layers"][0]["id"]==underlay_wms.KIEG_PARCELS
     url=stubbed_wms[-1][0]
     assert urlsplit(url).hostname=="integracja.gugik.gov.pl"
     assert "/cgi-bin/KrajowaIntegracjaEwidencjiGruntow" in url

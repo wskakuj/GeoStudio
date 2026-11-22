@@ -41,7 +41,8 @@ def test_cartographic_catalog_reads_actual_style_and_keeps_original_map():
     assert item["a2"]=="So120"
     assert item["style"]["hatch"]==3
     assert item["style"]["dash"]==[6,3]
-    assert item["style"]["strokeWidth"]==1.2
+    # 5310 outlines default to 3 px on this branch (library width is not used).
+    assert item["style"]["strokeWidth"]==3.0
     assert set(item["style"]["libraryMatches"])=={"CDF","LAY","SYM"}
     assert any("SYM" in note and "O" in note for note in item["notes"])
     assert ws.export_copy(ws.editing_status()["documentToken"])[1]==source

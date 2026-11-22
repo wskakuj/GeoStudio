@@ -42,7 +42,9 @@ def _token(workspace):
 def test_two_fields_are_one_atomic_history_step(workspace, source_map):
     old = source_map
     before = workspace.details("f0")
-    assert before["editableFields"] == ["A1", "A2", "A3"]
+    # A4–A6 are the descriptive fields added for the 5310 outline; the parser
+    # materialises them as empty strings, so they are editable from the start.
+    assert before["editableFields"] == ["A1", "A2", "A3", "A4", "A5", "A6"]
     assert not workspace.editing_status()["dirty"]
     result = workspace.edit_fields(
         "f0", {"A2": "Budynek mieszkalny", "A3": "Żółć"}, **_token(workspace))
@@ -74,7 +76,7 @@ def test_two_fields_are_one_atomic_history_step(workspace, source_map):
 
 
 @pytest.mark.parametrize("field,value", [
-    ("ID", "change"), ("A7", "no"), ("A6", "not present"),
+    ("ID", "change"), ("A7", "no"), ("A9", "spoza listy"),
     ("A1", "nowa\nlinia"), ("A1", "zamknij]"), ("A1", "😀"), ("A1", "x"*513),
 ])
 def test_invalid_updates_are_rejected_without_partial_changes(
@@ -89,7 +91,7 @@ def test_invalid_updates_are_rejected_without_partial_changes(
 def test_atomic_validation_for_multiple_fields(workspace):
     with pytest.raises(ValueError):
         workspace.edit_fields(
-            "f0", {"A1": "Nowe", "A4": "nie ma"}, **_token(workspace))
+            "f0", {"A1": "Nowe", "A9": "nie ma"}, **_token(workspace))
     assert workspace.details("f0")["fields"]["A1"] == "b"
     assert not workspace.editing_status()["dirty"]
 

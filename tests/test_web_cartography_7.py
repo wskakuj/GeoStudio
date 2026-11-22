@@ -181,10 +181,12 @@ def test_library_bytes_CDF_LAY_SYM_add_in_memory_styles_without_changing_MAP():
     rendered=ws.viewport((-1e3,-1e3,1e3,1e3))
     building=next(x for x in rendered["features"] if x["code"]=="5310")
     assert building["style"]["fill"]=="#16212C"
-    assert building["style"]["stroke"]=="#586364"
+    # 5310 keeps its own building outline (red, 3 px) on this branch; CDF/LAY
+    # still drive fill, hatch, dash and the pen colour of other codes.
+    assert building["style"]["stroke"]=="#FF0000"
     assert building["style"]["hatch"]==3
     assert building["style"]["dash"]==[6,3]
-    assert building["style"]["strokeWidth"]==1.2
+    assert building["style"]["strokeWidth"]==3.0
     assert ws.export_copy(auth(ws)["document_token"])[1]==before
     ws.load_map(raw,"mapa2.MAP")
     assert set(ws.cartography_status()["libraries"])=={"CDF","LAY","SYM"}

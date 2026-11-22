@@ -69,6 +69,8 @@ def test_crs_selectors_and_ui_no_crs_guess():
     assert '<option value="" selected>Wybierz układ MAP…</option>' in html
     assert 'readUnderlayPrj(ev.target.files?.[0])' in js
     assert 'x:String(-state.center.y),y:String(state.center.x)' in js
-    assert 'state.mapEPSG="";' in js
+    # The map CRS starts empty (never guessed); the field lives in the state
+    # literal since the classic script was split into map.js.
+    assert 'mapEPSG:""' in js
     assert 'setMapEPSG(String(result.epsg));' in js
     assert 'for(const id of ["underlay-epsg","raster-epsg","crs-epsg"])' in js

@@ -192,8 +192,11 @@ const src=fs.readFileSync('map.js','utf8');
 const a=src.indexOf('  function setMapEPSG(');
 const b=src.indexOf('  const wmsPresetUrls',a);
 assert.ok(a>=0&&b>a);
+const crsOptions=['2180','2176','2177','2178','2179'].map(v=>({value:v,textContent:'EPSG:'+v}));
 const inputs=Object.fromEntries(
-  ['underlay-epsg','raster-epsg','crs-epsg'].map(id=>[id,{value:''}]));
+  ['underlay-epsg','raster-epsg'].map(id=>[id,{value:''}]));
+inputs['crs-epsg']={value:'',options:crsOptions};
+const statusEl={textContent:'',title:''};
 const jpg={image:{},affine:[0,1,2,3,4,5],
   epsg:null,boundEPSG:'',visible:true};
 const geotiff={image:{},affine:[0,1,2,3,4,5],
@@ -204,7 +207,7 @@ let drawCount=0;
 const setEPSG=new Function('state','underlay','raster','$',
   'removeUnderlay','rasterInfo','requestDraw',
   src.slice(a,b)+'return setMapEPSG;')(
-    state,{enabled:false},raster,id=>inputs[id],()=>{},()=>{},()=>drawCount++);
+    state,{enabled:false},raster,id=>inputs[id]||statusEl,()=>{},()=>{},()=>drawCount++);
 setEPSG('2180');
 assert.equal(raster.boundEPSG,'2180');
 assert.equal(geotiff.boundEPSG,'');

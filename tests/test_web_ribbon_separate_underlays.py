@@ -48,7 +48,8 @@ def test_ribbon_contains_all_existing_tools_without_duplicate_ids():
     assert {"tool-raster","tool-crs","tool-layout-ribbon","tool-map-copy-ribbon"}<=set(ids)
     assert {"opt-snap","opt-shared","cartography-status"}<=set(ids)
 
-    expected={"start","select","edit","draw","cartography","underlay","export","topology"}
+    expected={"start","select","edit","draw","insert","cartography","underlay",
+              "export","topology"}
     tabs={attrs.get("data-ribbon-tab"):attrs for tag,attrs in records
           if tag=="button" and "data-ribbon-tab" in attrs}
     panels={attrs.get("data-ribbon-panel"):attrs for tag,attrs in records
@@ -116,8 +117,11 @@ const source=fs.readFileSync('map.js','utf8');
 const start=source.indexOf('  function setMapEPSG(');
 const end=source.indexOf('  const wmsPresetUrls',start);
 assert.ok(start>=0&&end>start);
-const inputs=Object.fromEntries(['underlay-epsg','raster-epsg','crs-epsg']
+const crsOptions=['2180','2176','2177','2178','2179'].map(v=>({value:v,textContent:'EPSG:'+v}));
+const inputs=Object.fromEntries(['underlay-epsg','raster-epsg']
     .map(id=>[id,{value:''}]));
+inputs['crs-epsg']={value:'',options:crsOptions};
+const statusEl={textContent:'',title:''};
 let removed=0, redraw=0, info='';
 const state={mapEPSG:'',previewActive:true,geometrySnapshotValid:true};
 const underlay={enabled:true};
@@ -125,7 +129,7 @@ const raster={image:{},affine:[0,1,2,3,4,5],layers:[],boundEPSG:'',epsg:null};
 const select=new Function('state','underlay','raster','$',
   'removeUnderlay','rasterInfo','requestDraw',
   source.slice(start,end)+';return setMapEPSG;')(
-    state,underlay,raster,id=>inputs[id],
+    state,underlay,raster,id=>inputs[id]||statusEl,
     ()=>{removed++;underlay.enabled=false;},
     msg=>{info=msg;},
     ()=>{redraw++});
