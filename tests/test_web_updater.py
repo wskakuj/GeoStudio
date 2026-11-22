@@ -127,3 +127,18 @@ def test_update_script_relaunches_the_app_after_install(tmp_path):
     assert "WaitForExit()" in script
     assert "Programs" in script and "GeoStudio2.exe" in script
     assert "Start-Process -FilePath $exe" in script
+
+
+def test_tabs_bridge_exposes_update_methods():
+    """Pasek zakładek woła mostek bez document_id — metody muszą tam być."""
+    from geostudio.web_app.documents import DocumentNativeBridge
+    assert callable(getattr(DocumentNativeBridge, "check_update", None))
+    assert callable(getattr(DocumentNativeBridge, "install_update", None))
+
+
+def test_tabs_badge_waits_for_the_bridge():
+    from pathlib import Path
+    js = Path("geostudio/web_app/static/tabs.js").read_text(encoding="utf-8")
+    assert "function waitForBridge(" in js
+    assert "pywebview?.api" in js
+    assert "Mostek aplikacji nie jest gotowy" in js
