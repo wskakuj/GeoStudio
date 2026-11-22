@@ -173,3 +173,26 @@ def test_update_script_searches_registry_hives_and_drives(tmp_path):
     assert "DisplayIcon" in script and "UninstallString" in script
     assert "From-Registry" in script and "From-Drives" in script
     assert "DriveType -eq 'Fixed'" in script
+
+
+def test_startup_check_shows_no_tk_dialog():
+    """Start nie może pokazywać okna Tk — informuje karta w aplikacji."""
+    from pathlib import Path
+    source = Path("geostudio/web_app/__main__.py").read_text(encoding="utf-8")
+    assert "_ask_update" not in source
+    assert "set_pending_update" in source
+    assert "updater_ask_yes_no" not in source
+
+
+def test_version_endpoint_reports_pending_update():
+    from fastapi.testclient import TestClient
+    from geostudio.web_app.server import create_app
+    from geostudio.web_app import updater
+    updater.set_pending_update({"version": "9.9.9", "assetUrl": "https://x/y.exe"})
+    try:
+        payload = TestClient(create_app()).get("/version").json()
+        assert payload["update"]["available"] is True
+        assert payload["update"]["version"] == "9.9.9"
+    finally:
+        updater.set_pending_update(None)
+    assert TestClient(create_app()).get("/version").json()["update"] is None

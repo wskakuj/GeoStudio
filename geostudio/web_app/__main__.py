@@ -129,30 +129,12 @@ def _selftest(workspace) -> int:
         sys.stdout, sys.stderr = saved
 
 
-def _ask_update(info: dict) -> bool:
-    """Pytanie o aktualizację; poza Windows/bez Tk zwraca False."""
-    message = (
-        "Dostępna jest nowa wersja programu: " + info["version"] +
-        "\n(obecnie " + info["current"] + ")\n\n" +
-        "Pobrać i zainstalować teraz? Program zostanie zamknięty."
-    )
-    if info.get("notes"):
-        message += "\n\n" + info["notes"][:600]
-    try:
-        return updater_ask_yes_no("GeoStudio — aktualizacja", message)
-    except Exception:
-        return False
-
-
-def updater_ask_yes_no(title: str, message: str) -> bool:
-    from .native_picker import _ask_yes_no
-    return _ask_yes_no(title, message)
-
-
 def check_updates_on_start(interactive: bool = True) -> None:
-    """Sprawdza GitHub i ewentualnie instaluje nowszą wersję.
+    """Sprawdza GitHub i zapamiętuje wynik dla interfejsu.
 
-    Tylko w spakowanym programie — wersja deweloperska nie podmienia plików.
+    Żadnego okna Tk: informację o aktualizacji pokazuje karta w aplikacji
+    (ta sama, którą widać po kliknięciu numeru wersji). Tylko w spakowanym
+    programie — wersja deweloperska nie podmienia plików.
     """
     if not updater.is_frozen():
         return
@@ -161,17 +143,9 @@ def check_updates_on_start(interactive: bool = True) -> None:
     except Exception:
         return
     if not info or not info.get("assetUrl"):
+        updater.set_pending_update(None)
         return
-    if not interactive or not _ask_update(info):
-        return
-    try:
-        updater.start_update(info["assetUrl"], info["version"])
-        # Okno pobierania żyje we własnym procesie PowerShell, więc program
-        # może się zamknąć — instalator uruchomi się po pobraniu.
-        time.sleep(0.5)
-        os._exit(0)
-    except Exception as exc:
-        _say("Aktualizacja nie powiodła się: " + str(exc))
+    updater.set_pending_update(info)
 
 
 def main(argv=None):

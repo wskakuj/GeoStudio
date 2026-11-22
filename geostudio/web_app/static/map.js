@@ -277,11 +277,19 @@
   async function initVersionBadge(){
     const badge=$("app-version");
     if(!badge)return;
-    let version="";
-    try{ version=(await api("/version")).version||""; }catch(_){}
+    let version="",pending=null;
+    try{
+      const data=await api("/version");
+      version=data.version||"";
+      pending=data.update&&data.update.available?data.update:null;
+    }catch(_){}
     badge.textContent="v"+(version||"—");
     badge.title="Wersja "+version+". Kliknij, aby sprawdzić aktualizacje.";
     badge.dataset.version=version;
+    if(pending&&pending.version){
+      badge.classList.add("is-stale");
+      badge.title="Dostępna wersja "+pending.version+". Kliknij, aby zainstalować.";
+    }
     badge.addEventListener("click",async()=>{
       // W trybie zakładek edytor jest w ramce, a mostek pywebview siedzi
       // w oknie nadrzędnym.

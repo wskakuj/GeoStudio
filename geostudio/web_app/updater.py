@@ -44,7 +44,7 @@ def is_newer(latest: str, current: str) -> bool:
 
 # Musi być zgodna z pyproject.toml; używana, gdy metadane pakietu nie są
 # spakowane (PyInstaller kopiuje je przez --copy-metadata geostudio-pl).
-FALLBACK_VERSION = "2.0.13"
+FALLBACK_VERSION = "2.0.14"
 
 
 def current_version() -> str:
@@ -325,6 +325,23 @@ def start_update(url: str, version: str = "",
         close_fds=True, creationflags=creationflags,
     )
     return target
+
+
+_PENDING_UPDATE: dict | None = None
+
+
+def set_pending_update(info: dict | None) -> None:
+    """Zapamiętuje wynik sprawdzenia z startu, żeby pokazać go w interfejsie."""
+    global _PENDING_UPDATE
+    _PENDING_UPDATE = dict(info) if info else None
+
+
+def pending_update() -> dict | None:
+    """Informacja o dostępnej aktualizacji znalezionej przy starcie."""
+    if not _PENDING_UPDATE:
+        return None
+    return {"version": _PENDING_UPDATE.get("version", ""),
+            "available": bool(_PENDING_UPDATE.get("assetUrl"))}
 
 
 def is_frozen() -> bool:
