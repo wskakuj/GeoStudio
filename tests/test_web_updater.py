@@ -90,8 +90,12 @@ def test_update_script_shows_a_progress_window(tmp_path):
     # Okno WinForms z paskiem postępu i licznikiem MB.
     assert "System.Windows.Forms.Form" in script
     assert "ProgressBar" in script
-    assert "DownloadProgressChanged" in script
+    # Pobieranie jest synchroniczne: czytamy strumień i wołamy DoEvents,
+    # zamiast zdarzeń WebClienta (ich $script:done żyje w innym runspace).
+    assert "GetResponseStream" in script
+    assert "DoEvents" in script
     assert "Pobrano" in script and "MB" in script
+    assert "Unblock-File" in script
     # Adres i plik docelowy trafiają do skryptu jako literały PowerShell.
     assert "https://example.com/setup.exe" in script
     assert str(tmp_path / "setup.exe") in script
