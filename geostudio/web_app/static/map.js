@@ -62,7 +62,7 @@
     edit: null, editBusy: false, bulkPreview: null, movePreview: null,
     moveIds: [], moveGhost: null, objectPreview:null,
     drawPoints:[], drawHover:null, drawSnap:null,
-    labelHits:[],labelDrag:null,labelSelected:null,
+    labelHits:[],labelDrag:null,labelSelected:null,leaderMode:false,
     drawMagnet:true,drawCursorWorld:null,copyIds:[],
     geometryPreview:null,cutIds:[],lineEditId:null,
     auditReport:null, auditBusy:false, auditActiveIssue:null,
@@ -6276,6 +6276,68 @@ inform("Klikaj mapę, aby wstawiać kolejne oznaczenia. Naciśnij Esc lub wybier
     requestDraw();
     await selectByCode(bbox);
   },true);
+  // Tryb „Wysięgniki”: kółko ustawia punkt zaczepienia, Q/E zmienia stronę.
+  let leaderPress=null;
+  canvas.addEventListener("pointerdown",ev=>{
+    if(!state.leaderMode||!state.edit||ev.button!==1)return;
+    ev.preventDefault();ev.stopImmediatePropagation();
+    leaderPress={id:ev.pointerId,x:ev.clientX,y:ev.clientY};
+  },true);
+  canvas.addEventListener("pointerup",async ev=>{
+    if(!leaderPress||leaderPress.id!==ev.pointerId)return;
+    const moved=Math.hypot(ev.clientX-leaderPress.x,ev.clientY-leaderPress.y);
+    leaderPress=null;
+    if(moved>=4)return;   // przeciągnięcie = panoramowanie, nie stawiamy kotwicy
+    const selected=state.labelSelected;
+    if(!selected){inform("Najpierw chwyć etykietę A1 lub A2 lewym przyciskiem.",true);return;}
+    ev.preventDefault();ev.stopImmediatePropagation();
+    const p=eventCoords(ev),world=screenToWorld(p.x,p.y);
+    await setLeaderAnchor(selected,world);
+  },true);
+  window.addEventListener("keydown",ev=>{
+    if(!state.leaderMode||!state.edit)return;
+    if(ev.target instanceof HTMLInputElement||ev.target instanceof HTMLTextAreaElement)return;
+    const key=ev.key.toLowerCase();
+    if(key!=="q"&&key!=="e")return;
+    const selected=state.labelSelected;
+    if(!selected){inform("Najpierw chwyć etykietę A1 lub A2.",true);return;}
+    ev.preventDefault();
+    flipLeaderSide(selected,key==="q");
+  });
+
+  async function setLeaderAnchor(selected,world){
+    try{
+      const result=await api("/api/labels/leader",{
+        method:"POST",headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({fid:selected.fid,
+          slot:selected.field==="A1"?2:3,enabled:true,
+          anchor:[world.x,world.y],
+          documentToken:state.edit.documentToken,revision:state.edit.revision})});
+      updateEditState(result);
+      await refreshEditedDocument(state.active);
+      inform("Punkt zaczepienia wysięgnika ustawiony ("+selected.field+").");
+    }catch(error){
+      inform("Nie ustawiono kotwicy: "+error.message,true);
+    }
+  }
+  async function flipLeaderSide(selected,left){
+    const feature=state.features.find(f=>f.id===selected.fid);
+    const label=(feature?.labels||[]).find(item=>item.field===selected.field);
+    const anchor=label?.leader?[-label.leader.y,label.leader.x]:null;
+    try{
+      const result=await api("/api/labels/leader",{
+        method:"POST",headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({fid:selected.fid,
+          slot:selected.field==="A1"?2:3,enabled:true,
+          anchor:anchor,preferLeft:left,
+          documentToken:state.edit.documentToken,revision:state.edit.revision})});
+      updateEditState(result);
+      await refreshEditedDocument(state.active);
+      inform("Wysięgnik "+selected.field+" wychodzi z "+(left?"lewej":"prawej")+" strony.");
+    }catch(error){
+      inform("Nie zmieniono strony wysięgnika: "+error.message,true);
+    }
+  }
   window.addEventListener("pointerdown",ev=>{
     if(state.tool!=="labels"||!state.edit||!state.labelAnchors?.length)return;
     const p=eventCoords(ev);
@@ -6500,7 +6562,7 @@ inform("Klikaj mapę, aby wstawiać kolejne oznaczenia. Naciśnij Esc lub wybier
     if(state.drag)return;
     const p=eventCoords(ev);
     state.hoverInsert=null;
-    if(((state.tool==="labels"&&ev.button===0)||rightLabel)&&!state.editBusy){
+    if((((state.tool==="labels"||state.leaderMode)&&ev.button===0)||rightLabel)&&!state.editBusy){
       const hit=pickLabelAt(p);
       if(!hit){if(!rightLabel)inform("Kliknij i przeciągnij tekst A1, A2 lub TX.");return;}
       ev.preventDefault();
@@ -7092,6 +7154,32 @@ inform("Klikaj mapę, aby wstawiać kolejne oznaczenia. Naciśnij Esc lub wybier
   });
   $("layout-form").addEventListener("submit",event=>{event.preventDefault();exportLayout(false);});
 
+  link("labels-reset",async()=>{
+    if(!state.edit)return;
+    if(!window.confirm("Usunąć wszystkie wysięgniki i wyzerować pozycje etykiet A1/A2?"))return;
+    try{
+      const result=await api("/api/labels/reset-leaders",{
+        method:"POST",headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({documentToken:state.edit.documentToken,
+          revision:state.edit.revision})});
+      updateEditState(result);
+      await refreshEditedDocument(state.active);
+      inform(result.changed?("Zresetowano wysięgniki ("+result.reset+" obiektów)."):
+        "Nie było czego resetować.");
+    }catch(error){
+      inform("Nie zresetowano wysięgników: "+error.message,true);
+    }
+  });
+  link("labels-mode",()=>{
+    state.leaderMode=!state.leaderMode;
+    $("labels-mode").setAttribute("aria-pressed",state.leaderMode?"true":"false");
+    if(state.leaderMode)state.tool="labels";
+    canvas.style.cursor=state.leaderMode?"crosshair":"";
+    inform(state.leaderMode?
+      "Tryb wysięgników: LPM przesuwa etykietę, kółko ustawia zaczepienie, Q/E zmienia stronę.":
+      "Tryb wysięgników wyłączony.");
+    requestDraw();
+  });
   link("block-select-all",()=>selectByCode(null));
   link("block-select-rect",startBlockRectangle);
   link("block-clear",()=>{state.pinned=new Set();selectFeature(null);

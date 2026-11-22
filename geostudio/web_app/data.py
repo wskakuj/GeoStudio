@@ -594,9 +594,11 @@ class PreviewWorkspace:
             anchor = record["anchor"]
             if not anchor:
                 return
+            # Kotwica w pliku jest względna — do porównania dodajemy bazę.
+            base = _label_anchor(obj)
             # point = [northing, easting]; kotwica = (northing, easting).
             label_easting = float(point[1])
-            anchor_easting = float(anchor[1])
+            anchor_easting = base[1] + float(anchor[1])
             if abs(label_easting - anchor_easting) < 1e-6:
                 return
             prefer_left = label_easting < anchor_easting
@@ -604,6 +606,46 @@ class PreviewWorkspace:
                 return
             self._doc.set_label_leader(obj.uid, slot, True, anchor, prefer_left)
             return
+
+    def reset_label_leaders(self, ids=None, *, document_token=None,
+                            revision=None) -> dict:
+        """Zeruje wysięgniki: czyści bity 64/128, kotwice i przesunięcia.
+
+        Jedna operacja w historii, więc Ctrl+Z cofa całość. ``ids`` puste
+        oznacza całą mapę (wszystkie obiekty z rekordami L).
+        """
+        with self._lock:
+            if self._doc is None:
+                raise ValueError("Najpierw otwórz mapę GEO-MAP.")
+            self._require_edit(document_token, revision)
+            from ..geomap import parse_label_record
+            wanted = None
+            if ids:
+                wanted = set(ids)
+            targets = []
+            for entry in self._entries:
+                if entry.obj.code != "5310":
+                    continue
+                if wanted is not None and entry.fid not in wanted:
+                    continue
+                records = [parse_label_record(line) for line in
+                           self._doc.lines[entry.obj.start:entry.obj.end]]
+                if any(record and (record["leader"] or record["anchor"])
+                       for record in records):
+                    targets.append(entry.obj)
+            if not targets:
+                return {**self._editing_status(), "changed": False, "reset": 0}
+            with self._history.begin(
+                    "Reset wysięgników (" + str(len(targets)) + " obiektów)",
+                    selection_before=tuple(obj.uid for obj in targets)):
+                for obj in targets:
+                    for slot in (2, 3):
+                        self._doc.set_label_leader(obj.uid, slot, False)
+                    self._label_positions.pop(obj.uid, None)
+            self._reindex(self._doc, self._doc.filename)
+            self._revision += 1
+            return {**self._editing_status(), "changed": True,
+                    "reset": len(targets)}
 
     def select_by_code(self, code: str, bbox=None, limit: int = 5000) -> dict:
         """Zwraca ID obiektów o danym kodzie (opcjonalnie w prostokącie).
@@ -673,6 +715,11 @@ class PreviewWorkspace:
                 point = (round(float(anchor[0]), 3), round(float(anchor[1]), 3))
             if enabled and point is None:
                 point = self._leader_default_anchor(obj)
+            if enabled and point is not None:
+                # Do pliku zapisujemy różnicę wobec punktu bazowego poligonu.
+                base = _label_anchor(obj)
+                point = (round(float(point[0]) - base[0], 3),
+                         round(float(point[1]) - base[1], 3))
             before = self._doc.to_bytes()
             with self._history.begin(
                 ("Włącz" if enabled else "Wyłącz") + " wysięgnik " +
@@ -3024,12 +3071,18 @@ class PreviewWorkspace:
         leaders = {}
         if self._doc is not None and obj.uid:
             from ..geomap import label_records
+            # Punkt zaczepienia w rekordzie L jest WZGLĘDNY wobec punktu
+            # bazowego poligonu (tego samego, co pozycja napisu). Wcześniej
+            # brałem go jako współrzędne świata — stąd linie lecące do (0,0).
             for slot, record in label_records(
                     self._doc.lines[obj.start:obj.end]).items():
-                if record.get("leader") and record.get("anchor"):
-                    anchor_x, anchor_y = record["anchor"]
-                    leaders[slot] = {"direction": record["leader"],
-                                     "x": anchor_y, "y": -anchor_x}
+                if not record.get("leader"):
+                    continue
+                offset = record.get("anchor") or (0.0, 0.0)
+                anchor_x = center[0] + float(offset[0])
+                anchor_y = center[1] + float(offset[1])
+                leaders[slot] = {"direction": record["leader"],
+                                 "x": anchor_y, "y": -anchor_x}
         result = []
         for i, field in enumerate(fields):
             value = obj.fields.get(field, "").replace("||", "\n").strip()
