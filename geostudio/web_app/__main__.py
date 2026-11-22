@@ -12,6 +12,7 @@ from pathlib import Path
 
 import uvicorn
 
+from . import updater
 from .data import PreviewWorkspace
 from .server import create_app
 
@@ -128,6 +129,48 @@ def _selftest(workspace) -> int:
         sys.stdout, sys.stderr = saved
 
 
+def _ask_update(info: dict) -> bool:
+    """Pytanie o aktualizację; poza Windows/bez Tk zwraca False."""
+    message = (
+        "Dostępna jest nowa wersja programu: " + info["version"] +
+        "\n(obecnie " + info["current"] + ")\n\n" +
+        "Pobrać i zainstalować teraz? Program zostanie zamknięty."
+    )
+    if info.get("notes"):
+        message += "\n\n" + info["notes"][:600]
+    try:
+        return updater_ask_yes_no("GeoStudio — aktualizacja", message)
+    except Exception:
+        return False
+
+
+def updater_ask_yes_no(title: str, message: str) -> bool:
+    from .native_picker import _ask_yes_no
+    return _ask_yes_no(title, message)
+
+
+def check_updates_on_start(interactive: bool = True) -> None:
+    """Sprawdza GitHub i ewentualnie instaluje nowszą wersję.
+
+    Tylko w spakowanym programie — wersja deweloperska nie podmienia plików.
+    """
+    if not updater.is_frozen():
+        return
+    try:
+        info = updater.check_for_update()
+    except Exception:
+        return
+    if not info or not info.get("assetUrl"):
+        return
+    if not interactive or not _ask_update(info):
+        return
+    try:
+        installer = updater.download_installer(info["assetUrl"])
+        updater.launch_installer(installer)
+    except Exception as exc:
+        _say("Aktualizacja nie powiodła się: " + str(exc))
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(
         description="GeoStudio 2.0 — testowy interfejs GIS (edycja kopii w pamięci)"
@@ -138,6 +181,8 @@ def main(argv=None):
                         help="Opcjonalny lokalny plik MAP do wczytania przy starcie")
     parser.add_argument("--selftest", action="store_true",
                         help="Sprawdź start bez konsoli (używane przez pakowanie)")
+    parser.add_argument("--no-update-check", action="store_true",
+                        help="Nie sprawdzaj aktualizacji przy starcie")
     args = parser.parse_args(argv)
 
     workspace = PreviewWorkspace()
@@ -146,6 +191,11 @@ def main(argv=None):
 
     if args.selftest:
         return _selftest(workspace)
+
+    if not args.no_update_check:
+        # Pytanie i pobieranie idą w tle, żeby okno startowało od razu;
+        # przy zgodzie program kończy się sam (launch_installer -> os._exit).
+        threading.Thread(target=check_updates_on_start, daemon=True).start()
 
     app = create_app(workspace, multi_document=True)
     # Bind immediately to an ephemeral loopback port. Passing an already-bound
