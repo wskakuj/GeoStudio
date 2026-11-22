@@ -54,8 +54,9 @@ def test_soft3d_tool_coverage_and_unique_gradient_ids():
     assert parser.buttons["btn-theme"]["icons"] == 2
     assert parser.buttons["btn-export"]["icons"] == 1
     assert "btn-export-label" in parser.ids
-    # +1: przycisk „Zapisz na oryginale mapy” w nagłówku.
-    assert len(parser.gradients) == 61
+    # Przycisk „Zapisz na oryginale mapy” usunięty — jego ikona trafiła do
+    # „Zapisz kopię mapy”, więc gradientów jest 60.
+    assert len(parser.gradients) == 60
     assert sorted(parser.gradients) == sorted(parser.fills)
 
 

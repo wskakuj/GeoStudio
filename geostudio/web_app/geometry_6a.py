@@ -17,13 +17,28 @@ from shapely.ops import split as shapely_split, unary_union
 
 
 def polygon_of(obj):
-    """A simple single-ring polygon; stage 6A compatibility for split tools."""
+    """Poligon obiektu; obrysy wieloczęściowe obsługiwane bez błędu.
+
+    Wcześniej każdy obiekt z więcej niż jednym obrysem (np. budynek z
+    dziedzińcem) kończył się komunikatem „bez otworów”, więc podział i
+    scalanie były dla nich niedostępne. Teraz bierzemy największy obrys jako
+    zewnętrzny, a mniejsze — jeśli leżą w środku — jako otwory.
+    """
     if not obj.is_closed or len(obj.points)<4:
         raise ValueError("Obiekt nie jest zamkniętym poligonem.")
-    if any(p.point_type!=1 for p in obj.points):
-        raise ValueError("Wybierz jeden prosty obrys, bez otworów.")
-    base=[(p.x,p.y) for p in obj.points[:-1]]
-    poly=Polygon(base)
+    parts=[[(p.x,p.y) for p in part] for part in obj.display_parts]
+    parts=[part for part in parts if len(part)>=4]
+    if not parts:
+        raise ValueError("Obiekt nie jest zamkniętym poligonem.")
+    rings=[]
+    for part in parts:
+        ring=list(part)
+        if ring[0]!=ring[-1]:
+            ring.append(ring[0])
+        rings.append(ring)
+    rings.sort(key=lambda ring: abs(Polygon(ring).area), reverse=True)
+    poly=Polygon(rings[0], [ring for ring in rings[1:]
+                            if Polygon(rings[0]).contains(Polygon(ring))])
     if poly.is_empty or not poly.is_valid or poly.area < .000001:
         raise ValueError("Obiekt ma nieprawidłową geometrię lub zerową powierzchnię.")
     return poly

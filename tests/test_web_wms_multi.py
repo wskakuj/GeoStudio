@@ -27,3 +27,10 @@ def test_single_layer_can_be_removed():
     assert "function removeUnderlay(id){" in JS
     assert "removeUnderlay(item.id);" in JS
     assert "underlays.splice(index,1);" in JS
+
+
+def test_save_over_source_button_removed():
+    html = Path("geostudio/web_app/static/index.html").read_text(encoding="utf-8")
+    assert "Zapisz na oryginale mapy" not in html
+    assert 'id="btn-save-source"' not in html
+    assert "Zapisz kopię mapy" in html

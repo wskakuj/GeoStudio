@@ -36,8 +36,8 @@ def test_wms_request_is_hidpi_cancelable_and_reloads_after_zoom():
     assert "if(!underlay.enabled)return;" in js
     assert "if(!item.visible||!item.image||!item.bounds)continue;" in js
     assert "documentToken!==state.edit?.documentToken)return" in js
-    # Obraz trafia do aktywnego podkładu ze stosu.
-    assert "target.image=image;target.bounds=bounds;target.loading=false;" in js
+    # Obraz trafia do konkretnej warstwy stosu (odświeżamy wszystkie widoczne).
+    assert "item.image=image;item.bounds=bounds;item.loading=false;" in js
 
 
 def test_sidebar_layers_and_nonmodal_visual_pairing():

@@ -2641,9 +2641,8 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
             height:Math.max(128,Math.min(2048,height))};
   }
   function scheduleUnderlayRefresh(immediate=false){
-    if(!underlay.enabled||!state.meta)return;
-    const current=activeUnderlay();
-    if(current&&!current.visible)return;
+    if(!state.meta||!underlays.some(item=>item.visible))return;
+    underlay.enabled=true;
     // A zoom changes the desired BBOX: invalidate any old request now,
     // not after a later debounced request has started.
     underlay.ticket++;
@@ -2653,20 +2652,28 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
     underlay.timer=setTimeout(refreshUnderlay,immediate?0:115);
   }
   async function refreshUnderlay(){
-    if(!underlay.enabled||!state.meta)return;
-    const id=++underlay.ticket;
-    if(underlay.abort)underlay.abort.abort();
-    const controller=new AbortController();underlay.abort=controller;
+    if(!state.meta)return;
+    const targets=underlays.filter(item=>item.visible);
+    if(!targets.length)return;
+    // Odświeżamy WSZYSTKIE widoczne podkłady — wcześniej tylko ostatnio
+    // włączony, więc starsze warstwy zostawały z obrazem z poprzedniego kadru.
     const bounds=boundsFromViewport(.09);
     const size=underlayRequestDimensions(bounds);
-    const current=activeUnderlay()||underlay;
+    const documentToken=state.edit?.documentToken;
+    await Promise.all(targets.map(item=>refreshUnderlayItem(
+      item,bounds,size,documentToken)));
+  }
+  async function refreshUnderlayItem(item,bounds,size,documentToken){
+    const id=++item.ticket;
+    if(item.abort)item.abort.abort();
+    const controller=new AbortController();item.abort=controller;
     const params=new URLSearchParams({
-      preset:current.preset,layer:current.layer,epsg:String(current.epsg),
+      preset:item.preset,layer:item.layer,epsg:String(item.epsg),
       xmin:String(bounds[0]),ymin:String(bounds[1]),
       xmax:String(bounds[2]),ymax:String(bounds[3]),
       width:String(size.width),height:String(size.height)
     });
-    const documentToken=state.edit?.documentToken;
+    item.loading=true;
     try{
       const response=await documentFetch("/api/underlay/wms/map?"+params,{
         headers:{"X-GeoStudio-Token":token},cache:"no-store",signal:controller.signal
@@ -2686,22 +2693,14 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
           bitmap.src=url;
         });
       }finally{URL.revokeObjectURL(url);}
-      if(!underlay.enabled||id!==underlay.ticket||
+      if(!item.visible||id!==item.ticket||
          documentToken!==state.edit?.documentToken)return;
-      const target=activeUnderlay();
-      if(target){target.image=image;target.bounds=bounds;target.loading=false;}
-      else{underlay.image=image;underlay.bounds=bounds;}
-      underlay.loading=false;
+      item.image=image;item.bounds=bounds;item.loading=false;
       requestDraw();renderRasterLayers();
-      updateUnderlayStatus("WMS ostry dla aktualnego kadru.");
     }catch(error){
-      if(error.name==="AbortError"||id!==underlay.ticket)return;
-      // Existing WMS stays visible until a new image arrives.
-      underlay.loading=false;
-      updateUnderlayStatus("WMS nie został odświeżony: "+error.message);
-      renderRasterLayers();
-    }finally{
-      if(underlay.abort===controller)underlay.abort=null;
+      if(error.name==="AbortError"||id!==item.ticket)return;
+      item.loading=false;renderRasterLayers();
+      inform("Podkład "+item.title+": "+error.message,true);
     }
   }
   function applyUnderlay(){
@@ -2717,18 +2716,18 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
     }
     const preset=$("underlay-preset").value;
     const title=option.textContent||layer;
-    // Ten sam preset+warstwa+układ = odświeżenie istniejącego podkładu,
-    // inny = NOWA warstwa na stosie (poprzednie zostają).
+    // Ten sam preset+warstwa+układ odświeża istniejący wpis, inny dokłada
+    // NOWĄ warstwę na stos (poprzednie zostają).
     let item=underlays.find(entry=>entry.preset===preset&&entry.layer===layer&&
                                    entry.epsg===epsg);
     if(!item){
       item={id:"wms"+(++underlaySerial),preset,layer,epsg,title,
-            image:null,bounds:null,opacity:Number($("underlay-opacity").value)/100||.75,
+            image:null,bounds:null,
+            opacity:Number($("underlay-opacity").value)/100||.75,
             visible:true,loading:false,ticket:0,timer:null,abort:null};
       underlays.push(item);
     }else{
-      item.visible=true;
-      item.image=null;item.bounds=null;
+      item.visible=true;item.image=null;item.bounds=null;
     }
     underlay.activeId=item.id;
     underlay.enabled=true;
@@ -6672,7 +6671,12 @@ inform("Klikaj mapę, aby wstawiać kolejne oznaczenia. Naciśnij Esc lub wybier
     state.hoverInsert=null;
     if((((state.tool==="labels"||state.leaderMode)&&ev.button===0)||rightLabel)&&!state.editBusy){
       const hit=pickLabelAt(p);
-      if(!hit){if(!rightLabel)inform("Kliknij i przeciągnij tekst A1, A2 lub TX.");return;}
+      if(!hit){
+        // W trybie wysięgników pudło w etykietę NIE blokuje mapy:
+        // kliknięcie ma dalej zaznaczać obiekty i rysować.
+        if(state.leaderMode&&!rightLabel){/* lecimy dalej normalną ścieżką */}
+        else{if(!rightLabel)inform("Kliknij i przeciągnij tekst A1, A2 lub TX.");return;}
+      }else{
       ev.preventDefault();
       canvas.setPointerCapture(ev.pointerId);
       const label=hit.label;
@@ -6685,6 +6689,7 @@ inform("Klikaj mapę, aby wstawiać kolejne oznaczenia. Naciśnij Esc lub wybier
       state.drag={pointer:ev.pointerId,start:p,last:p,moved:false,label:true};
       if(state.active!==hit.fid){state.pinned.clear();selectFeature(hit.fid);}
       requestDraw();return;
+      }
     }
     if(rightLabel)return;
     if(["draw","cut","line","line-edit"].includes(state.tool)&&
@@ -7281,15 +7286,25 @@ inform("Klikaj mapę, aby wstawiać kolejne oznaczenia. Naciśnij Esc lub wybier
       inform("Nie zresetowano wysięgników: "+error.message,true);
     }
   });
-  link("labels-mode",()=>{
+  function toggleLeaderMode(){
     state.leaderMode=!state.leaderMode;
     $("labels-mode").setAttribute("aria-pressed",state.leaderMode?"true":"false");
-    if(state.leaderMode)state.tool="labels";
+    // Tryb wysięgników NIE przejmuje narzędzia: działa jako nakładka, więc
+    // zaznaczanie i rysowanie poligonów działa dalej. Wcześniej ustawiał
+    // state.tool="labels" i po edycji etykiet mapa przestawała reagować.
     canvas.style.cursor=state.leaderMode?"crosshair":"";
     inform(state.leaderMode?
       "Tryb wysięgników: LPM przesuwa etykietę, kółko ustawia zaczepienie, Q/W zmienia stronę.":
       "Tryb wysięgników wyłączony.");
     requestDraw();
+  }
+  link("labels-mode",toggleLeaderMode);
+  window.addEventListener("keydown",ev=>{
+    if(ev.target instanceof HTMLInputElement||ev.target instanceof HTMLTextAreaElement)return;
+    if(ev.ctrlKey||ev.metaKey||ev.altKey)return;
+    if(ev.key.toLowerCase()!=="s"||!state.edit)return;
+    ev.preventDefault();
+    toggleLeaderMode();
   });
   link("block-select-all",()=>selectByCode(null));
   link("block-select-rect",startBlockRectangle);
