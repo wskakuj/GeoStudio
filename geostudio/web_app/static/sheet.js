@@ -33,8 +33,11 @@ window.GeoStudioSheet = (() => {
   function signShapes(item){
     const paths=signPaths[item.kind];
     if(!paths)return [];
+    // Punkty w przestrzeni 48x16 — paint() sam skaluje do rozmiaru elementu.
+    // Wcześniej mnożyłem je tu dodatkowo przez item.w/48, przez co podgląd
+    // był o ten czynnik za duży względem znaku wpisanego do MAP.
     return paths.map(([points,color,filled])=>({
-      points:points.map(([u,v])=>[u*item.w/48,v*item.h/16]),
+      points:points.map(([u,v])=>[u,v]),
       fill:filled?color:null,stroke:color}));
   }
   function baseShapes(item,scale){
