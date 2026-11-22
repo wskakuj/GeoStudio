@@ -45,9 +45,14 @@ jobs:
         shell: pwsh
         run: |
           ./tools/windows/build.ps1
-          $installer = "dist/installer/GeoStudio2-Setup-preview8-x64.exe"
-          if (!(Test-Path $installer)) { throw "Installer not found: $installer" }
-          if ((Get-Item $installer).Length -lt 1000000) { throw "Installer is unexpectedly small." }
+          # Nazwa instalatora zawiera wersję (np. GeoStudio2-Setup-2.0.1-x64.exe),
+          # więc szukamy maską, a nie zaszytym plikiem "preview8".
+          $installer = Get-ChildItem "dist/installer/*.exe" | Select-Object -First 1
+          if (-not $installer) { throw "Installer not found in dist/installer/" }
+          if ($installer.Length -lt 1000000) {
+            throw "Installer is unexpectedly small: $($installer.Name)"
+          }
+          Write-Host "Installer: $($installer.FullName)"
       - name: Publish prerelease and attach installer
         uses: softprops/action-gh-release@v2
         with:
