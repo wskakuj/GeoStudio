@@ -1,0 +1,63 @@
+name: Build GeoStudio Windows release from selected ref
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_ref:
+        description: Branch or commit to package
+        required: true
+        default: feat/raster-trace-5310
+        type: string
+      release_tag:
+        description: GitHub release tag
+        required: true
+        default: v0.14.0-preview.8
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build Windows installer
+    runs-on: windows-latest
+    timeout-minutes: 60
+    steps:
+      - name: Check out selected GeoStudio version
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.source_ref }}
+      - name: Record exact source commit
+        id: source
+        shell: pwsh
+        run: |
+          "sha=$(git rev-parse HEAD)" >> $env:GITHUB_OUTPUT
+      - name: Install Inno Setup 6 if missing
+        shell: pwsh
+        run: |
+          $iscc = Join-Path ([Environment]::GetFolderPath("ProgramFilesX86")) "Inno Setup 6/ISCC.exe"
+          if (!(Test-Path $iscc)) {
+            choco install innosetup -y --no-progress
+            if ($LASTEXITCODE -ne 0) { throw "Inno Setup installation failed." }
+          }
+      - name: Build and smoke-check installer
+        shell: pwsh
+        run: |
+          ./tools/windows/build.ps1
+          $installer = "dist/installer/GeoStudio2-Setup-preview8-x64.exe"
+          if (!(Test-Path $installer)) { throw "Installer not found: $installer" }
+          if ((Get-Item $installer).Length -lt 1000000) { throw "Installer is unexpectedly small." }
+      - name: Publish prerelease and attach installer
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ inputs.release_tag }}
+          target_commitish: ${{ steps.source.outputs.sha }}
+          name: GeoStudio 2.0 · ${{ inputs.release_tag }}
+          body: |
+            Wstępne wydanie instalatora GeoStudio 2.0 dla Windows.
+
+            Źródło: `${{ inputs.source_ref }}` (`${{ steps.source.outputs.sha }}`).
+            Instalator tworzy instalację dla bieżącego użytkownika.
+            To wydanie ma status prerelease.
+          prerelease: true
+          files: dist/installer/GeoStudio2-Setup-preview8-x64.exe
