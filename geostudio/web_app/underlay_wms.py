@@ -14,7 +14,7 @@ from urllib.request import HTTPRedirectHandler, Request, build_opener
 from urllib.parse import urlsplit
 from math import isfinite
 
-from geostudio.wms_service import WMSBounds, capabilities_url, getmap_url, parse_capabilities
+from geostudio.wms_service import WMSBounds, WMSLayerInfo, capabilities_url, getmap_url, parse_capabilities
 
 PRESETS = {
     "standard": ("Ortofotomapa standardowa", "https://mapy.geoportal.gov.pl/wss/service/PZGIK/ORTO/WMS/StandardResolution"),
@@ -23,6 +23,9 @@ PRESETS = {
 }
 # An explicit user choice is mandatory; no inference from MAP coordinates.
 SUPPORTED_EPSG = frozenset((2180, 2176, 2177, 2178, 2179))
+KIEG_IMAGE_URL = "https://integracja02.gugik.gov.pl/cgi-bin/KrajowaIntegracjaEwidencjiGruntow"
+KIEG_PARCELS = "dzialki,numery_dzialek"
+PARCEL_LAYERS = (KIEG_PARCELS, "dzialki", "numery_dzialek")
 MAX_WMS_BYTES = 15_000_000
 
 
@@ -33,7 +36,7 @@ class NoRedirect(HTTPRedirectHandler):
 
 def _download(url: str, max_bytes: int) -> bytes:
     parsed = urlsplit(url)
-    if parsed.scheme != "https" or parsed.hostname not in {"mapy.geoportal.gov.pl", "integracja.gugik.gov.pl"} or parsed.port not in (None, 443):
+    if parsed.scheme != "https" or parsed.hostname not in {"mapy.geoportal.gov.pl", "integracja.gugik.gov.pl", "integracja02.gugik.gov.pl"} or parsed.port not in (None, 443):
         raise ValueError("Dozwolone są wyłącznie oficjalne usługi Geoportalu.")
     if parsed.username or parsed.password:
         raise ValueError("Nieprawidłowy adres usługi.")
@@ -58,6 +61,18 @@ def _preset(name: str) -> str:
 
 @lru_cache(maxsize=3)
 def layers_for(preset: str) -> tuple:
+    if preset == "kieg":
+        # The published GetMap example provides these layers in PL-1992,
+        # independently of availability of the capabilities catalogue.
+        defaults = tuple(WMSLayerInfo(key, title, ("EPSG:2180",)) for key, title in (
+            (KIEG_PARCELS, "Granice i numery działek"),
+            ("dzialki", "Granice działek"), ("numery_dzialek", "Numery działek")))
+        try:
+            catalogue = parse_capabilities(_download(capabilities_url(_preset(preset)), 4_000_000))
+        except (RuntimeError, ValueError):
+            catalogue = ()
+        keys = {entry.name for entry in defaults}
+        return defaults + tuple(entry for entry in catalogue if entry.name not in keys)
     xml = _download(capabilities_url(_preset(preset)), 4_000_000)
     layers = parse_capabilities(xml)
     if not layers:
@@ -71,7 +86,7 @@ def list_layers(preset: str) -> dict:
         "preset": preset,
         "name": PRESETS[preset][0],
         "layers": [
-            {"id": layer.name, "title": layer.title, "epsg": sorted(
+            {"id": layer.name, "title": layer.title, "epsg": sorted(SUPPORTED_EPSG) if preset == "kieg" and layer.name in PARCEL_LAYERS else sorted(
                 int(x.split(":")[1]) for x in layer.crs
                 if x.startswith("EPSG:") and x.split(":")[1].isdigit()
                 and int(x.split(":")[1]) in SUPPORTED_EPSG)}
@@ -95,13 +110,62 @@ def map_png(preset: str, layer: str, epsg: int,
         raise ValueError("Nieprawidłowy zasięg obrazu WMS.")
     candidates = layers_for(preset)
     choice = next((entry for entry in candidates if entry.name == layer), None)
-    if choice is None or f"EPSG:{epsg}" not in choice.crs:
+    parcel = preset == "kieg" and layer in PARCEL_LAYERS
+    if choice is None or (not parcel and f"EPSG:{epsg}" not in choice.crs):
         raise ValueError("Wybrana warstwa nie obsługuje tego EPSG.")
     # Canvas world (horizontal=easting, vertical=-northing) -> GEO-MAP X/Y.
     bounds = WMSBounds(min_x=-ymax, min_y=xmin, max_x=-ymin, max_y=xmax)
+    if parcel:
+        return _parcel_image(layer, epsg, bounds, width, height)
     url = getmap_url(base, layer, f"EPSG:{epsg}", bounds, width, height,
                      version="1.1.1")
     content = _download(url, MAX_WMS_BYTES)
     if not content.startswith(b"\x89PNG\r\n\x1a\n"):
         raise ValueError("WMS zwrócił dane inne niż obraz PNG; sprawdź warstwę i EPSG.")
     return content
+
+
+def _parcel_image(layer, epsg, bounds, width, height):
+    """Fetch the official 1992 overlay and warp its alpha channel with the lines."""
+    from PIL import Image
+    from pyproj import Transformer
+    west, south, east, north = bounds.getmap_bbox(f"EPSG:{epsg}", "1.1.1")
+    source = bounds
+    if epsg != 2180:
+        transform = Transformer.from_crs(epsg, 2180, always_xy=True)
+        left, bottom, right, top = transform.transform_bounds(west, south, east, north, densify_pts=21)
+        source = WMSBounds(bottom, left, top, right)
+    error = None
+    for endpoint in (KIEG_IMAGE_URL, PRESETS["kieg"][1]):
+        url = getmap_url(endpoint, layer, "EPSG:2180", source, width, height, version="1.1.1")
+        try:
+            content = _download(url, MAX_WMS_BYTES)
+            if not content.startswith(b"\x89PNG\r\n\x1a\n"):
+                raise ValueError("Usługa działek GUGiK zwróciła odpowiedź bez obrazu PNG.")
+            with Image.open(BytesIO(content)) as image:
+                if image.size != (width, height):
+                    raise ValueError("Usługa działek GUGiK zwróciła obraz o innym rozmiarze.")
+                if epsg == 2180:
+                    image.verify()
+                    return content
+                overlay = image.convert("RGBA")
+            break
+        except (RuntimeError, OSError, ValueError) as exc:
+            error = exc
+    else:
+        raise RuntimeError("Nie udało się pobrać obrazu działek z obu adresów usługi GUGiK.") from error
+
+    def source_pixel(x, y):
+        e, n = transform.transform(west + x*(east-west)/width, north - y*(north-south)/height)
+        return ((e-left)*width/(right-left), (top-n)*height/(top-bottom))
+
+    mesh = []
+    for y in range(0, height, 64):
+        for x in range(0, width, 64):
+            x1, y1 = min(width, x+64), min(height, y+64)
+            quad = source_pixel(x,y) + source_pixel(x,y1) + source_pixel(x1,y1) + source_pixel(x1,y)
+            mesh.append(((x,y,x1,y1), quad))
+    result = overlay.transform((width,height), Image.Transform.MESH, mesh, Image.Resampling.BILINEAR)
+    output = BytesIO()
+    result.save(output, "PNG")
+    return output.getvalue()

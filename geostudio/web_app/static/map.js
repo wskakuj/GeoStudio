@@ -2178,6 +2178,7 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
       $("underlay-summary").textContent=
         "Wybierz rzeczywisty EPSG otwartej MAP, a następnie włącz podkład.";
     }catch(error){
+      if($("underlay-preset").value!==preset)return;
       options.replaceChildren(new Option("Nie udało się pobrać warstw",""));
       $("underlay-summary").textContent=error.message;
       inform("Błąd WMS: "+error.message,true);
