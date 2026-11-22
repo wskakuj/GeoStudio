@@ -46,9 +46,11 @@ def test_preview_parser_preserves_source_and_correct_native_axes(sample_map):
     assert meta["checksumValid"]
     assert meta["readOnly"]
     assert meta["forestClasses"] == {"LsV": 1}
-    assert {d["name"] for d in meta["layers"]} >= {
-        "Budynki", "Użytki Leśne", "Użytki", "Działki", "Linie"
-    }
+    # 6900 lines became the "Numery oddziałów · 6900" layer in the raster-trace
+    # line; the fixture still holds exactly one such object.
+    names = {d["name"] for d in meta["layers"]}
+    assert names >= {"Budynki", "Użytki Leśne", "Użytki", "Działki"}
+    assert any(n.startswith("Numery oddziałów") for n in names), names
     # Map (native northing X=100, easting Y=200) becomes browser (200,-100).
     features = workspace.viewport((199, -112, 223, -99))["features"]
     building = next(f for f in features if f["code"] == "5310")

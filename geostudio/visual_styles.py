@@ -122,10 +122,12 @@ def validated_styles(styles: dict) -> dict[str, dict]:
             # any original per-object CDF/native fill color. Store it in
             # the existing sidecar dictionary so Undo/Redo works unchanged.
             try:
-                opacity = int(style["opacity"])
-                if not 0 <= opacity <= 100:
-                    continue
-                entry = {"opacity": opacity}
+                entry = {}
+                if "opacity" in style:
+                    opacity = int(style["opacity"])
+                    if not 0 <= opacity <= 100:
+                        continue
+                    entry["opacity"] = opacity
                 if "fill" in style:
                     entry["fill"] = parse_fill_code(str(style["fill"]))[0]
                     if style.get("force_fill") is True:
@@ -137,7 +139,8 @@ def validated_styles(styles: dict) -> dict[str, dict]:
                     width = float(style["stroke_width"])
                     if isfinite(width):
                         entry["stroke_width"] = max(0.5, min(12.0, width))
-                cleaned[uid] = entry
+                if entry:
+                    cleaned[uid] = entry
             except (KeyError, ValueError, TypeError):
                 continue
             continue

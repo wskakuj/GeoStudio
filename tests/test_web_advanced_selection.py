@@ -157,7 +157,9 @@ def test_pywebview_js_bridge_has_no_native_window_or_workspace(tmp_path):
     workspace = PreviewWorkspace()
     picker = NativeMapPicker(workspace, settings=tmp_path / "preferences.json")
     exposed = [name for name in dir(picker) if not name.startswith("_")]
-    assert exposed == ["open_map"]
+    assert exposed == ["open_libraries", "open_map", "open_raster", "restore_recovery",
+                       "save_baked_map", "save_base_map", "save_generated_export", "save_map",
+                       "save_recovery", "save_tiled_export"]
     assert callable(picker.open_map)
     assert picker._workspace is workspace
     assert not hasattr(picker, "_window")
@@ -195,7 +197,7 @@ def test_native_picker_failure_gives_clickable_fallback(tmp_path, monkeypatch):
         raise RuntimeError("No native picker")
     monkeypatch.setattr(NativeMapPicker, "_choose_path", fail)
     picker = NativeMapPicker(PreviewWorkspace(), settings=tmp_path / "prefs.json")
-    with pytest.raises(RuntimeError, match="Z dysku"):
+    with pytest.raises(RuntimeError, match="standardowego okna wyboru pliku"):
         picker.open_map()
 
 def test_web_buttons_and_browser_fallback_exist():
@@ -207,12 +209,12 @@ def test_web_buttons_and_browser_fallback_exist():
                     "select-apply", "select-clear"]:
         assert 'id="'+element+'"' in html
     assert 'ev.key.toLowerCase()==="h"' in js
-    assert 'window.pywebview.api?.open_map' in js
-    assert 'id="btn-open-direct"' in html
-    assert 'for="file-map"' in html
-    assert 'if(window.pywebview)' in js
-    assert 'window.pywebview.api?.open_map' in js
-    assert 'window.showOpenFilePicker' in js
-    assert 'id:"geostudio-map-folder"' in js
+    assert 'nativeAPI()?.open_map' in js
+    assert 'id="btn-open-direct"' not in html
+    assert 'id="map-picker-retry"' in html
+    assert 'id="file-map"' in html
+    assert 'showPickerFallback()' in js
+    assert '$("file-map").click()' in js
+    assert 'bridge.document_call(documentId,name,args)' in js
     assert "state.pinned=matches" in js
     assert "state.tool===\"nodes\"" in js
