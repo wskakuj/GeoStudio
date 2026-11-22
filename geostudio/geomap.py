@@ -33,6 +33,54 @@ class GeoPoint:
     point_type: int = 1  # GEO-MAP P 0 ends a component; P 1 draws its contour
 
 
+LABEL_RECORD_RE = re.compile(rb"^L\s+([123])\s+(.*)$")
+
+# Bity wysięgnika w polu flagi rekordu L (GEO-MAP v8).
+LEADER_RIGHT = 64
+LEADER_LEFT = 128
+
+
+def parse_label_record(raw: bytes) -> dict | None:
+    """Rozbiera rekord L 1/2/3 na liczby.
+
+    ``L 2 dx dy rotacja skala flagi [anchorX anchorY]`` — osiem liczb pojawia
+    się dopiero przy wysięgniku; sześć to zwykła etykieta. Brak kotwicy
+    zwraca ``anchor = None``.
+    """
+    match = LABEL_RECORD_RE.match(raw.rstrip(b"\r\n"))
+    if not match:
+        return None
+    try:
+        numbers = [float(value) for value in match.group(2).split()]
+    except ValueError:
+        return None
+    if len(numbers) < 5:
+        return None
+    flags = int(numbers[4])
+    anchor = None
+    if len(numbers) >= 7:
+        anchor = (numbers[5], numbers[6])
+    return {
+        "slot": int(match.group(1)),
+        "dx": numbers[0], "dy": numbers[1],
+        "rotation": numbers[2], "scale": numbers[3],
+        "flags": flags,
+        "leader": "left" if flags & LEADER_LEFT else
+                  "right" if flags & LEADER_RIGHT else None,
+        "anchor": anchor,
+    }
+
+
+def label_records(lines) -> dict[int, dict]:
+    """Rekordy L z zakresu obiektu, kluczowane numerem slotu (1, 2, 3)."""
+    found: dict[int, dict] = {}
+    for raw in lines:
+        parsed = parse_label_record(raw)
+        if parsed:
+            found[parsed["slot"]] = parsed
+    return found
+
+
 @dataclass(slots=True)
 class GeoObject:
     code: str

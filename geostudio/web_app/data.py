@@ -2892,6 +2892,17 @@ class PreviewWorkspace:
                         overrides[key].get("visible") is False)]
         pos = self._label_positions.get(obj.uid, {}) if obj.uid else {}
         center = _label_anchor(obj)
+        # Natywne rekordy L 2/L 3 niosą własny wysięgnik (bity 64/128 flagi
+        # i punkt zaczepienia). Slot 2 to A1, slot 3 to A2.
+        leaders = {}
+        if self._doc is not None and obj.uid:
+            from ..geomap import label_records
+            for slot, record in label_records(
+                    self._doc.lines[obj.start:obj.end]).items():
+                if record.get("leader") and record.get("anchor"):
+                    anchor_x, anchor_y = record["anchor"]
+                    leaders[slot] = {"direction": record["leader"],
+                                     "x": anchor_y, "y": -anchor_x}
         result = []
         for i, field in enumerate(fields):
             value = obj.fields.get(field, "").replace("||", "\n").strip()
@@ -2917,8 +2928,10 @@ class PreviewWorkspace:
             # The old Qt engine draws separate A1 / A2 lines for buildings;
             # keep manual A2 "|" line breaks from the actual MAP.
             formatted = value.replace("|", "\n") if is_building and field == "A2" else value
+            leader = leaders.get(2 if field == "A1" else 3 if field == "A2" else 0)
             result.append({
                 "field": field, "text": formatted[:220],
+                "leader": leader,
                 "x": east, "y": south,
                 "offset": (0 if location else
                     (i - (len(fields) - 1)/2)*base_size*.80),
