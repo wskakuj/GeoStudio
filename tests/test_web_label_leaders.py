@@ -38,3 +38,53 @@ def test_labels_payload_carries_leader_for_both_slots():
     assert '"leader": leader' in source
     # slot 2 -> A1, slot 3 -> A2
     assert 'leaders.get(2 if field == "A1" else 3 if field == "A2" else 0)' in source
+
+
+def _map_with_label(tmp_path=None):
+    import pathlib
+    source = pathlib.Path("/scratch/input/02_BYSŁAWEK.MAP")
+    if not source.exists():
+        import pytest
+        pytest.skip("brak mapy testowej")
+    from geostudio.web_app.data import PreviewWorkspace
+    workspace = PreviewWorkspace()
+    workspace.load_map(source.read_bytes(), "02.MAP")
+    return workspace
+
+
+def test_toggle_leader_writes_native_flags():
+    from geostudio.geomap import parse_label_record
+    workspace = _map_with_label()
+    status = workspace.editing_status()
+    features = workspace.viewport((0, -1e6, 1e6, 1e6), limit=3000)["features"]
+    feature = next(f for f in features if f["code"] == "5310")
+    workspace.set_label_leader(feature["id"], 2, True, (-8.18, 1.438), True,
+                               document_token=status["documentToken"],
+                               revision=status["revision"])
+    entry = workspace._lookup[feature["id"]]
+    records = [parse_label_record(line) for line in
+               workspace._doc.lines[entry.obj.start:entry.obj.end]]
+    slot2 = next(r for r in records if r and r["slot"] == 2)
+    assert slot2["leader"] == "left"
+    assert slot2["anchor"] == (-8.18, 1.438)
+    assert slot2["flags"] & 128
+
+
+def test_moving_label_flips_leader_direction():
+    workspace = _map_with_label()
+    status = workspace.editing_status()
+    features = workspace.viewport((0, -1e6, 1e6, 1e6), limit=3000)["features"]
+    feature = next(f for f in features if f["code"] == "5310"
+                   and any(item.get("leader") for item in f["labels"]))
+    label = next(l for l in feature["labels"] if l.get("leader"))
+    anchor_east = label["leader"]["x"]
+    anchor_north = -label["leader"]["y"]
+    before = label["leader"]["direction"]
+    opposite = anchor_east + (500 if before == "left" else -500)
+    workspace.move_label(feature["id"], label["field"], anchor_north, opposite,
+                         document_token=status["documentToken"],
+                         revision=status["revision"])
+    updated = workspace.viewport((0, -1e6, 1e6, 1e6), limit=3000)["features"]
+    changed = next(f for f in updated if f["id"] == feature["id"])
+    moved = next(l for l in changed["labels"] if l["field"] == label["field"])
+    assert moved["leader"]["direction"] != before

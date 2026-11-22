@@ -280,6 +280,18 @@ def _draw_pdf_labels(c, features: list[dict], options: dict, layout: dict, point
             if not mandatory and collides(str(feature.get("id")), rect):
                 continue
             register(str(feature.get("id")), rect)
+            # Wysięgnik etykiety: linia od krawędzi napisu do punktu
+            # zaczepienia — ten sam mechanizm, co na ekranie.
+            leader = label.get("leader")
+            if leader and leader.get("direction"):
+                anchor_x, anchor_y = point((float(leader.get("x") or 0),
+                                            float(leader.get("y") or 0)))
+                start_x = rect[0] if leader["direction"] == "left" else rect[2]
+                c.setStrokeColor(_rgb(label.get("color", "#4A5056")))
+                c.setLineWidth(max(0.4, size * 0.06))
+                c.line(start_x, cy, anchor_x, anchor_y)
+                radius = max(0.6, size * 0.09)
+                c.circle(anchor_x, anchor_y, radius, stroke=0, fill=1)
             c.setFillColor(_rgb(label.get("color", "#4A5056")))
             c.setFont(label_font, size)
             for index, line in enumerate(lines):

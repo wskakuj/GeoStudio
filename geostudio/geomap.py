@@ -682,6 +682,52 @@ class GeoMap:
         self.lines[positions[0]:positions[-1]+1]=written
         self._parse()
 
+    def set_label_leader(self, uid: str, slot: int, enabled: bool,
+                         anchor: tuple[float, float] | None = None,
+                         prefer_left: bool | None = None) -> int:
+        """Włącza/wyłącza wysięgnik etykiety w natywnym rekordzie L.
+
+        ``slot`` 2 to A1, 3 to A2. Włączenie ustawia bit 64 (w prawo) albo
+        128 (w lewo) i dopisuje punkt zaczepienia; wyłączenie czyści oba bity
+        i usuwa kotwicę, zostawiając pozostałe pola bez zmian.
+        Zwraca 1, gdy rekord zmieniono, 0 gdy nie było czego zmieniać.
+        """
+        if uid not in self.by_id:
+            raise LookupError(uid)
+        if slot not in (1, 2, 3):
+            raise ValueError("Slot etykiety musi być 1, 2 albo 3.")
+        obj = self.by_id[uid]
+        for index in range(obj.start, obj.end):
+            raw = self.lines[index]
+            parsed = parse_label_record(raw)
+            if not parsed or parsed["slot"] != slot:
+                continue
+            numbers = [parsed["dx"], parsed["dy"], parsed["rotation"],
+                       parsed["scale"], float(parsed["flags"])]
+            if enabled:
+                direction_left = (prefer_left if prefer_left is not None
+                                  else parsed["leader"] == "left")
+                flags = int(parsed["flags"]) & ~(LEADER_LEFT | LEADER_RIGHT)
+                flags |= LEADER_LEFT if direction_left else LEADER_RIGHT
+                numbers[4] = float(flags)
+                point = anchor or parsed["anchor"] or (0.0, 0.0)
+                numbers.extend([float(point[0]), float(point[1])])
+            else:
+                # Wyłączenie: czyścimy oba bity i usuwamy kotwicę.
+                numbers[4] = float(int(parsed["flags"]) &
+                                   ~(LEADER_LEFT | LEADER_RIGHT))
+            text = " ".join(
+                (f"{value:.0f}" if index_of == 4 else
+                 f"{value:.3f}" if index_of < 2 else
+                 f"{value:.7f}" if index_of == 2 else
+                 f"{value:.7f}" if index_of == 3 else f"{value:.3f}")
+                for index_of, value in enumerate(numbers))
+            eol = b"\r\n" if raw.endswith(b"\r\n") else b"\n"
+            self.lines[index] = ("L " + str(slot) + " " + text).encode("ascii") + eol
+            self._parse()
+            return 1
+        return 0
+
     def ensure_native_label_records(self, uid: str,
                                     donor_uids: list[str] | tuple[str, ...] = ()) -> int:
         """Keep the native L 1/2/3 label descriptors after building a polygon.

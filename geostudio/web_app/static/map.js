@@ -1298,6 +1298,41 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
     $("map-status").textContent="Znak z arkusza · "+group.members.length+" elementów";
     inform("Zaznaczono cały znak ("+group.members.length+" elementów). Przesuń go narzędziem „Przesuń obiekt”.");
   }
+  // Wysięgniki A1/A2: stan czytamy z payloadu (label.leader), zapis do
+  // natywnego rekordu L przez /api/labels/leader.
+  function updateLeaderButtons(){
+    const box=$("inspector-leaders");
+    if(!box)return;
+    const feature=state.features.find(f=>f.id===state.active);
+    const is5310=!!feature&&feature.code==="5310"&&!!state.edit;
+    box.hidden=!is5310;
+    if(!is5310)return;
+    for(const [field,id] of [["A1","leader-a1"],["A2","leader-a2"]]){
+      const label=(feature.labels||[]).find(item=>item.field===field);
+      const on=!!label?.leader;
+      const button=$(id);
+      button.setAttribute("aria-pressed",on?"true":"false");
+      button.title=on?("Wyłącz wysięgnik "+field):("Włącz wysięgnik "+field);
+    }
+  }
+  async function toggleLeader(field){
+    const feature=state.features.find(f=>f.id===state.active);
+    if(!feature||!state.edit)return;
+    const label=(feature.labels||[]).find(item=>item.field===field);
+    const slot=field==="A1"?2:3;
+    const enabled=!label?.leader;
+    try{
+      const result=await api("/api/labels/leader",{
+        method:"POST",headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({fid:feature.id,slot,enabled,
+          documentToken:state.edit.documentToken,revision:state.edit.revision})});
+      updateEditState(result);
+      await refreshEditedDocument(state.active);
+      inform((enabled?"Włączono":"Wyłączono")+" wysięgnik "+field+".");
+    }catch(error){
+      inform("Nie zmieniono wysięgnika: "+error.message,true);
+    }
+  }
   function selectedObjectIds() {
     const ids=new Set(state.pinned);
     if(state.active)ids.add(state.active);
@@ -4221,7 +4256,7 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
     return {lines,size,height:lines.length*size*1.20};
   }
   function renderLabels(features,collisions=[]) {
-    state.labelHits=[];
+    state.labelHits=[];state.labelAnchors=[];
     if(!state.labels)return;
     // Screen-space spatial hash, preserving export's cross-batch collision
     // ledger. Checking every prior caption on every wheel frame was O(n²).
@@ -4335,6 +4370,7 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
         // Wysięgnik: linia od etykiety do punktu zaczepienia w poligonie
         // (natywne L 2 / L 3, bity 64/128 flagi).
         if(label.leader&&label.leader.direction){
+          if(!state.labelAnchors)state.labelAnchors=[];
           const anchor=worldToScreen(label.leader.y,-label.leader.x);
           const startX=label.leader.direction==="left"?rect[0]:rect[2];
           const startY=cy;
@@ -4345,6 +4381,9 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
           ctx.beginPath();ctx.arc(anchor.x,anchor.y,Math.max(1.5,size*.09),0,Math.PI*2);
           ctx.fillStyle=label.color||"#4A5056";ctx.fill();
           ctx.restore();
+          if(!state.exporting)state.labelAnchors.push(
+            {fid:feature.id,field:label.field,slot:label.field==="A1"?2:3,
+             x:anchor.x,y:anchor.y});
         }
         ctx.font=font;
         for(let i=0;i<lines.length;i++){
@@ -5889,7 +5928,7 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
     }
     if(state.active!==fid)state.selectedVertex=null;
     state.active=fid;state.detail=null;updateDeleteNodeButton();updateInspector();
-    updateSelectionCount();requestDraw();
+    updateSelectionCount();updateLeaderButtons();requestDraw();
     if(fid===null)return;
     const ticket=++state.selectionRequest;
     try{
@@ -6164,6 +6203,44 @@ inform("Klikaj mapę, aby wstawiać kolejne oznaczenia. Naciśnij Esc lub wybier
     const corner=worldToScreen(hit.x+hit.w,hit.y+hit.h);
     sheetDrag={id:ev.pointerId,token:state.edit.documentToken,start:world,base:hit,item:{...hit},resize:Math.hypot(corner.x-p.x,corner.y-p.y)<12};
     canvas.setPointerCapture(ev.pointerId);requestDraw();
+  },true);
+  // Przeciąganie punktu zaczepienia wysięgnika (tryb „Etykiety”).
+  window.addEventListener("pointerdown",ev=>{
+    if(state.tool!=="labels"||!state.edit||!state.labelAnchors?.length)return;
+    const p=eventCoords(ev);
+    const hit=state.labelAnchors.find(a=>Math.hypot(p.x-a.x,p.y-a.y)<=10);
+    if(!hit)return;
+    ev.stopPropagation();ev.preventDefault();
+    state.anchorDrag={id:ev.pointerId,fid:hit.fid,field:hit.field,slot:hit.slot,
+                      point:screenToWorld(p.x,p.y)};
+  },true);
+  window.addEventListener("pointermove",ev=>{
+    if(state.anchorDrag?.id!==ev.pointerId)return;
+    ev.preventDefault();
+    const p=eventCoords(ev),world=screenToWorld(p.x,p.y);
+    // Snap: druga kotwica tego samego obiektu w promieniu 12 px.
+    const others=(state.labelAnchors||[]).filter(a=>
+      a.fid===state.anchorDrag.fid&&a.slot!==state.anchorDrag.slot);
+    const near=others.find(a=>Math.hypot(p.x-a.x,p.y-a.y)<=12);
+    state.anchorDrag.point=near?screenToWorld(near.x,near.y):world;
+    state.anchorDrag.snap=!!near;
+    requestDraw();
+  },true);
+  window.addEventListener("pointerup",async ev=>{
+    if(state.anchorDrag?.id!==ev.pointerId)return;
+    const drag=state.anchorDrag;state.anchorDrag=null;
+    try{
+      const result=await api("/api/labels/leader",{
+        method:"POST",headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({fid:drag.fid,slot:drag.slot,enabled:true,
+          anchor:[drag.point.x,drag.point.y],
+          documentToken:state.edit.documentToken,revision:state.edit.revision})});
+      updateEditState(result);
+      await refreshEditedDocument(state.active);
+      inform(drag.snap?"Kotwica przyciągnięta do drugiej etykiety.":"Przesunięto punkt zaczepienia wysięgnika.");
+    }catch(error){
+      inform("Nie przesunięto kotwicy: "+error.message,true);
+    }
   },true);
   window.addEventListener("pointermove",ev=>{
     if(sheetRotate?.id!==ev.pointerId)return;
@@ -6944,6 +7021,8 @@ inform("Klikaj mapę, aby wstawiać kolejne oznaczenia. Naciśnij Esc lub wybier
   });
   $("layout-form").addEventListener("submit",event=>{event.preventDefault();exportLayout(false);});
 
+  link("leader-a1",()=>toggleLeader("A1"));
+  link("leader-a2",()=>toggleLeader("A2"));
   link("tool-export-baked",downloadNativeCutouts);
   link("inspector-edit-toggle",()=>{
     toggleInspectorEdit($("inspector-edit").hidden);

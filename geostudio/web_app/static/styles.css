@@ -2066,3 +2066,10 @@ body[data-theme="dark"] #raster-summary[data-result="ready"] strong { color:#93e
   border:1px solid #cfd8e3;background:#f6f8fb;color:#26313f}
 .update-actions button:hover{filter:brightness(.97)}
 .update-actions .update-install{border-color:#2664db;background:#2664db;color:#fff;font-weight:600}
+
+/* Wysięgniki etykiet A1/A2 (tylko obiekty 5310). */
+.inspector-leaders{margin-top:10px}
+.leader-buttons{display:flex;gap:6px}
+.leader-button{flex:1;padding:6px 10px;border-radius:8px;cursor:pointer;
+  border:1px solid #cfd8e3;background:#f6f8fb;color:#26313f;font-size:12px}
+.leader-button[aria-pressed="true"]{border-color:#2664db;background:#2664db;color:#fff;font-weight:600}

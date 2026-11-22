@@ -783,6 +783,22 @@ def create_app(workspace: PreviewWorkspace | None = None, *,
         except (ValueError,TypeError) as exc:
             raise HTTPException(400,str(exc)) from exc
 
+    @app.post("/api/labels/leader")
+    async def set_label_leader(request: Request):
+        data=await edit_payload(request)
+        try:
+            return state.set_label_leader(
+                data.get("fid"),data.get("slot"),data.get("enabled"),
+                data.get("anchor"),data.get("preferLeft"),
+                document_token=data.get("documentToken"),
+                revision=data.get("revision"))
+        except LookupError as exc:
+            raise HTTPException(404,str(exc)) from exc
+        except RuntimeError as exc:
+            raise HTTPException(409,str(exc)) from exc
+        except (ValueError,TypeError) as exc:
+            raise HTTPException(400,str(exc)) from exc
+
     @app.post("/api/labels/settings")
     async def set_label_settings(request: Request):
         data=await edit_payload(request)
