@@ -106,7 +106,8 @@ def test_underlay_is_behind_vectors_and_not_in_export():
     assert 'id="underlay-epsg"' in html
     assert 'id="underlay-opacity"' in html
     assert 'paintUnderlay();paintRaster();drawGrid();' in js
-    assert 'ctx.drawImage(underlay.image,top.x,top.y' in js
+    # Podkłady rysowane są w pętli po stosie (wiele warstw WMS naraz).
+    assert 'ctx.drawImage(item.image,top.x,top.y' in js
     assert 'scheduleUnderlayRefresh();' in js
     assert 'if(pass==="fills")for(const item of visible)renderFill(item);' in js
     assert 'state.exporting=true;' in js

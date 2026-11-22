@@ -32,9 +32,12 @@ def test_wms_request_is_hidpi_cancelable_and_reloads_after_zoom():
     assert "underlay.ticket++;" in js
     assert "if(underlay.abort){underlay.abort.abort();underlay.abort=null;}" in js
     assert "setTimeout(refreshUnderlay,immediate?0:115)" in js
-    assert "if(!underlay.enabled||!underlay.visible||!underlay.image" in js
+    # Rysowanie idzie po stosie podkładów, więc warunek jest per warstwa.
+    assert "if(!underlay.enabled)return;" in js
+    assert "if(!item.visible||!item.image||!item.bounds)continue;" in js
     assert "documentToken!==state.edit?.documentToken)return" in js
-    assert "underlay.image=image;underlay.bounds=bounds;underlay.loading=false;" in js
+    # Obraz trafia do aktywnego podkładu ze stosu.
+    assert "target.image=image;target.bounds=bounds;target.loading=false;" in js
 
 
 def test_sidebar_layers_and_nonmodal_visual_pairing():
