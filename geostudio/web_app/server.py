@@ -783,6 +783,15 @@ def create_app(workspace: PreviewWorkspace | None = None, *,
         except (ValueError,TypeError) as exc:
             raise HTTPException(400,str(exc)) from exc
 
+    @app.post("/api/select/code")
+    async def select_by_code(request: Request):
+        data=await request.json()
+        try:
+            return state.select_by_code(data.get("code"), data.get("bbox"),
+                                        data.get("limit", 5000))
+        except (ValueError,TypeError) as exc:
+            raise HTTPException(400,str(exc)) from exc
+
     @app.post("/api/labels/leader")
     async def set_label_leader(request: Request):
         data=await edit_payload(request)
