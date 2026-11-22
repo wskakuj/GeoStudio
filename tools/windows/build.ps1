@@ -30,6 +30,8 @@ $Args = @(
     # never imports Qt. Without these exclusions PyInstaller analyses and
     # bundles ~500 MB of Qt on every build, which is what made the Windows
     # job take tens of minutes (and time out).
+    # Wersja programu musi być czytelna w spakowanej aplikacji (updater).
+    "--copy-metadata", "geostudio-pl",
     "--exclude-module", "PySide6",
     "--exclude-module", "shiboken6",
     "tools/windows/geostudio2_entry.py"

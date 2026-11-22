@@ -516,6 +516,24 @@ class NativeMapPicker:
         """Default Save As: bake same-code overlays when any exist."""
         return self._save_map(burn_cutouts=None)
 
+    def check_update(self) -> dict:
+        """Ręczne sprawdzenie aktualizacji z panelu programu."""
+        from . import updater
+        info = updater.check_for_update()
+        if not info:
+            return {"available": False, "current": updater.current_version()}
+        return {"available": True, **info}
+
+    def install_update(self) -> dict:
+        """Pobiera i uruchamia instalator nowej wersji (zamyka program)."""
+        from . import updater
+        info = updater.check_for_update()
+        if not info or not info.get("assetUrl"):
+            return {"started": False, "reason": "Brak nowszej wersji."}
+        installer = updater.download_installer(info["assetUrl"])
+        updater.launch_installer(installer)
+        return {"started": True}
+
     def save_over_source(self) -> dict:
         """Write the working copy back into the MAP the user opened.
 
