@@ -10,20 +10,22 @@ from geostudio.geomap import parse_label_record  # noqa: E402
 from geostudio.web_app.data import PreviewWorkspace  # noqa: E402
 
 
-def test_left_leader_flags_133_and_shared_anchor():
+def test_right_leader_flags_133_and_shared_anchor():
+    # 128 = prawa strona etykiety (tak jak rysuje to Geo-MAP).
     record = parse_label_record(
         b"L 2 10.232 -28.481 0.0000000 1.0000000 133 -8.180 1.438")
     assert record["slot"] == 2
-    assert record["leader"] == "left"
+    assert record["leader"] == "right"
     assert record["anchor"] == (-8.18, 1.438)
     assert record["dx"] == 10.232 and record["dy"] == -28.481
 
 
-def test_right_leader_flags_69():
+def test_left_leader_flags_69():
+    # 64 = lewa strona etykiety.
     record = parse_label_record(
         b"L 3 8.506 48.331 0.0000393 1.0000000 69 -8.180 1.438")
     assert record["slot"] == 3
-    assert record["leader"] == "right"
+    assert record["leader"] == "left"
     assert record["anchor"] == (-8.18, 1.438)
 
 
@@ -73,7 +75,7 @@ def test_toggle_leader_writes_native_flags():
     slot2 = next(r for r in records if r and r["slot"] == 2)
     assert slot2["leader"] == "left"
     assert slot2["anchor"] == (-8.18, 1.438)
-    assert slot2["flags"] & 128
+    assert slot2["flags"] & 64          # 64 = lewa strona
 
 
 def test_moving_label_flips_leader_direction():
@@ -212,3 +214,22 @@ def test_label_position_and_leader_survive_map_save():
     assert abs(label["x"] - (click[1] + 12)) < 0.5
     assert abs(-label["y"] - (click[0] + 8)) < 0.5
     assert label["leader"] is not None
+
+
+def test_side_flags_match_geo_map(monkeypatch):
+    """64 = lewa strona etykiety, 128 = prawa (tak jak rysuje Geo-MAP)."""
+    from geostudio.geomap import LEADER_LEFT, LEADER_RIGHT
+    assert LEADER_LEFT == 64
+    assert LEADER_RIGHT == 128
+    workspace = _map_with_label()
+    status = workspace.editing_status()
+    features = workspace.viewport((0, -1e6, 1e6, 1e6), limit=3000)["features"]
+    feature = next(f for f in features if f["code"] == "5310")
+    workspace.set_label_leader(feature["id"], 2, True, [0, 0], True,
+                               document_token=status["documentToken"],
+                               revision=status["revision"])
+    entry = workspace._lookup[feature["id"]].obj
+    record = next(r for r in (parse_label_record(line) for line in
+                              workspace._doc.lines[entry.start:entry.end])
+                  if r and r["slot"] == 2)
+    assert record["flags"] & 64 and record["leader"] == "left"

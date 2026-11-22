@@ -36,8 +36,12 @@ class GeoPoint:
 LABEL_RECORD_RE = re.compile(rb"^L\s+([123])\s+(.*)$")
 
 # Bity wysięgnika w polu flagi rekordu L (GEO-MAP v8).
-LEADER_RIGHT = 64
-LEADER_LEFT = 128
+# Bity wysięgnika w polu flagi rekordu L (GEO-MAP v8).
+# 64 = wysięgnik wychodzi z LEWEJ strony etykiety, 128 = z PRAWEJ.
+# Wcześniej miałem to odwrotnie, przez co GeoStudio rysowało wysięgnik po
+# przeciwnej stronie niż Geo-MAP dla tego samego rekordu.
+LEADER_LEFT = 64
+LEADER_RIGHT = 128
 
 
 def parse_label_record(raw: bytes) -> dict | None:
