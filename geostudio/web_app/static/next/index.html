@@ -1014,7 +1014,7 @@ text.plabel.is-draggable{cursor:move}
           <option value="300" selected>300 DPI — druk</option>
           <option value="600">600 DPI — wysoka ostrość</option>
         </select></label>
-        <label>Tytuł<input class="wms__select" id="printTitle" value="Mapa GEO-MAP"></label>
+        <label>Tytuł<input class="wms__select" id="printTitle" value="" placeholder="opcjonalnie"></label>
       </div>
       <div class="print__checks">
         <label class="print__check"><input type="checkbox" id="printFrame" checked> ramka</label>
@@ -3127,7 +3127,7 @@ function printOptions(){
     dpi: Number($('#printDpi').value) || 300,
     paper: $('#printPaper').value,
     orientation: $('#printOrientation').value,
-    title: $('#printTitle').value || 'Mapa GEO-MAP',
+    title: $('#printTitle').value || '',
     frame: $('#printFrame').checked,
     showLegend: $('#printLegend').checked,
     north: $('#printNorth').checked,
@@ -3160,7 +3160,7 @@ function preparePrint(){
     ? Math.max(10, Math.round(703 / (state.fitWidth ? state.fitWidth / state.view.w : 1)))
     : 1000;
   $('#printScale').value = den;
-  $('#printTitle').value = (state.meta && state.meta.name ? state.meta.name.replace(/\.MAP$/i, '') : 'Mapa GEO-MAP');
+  $('#printTitle').value = '';
   $('#printTable').innerHTML = '';
   addPrintRow('Miejscowość', '');
   addPrintRow('Data', new Date().toLocaleDateString('pl-PL'));

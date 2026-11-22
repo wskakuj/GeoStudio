@@ -55,13 +55,16 @@ def test_save_over_source_writes_original_and_keeps_backup(tmp_path, monkeypatch
     assert GeoMap(after).by_id["DZ-1"].fields["A1"] == "777"
 
 
-def test_save_over_source_cancelled_changes_nothing(tmp_path, monkeypatch):
+def test_save_over_source_no_longer_asks_with_tk(tmp_path, monkeypatch):
+    """Potwierdzenie robi interfejs; drugie okno Tk zawieszało pywebview."""
     picker, ws, source = _picker(tmp_path, monkeypatch, confirm=False)
+    called = []
+    monkeypatch.setattr(np, "_ask_yes_no", lambda *a, **k: called.append(1) or True)
     before = source.read_bytes()
     result = picker.save_over_source()
-    assert result.get("cancelled") is True
-    assert source.read_bytes() == before
-    assert not source.with_name("mapa.geostudio-backup.MAP").exists()
+    assert called == [], "Python nie może otwierać okna Tk"
+    assert result["saved"] is True
+    assert source.read_bytes() != before
 
 
 def test_save_map_overwrites_existing_pair_after_confirmation(tmp_path, monkeypatch):

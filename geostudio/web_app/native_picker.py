@@ -530,7 +530,7 @@ class NativeMapPicker:
         info = updater.check_for_update()
         if not info or not info.get("assetUrl"):
             return {"started": False, "reason": "Brak nowszej wersji."}
-        installer = updater.download_installer(info["assetUrl"])
+        installer = updater.download_with_progress(info["assetUrl"], info["version"])
         updater.launch_installer(installer)
         return {"started": True}
 
@@ -558,14 +558,8 @@ class NativeMapPicker:
         visual_bytes = self._workspace.export_visual_sidecar(content)
         epsg = self._workspace.metadata().get("mapEPSG")
 
-        confirmed = _ask_yes_no(
-            "GeoStudio 2.0 — zapis na oryginale",
-            ("Zapisać zmiany w otwartym pliku?\n\n" + str(path) +
-             "\n\nPoprzednia wersja zostanie zachowana jako " +
-             path.stem + ".geostudio-backup.MAP"),
-        )
-        if not confirmed:
-            return {"cancelled": True}
+        # Potwierdzenie robi interfejs (window.confirm). Drugie okno Tk w tym
+        # wątku blokowało pętlę pywebview i program przestawał odpowiadać.
 
         backup = path.with_name(path.stem + ".geostudio-backup.MAP")
         companion = path.with_suffix(".geostudio-topology.json")

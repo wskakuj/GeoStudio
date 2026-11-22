@@ -94,7 +94,8 @@ def _setup(opts: dict):
     for item in table:
         if not isinstance(item, dict):
             raise ValueError("Tabela musi zawierać pary opis–wartość.")
-    title = _text(opts.get("title", "Mapa GEO-MAP"), 100)
+    # Bez wpisanego tytułu arkusz nie ma nagłówka — nie wstawiamy domyślnego.
+    title = _text(opts.get("title", ""), 100)
     show_legend = opts.get("showLegend", True) is True and len(legend) > 0
     legend_mm = 55 if show_legend else 0
     head_mm, footer_mm, margin_mm = 20, max(22, 9 + len(table)*8), 13
