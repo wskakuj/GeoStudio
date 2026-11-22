@@ -188,7 +188,8 @@ def create_app(workspace: PreviewWorkspace | None = None, *,
     @app.get("/version")
     async def app_version():
         from . import updater
-        return {"version": updater.current_version()}
+        return {"version": updater.current_version(),
+                "update": updater.pending_update()}
 
     @app.get("/styles.css")
     async def styles():

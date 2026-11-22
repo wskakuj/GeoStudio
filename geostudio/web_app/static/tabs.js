@@ -181,10 +181,28 @@
   async function initVersionBadge(){
     const badge=$("app-version");
     if(!badge)return;
-    let version="";
-    try{ version=(await request("/version")).version||""; }catch(_){}
+    let version="",pending=null;
+    try{
+      const data=await request("/version");
+      version=data.version||"";
+      pending=data.update&&data.update.available?data.update:null;
+    }catch(_){}
     badge.textContent="v"+(version||"—");
     badge.title="Wersja "+version+". Kliknij, aby sprawdzić aktualizacje.";
+    if(pending&&pending.version){
+      // Sprawdzenie przy starcie znalazło nowszą wersję: żółty znaczek i karta.
+      badge.classList.add("is-stale");
+      badge.title="Dostępna wersja "+pending.version+". Kliknij, aby zainstalować.";
+      setTimeout(async()=>{
+        if(await showUpdatePrompt(version,pending.version)){
+          badge.textContent="aktualizuję…";
+          try{
+            const bridge=await waitForBridge();
+            await bridge?.install_update?.();
+          }catch(_){}
+        }
+      },900);
+    }
     badge.addEventListener("click",async()=>{
       // pywebview wstrzykuje mostek asynchronicznie — daj mu chwilę.
       const bridge=await waitForBridge();
