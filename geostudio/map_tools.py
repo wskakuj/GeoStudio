@@ -10,9 +10,9 @@ from __future__ import annotations
 
 import math
 
-from PySide6.QtCore import QPointF, Qt, Signal
+from PySide6.QtCore import QPoint, QPointF, QRect, Qt, Signal
 from PySide6.QtGui import QBrush, QColor, QPainter, QTransform
-from PySide6.QtWidgets import QGraphicsView
+from PySide6.QtWidgets import QGraphicsView, QRubberBand
 
 
 class MapView(QGraphicsView):
@@ -23,6 +23,7 @@ class MapView(QGraphicsView):
     """
     coordinate = Signal(float, float)
     canvas_click = Signal(float, float, bool, bool)
+    selection_rectangle = Signal(float, float, float, float, bool)
     canvas_context = Signal(float, float)
     point_for_polygon = Signal(float, float)
     polygon_hover = Signal(float, float)
@@ -51,6 +52,9 @@ class MapView(QGraphicsView):
         self._pan_button = None
         self._pan_last = None
         self._drag_decoration = False
+        self._selection_origin = None
+        self._selection_band = None
+        self._selection_dragged = False
         self.setRenderHint(QPainter.Antialiasing)
         self.setDragMode(QGraphicsView.NoDrag)
         self.setViewportUpdateMode(QGraphicsView.BoundingRectViewportUpdate)
@@ -125,6 +129,23 @@ class MapView(QGraphicsView):
             self.verticalScrollBar().setValue(self.verticalScrollBar().value() - step.y())
             event.accept()
             return
+        if self._selection_origin is not None:
+            pos = event.position().toPoint()
+            self._selection_dragged = (
+                pos - self._selection_origin).manhattanLength() >= 8
+            if self._selection_dragged:
+                if self._selection_band is None:
+                    self._selection_band = QRubberBand(
+                        QRubberBand.Shape.Rectangle, self.viewport())
+                    self._selection_band.setStyleSheet(
+                        "background: rgba(30, 110, 220, 35);"
+                        "border: 1px solid #1e6edc;")
+                self._selection_band.setGeometry(
+                    QRect(self._selection_origin, pos).normalized())
+                self._selection_band.show()
+            self.coordinate.emit(*self._position(event))
+            event.accept()
+            return
         x, y = self._position(event)
         self.coordinate.emit(x, y)
         if self.label_mode and self._label_down:
@@ -189,8 +210,9 @@ class MapView(QGraphicsView):
         elif event.button() == Qt.RightButton:
             self.canvas_context.emit(x, y)
         elif event.button() == Qt.LeftButton:
-            self.canvas_click.emit(x, y, bool(event.modifiers() & Qt.AltModifier),
-                                   bool(event.modifiers() & Qt.ControlModifier))
+            self._selection_origin = event.position().toPoint()
+            self._selection_dragged = False
+            event.accept()
         event.accept()
 
     def mouseReleaseEvent(self, event):
@@ -210,6 +232,28 @@ class MapView(QGraphicsView):
             self._label_down = False
             x, y = self._position(event)
             self.label_drop.emit(x, y)
+            event.accept()
+            return
+        if self._selection_origin is not None and event.button() == Qt.LeftButton:
+            origin = self._selection_origin
+            dragged = self._selection_dragged
+            self._selection_origin = None
+            self._selection_dragged = False
+            if self._selection_band is not None:
+                self._selection_band.hide()
+            if dragged:
+                start_scene = self.mapToScene(origin)
+                end_scene = self.mapToScene(event.position().toPoint())
+                x0, x1 = sorted((start_scene.x(), end_scene.x()))
+                y0, y1 = sorted((-start_scene.y(), -end_scene.y()))
+                self.selection_rectangle.emit(
+                    x0, y0, x1, y1,
+                    bool(event.modifiers() & Qt.ControlModifier))
+            else:
+                x, y = self._position(event)
+                self.canvas_click.emit(
+                    x, y, bool(event.modifiers() & Qt.AltModifier),
+                    bool(event.modifiers() & Qt.ControlModifier))
             event.accept()
             return
         if self.edit_mode and self.dragged_vertex is not None and event.button() == Qt.LeftButton:

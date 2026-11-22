@@ -37,7 +37,8 @@ from .forest_classes import (
 )
 from .label_editor import ATTRIBUTE_FIELDS, AttributeLabelsDialog
 from .selection import (SelectionContext, highlight_path, pick_candidates,
-                        resolve_click, snap_at, toggle_selection, visible_uids)
+                        rectangle_candidates, resolve_click, snap_at, toggle_selection,
+                        visible_uids)
 from .exporters import render_scene_image, render_print_image, save_image, write_dxf
 from .history import History, HistoryConflict
 from .map_layout import (detect_source_compilation_scale, validated_compilation_scale,
@@ -192,6 +193,7 @@ class GeoStudioWindow(QMainWindow):
         self.view.setObjectName('GeoStudioCanvas')
         self.view.coordinate.connect(self.on_coordinate)
         self.view.canvas_click.connect(self.select_at)
+        self.view.selection_rectangle.connect(self.select_in_rectangle)
         self.view.canvas_context.connect(self.show_objects_here)
         self.view.polygon_hover.connect(self.preview_polygon)
         self.view.vertex_hover.connect(self.preview_vertex)
@@ -2135,6 +2137,9 @@ class GeoStudioWindow(QMainWindow):
         self._last_pick_pos = None
         self._last_pick_candidates = ()
         self._select_uid('')
+        active = f"kod {self.select_code_filter}" if self.select_code_filter else "wszystkie kody"
+        self.status.showMessage(
+            f"Filtr zaznaczania: {active}. Przeciągnij myszą, aby zaznaczyć prostokątem.")
 
     @staticmethod
     def _upright_map_text_transform(view_transform, bounds, ratio, offset=0.0):
@@ -2624,6 +2629,23 @@ class GeoStudioWindow(QMainWindow):
             f'Wybrano kod {self.doc.by_id[uid].code}. '
             f'Łącznie zaznaczono: {len(self.selected_uids)}. '
             'B utrwala obiekt, Ctrl+L zaznacza cały aktywny kod; F wyszukuje.')
+
+    def select_in_rectangle(self, x0, y0, x1, y1, additive=False):
+        """Select visible objects intersecting a drag rectangle in map units."""
+        if not self.doc:
+            return
+        objects = rectangle_candidates(self._selection_context(0.0), x0, y0, x1, y1)
+        hits = [obj.uid for obj in objects]
+        base = list(self.selected_uids if additive else self.pinned_uids)
+        combined = list(dict.fromkeys(base + hits))
+        self._last_pick_pos = None
+        self._last_pick_candidates = ()
+        self._set_selected_uids(combined)
+        code_note = (f" (filtr kodu {self.select_code_filter})"
+                     if self.select_code_filter else "")
+        self.status.showMessage(
+            f"Zaznaczono {len(hits)} obiektów prostokątem{code_note}. "
+            f"Łącznie: {len(self.selected_uids)}. Ctrl + przeciągnięcie dodaje do zaznaczenia.")
 
     def select_all_same_code(self):
         if not self.doc or not self.selected_uid:

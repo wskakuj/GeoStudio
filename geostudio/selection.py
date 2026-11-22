@@ -78,6 +78,34 @@ def resolve_click(uids: list[str], current_uid: str, *,
     return uids[index]
 
 
+def rectangle_candidates(ctx: SelectionContext, x0: float, y0: float,
+                         x1: float, y1: float) -> list[GeoObject]:
+    """Visible map objects whose geometry bounds intersect a drag rectangle.
+
+    Coordinates are map units. The active code filter and layer visibility use
+    the same context as single-click picking, so rectangle selection cannot
+    accidentally include other codes or hidden layers.
+    """
+    if ctx.doc is None:
+        return []
+    left, right = sorted((x0, x1))
+    bottom, top = sorted((y0, y1))
+    visible = visible_uids(ctx)
+    matches = []
+    for obj in ctx.doc.objects:
+        if (not obj.uid or obj.uid not in visible or
+                (ctx.code_filter is not None and obj.code != ctx.code_filter)):
+            continue
+        if not obj.points:
+            continue
+        xs = [point.x for point in obj.points]
+        ys = [point.y for point in obj.points]
+        if max(xs) < left or min(xs) > right or max(ys) < bottom or min(ys) > top:
+            continue
+        matches.append(obj)
+    return matches
+
+
 def toggle_selection(selected: list[str], uid: str) -> list[str]:
     """Ctrl+click behaviour: add the object, or remove it if already selected."""
     updated = [item for item in selected if item != uid]
