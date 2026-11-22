@@ -574,9 +574,97 @@ class PreviewWorkspace:
                 self._label_positions.setdefault(obj.uid,{})[field]=point
             if self._doc.to_bytes()!=before:
                 raise ValueError("Naruszono geometrię MAP podczas przesuwania etykiety.")
+            # Przesunięcie napisu na drugą stronę kotwicy zmienia kierunek
+            # wysięgnika: 69 (w prawo) <-> 133 (w lewo).
+            self._sync_leader_direction(obj, field, point)
             self._revision+=1
             return {**self._editing_status(),"changed":True,
                     "fid":fid,"field":field,"point":point}
+
+    def _sync_leader_direction(self, obj, field: str, point) -> None:
+        """Ustawia bit wysięgnika zgodnie ze stroną, po której stoi napis."""
+        from ..geomap import parse_label_record
+        slot = 2 if field == "A1" else 3 if field == "A2" else None
+        if slot is None or self._doc is None:
+            return
+        for raw in self._doc.lines[obj.start:obj.end]:
+            record = parse_label_record(raw)
+            if not record or record["slot"] != slot or not record["leader"]:
+                continue
+            anchor = record["anchor"]
+            if not anchor:
+                return
+            # point = [northing, easting]; kotwica = (northing, easting).
+            label_easting = float(point[1])
+            anchor_easting = float(anchor[1])
+            if abs(label_easting - anchor_easting) < 1e-6:
+                return
+            prefer_left = label_easting < anchor_easting
+            if (record["leader"] == "left") == prefer_left:
+                return
+            self._doc.set_label_leader(obj.uid, slot, True, anchor, prefer_left)
+            return
+
+    def set_label_leader(self, fid: str, slot: int, enabled: bool,
+                         anchor=None, prefer_left=None, *,
+                         document_token=None, revision=None) -> dict:
+        """Włącza/wyłącza wysięgnik etykiety A1 (slot 2) lub A2 (slot 3).
+
+        Zapis idzie do natywnego rekordu L, więc trafia też do pliku MAP.
+        """
+        with self._lock:
+            if self._doc is None:
+                raise ValueError("Najpierw otwórz mapę GEO-MAP.")
+            self._require_edit(document_token, revision)
+            entry = self._lookup.get(fid)
+            if entry is None:
+                raise LookupError(fid)
+            obj = entry.obj
+            if not obj.uid or self._uid_counts.get(obj.uid) != 1:
+                raise ValueError("Wysięgnik wymaga unikalnego ID obiektu.")
+            if slot not in (2, 3):
+                raise ValueError("Wysięgnik dotyczy tylko etykiet A1 i A2.")
+            if type(enabled) is not bool:
+                raise ValueError("Opcja wysięgnika musi być true/false.")
+            point = None
+            if anchor is not None:
+                if (not isinstance(anchor, (list, tuple)) or len(anchor) != 2
+                        or not all(_valid_number(value) for value in anchor)):
+                    raise ValueError("Nieprawidłowy punkt zaczepienia.")
+                point = (round(float(anchor[0]), 3), round(float(anchor[1]), 3))
+            if enabled and point is None:
+                point = self._leader_default_anchor(obj)
+            before = self._doc.to_bytes()
+            with self._history.begin(
+                ("Włącz" if enabled else "Wyłącz") + " wysięgnik " +
+                ("A1" if slot == 2 else "A2"),
+                selection_before=(obj.uid,),
+            ):
+                changed = self._doc.set_label_leader(
+                    obj.uid, slot, enabled, point, prefer_left)
+            if not changed:
+                return {**self._editing_status(), "changed": False}
+            self._reindex(self._doc, self._doc.filename)
+            self._revision += 1
+            return {**self._editing_status(), "changed": True,
+                    "fid": fid, "slot": slot, "enabled": enabled,
+                    "anchor": list(point) if point else None}
+
+    def _leader_default_anchor(self, obj) -> tuple[float, float]:
+        """Punkt zaczepienia w środku poligonu (albo średnia wierzchołków)."""
+        try:
+            from shapely.geometry import Point
+            shape = geometry_of(obj)
+            if shape is not None and shape.is_valid and not shape.is_empty:
+                inside = shape.representative_point()
+                return (round(inside.y, 3), round(inside.x, 3))
+        except Exception:
+            pass
+        points = obj.points or []
+        if not points:
+            return (0.0, 0.0)
+        return (round(sum(p.x for p in points) / len(points), 3),
+                round(sum(p.y for p in points) / len(points), 3))
 
     @staticmethod
     def _validate_sheet_items(items):
