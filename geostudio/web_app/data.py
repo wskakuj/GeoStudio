@@ -2944,12 +2944,12 @@ class PreviewWorkspace:
             rank=overlay_rank
             if rank is None:
                 rank={uid:i for i,uid in enumerate(self._overlay_uids())}
-            at=rank.get(obj.uid,-1)
+            at=rank.get(id(obj),-1)
             # Only later objects of exactly the SAME code can mask this
             # object, and stationary foreign-code lines remain protected.
             upper=[other for other in overlay_objects
-                   if other.uid!=obj.uid and other.code==obj.code
-                   and rank.get(other.uid,-1)>at]
+                   if other is not obj and other.code==obj.code
+                   and rank.get(id(other),-1)>at]
             if upper:
                 ax0=min(p.x for p in obj.points)
                 ay0=min(p.y for p in obj.points)
@@ -3034,10 +3034,12 @@ class PreviewWorkspace:
             rank={}
             for index,uid in enumerate(stack):
                 obj=self._doc.by_id.get(uid)
-                if (obj is None or self._uid_counts.get(uid)!=1
-                        or not obj.is_closed):
+                if obj is None or not obj.is_closed:
                     continue
-                rank[uid]=index
+                # Klucz po tożsamości obiektu, nie po uid: mapy po wielu
+                # zapisach mają powtórzone uid-y i wtedy CAŁY stos był
+                # pomijany, więc przesunięty poligon nie wycinał sąsiada.
+                rank[id(obj)]=index
                 overlay_by_code.setdefault(obj.code,[]).append(obj)
             return {
                 "features":[self._feature(entry,
