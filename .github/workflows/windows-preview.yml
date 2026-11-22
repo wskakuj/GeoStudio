@@ -21,7 +21,9 @@ permissions:
 jobs:
   installer:
     runs-on: windows-latest
-    timeout-minutes: 50
+    # A healthy build takes ~4 minutes; 40 leaves room for a cold pip cache
+    # without burning an hour when something really is stuck.
+    timeout-minutes: 40
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
