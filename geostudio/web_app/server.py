@@ -195,6 +195,10 @@ def create_app(workspace: PreviewWorkspace | None = None, *,
     async def drawing_snap_js():
         return FileResponse(ROOT / "drawing_snap.js", media_type="text/javascript")
 
+    @app.get("/sheet.js")
+    def sheet_script():
+        return FileResponse(ROOT / "sheet.js", media_type="text/javascript")
+
     @app.get("/map.js")
     async def javascript():
         return FileResponse(ROOT / "map.js", media_type="text/javascript")
@@ -784,6 +788,19 @@ def create_app(workspace: PreviewWorkspace | None = None, *,
         except (ValueError,TypeError) as exc:
             raise HTTPException(400,str(exc)) from exc
 
+    @app.post("/api/sheet-items")
+    async def set_sheet_items(request: Request):
+        data=await edit_payload(request,512*1024)
+        try:
+            return state.set_sheet_items(
+                data.get("items"),
+                document_token=data.get("documentToken"),
+                revision=data.get("revision"))
+        except RuntimeError as exc:
+            raise HTTPException(409,str(exc)) from exc
+        except (ValueError,TypeError) as exc:
+            raise HTTPException(400,str(exc)) from exc
+
     @app.post("/api/compilation-scale")
     async def set_compilation_scale(request: Request):
         data=await edit_payload(request)
@@ -909,7 +926,7 @@ def create_app(workspace: PreviewWorkspace | None = None, *,
             ticket=tiles.begin_mosaic(
                 data.get("documentToken"),data.get("revision"),
                 data.get("filename"),data.get("width"),data.get("height"),
-                data.get("dpi"),data.get("tileWidth"),data.get("tileHeight"))
+                data.get("dpi"),data.get("tileWidth"),data.get("tileHeight"),data.get("format","tiff"))
             return {"ticket":ticket}
         except RuntimeError as exc:
             raise HTTPException(409,str(exc)) from exc
@@ -933,7 +950,7 @@ def create_app(workspace: PreviewWorkspace | None = None, *,
     @app.post("/api/export/mosaic/{ticket}/finish")
     async def complete_single_tiff(ticket: str):
         try:
-            return tiles.finish_mosaic(ticket)
+            return await run_in_threadpool(tiles.finish_mosaic,ticket)
         except RuntimeError as exc:
             raise HTTPException(409,str(exc)) from exc
         except LookupError as exc:
@@ -946,7 +963,7 @@ def create_app(workspace: PreviewWorkspace | None = None, *,
         """Stream a single TIFF/BigTIFF file from temporary disk."""
         try:
             filename,path=tiles.archive(ticket)
-            if not filename.endswith(".tif"):
+            if not filename.endswith((".tif",".jpg",".png")):
                 raise ValueError("Wybrany eksport nie jest obrazem TIFF.")
         except RuntimeError as exc:
             raise HTTPException(409,str(exc)) from exc
@@ -954,7 +971,7 @@ def create_app(workspace: PreviewWorkspace | None = None, *,
             raise HTTPException(404,str(exc)) from exc
         except ValueError as exc:
             raise HTTPException(400,str(exc)) from exc
-        return FileResponse(path,media_type="image/tiff",filename=filename)
+        return FileResponse(path,media_type={".jpg":"image/jpeg",".png":"image/png",".tif":"image/tiff"}[path.suffix],filename=filename)
 
     @app.post("/api/export/buffer")
     async def save_generated_export_buffer(request: Request):
@@ -975,7 +992,7 @@ def create_app(workspace: PreviewWorkspace | None = None, *,
     @app.post("/api/export/pdf")
     async def download_vector_pdf(request: Request):
         """True vector A0-A4 PDF; user-authored legend/frame/table in JSON."""
-        raw=await receive(request,64*1024)
+        raw=await receive(request,2*1024*1024)
         try:
             payload=json.loads(raw)
             if not isinstance(payload,dict):

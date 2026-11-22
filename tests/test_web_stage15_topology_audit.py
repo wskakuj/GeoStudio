@@ -149,11 +149,13 @@ def test_map_audit_ui_has_live_list_and_manual_fix_actions():
     js=(root/"map.js").read_text(encoding="utf-8")
     css=(root/"styles.css").read_text(encoding="utf-8")
     for name in (
-        "tool-topology-scan","tool-topology-list","topology-panel",
+        "tool-topology-scan","topology-panel",
         "topology-issues","topology-filter","topology-rescan","topology-edit",
         "topology-delete-duplicate"
     ):
         assert f'id="{name}"' in html
+    assert 'id="tool-topology-list"' not in html
+    assert "Kontrola poligonów" in html
     assert "/api/topology/audit?" in js
     assert "drawTopologyHighlight(features)" in js
     assert "function focusTopologyIssue(issue)" in js

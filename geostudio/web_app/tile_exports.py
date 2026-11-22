@@ -48,6 +48,7 @@ class _MosaicSession:
     height: int
     tile_width: int
     tile_height: int
+    dpi: int
     pixel_offset: int
 
 
@@ -144,7 +145,7 @@ class TiledArchiveStore:
 
     def begin_mosaic(self, document_token: str, revision: int,
                      filename: str, width: int, height: int, dpi: int,
-                     tile_width: int, tile_height: int) -> str:
+                     tile_width: int, tile_height: int, output_format: str = "tiff") -> str:
         """Allocate a single RGB TIFF/BigTIFF on disk, not a ZIP.
 
         Pixels are written at image-global offsets. No per-tile frame,
@@ -158,7 +159,11 @@ class TiledArchiveStore:
                 not 1 <= tile_width <= 4096 or not 1 <= tile_height <= 4096 or
                 tile_width * tile_height > 12_000_000):
             raise ValueError("Nieprawidłowe parametry pojedynczego TIFF.")
+        if output_format not in ("tiff", "png", "jpeg"):
+            raise ValueError("Nieobsługiwany format obrazu.")
         header, pixel_offset, _ = tiff_header(width, height, dpi)
+        if output_format == "jpeg" and max(width, height) > 65500:
+            raise ValueError("JPEG obsługuje boki do 65500 pikseli. Wybierz PNG lub TIFF.")
         total_bytes = pixel_offset + width * height * 3
         if total_bytes > 16 * 1024**3:
             raise ValueError("Mapa przekracza limit 16 GiB dla pojedynczego TIFF.")
@@ -186,12 +191,12 @@ class TiledArchiveStore:
                 path.unlink(missing_ok=True)
                 raise ValueError("Nie można utworzyć pliku TIFF na dysku.") from exc
             self._sessions[ticket] = _MosaicSession(
-                path=path, filename=filename + "_calosc.tif",
+                path=path, filename=filename + "_calosc." + {"tiff":"tif","png":"png","jpeg":"jpg"}[output_format],
                 token=document_token, revision=revision,
-                columns=columns, rows=rows, format="mosaic",
+                columns=columns, rows=rows, format=output_format,
                 next_index=0, ready=False, width=width, height=height,
                 tile_width=tile_width, tile_height=tile_height,
-                pixel_offset=pixel_offset,
+                pixel_offset=pixel_offset, dpi=dpi,
             )
             return ticket
 
@@ -231,10 +236,53 @@ class TiledArchiveStore:
                 raise ValueError("Nieprawidłowy eksport TIFF.")
             if entry.next_index != entry.rows * entry.columns:
                 raise ValueError("Brakuje fragmentów obrazu TIFF.")
+            if not entry.ready and entry.format != "tiff":
+                target = entry.path.with_suffix(Path(entry.filename).suffix)
+                try:
+                    with entry.path.open("rb") as source:
+                        source.seek(entry.pixel_offset)
+                        if entry.format == "png":
+                            self._write_png(entry, source, target)
+                        else:
+                            from PIL import Image
+                            image = Image.new("RGB", (entry.width, entry.height))
+                            for row in range(0, entry.height, 64):
+                                height = min(64, entry.height-row)
+                                strip = Image.frombytes("RGB", (entry.width, height),
+                                    source.read(entry.width*height*3))
+                                image.paste(strip, (0,row))
+                            image.save(target, quality=96, subsampling=0, dpi=(entry.dpi, entry.dpi))
+                    entry.path.unlink()
+                    entry.path = target
+                except Exception:
+                    target.unlink(missing_ok=True)
+                    raise
             entry.ready = True
             return {"ticket": ticket, "filename": entry.filename,
                     "bytes": entry.path.stat().st_size,
-                    "tiles": entry.next_index, "format": "tiff"}
+                    "tiles": entry.next_index, "format": entry.format}
+
+    @staticmethod
+    def _write_png(entry, source, target):
+        import struct
+        import zlib
+        with target.open("wb") as stream:
+            def chunk(kind, payload):
+                stream.write(struct.pack(">I", len(payload)))
+                stream.write(kind)
+                stream.write(payload)
+                stream.write(struct.pack(">I", zlib.crc32(payload, zlib.crc32(kind))))
+            stream.write(b"\x89PNG\r\n\x1a\n")
+            chunk(b"IHDR", struct.pack(">IIBBBBB", entry.width, entry.height, 8, 2, 0, 0, 0))
+            ppm = round(entry.dpi / .0254)
+            chunk(b"pHYs", struct.pack(">IIB", ppm, ppm, 1))
+            compressor = zlib.compressobj()
+            for _ in range(entry.height):
+                data = compressor.compress(b"\0" + source.read(entry.width * 3))
+                if data:
+                    chunk(b"IDAT", data)
+            chunk(b"IDAT", compressor.flush())
+            chunk(b"IEND", b"")
 
     def archive(self, ticket: str) -> tuple[str, Path]:
         with self._lock:

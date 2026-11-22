@@ -287,6 +287,49 @@ def _draw_pdf_labels(c, features: list[dict], options: dict, layout: dict, point
             painted += 1
 
 
+def _sheet_inserts(c, inserts, point, per_m, font):
+    if not isinstance(inserts,list) or len(inserts)>100:
+        raise ValueError("Zbyt wiele elementów arkusza.")
+    def number(value):
+        if type(value) not in (float,int) or not isfinite(value) or abs(value)>1e9:
+            raise ValueError("Nieprawidłowy wymiar elementu.")
+        return value
+    for item in inserts:
+        if not isinstance(item,dict):
+            raise ValueError("Nieprawidłowy element arkusza.")
+        x,y=point([number(item.get(k)) for k in ("x","y")])
+        size=item.get("size")
+        if not isinstance(size,list) or len(size)!=2 or min(map(number,size))<=0:
+            raise ValueError("Nieprawidłowe proporcje elementu.")
+        shapes=item.get("shapes")
+        if not isinstance(shapes,list) or len(shapes)>250:
+            raise ValueError("Nieprawidłowe oznaczenia w legendzie.")
+        c.saveState()
+        c.translate(x,y)
+        c.scale(number(item.get("w"))*per_m/size[0],number(item.get("h"))*per_m/size[1])
+        c.setLineWidth(.65)
+        for s in shapes:
+            if not isinstance(s,dict):
+                raise ValueError("Nieprawidłowy znak.")
+            if "text" in s:
+                c.setFillColor(colors.HexColor("#202020"));c.setFont(font,number(s.get("size")))
+                draw=c.drawCentredString if s.get("center") else c.drawString
+                draw(number(s.get("x")),-number(s.get("y")),_text(s.get("text"),1500))
+            else:
+                pts=s.get("points")
+                if not isinstance(pts,list) or not 2<=len(pts)<=32:
+                    raise ValueError("Nieprawidłowy obrys znaku.")
+                path=c.beginPath()
+                for idx,pair in enumerate(pts):
+                    if not isinstance(pair,list) or len(pair)!=2:
+                        raise ValueError("Nieprawidłowy punkt znaku.")
+                    (path.lineTo if idx else path.moveTo)(number(pair[0]),-number(pair[1]))
+                if s.get("fill"):c.setFillColor(_rgb(s["fill"]))
+                if s.get("stroke"):c.setStrokeColor(_rgb(s["stroke"]))
+                c.drawPath(path,fill=int(bool(s.get("fill"))),stroke=int(bool(s.get("stroke"))))
+        c.restoreState()
+
+
 def render_vector_pdf(features: Iterable[dict], options: dict) -> bytes:
     """Render a true vector A0–A4/automatic layout; no 40MP Canvas limit."""
     o = _setup(options)
@@ -343,6 +386,7 @@ def render_vector_pdf(features: Iterable[dict], options: dict) -> bytes:
                 c.drawPath(p,fill=1 if pass_=="fill" else 0,
                            stroke=1 if pass_=="stroke" else 0,fillMode=0)
             c.restoreState()
+    _sheet_inserts(c, options.get("inserts",[]), point, per_m, font)
     c.restoreState()
     # Map and outer sheet frames are individually configurable.
     if o["frame"]:

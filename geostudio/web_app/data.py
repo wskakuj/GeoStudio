@@ -567,6 +567,36 @@ class PreviewWorkspace:
             return {**self._editing_status(),"changed":True,
                     "fid":fid,"field":field,"point":point}
 
+    @staticmethod
+    def _validate_sheet_items(items):
+        if not isinstance(items,list) or len(items)>100:
+            raise ValueError("Arkusz może zawierać do 100 elementów.")
+        ids=set()
+        for item in items:
+            if (not isinstance(item,dict) or set(item)!={"id","kind","x","y","w","h","text"}
+                    or item["kind"] not in ("title","credits","compass","symbols","species")
+                    or not isinstance(item["id"],str) or len(item["id"])>80 or item["id"] in ids
+                    or not isinstance(item["text"],str) or len(item["text"])>1500
+                    or len(item["text"].splitlines())>16
+                    or not all(type(item[k]) in (float,int) and isfinite(item[k]) and abs(item[k])<1e9
+                               for k in ("x","y","w","h"))
+                    or min(item["w"],item["h"])<=0):
+                raise ValueError("Nieprawidłowy element arkusza.")
+            ids.add(item["id"])
+        return items
+
+    def set_sheet_items(self, items, *, document_token, revision):
+        with self._lock:
+            self._require_edit(document_token,revision)
+            self._validate_sheet_items(items)
+            with self._history.begin("Elementy arkusza"):
+                if items:
+                    self._styles["cartography:sheet"]={"items":items}
+                else:
+                    self._styles.pop("cartography:sheet",None)
+            self._revision+=1
+            return self._editing_status()
+
     def set_compilation_scale(self, denominator: int,
                               *,document_token: str,revision: int) -> dict:
         with self._lock:
@@ -617,6 +647,7 @@ class PreviewWorkspace:
     def _editing_status(self) -> dict:
         history = self._history
         return {
+            "sheetItems": self._styles.get("cartography:sheet",{}).get("items",[]),
             "dirty": bool(history and history.is_dirty),
             "canUndo": bool(history and history.can_undo),
             "canRedo": bool(history and history.can_redo),
@@ -1605,10 +1636,8 @@ class PreviewWorkspace:
             details={"repairs":repairs}
         elif action=="merge":
             codes={obj.code for obj in selected}
-            attrs={(obj.fields.get("A1",""),obj.fields.get("A2",""))
-                   for obj in selected}
-            if len(codes)!=1 or len(attrs)!=1:
-                raise ValueError("Scalaj tylko ten sam kod i zgodne wartości A1/A2.")
+            if len(codes)!=1:
+                raise ValueError("Scalane poligony muszą mieć ten sam kod.")
             geometry=merge_multipart([geometry_of(o) for o in selected])
             rings=rings_from_shape(geometry,
                 prefer_anchor=(selected[0].points[0].x,selected[0].points[0].y))
@@ -2513,6 +2542,8 @@ class PreviewWorkspace:
             for key, value in raw.items():
                 if isinstance(key, str) and isinstance(value, dict):
                     styles[key[:220]] = value
+        if "cartography:sheet" in styles:
+            self._validate_sheet_items(styles["cartography:sheet"].get("items"))
         pos = payload.get("labels", {})
         labels={}
         if isinstance(pos,dict) and len(pos)<=50000:

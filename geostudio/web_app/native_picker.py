@@ -359,9 +359,9 @@ class NativeMapPicker:
         import shutil
         suggested, source = self._tile_exports.archive(ticket)
         extension=Path(suggested).suffix.lower()
-        if extension not in (".tif", ".zip"):
+        if extension not in (".tif", ".png", ".jpg", ".zip"):
             raise ValueError("Niedozwolony format dużego eksportu.")
-        label="TIFF" if extension==".tif" else "ZIP"
+        label=extension[1:].upper()
         root = tk.Tk()
         try:
             root.withdraw()

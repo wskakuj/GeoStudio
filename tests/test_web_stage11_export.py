@@ -165,9 +165,10 @@ def test_dxf_http_auth_and_web_controls():
     html = (assets / "index.html").read_text(encoding="utf-8")
     js = (assets / "map.js").read_text(encoding="utf-8")
     for name in ("btn-layout", "tool-clear-selection", "layout-dialog",
-                 "layout-scale", "layout-dpi", "layout-legend",
-                 "layout-north", "layout-scalebar", "layout-export"):
+                 "layout-scale", "layout-dpi", "ribbon-tab-insert", "layout-export"):
         assert 'id="' + name + '"' in html
+    for name in ("layout-frame", "layout-north", "layout-scalebar", "layout-legend"):
+        assert f'id="{name}"' not in html
     for phrase in ("renderLayoutCanvas(", "makeRGBTiff(", "/api/export/dxf",
                    "geometrySnapshotValid", "renderLabels(visible,collisions)"):
         assert phrase in js

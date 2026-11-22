@@ -147,15 +147,13 @@
        status.documentToken!==state.auditReport.documentToken)){
       state.auditReport=null;state.auditActiveIssue=null;
       if(!$("topology-panel").hidden){
-        $("topology-status").textContent=
-          "Mapa zmieniona. Uruchom kontrolę ponownie, aby sprawdzić nowe obrysy.";
-        $("topology-action-hint").textContent="Raport nieaktualny. Kliknij ↻.";
-        $("topology-issues").replaceChildren();
+        queueMicrotask(scanTopology);
         $("topology-edit").disabled=true;
         $("topology-delete-duplicate").hidden=true;
       }
     }
     state.edit={
+      sheetItems:status.sheetItems||[],
       dirty:!!status.dirty,
       canUndo:!!status.canUndo,
       canRedo:!!status.canRedo,
@@ -513,7 +511,7 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
     htmlText($("count-objects"), display(meta.objectCount));
     htmlText($("count-vertices"), display(meta.vertexCount));
     const quality = $("checksum-badge");
-    quality.hidden = false;
+    quality.hidden = !!meta.checksumValid;
     quality.textContent = meta.checksumValid ? "✓ CHK poprawna" : "⚠ CHK niezgodna";
     quality.classList.toggle("warning", !meta.checksumValid);
     renderLayers(); updateInspector(); fitToMap(); updateSelectionCount();
@@ -1796,15 +1794,20 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
       if($("create-dialog").open)$("create-a1").focus({preventScroll:true});
     });
   }
-  function finishGeometryDrawing() {
+  async function finishGeometryDrawing() {
     if(state.tool==="draw"){finishDrawPolygon();return;}
     if(state.tool==="cut"){
       if(state.drawPoints.length<2){
         inform("Podział wymaga linii przecinającej poligon.",true);return;
       }
-      $("split-summary").textContent="Przed podziałem sprawdź linię.";
-      state.geometryPreview=null;$("split-apply").disabled=true;
-      $("split-dialog").showModal();return;
+      if(state.splitPending||state.editBusy)return;
+      state.splitPending=true;
+      try{
+        await previewGeometryForm("split");
+        if(state.geometryPreview?.which==="split"&&state.geometryPreview.report.canApply)
+          await applyGeometryForm("split");
+      }finally{state.splitPending=false;}
+      return;
     }
     if(["line","line-edit"].includes(state.tool)){
       if(state.drawPoints.length<2){
@@ -1892,7 +1895,7 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
     }finally{$(which+"-preview").disabled=false;}
   }
   async function applyGeometryForm(which,ev) {
-    ev.preventDefault();
+    ev?.preventDefault();
     const current=state.geometryPreview;
     if(!current||current.which!==which||state.editBusy)return;
     const request={...editRequestBody(),
@@ -1901,7 +1904,7 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
       state.geometryPreview=null;$(which+"-apply").disabled=true;
       inform("Obrys został zmieniony. Sprawdź ponownie.",true);return;
     }
-    if(current.report.metadataWarning&&!window.confirm(
+    if(which!=="split"&&current.report.metadataWarning&&!window.confirm(
       "Scalenie/podział wymaga ręcznego sprawdzenia danych powierzchniowych "+
       "A4/A6 w GEO-MAP. Czy kontynuować?"))return;
     state.editBusy=true;updateEditState(state.edit);
@@ -1952,7 +1955,7 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
         ?"Odwrócić kolejność punktów w "+report.repairs.length+
           " poligonach, aby w GEO-MAP otrzymać dodatnią powierzchnię?"
         :"Scalić "+display(ids.length)+" poligonów w jeden obiekt GEO-MAP?\n"+
-          "Po scaleniu części mogą być rozłączne. Liczba wysp: "+
+          "Atrybuty wyniku pochodzą z pierwszego poligonu. Liczba wysp: "+
           report.components+", konturów: "+report.rings+".\n"+
           "Suma przed: "+report.beforeArea+" m²; po: "+
           report.afterArea+" m².\n"+
@@ -2342,6 +2345,7 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
       item.hidden=item!==panel;
       item.classList.toggle("active",item===panel);
     });
+    pendingSheet=null;sheetDrag=null;requestDraw();
     if(focus)tab.focus({preventScroll:true});
   }
   function setupRibbon(){
@@ -4250,6 +4254,7 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
     // No bitmap snapshot or resampling is made during a wheel frame.
     // The map remains rendered in native screen-space vector precision.
     renderScreenLabels(features);drawGcpMapMarkers();
+    drawSheetItems();
     drawExportAreaOverlay();
     drawDraftPolygon();drawMagnetMarker();drawVertexTool();
     updateScaleReadout();
@@ -4329,7 +4334,14 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
   // Stage 11: screen exporter keeps native vector geometry.
   // Stage 14B: export bounds are independent of screen zoom and pan.
   function selectedExportBounds(){
-    if($("layout-scope").value==="all")return [...state.meta.bounds];
+    if($("layout-scope").value==="all"){
+      const b=[...state.meta.bounds];
+      for(const i of state.edit?.sheetItems||[]){
+        b[0]=Math.min(b[0],i.x);b[1]=Math.min(b[1],i.y);
+        b[2]=Math.max(b[2],i.x+i.w);b[3]=Math.max(b[3],i.y+i.h);
+      }
+      return b;
+    }
     if($("layout-scope").value==="rect"&&state.exportAreaBounds)
       return [...state.exportAreaBounds];
     throw Error("Najpierw zaznacz prostokąt na mapie.");
@@ -4363,7 +4375,7 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
     updateExportAreaControls();
     updateExportFormatControls();
     $("layout-summary").textContent="Skala opracowania: 1:"+
-      $("layout-scale").value+". Duży TIFF: jeden plik. Duże JPG/PNG: ZIP.";
+      $("layout-scale").value+". Cała mapa w jednym pliku.";
     if(!$("layout-dialog").open)$("layout-dialog").showModal();
   }
   function beginExportAreaSelection(){
@@ -4486,15 +4498,19 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
       throw Error("Grubość ramki: od 0,1 do 2,5 mm.");
     return {
       format:"pdf",bounds,denominator,
+      inserts:(state.edit.sheetItems||[]).map(i=>({
+        x:i.x,y:i.y,w:i.w,h:i.h,size:GeoStudioSheet.sizes[i.kind],
+        shapes:GeoStudioSheet.shapes(i,denominator)
+      })),
       paper:$("layout-paper").value,
       orientation:$("layout-orientation").value,
       title:$("layout-title").value.trim().slice(0,100)||"Mapa GEO-MAP",
-      frame:$("layout-frame").checked,
+      frame:false,
       frameColor:$("layout-frame-color").value,
       frameWidthMm,
-      north:$("layout-north").checked,
-      scaleBar:$("layout-scalebar").checked,
-      showLegend:$("layout-legend").checked,
+      north:false,
+      scaleBar:false,
+      showLegend:false,
       legendRows:parseRows("layout-legend-rows","legenda",40),
       tableRows:parseRows("layout-table-rows","tabela",8),
       compilationScale:state.edit?.compilationScale||5000,
@@ -4523,7 +4539,7 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
       "Obiekt jest za mały dla tej skali i DPI. Użyj większej skali.");
     const mm=value=>Math.round(value*dpi/25.4);
     const margin=mm(13),head=mm(20),foot=mm(21);
-    const legend=$("layout-legend").checked?mm(52):0;
+    const legend=0;
     const fullWidth=width+margin*2+legend;
     const fullHeight=height+head+foot;
     // Large print sheets become full-resolution tiled archives.
@@ -4534,9 +4550,9 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
       legend,fullWidth,fullHeight,tiled,
       orientation:width>=height?"landscape":"portrait",
       title:$("layout-title").value.trim().slice(0,100)||"Mapa GEO-MAP",
-      frame:$("layout-frame").checked,north:$("layout-north").checked,
-      scaleBar:$("layout-scalebar").checked,
-      showLegend:$("layout-legend").checked,
+      frame:false,north:false,
+      scaleBar:false,
+      showLegend:false,
       format:$("layout-format").value,
     };
   }
@@ -4696,6 +4712,15 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
          state.edit?.documentToken!==documentToken)
         throw Error("Mapa została zmieniona podczas przygotowania eksportu.");
     }
+    const page=options.virtualLayout?.full||options;
+    const ox=page.margin+page.width/2-(options.virtualLayout?.x||0);
+    const oy=page.head+page.height/2-(options.virtualLayout?.y||0);
+    g.save();g.beginPath();g.rect(ox-page.width/2,oy-page.height/2,page.width,page.height);g.clip();
+    GeoStudioSheet.paint(g,state.edit.sheetItems,(x,y)=>({
+      x:ox+(x-(page.bounds[0]+page.bounds[2])/2)*page.pxPerUnit,
+      y:oy+(y-(page.bounds[1]+page.bounds[3])/2)*page.pxPerUnit
+    }),page.pxPerUnit,page.denominator);
+    g.restore();
     if(options.virtualLayout){
       g.save();
       g.translate(-options.virtualLayout.x,-options.virtualLayout.y);
@@ -5009,26 +5034,26 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
   }
   async function saveSingleMosaicTiff(ticket,filename){
     if(nativeAPI()?.save_tiled_export){
-      exportInfo("Wybierz miejsce zapisu jednego pliku TIFF…");
+      exportInfo("Wybierz miejsce zapisu jednego obrazu…");
       const result=await nativeAPI().save_tiled_export(ticket);
       if(!result||result.cancelled)return false;
-      inform("Zapisano całą mapę do jednego TIFF: "+result.path+".");
+      inform("Zapisano całą mapę do pliku: "+result.path+".");
       return true;
     }
     // Browser mode streams to disk; it must not buffer a gigabyte TIFF Blob.
     if(!window.showSaveFilePicker)
-      throw Error("Zapis dużego TIFF wymaga aplikacji GeoStudio Windows "+
+      throw Error("Zapis dużego obrazu wymaga aplikacji GeoStudio Windows "+
         "lub przeglądarki obsługującej zapis strumieniowy.");
     const handle=await window.showSaveFilePicker({
       suggestedName:filename,
-      types:[{description:"Obraz TIFF",accept:{"image/tiff":[".tif"]}}]
+      types:[{description:"Obraz mapy",accept:{[{"tif":"image/tiff","jpg":"image/jpeg","png":"image/png"}[filename.split(".").pop()]]:["."+filename.split(".").pop()]}}]
     });
     const response=await documentFetch("/api/export/mosaic/"+ticket+"/download",{
       headers:{"X-GeoStudio-Token":token},cache:"no-store"
     });
     if(!response.ok||!response.body){
       const message=await response.json().catch(()=>({}));
-      throw Error(message.detail||"Nie można pobrać dużego TIFF.");
+      throw Error(message.detail||"Nie można pobrać dużego obrazu.");
     }
     const file=await handle.createWritable();
     try{
@@ -5048,7 +5073,7 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
         revision:state.edit.revision,
         filename:basename,width:options.fullWidth,
         height:options.fullHeight,dpi:options.dpi,
-        tileWidth:plan.tileWidth,tileHeight:plan.tileHeight
+        format:options.format,tileWidth:plan.tileWidth,tileHeight:plan.tileHeight
       })
     });
     const ticket=start.ticket,documentToken=state.edit.documentToken;
@@ -5057,7 +5082,7 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
       if(state.edit?.documentToken!==documentToken||
          state.edit?.revision!==revision)
         throw Error("Mapa zmieniła się podczas eksportu TIFF.");
-      exportInfo("Jeden TIFF · składanie obrazu "+(i+1)+"/"+
+      exportInfo("Pełny obraz · składanie obrazu "+(i+1)+"/"+
         plan.tiles.length+" · "+options.dpi+" DPI");
       const canvasTile=await renderLayoutCanvas(plan.tiles[i]);
       const blob=mosaicRGBBlob(canvasTile);
@@ -5069,7 +5094,7 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
     const finished=await api("/api/export/mosaic/"+ticket+"/finish",{
       method:"POST"
     });
-    exportInfo("Gotowy pełny TIFF "+options.fullWidth+" × "+
+    exportInfo("Gotowy obraz "+options.fullWidth+" × "+
       options.fullHeight+" px. Wybierz miejsce zapisu.");
     return saveSingleMosaicTiff(ticket,finished.filename);
   }
@@ -5152,7 +5177,7 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
     }
     if(print&&options.tiled){
       inform("Wielkoformatowy druk wykonaj z PDF wektorowego; "+
-        "w eksporcie TIFF otrzymasz jeden obraz, a JPG/PNG — arkusze ZIP.",true);
+        "eksport zapisze całą mapę w jednym obrazie.",true);
       return;
     }
     button.disabled=true;printButton.disabled=true;
@@ -5195,9 +5220,7 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
           exportInfo("Anulowano zapis DXF.");return;
         }
       }else if(options.tiled){
-        const saved=options.format==="tiff"
-          ?await exportSingleMosaicTiff(options,basename)
-          :await exportTiledLayout(options,basename);
+        const saved=await exportSingleMosaicTiff(options,basename);
         if(!saved){exportInfo("Anulowano zapis eksportu.");return;}
       }else{
         const raster=await renderLayoutCanvas(options);
@@ -5272,7 +5295,7 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
       const report=await api("/api/topology/audit?"+query);
       if(state.edit?.documentToken!==tokenAtStart||
          state.edit?.revision!==revisionAtStart)
-        throw Error("Mapa została zmieniona w czasie analizy. Uruchom ją ponownie.");
+        return;
       state.auditReport=report;
       state.auditActiveIssue=null;
       $("topology-found").textContent=display(report.detected);
@@ -5288,6 +5311,7 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
       inform("Kontrola mapy: "+error.message,true);
     }finally{
       state.auditBusy=false;
+      if(!$("topology-panel").hidden && (state.edit?.revision!==revisionAtStart || state.edit?.documentToken!==tokenAtStart))queueMicrotask(scanTopology);
       $("topology-rescan").disabled=false;
       $("tool-topology-scan").disabled=false;
     }
@@ -5783,6 +5807,75 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
     const box=canvas.getBoundingClientRect();
     return {x:ev.clientX-box.left,y:ev.clientY-box.top};
   }
+  let pendingSheet=null,selectedSheet=null,sheetDrag=null,sheetSaving=false;
+  const insertMode=()=>!$("ribbon-panel-insert").hidden;
+  function sheetItems(){
+    return (state.edit?.sheetItems||[]).map(i=>sheetDrag?.item.id===i.id?sheetDrag.item:i);
+  }
+  function drawSheetItems(){
+    const items=sheetItems(),selected=items.find(i=>i.id===selectedSheet);
+    $("sheet-edit").disabled=!selected||!["title","credits"].includes(selected.kind);
+    $("sheet-remove").disabled=!selected;
+    GeoStudioSheet.paint(ctx,items,worldToScreen,state.scale,state.edit?.compilationScale||5000,insertMode()?selectedSheet:null);
+  }
+  async function saveSheet(items){
+    if(sheetSaving||state.editBusy)return;
+    sheetSaving=true;
+    try{
+      const res=await api("/api/sheet-items",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({...editRequestBody(),items})});
+      if(res.documentToken===state.edit?.documentToken)updateEditState(res);
+    }catch(err){inform(err.message,true);}
+    finally{sheetSaving=false;requestDraw();}
+  }
+  for(const btn of document.querySelectorAll("[data-sheet]"))btn.addEventListener("click",()=>{
+    if(!state.meta)return inform("Najpierw otwórz mapę.",true);
+    pendingSheet=btn.dataset.sheet;inform("Kliknij miejsce na mapie, gdzie ma się znaleźć lewy górny róg elementu.");
+  });
+  canvas.addEventListener("pointerdown",ev=>{
+    if(!insertMode()||!state.meta||ev.button!==0)return;
+    const p=eventCoords(ev),world=screenToWorld(p.x,p.y),items=sheetItems();
+    const hit=items.slice().reverse().find(i=>{
+      const a=worldToScreen(i.x,i.y);
+      return p.x>=a.x-5&&p.y>=a.y-5&&p.x<=a.x+i.w*state.scale+6&&p.y<=a.y+i.h*state.scale+6;
+    });
+    if(!pendingSheet&&!hit){selectedSheet=null;requestDraw();return;}
+    ev.stopImmediatePropagation();ev.preventDefault();
+    if(sheetSaving||state.editBusy)return;
+    if(pendingSheet){
+      const kind=pendingSheet,[w,h]=GeoStudioSheet.sizes[kind];
+      const item={id:crypto.randomUUID(),kind,x:world.x,y:world.y,w:w/state.scale,h:h/state.scale,text:GeoStudioSheet.defaultText(kind,state.meta.name)};
+      selectedSheet=item.id;pendingSheet=null;saveSheet([...items,item]);
+      inform("Przeciągnij element, aby go przesunąć. Prawy dolny uchwyt zmienia jego rozmiar.");return;
+    }
+    selectedSheet=hit.id;
+    const corner=worldToScreen(hit.x+hit.w,hit.y+hit.h);
+    sheetDrag={id:ev.pointerId,token:state.edit.documentToken,start:world,base:hit,item:{...hit},resize:Math.hypot(corner.x-p.x,corner.y-p.y)<12};
+    canvas.setPointerCapture(ev.pointerId);requestDraw();
+  },true);
+  canvas.addEventListener("pointermove",ev=>{
+    if(sheetDrag?.id!==ev.pointerId)return;
+    ev.stopImmediatePropagation();
+    const p=eventCoords(ev),w=screenToWorld(p.x,p.y),d=sheetDrag;
+    const dx=w.x-d.start.x,dy=w.y-d.start.y;
+    if(d.resize){d.item.w=Math.max(8/state.scale,d.base.w+dx);d.item.h=Math.max(8/state.scale,d.base.h+dy);}
+    else{d.item.x=d.base.x+dx;d.item.y=d.base.y+dy;}
+    requestDraw();
+  },true);
+  for(const event of ["pointerup","pointercancel"])canvas.addEventListener(event,ev=>{
+    if(sheetDrag?.id!==ev.pointerId)return;
+    ev.stopImmediatePropagation();const d=sheetDrag;sheetDrag=null;
+    if(event==="pointerup"&&d.token===state.edit?.documentToken&&JSON.stringify(d.base)!==JSON.stringify(d.item))
+      saveSheet(sheetItems().map(i=>i.id===d.item.id?d.item:i));
+    requestDraw();
+  },true);
+  $("sheet-remove").addEventListener("click",()=>saveSheet(sheetItems().filter(i=>i.id!==selectedSheet)));
+  $("sheet-edit").addEventListener("click",()=>{
+    const i=sheetItems().find(i=>i.id===selectedSheet);if(!i)return;
+    $("sheet-lines").value=i.text;$("sheet-text-dialog").returnValue="cancel";$("sheet-text-dialog").showModal();
+  });
+  $("sheet-text-dialog").addEventListener("close",()=>{
+    if($("sheet-text-dialog").returnValue==="save")saveSheet(sheetItems().map(i=>i.id===selectedSheet?{...i,text:$("sheet-lines").value}:i));
+  });
   canvas.addEventListener("pointerdown", ev=>{
     if(state.tool==="nodes"&&(ev.button===2||ev.button===1)){
       ev.preventDefault();
@@ -6426,7 +6519,6 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
       if(ev.key==="Enter"){ev.preventDefault();$(id).blur();}
     });
   link("tool-topology-scan",()=>openTopologyPanel(true));
-  link("tool-topology-list",()=>openTopologyPanel(false));
   link("topology-close",closeTopologyPanel);
   link("topology-rescan",scanTopology);
   link("topology-edit",editTopologyIssue);

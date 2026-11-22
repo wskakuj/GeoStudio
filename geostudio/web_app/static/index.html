@@ -9,6 +9,7 @@
   <link rel="stylesheet" href="/styles.css">
   <script defer src="/raster_trace.js"></script>
   <script defer src="/drawing_snap.js"></script>
+  <script defer src="/sheet.js"></script>
   <script defer src="/map.js"></script>
 </head>
 <body data-theme="dark">
@@ -65,6 +66,7 @@
 <button type="button" role="tab" id="ribbon-tab-draw" data-ribbon-tab="draw" aria-controls="ribbon-panel-draw" aria-selected="false" tabindex="-1" class="ribbon-tab" title="Tworzenie i operacje">Rysowanie</button>
 <button type="button" role="tab" id="ribbon-tab-cartography" data-ribbon-tab="cartography" aria-controls="ribbon-panel-cartography" aria-selected="false" tabindex="-1" class="ribbon-tab" title="Opisy i style mapy">Kartografia</button>
 <button type="button" role="tab" id="ribbon-tab-underlay" data-ribbon-tab="underlay" aria-controls="ribbon-panel-underlay" aria-selected="false" tabindex="-1" class="ribbon-tab" title="WMS, raster i układy">Podkłady</button>
+<button type="button" role="tab" class="ribbon-tab" id="ribbon-tab-insert" data-ribbon-tab="insert" aria-controls="ribbon-panel-insert" aria-selected="false" tabindex="-1">Wstawianie</button>
 <button type="button" role="tab" id="ribbon-tab-export" data-ribbon-tab="export" aria-controls="ribbon-panel-export" aria-selected="false" tabindex="-1" class="ribbon-tab" title="Wydruk i kopie">Eksport</button>
 <button type="button" role="tab" id="ribbon-tab-topology" data-ribbon-tab="topology" aria-controls="ribbon-panel-topology" aria-selected="false" tabindex="-1" class="ribbon-tab" title="Kontrola błędów geometrii i topologii">Kontrola mapy</button>
       </div>
@@ -119,6 +121,19 @@
 </div></section>
 <p class="ribbon-help">Podkłady rysowane są pod geometrią i nie zmieniają pliku MAP.</p>
 </div>
+<div id="ribbon-panel-insert" class="ribbon-panel" data-ribbon-panel="insert" role="tabpanel" aria-labelledby="ribbon-tab-insert" hidden>
+  <div class="ribbon-group"><div class="section-label">Elementy arkusza</div><div class="tool-row">
+    <button type="button" class="tool-button" data-sheet="title">Tytuł mapy</button>
+    <button type="button" class="tool-button" data-sheet="compass">Róża kierunków</button>
+    <button type="button" class="tool-button" data-sheet="credits">Wykonawca</button>
+    <button type="button" class="tool-button" data-sheet="symbols">Legenda oznaczeń</button>
+    <button type="button" class="tool-button" data-sheet="species">Legenda gatunków</button>
+  </div></div>
+  <div class="ribbon-group"><div class="section-label">Wybrany element</div><div class="tool-row">
+    <button type="button" class="tool-button" id="sheet-edit" disabled>Edytuj tekst</button>
+    <button type="button" class="tool-button" id="sheet-remove" disabled>Usuń</button>
+  </div></div>
+</div>
 <div id="ribbon-panel-export" class="ribbon-panel" data-ribbon-panel="export" role="tabpanel" aria-labelledby="ribbon-tab-export" hidden>
 <section class="ribbon-group" aria-label="WYCIĘCIA GEO-MAP"><span class="section-label">WYCIĘCIA GEO-MAP</span><div class="tool-row"><button class="tool-button" id="tool-export-baked" disabled title="Eksperymentalny: zapisz rzeczywiste wycięcia do MAP wraz z plikiem do ich odtworzenia"><span class="tool-glyph" aria-hidden="true"><svg class="soft3d-icon " viewBox="0 0 40 40" aria-hidden="true" focusable="false"><defs><linearGradient id="gs-soft3d-41" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#a8b9ce"/><stop offset=".55" stop-color="#62788f"/><stop offset="1" stop-color="#3e526a"/></linearGradient></defs><ellipse cx="20" cy="36.5" rx="15" ry="2" fill="#101827" opacity=".18"/><rect x="3" y="6" width="34" height="30" rx="9" fill="#3e526a"/><rect x="3" y="2" width="34" height="30" rx="9" fill="url(#gs-soft3d-41)" stroke="#3e526a" stroke-width=".6"/><path d="M6 11Q6 5 12 5h16" stroke="#fff" stroke-opacity=".4" stroke-width="1.35" fill="none" stroke-linecap="round"/><g transform="translate(8 5)"><g fill="none" stroke="#fff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 3h10l4 4v14H5ZM14 3v5h5"/><path d="M8 13h8m-4-4v8M7 19h10"/></g></g></svg></span>Zapisz wycięcia <small>6B</small></button><button class="tool-button" id="tool-topology" title="Po otwarciu wyciętej mapy MAP w przeglądarce wczytaj jej JSON z odwracalną topologią"><span class="tool-glyph" aria-hidden="true"><svg class="soft3d-icon " viewBox="0 0 40 40" aria-hidden="true" focusable="false"><defs><linearGradient id="gs-soft3d-9" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#6bd5c6"/><stop offset=".55" stop-color="#168e80"/><stop offset="1" stop-color="#086257"/></linearGradient></defs><ellipse cx="20" cy="36.5" rx="15" ry="2" fill="#101827" opacity=".18"/><rect x="3" y="6" width="34" height="30" rx="9" fill="#086257"/><rect x="3" y="2" width="34" height="30" rx="9" fill="url(#gs-soft3d-9)" stroke="#086257" stroke-width=".6"/><path d="M6 11Q6 5 12 5h16" stroke="#fff" stroke-opacity=".4" stroke-width="1.35" fill="none" stroke-linecap="round"/><g transform="translate(8 5)"><g fill="none" stroke="#fff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="m3 8 9-5 9 5-9 5ZM3 12l9 5 9-5M3 16l9 5 9-5"/><path d="m16 18 3 3 3-3"/></g></g></svg></span>Odtwórz kontury</button></div></section>
 <section class="ribbon-group" aria-label="Formaty wyjściowe"><span class="section-label">PLIKI WYNIKOWE</span><div class="tool-row">
@@ -132,12 +147,9 @@
     <div class="tool-row">
       <button class="tool-button" id="tool-topology-scan" type="button"
         title="Przeanalizuj aktualną mapę bez zmiany jej danych">
-        <span class="tool-glyph" aria-hidden="true"><svg class="soft3d-icon " viewBox="0 0 40 40" aria-hidden="true" focusable="false"><defs><linearGradient id="gs-soft3d-44" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#b7a0fa"/><stop offset=".55" stop-color="#8051d2"/><stop offset="1" stop-color="#51339d"/></linearGradient></defs><ellipse cx="20" cy="36.5" rx="15" ry="2" fill="#101827" opacity=".18"/><rect x="3" y="6" width="34" height="30" rx="9" fill="#51339d"/><rect x="3" y="2" width="34" height="30" rx="9" fill="url(#gs-soft3d-44)" stroke="#51339d" stroke-width=".6"/><path d="M6 11Q6 5 12 5h16" stroke="#fff" stroke-opacity=".4" stroke-width="1.35" fill="none" stroke-linecap="round"/><g transform="translate(8 5)"><g fill="none" stroke="#fff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2 21 6v6c0 5-4 8-9 10-5-2-9-5-9-10V6ZM7 12l3 3 7-7"/></g></g></svg></span>Sprawdź 5310
+        <span class="tool-glyph" aria-hidden="true"><svg class="soft3d-icon " viewBox="0 0 40 40" aria-hidden="true" focusable="false"><defs><linearGradient id="gs-soft3d-44" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#b7a0fa"/><stop offset=".55" stop-color="#8051d2"/><stop offset="1" stop-color="#51339d"/></linearGradient></defs><ellipse cx="20" cy="36.5" rx="15" ry="2" fill="#101827" opacity=".18"/><rect x="3" y="6" width="34" height="30" rx="9" fill="#51339d"/><rect x="3" y="2" width="34" height="30" rx="9" fill="url(#gs-soft3d-44)" stroke="#51339d" stroke-width=".6"/><path d="M6 11Q6 5 12 5h16" stroke="#fff" stroke-opacity=".4" stroke-width="1.35" fill="none" stroke-linecap="round"/><g transform="translate(8 5)"><g fill="none" stroke="#fff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2 21 6v6c0 5-4 8-9 10-5-2-9-5-9-10V6ZM7 12l3 3 7-7"/></g></g></svg></span>Kontrola poligonów
       </button>
-      <button class="tool-button" id="tool-topology-list" type="button"
-        title="Otwórz listę wykrytych nieprawidłowości">
-        <span class="tool-glyph" aria-hidden="true"><svg class="soft3d-icon " viewBox="0 0 40 40" aria-hidden="true" focusable="false"><defs><linearGradient id="gs-soft3d-45" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#b7a0fa"/><stop offset=".55" stop-color="#8051d2"/><stop offset="1" stop-color="#51339d"/></linearGradient></defs><ellipse cx="20" cy="36.5" rx="15" ry="2" fill="#101827" opacity=".18"/><rect x="3" y="6" width="34" height="30" rx="9" fill="#51339d"/><rect x="3" y="2" width="34" height="30" rx="9" fill="url(#gs-soft3d-45)" stroke="#51339d" stroke-width=".6"/><path d="M6 11Q6 5 12 5h16" stroke="#fff" stroke-opacity=".4" stroke-width="1.35" fill="none" stroke-linecap="round"/><g transform="translate(8 5)"><g fill="none" stroke="#fff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M8 5h12M8 12h12M8 19h12M3 5h1M3 12h1M3 19h1"/></g></g></svg></span>Lista błędów
-      </button>
+      
     </div>
   </section>
   <p class="ribbon-help">Kod 5310: duplikaty, nakładki, szczeliny, błędne kontury i węzły.
@@ -265,7 +277,7 @@
           <span id="scale-label" hidden>—</span>
         </div>
         <div class="map-bottom-left" title="Współrzędne GEO-MAP: X — północ, Y — wschód; jednostki mapy w metrach. Brak zgadywania EPSG.">
-          <span class="coordinate-dot"></span><span id="cursor-coords">X: —  Y: —</span><small>X / Y GEO-MAP</small>
+          <span class="coordinate-dot"></span><span id="cursor-coords">X: —  Y: —</span>
         </div>
         <div class="map-bottom-right" id="render-hint"></div>
         <div class="geometry-help" id="geometry-help" hidden>Tryb P: kliknij węzeł, następnie Delete, aby go usunąć; przeciągnij, żeby przesunąć; dwuklik na krawędzi dodaje punkt.</div>
@@ -321,7 +333,7 @@
     <footer class="statusbar">
       <span class="footer-active">●</span>
       <span id="status-message">GeoStudio 2.0 gotowe — otwórz mapę GEO-MAP</span>
-      <div class="statusbar-right"><span id="selection-count">Zaznaczonych: 0</span><span id="status-map-crs">Układ nieustalony</span><span>TESTOWE 2.0</span></div>
+      <div class="statusbar-right"><span id="selection-count">Zaznaczonych: 0</span><span id="status-map-crs">Układ nieustalony</span></div>
     </footer>
   </div>
 
@@ -666,7 +678,7 @@
         <button type="button" id="layout-close" class="select-close" aria-label="Zamknij">×</button>
       </div>
       <div class="select-content">
-        <p class="select-explain">Wybierz całą mapę albo przeciągnij na mapie prostokąt do eksportu. Duży TIFF zostanie zapisany jako jeden pełny obraz bez utraty ostrości. Duże JPG/PNG pozostają w arkuszach ZIP. Przybliżenie ekranu nie zmienia zakresu eksportu.</p>
+        <p class="select-explain">Wybierz całą mapę albo przeciągnij na mapie prostokąt do eksportu. PNG, JPG i TIFF zapisują całą mapę w jednym pliku. Przybliżenie ekranu nie zmienia zakresu eksportu.</p>
         <div class="select-grid">
           <div><label for="layout-format">Format</label><select id="layout-format">
             <option value="png">PNG — bezstratny</option>
@@ -710,12 +722,7 @@
         </div>
         <label for="layout-title">Tytuł arkusza</label>
         <input type="text" id="layout-title" maxlength="100" value="Mapa GEO-MAP" placeholder="Tytuł opracowania">
-        <div class="layout-options">
-          <label><input id="layout-frame" type="checkbox" checked> Ramka</label>
-          <label><input id="layout-north" type="checkbox" checked> Strzałka północy</label>
-          <label><input id="layout-legend" type="checkbox" checked> Legenda</label>
-          <label><input id="layout-scalebar" type="checkbox" checked> Podziałka liniowa</label>
-        </div>
+        
         <details class="layout-editor-details" hidden>
           <summary>Edytowalna legenda i oprawa PDF</summary>
           <p class="select-explain">Jedna pozycja legendy w wierszu: <strong>Nazwa | #RRGGBB</strong>. Możesz zmieniać opisy, kolory, kolejność i usuwać wiersze. Tabelka: <strong>Pole | wartość</strong>.</p>
@@ -907,5 +914,6 @@
     <div class="select-content"><p class="select-explain">Systemowe okno wyboru plików nie zadziałało. Użyj standardowego wyboru pliku.</p></div>
     <div class="select-actions"><button type="button" id="map-picker-cancel" class="button ghost">Anuluj</button><button type="button" id="map-picker-retry" class="button primary">Wybierz plik</button></div>
   </dialog>
+<dialog id="sheet-text-dialog"><form method="dialog"><label>Tekst na mapie<br><textarea id="sheet-lines" rows="10" cols="46" maxlength="1500"></textarea></label><div><button value="cancel">Anuluj</button> <button value="save">Zapisz</button></div></form></dialog>
 </body>
 </html>
