@@ -40,7 +40,43 @@ jobs:
             choco install innosetup -y --no-progress
             if ($LASTEXITCODE -ne 0) { throw "Inno Setup installation failed." }
           }
+      - name: Prepare UTF-8 packaging and bounded smoke test
+        shell: pwsh
+        run: |
+          # Patch only the packaging script in the disposable runner checkout.
+          # The selected application commit and its tracked application code remain unchanged.
+          $buildPath = Join-Path $PWD "tools/windows/build.ps1"
+          $build = [IO.File]::ReadAllText($buildPath)
+          $oldArgs = '"--noconfirm", "--clean", "--onedir", "--windowed",'
+          $newArgs = '"--noconfirm", "--clean", "--onedir", "--windowed", "--python-option", "X utf8",'
+          $oldSmoke = '& $Executable --help | Out-Null'
+          $oldCheck = 'if ($LASTEXITCODE -ne 0) { throw "Packaged EXE failed smoke test: --help" }'
+          if (!$build.Contains($oldArgs) -or !$build.Contains($oldSmoke) -or !$build.Contains($oldCheck)) {
+            throw "Unexpected packaging script; review UTF-8 smoke-test patch for this source ref."
+          }
+          $newSmoke = @'
+          $stdout = Join-Path $env:RUNNER_TEMP "geostudio-help.stdout.txt"
+          $stderr = Join-Path $env:RUNNER_TEMP "geostudio-help.stderr.txt"
+          $process = Start-Process -FilePath $Executable -ArgumentList "--help" -RedirectStandardOutput $stdout -RedirectStandardError $stderr -PassThru
+          try {
+              if (-not $process.WaitForExit(120000)) {
+                  & taskkill.exe /PID $process.Id /T /F | Out-Host
+                  throw "Packaged EXE smoke test timed out after 120 seconds."
+              }
+              $process.WaitForExit()
+              if ($process.ExitCode -ne 0) { throw "Packaged EXE smoke test failed: exit $($process.ExitCode)" }
+          } finally {
+              foreach ($log in @($stdout, $stderr)) {
+                  if (Test-Path $log) { Get-Content -Encoding UTF8 $log | Write-Host }
+              }
+              $process.Dispose()
+          }
+          '@
+          $build = $build.Replace($oldArgs, $newArgs).Replace($oldSmoke, $newSmoke).Replace($oldCheck, '')
+          [IO.File]::WriteAllText($buildPath, $build, [Text.UTF8Encoding]::new($false))
+          git diff -- tools/windows/build.ps1
       - name: Build and smoke-check installer
+        timeout-minutes: 20
         shell: pwsh
         run: |
           ./tools/windows/build.ps1
