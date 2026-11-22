@@ -58,7 +58,12 @@ def test_toggle_leader_writes_native_flags():
     status = workspace.editing_status()
     features = workspace.viewport((0, -1e6, 1e6, 1e6), limit=3000)["features"]
     feature = next(f for f in features if f["code"] == "5310")
-    workspace.set_label_leader(feature["id"], 2, True, (-8.18, 1.438), True,
+    # anchor podajemy we współrzędnych świata; do pliku idzie różnica
+    # wobec punktu bazowego poligonu.
+    from geostudio.web_app.data import _label_anchor
+    base = _label_anchor(workspace._lookup[feature["id"]].obj)
+    workspace.set_label_leader(feature["id"], 2, True,
+                               (base[0] - 8.18, base[1] + 1.438), True,
                                document_token=status["documentToken"],
                                revision=status["revision"])
     entry = workspace._lookup[feature["id"]]
@@ -88,3 +93,34 @@ def test_moving_label_flips_leader_direction():
     changed = next(f for f in updated if f["id"] == feature["id"])
     moved = next(l for l in changed["labels"] if l["field"] == label["field"])
     assert moved["leader"]["direction"] != before
+
+
+def test_anchor_is_relative_to_polygon_base():
+    """Kotwica w pliku jest względna — payload musi dodać punkt bazowy."""
+    from geostudio.web_app.data import _label_anchor
+    workspace = _map_with_label()
+    features = workspace.viewport((0, -1e6, 1e6, 1e6), limit=3000)["features"]
+    feature = next(f for f in features if f["code"] == "5310"
+                   and any(item.get("leader") for item in f["labels"]))
+    label = next(l for l in feature["labels"] if l.get("leader"))
+    base = _label_anchor(workspace._lookup[feature["id"]].obj)
+    anchor_north = -label["leader"]["y"]
+    anchor_east = label["leader"]["x"]
+    # Kotwica nie może wylądować w (0, 0) ani daleko od poligonu.
+    distance = ((anchor_east - base[1]) ** 2 + (anchor_north - base[0]) ** 2) ** 0.5
+    assert distance < 5000
+
+
+def test_reset_clears_all_leaders_in_one_step():
+    workspace = _map_with_label()
+    status = workspace.editing_status()
+    before = [f for f in workspace.viewport((0, -1e6, 1e6, 1e6), limit=3000)["features"]
+              if any(item.get("leader") for item in f["labels"])]
+    assert before
+    result = workspace.reset_label_leaders(None,
+                                           document_token=status["documentToken"],
+                                           revision=status["revision"])
+    assert result["changed"] is True and result["reset"] >= 1
+    after = [f for f in workspace.viewport((0, -1e6, 1e6, 1e6), limit=3000)["features"]
+             if any(item.get("leader") for item in f["labels"])]
+    assert after == []

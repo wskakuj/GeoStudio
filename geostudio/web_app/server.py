@@ -783,6 +783,19 @@ def create_app(workspace: PreviewWorkspace | None = None, *,
         except (ValueError,TypeError) as exc:
             raise HTTPException(400,str(exc)) from exc
 
+    @app.post("/api/labels/reset-leaders")
+    async def reset_label_leaders(request: Request):
+        data=await edit_payload(request)
+        try:
+            return state.reset_label_leaders(
+                data.get("ids"),
+                document_token=data.get("documentToken"),
+                revision=data.get("revision"))
+        except RuntimeError as exc:
+            raise HTTPException(409,str(exc)) from exc
+        except (ValueError,TypeError) as exc:
+            raise HTTPException(400,str(exc)) from exc
+
     @app.post("/api/select/code")
     async def select_by_code(request: Request):
         data=await request.json()
