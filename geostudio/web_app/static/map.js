@@ -19,7 +19,7 @@
   // Never use an unscoped desktop bridge from a document frame. The
   // top-level bridge validates the document ID and the operation allowlist.
   const scopedMethods=["open_map","open_raster","open_libraries","save_recovery","restore_recovery",
-    "save_map","save_base_map","save_baked_map","save_tiled_export","save_generated_export"];
+    "save_map","save_over_source","save_base_map","save_baked_map","save_tiled_export","save_generated_export"];
   const nativeAPI=()=>{
     if(!documentId)return window.pywebview?.api;
     const bridge=window.parent.pywebview?.api;
@@ -176,9 +176,10 @@
     $("btn-export").disabled=state.editBusy||!state.meta;
     $("btn-layout").disabled=state.editBusy||!state.meta;
     $("tool-export-baked").disabled=state.editBusy||!state.meta;
-    $("btn-export-label").textContent=(
-      state.edit.hasReversibleMasks||state.edit.hasVisualStyles)
-      ?"Pobierz MAP + JSON":"Pobierz MAP";
+    $("btn-export-label").textContent="Zapisz kopię mapy";
+    const overSource=$("btn-save-source");
+    if(overSource)
+      overSource.disabled=state.editBusy||!state.meta||!nativeAPI()?.save_over_source;
     if(document.activeElement!==$("compilation-scale"))
       $("compilation-scale").value="1:"+state.edit.compilationScale;
     updateBulkButton();
@@ -401,6 +402,35 @@
       inform("Pobrano bazowy MAP bez wycięć: "+filename);
     }catch(error){
       inform("Błąd zapisu bazowego MAP: "+error.message,true);
+    }
+  }
+
+  async function saveOverSource() {
+    if(!state.meta||!state.edit||state.editBusy)return;
+    if(!nativeAPI()?.save_over_source){
+      inform("Zapis na oryginale działa tylko w aplikacji okienkowej. "+
+             "W przeglądarce użyj „Zapisz kopię mapy”.",true);
+      return;
+    }
+    const target=state.meta.name;
+    if(!window.confirm(
+        "Zapisać zmiany bezpośrednio w otwartym pliku?\n\n"+target+
+        "\n\nPoprzednia wersja zostanie zachowana jako plik "+
+        "„.geostudio-backup.MAP” obok oryginału."))return;
+    state.editBusy=true; refreshEditState();
+    try{
+      const saved=await nativeAPI().save_over_source();
+      if(saved?.cancelled)return;
+      if(saved?.saved){
+        await refreshEditedDocument(state.active);
+        inform("Zapisano na oryginale: "+saved.path+
+               " ("+display(saved.bytes)+" bajtów). Kopia poprzedniej wersji: "+
+               (saved.backup||"brak"));
+      }
+    }catch(error){
+      inform("Nie udało się zapisać na oryginale: "+error.message,true);
+    }finally{
+      state.editBusy=false; refreshEditState();
     }
   }
 
@@ -6594,6 +6624,7 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
   link("tool-undo",()=>historyStep("undo"));
   link("tool-redo",()=>historyStep("redo"));
   link("btn-export",downloadMapCopy);
+  link("btn-save-source",saveOverSource);
   link("btn-layout",openLayoutDialog);
   link("layout-close",()=>$("layout-dialog").close());
   $("layout-format").addEventListener("change",updateExportFormatControls);

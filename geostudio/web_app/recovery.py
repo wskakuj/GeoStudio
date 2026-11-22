@@ -106,6 +106,24 @@ class LocalRecoveryStore:
                 "revision":manifest["revision"],
                 "bytes":len(map_bytes)}
 
+    def discard(self,source: Path) -> bool:
+        """Drop the snapshot bound to this source path, if one exists."""
+        manifest=self._metadata(source)
+        removed=False
+        if manifest is not None:
+            for field in ("mapFile","topologyFile"):
+                try:
+                    (self.directory/manifest[field]).unlink()
+                    removed=True
+                except OSError:
+                    pass
+        try:
+            self._index(source).unlink()
+            removed=True
+        except OSError:
+            pass
+        return removed
+
     def save(self,source: Path,source_sha: str,
              map_bytes: bytes,topology_bytes: bytes,revision: int) -> dict:
         if (not isinstance(source_sha,str) or

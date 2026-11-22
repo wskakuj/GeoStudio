@@ -129,6 +129,60 @@ def save_appearance_preference(settings: Path, theme: str, map_background: str) 
     return result
 
 
+def _ask_save_as(directory: Path, initialfile: str) -> str:
+    """Windows Save As dialog, isolated so tests never need a display."""
+    import tkinter as tk
+    from tkinter import filedialog
+    root = tk.Tk()
+    try:
+        root.withdraw()
+        root.attributes("-topmost", True)
+        root.update()
+        return filedialog.asksaveasfilename(
+            parent=root,
+            title="GeoStudio 2.0 — Zapisz kopię mapy MAP",
+            initialdir=str(directory),
+            initialfile=initialfile,
+            defaultextension=".MAP",
+            filetypes=(("Mapy GEO-MAP", "*.MAP"),),
+            confirmoverwrite=True,
+        ) or ""
+    finally:
+        root.destroy()
+
+
+def _ask_yes_no(title: str, message: str) -> bool:
+    """Tk Yes/No dialog, isolated so tests never need a display."""
+    import tkinter as tk
+    from tkinter import messagebox
+    root = tk.Tk()
+    try:
+        root.withdraw()
+        root.attributes("-topmost", True)
+        root.update()
+        return bool(messagebox.askyesno(title=title, message=message, parent=root))
+    finally:
+        root.destroy()
+
+
+def _atomic_write(path: Path, content: bytes) -> None:
+    """Replace a file in one step so a crash cannot leave half a MAP."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, temp = tempfile.mkstemp(prefix=".geostudio2-", suffix=".tmp",
+                                dir=str(path.parent))
+    try:
+        with os.fdopen(fd, "wb") as stream:
+            stream.write(content)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temp, path)
+    finally:
+        try:
+            os.unlink(temp)
+        except FileNotFoundError:
+            pass
+
+
 class NativeMapPicker:
     """Small JS API that never exposes pywebview/WinForms COM objects.
 
@@ -462,6 +516,67 @@ class NativeMapPicker:
         """Default Save As: bake same-code overlays when any exist."""
         return self._save_map(burn_cutouts=None)
 
+    def save_over_source(self) -> dict:
+        """Write the working copy back into the MAP the user opened.
+
+        Deliberately destructive, so it asks first and keeps the previous
+        file as ``<name>.geostudio-backup.MAP`` next to the original.
+        """
+        status = self._workspace.editing_status()
+        if not status.get("documentToken"):
+            raise ValueError("Najpierw otwórz mapę GEO-MAP.")
+        path = self._source_path
+        if path is None or not path.is_file():
+            raise ValueError(
+                "Ta mapa nie została otwarta z dysku. Użyj „Zapisz kopię mapy”.")
+        burn_cutouts = bool(status.get("hasReversibleMasks"))
+        if burn_cutouts:
+            _, content, overlay_bytes = (
+                self._workspace.export_native_cutouts(status["documentToken"]))
+        else:
+            _, content = self._workspace.export_positive_copy(
+                status["documentToken"])
+            overlay_bytes = self._workspace.export_topology_metadata(content)
+        visual_bytes = self._workspace.export_visual_sidecar(content)
+        epsg = self._workspace.metadata().get("mapEPSG")
+
+        confirmed = _ask_yes_no(
+            "GeoStudio 2.0 — zapis na oryginale",
+            ("Zapisać zmiany w otwartym pliku?\n\n" + str(path) +
+             "\n\nPoprzednia wersja zostanie zachowana jako " +
+             path.stem + ".geostudio-backup.MAP"),
+        )
+        if not confirmed:
+            return {"cancelled": True}
+
+        backup = path.with_name(path.stem + ".geostudio-backup.MAP")
+        companion = path.with_suffix(".geostudio-topology.json")
+        visual_path = path.with_suffix(".geostudio.json")
+        prj_path = path.with_suffix(".prj")
+        try:
+            previous = path.read_bytes()
+        except OSError as exc:
+            raise ValueError("Nie można odczytać pliku źródłowego: " + str(exc)) from exc
+        _atomic_write(backup, previous)
+        # Companions first: a MAP pointing at a missing sidecar is worse than
+        # a sidecar newer than the MAP.
+        if overlay_bytes:
+            _atomic_write(companion, overlay_bytes)
+        if visual_bytes:
+            _atomic_write(visual_path, visual_bytes)
+        if epsg:
+            from geostudio.coordinates import output_prj_text
+            _atomic_write(prj_path, output_prj_text(epsg).encode("utf-8"))
+        _atomic_write(path, content)
+        self._source_sha = sha256(content).hexdigest()
+        self._workspace.mark_saved()
+        try:
+            self._recovery_store().discard(self._source_path)
+        except (OSError, ValueError):
+            pass
+        return {"saved": True, "path": str(path), "bytes": len(content),
+                "backup": str(backup)}
+
     def save_base_map(self) -> dict:
         """Explicit compatibility fallback: MAP without baked cutouts."""
         return self._save_map(burn_cutouts=False)
@@ -476,8 +591,6 @@ class NativeMapPicker:
         Unlike a browser Blob download, WebView2 can display and reliably
         persist this path. Never guess the destination or overwrite source.
         """
-        import tkinter as tk
-        from tkinter import filedialog
         status = self._workspace.editing_status()
         if not status.get("documentToken"):
             raise ValueError("Najpierw otwórz mapę GEO-MAP.")
@@ -491,49 +604,33 @@ class NativeMapPicker:
                 status["documentToken"])
             overlay_bytes=self._workspace.export_topology_metadata(content)
         visual_bytes=self._workspace.export_visual_sidecar(content)
-        root = tk.Tk()
-        try:
-            root.withdraw()
-            root.attributes("-topmost", True)
-            root.update()
-            directory = (self._source_path.parent if self._source_path
-                         else Path(read_last_map_directory(self._settings) or
-                                   str(Path.home() / "Documents")))
-            chosen_name = filedialog.asksaveasfilename(
-                parent=root,
-                title="GeoStudio 2.0 — Zapisz kopię mapy MAP",
-                initialdir=str(directory),
-                initialfile=suggested_name,
-                defaultextension=".MAP",
-                filetypes=(("Mapy GEO-MAP", "*.MAP"),),
-                confirmoverwrite=True,
-            )
-        finally:
-            root.destroy()
+        directory = (self._source_path.parent if self._source_path
+                     else Path(read_last_map_directory(self._settings) or
+                               str(Path.home() / "Documents")))
+        chosen_name = _ask_save_as(directory, suggested_name)
         if not chosen_name:
             return {"cancelled": True}
         chosen = Path(chosen_name)
         if chosen.suffix.casefold() != ".map":
             raise ValueError("Kopia musi mieć rozszerzenie .MAP.")
+        # Choosing the opened file means "save over the original": route it to
+        # the explicit in-place path, which keeps a backup and asks first.
         if (self._source_path is not None and
                 chosen.resolve() == self._source_path):
-            raise ValueError("Nie wolno nadpisać otwartego pliku źródłowego.")
-        if chosen.name.casefold() == self._workspace.metadata()["name"].casefold():
-            raise ValueError("Podaj inną nazwę niż mapa źródłowa.")
-        # A MAP and its two companions are published as a new project;
-        # never overwrite existing files when any companion is required.
+            return self.save_over_source()
         epsg = self._workspace.metadata().get("mapEPSG")
         prj_path = chosen.with_suffix(".prj")
-        if epsg and prj_path.exists():
-            raise ValueError("Plik PRJ o wybranej nazwie już istnieje.")
-        if (burn_cutouts or visual_bytes or epsg) and chosen.exists():
-            raise ValueError("Wybierz nową nazwę MAP, aby nie nadpisać pary MAP/JSON.")
         companion=chosen.with_suffix(".geostudio-topology.json")
         visual_path=chosen.with_suffix(".geostudio.json")
-        if overlay_bytes and companion.exists():
-            raise ValueError("Istnieje już plik topologii. Wybierz nową nazwę.")
-        if visual_bytes and visual_path.exists():
-            raise ValueError("Istnieje już plik stylów. Wybierz nową nazwę.")
+        # Overwriting an existing MAP/JSON set is allowed, but never silently.
+        if chosen.exists() or prj_path.exists():
+            replace = _ask_yes_no(
+                "GeoStudio 2.0 — nadpisać pliki?",
+                ("Plik o tej nazwie już istnieje.\n\n" + str(chosen) +
+                 "\n\nNadpisać go razem z plikami towarzyszącymi?"),
+            )
+            if not replace:
+                return {"cancelled": True}
         fd,tmp=tempfile.mkstemp(prefix=".geostudio2-",suffix=".tmp",
                                 dir=str(chosen.parent))
         tmp_companion=None
@@ -561,9 +658,10 @@ class NativeMapPicker:
             if epsg:
                 from geostudio.coordinates import output_prj_text
                 projection = output_prj_text(epsg)
-                with prj_path.open("x", encoding="utf-8") as stream:
-                    committed.append(prj_path)
-                    stream.write(projection)
+                # Overwrite is confirmed above, so a plain replace is safe and
+                # atomic; "x" would fail when the user chose an existing pair.
+                committed.append(prj_path)
+                _atomic_write(prj_path, projection.encode("utf-8"))
             if burn_cutouts or visual_bytes or epsg:
                 # Publish the companions first. The MAP is committed last.
                 if tmp_companion:
