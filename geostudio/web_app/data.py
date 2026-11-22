@@ -20,7 +20,8 @@ import json
 import re
 import base64
 
-from .sheet_marks import KINDS as SHEET_SIGNS, NUMBER as SHEET_NUMBER, primitives as sheet_primitives
+from .sheet_marks import (KINDS as SHEET_SIGNS, NUMBER as SHEET_NUMBER,
+                          ROTATABLE as SHEET_ROTATABLE, primitives as sheet_primitives)
 from geostudio.geomap import GeoMap
 from geostudio.forest_classes import forest_class_value
 from geostudio.map_layout import detect_source_compilation_scale, validated_compilation_scale, DEFAULT_SCALE
@@ -583,7 +584,7 @@ class PreviewWorkspace:
             raise ValueError("Arkusz może zawierać do 100 elementów.")
         ids=set()
         for item in items:
-            if (not isinstance(item,dict) or set(item)-{"runs"}!={"id","kind","x","y","w","h","text"}
+            if (not isinstance(item,dict) or set(item)-{"runs","angle"}!={"id","kind","x","y","w","h","text"}
                     or item["kind"] not in ("title","credits","compass","symbols","species",SHEET_NUMBER,*SHEET_SIGNS)
                     or not isinstance(item["id"],str) or len(item["id"])>80 or item["id"] in ids
                     or not isinstance(item["text"],str) or len(item["text"])>1500
@@ -593,6 +594,11 @@ class PreviewWorkspace:
                                for k in ("x","y","w","h"))
                     or min(item["w"],item["h"])<=0):
                 raise ValueError("Nieprawidłowy element arkusza.")
+            if "angle" in item:
+                angle=item["angle"]
+                if (item["kind"] not in SHEET_ROTATABLE or type(angle) not in (int,float)
+                        or not isfinite(angle) or not -360<=angle<=360):
+                    raise ValueError("Obrót dotyczy tylko zrębu, bagna, linii energetycznej i gazociągu.")
             if item["kind"]==SHEET_NUMBER and not re.fullmatch(r"[\w./ -]{1,24}",item["text"]):
                 raise ValueError("Numer oddziału musi mieć od 1 do 24 znaków.")
             runs=item.get("runs",[])

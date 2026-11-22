@@ -113,7 +113,14 @@
   async function closeTab(id){
     const tab=tabs.get(id);if(!tab)return;
     const snapshot=getStatus(tab);
-    if(snapshot.busy){error("Poczekaj na zakończenie operacji w tej mapie.");return;}
+    if(snapshot.busy){
+      // Zablokowana zakładka nie może być ślepą uliczką: po potwierdzeniu
+      // zamykamy ją mimo to, bo inaczej użytkownik zostaje bez wyjścia.
+      const forced=window.confirm(
+        "Mapa zgłasza trwającą operację.\n\n"+
+        "Zamknąć zakładkę mimo to? Niezapisane zmiany przepadną.");
+      if(!forced){error("Poczekaj na zakończenie operacji w tej mapie.");return;}
+    }
     const dirty=!!snapshot.dirty;
     if(dirty&&!window.confirm("Mapa "+(snapshot.name||"")+" ma niezapisane zmiany. Zamknąć bez zapisu?"))return;
     tab.close.disabled=true;

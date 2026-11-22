@@ -5838,6 +5838,8 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
     return {x:ev.clientX-box.left,y:ev.clientY-box.top};
   }
   let pendingSheet=null,selectedSheet=null,sheetDrag=null,sheetSaving=false,sheetSize=1,sheetCursor=null;
+  let sheetAngle=0;
+  const rotatableSigns=new Set(["clearcut","marsh","power","gas"]);
   const insertMode=()=>!$("ribbon-panel-insert").hidden;
   const singleSheetKinds=new Set(["title","credits","compass","symbols","species"]);
   function sheetWorldPerPixel(){return (state.edit?.compilationScale||5000)/3779.527559;}
@@ -5855,6 +5857,7 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
       const ghost={id:"__preview__",kind,x:sheetCursor.x,y:sheetCursor.y,
         w:w*z*sheetWorldPerPixel(),h:h*z*sheetWorldPerPixel(),
         text:kind==="compartment"?$("sheet-number").value||"1":GeoStudioSheet.defaultText(kind,state.meta?.name||"")};
+      if(rotatableSigns.has(kind)&&sheetAngle)ghost.angle=sheetAngle;
       GeoStudioSheet.paint(labelCtx,[ghost],worldToScreen,state.scale,state.edit?.compilationScale||5000);
     }
   }
@@ -5888,9 +5891,30 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
   },true);
   canvas.addEventListener("pointerleave",()=>{sheetCursor=null;requestDraw();},true);
   $("sheet-size-factor").oninput=e=>{sheetSize=Number(e.target.value);$("sheet-size-value").value=Math.round(sheetSize*100)+"%";};
+  function setSheetAngle(value, save){
+    sheetAngle=Math.round(Number(value)||0);
+    $("sheet-angle").value=String(sheetAngle);
+    $("sheet-angle-value").value=sheetAngle+"°";
+    const chosen=sheetItems().find(i=>i.id===selectedSheet);
+    if(save&&chosen&&rotatableSigns.has(chosen.kind)&&chosen.angle!==sheetAngle){
+      const updated={...chosen};
+      if(sheetAngle)updated.angle=sheetAngle;else delete updated.angle;
+      saveSheet(sheetItems().map(i=>i.id===updated.id?updated:i));
+      return;
+    }
+    requestDraw();
+  }
+  $("sheet-angle").oninput=e=>setSheetAngle(e.target.value,false);
+  $("sheet-angle").onchange=e=>setSheetAngle(e.target.value,true);
+  $("sheet-sign").addEventListener("change",()=>{
+    const kind=$("sheet-sign").value;
+    $("sheet-angle").disabled=!rotatableSigns.has(kind);
+    if(!rotatableSigns.has(kind))setSheetAngle(0,false);
+  });
   $("sheet-place-sign").onclick=()=>{
     if(!state.meta)return inform("Najpierw otwórz mapę.",true);
-    pendingSheet=$("sheet-sign").value;inform("Klikaj mapę, aby wstawiać kolejne oznaczenia. Naciśnij Esc lub wybierz inne narzędzie, aby zakończyć.");
+    pendingSheet=$("sheet-sign").value;
+    $("sheet-angle").disabled=!rotatableSigns.has(pendingSheet);inform("Klikaj mapę, aby wstawiać kolejne oznaczenia. Naciśnij Esc lub wybierz inne narzędzie, aby zakończyć.");
   };
   for(const btn of document.querySelectorAll("[data-sheet]"))btn.addEventListener("click",()=>{
     if(!state.meta)return inform("Najpierw otwórz mapę.",true);
@@ -5915,7 +5939,7 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
       const kind=pendingSheet,[w,h]=GeoStudioSheet.sizes[kind];
       const factor=kind==="compartment"?Number($("sheet-number-size").value)/12:sheetSize;
       const size=kind==="compartment"?Number($("sheet-number-size").value):12;
-      const item={id:crypto.randomUUID(),kind,x:world.x,y:world.y,w:w*factor*sheetWorldPerPixel(),h:h*factor*sheetWorldPerPixel(),text:GeoStudioSheet.defaultText(kind,state.meta.name),...(kind==="compartment"?{fontSize:size}:{})};
+      const item={id:crypto.randomUUID(),kind,x:world.x,y:world.y,w:w*factor*sheetWorldPerPixel(),h:h*factor*sheetWorldPerPixel(),text:GeoStudioSheet.defaultText(kind,state.meta.name),...(kind==="compartment"?{fontSize:size}:{}),...(rotatableSigns.has(kind)&&sheetAngle?{angle:sheetAngle}:{})};
       selectedSheet=item.id;
       if(kind==="compartment"){
         numberPlacement={item,token:state.edit.documentToken};
@@ -5928,6 +5952,7 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
       inform("Klikaj dalej, aby wstawić następne. Esc kończy wstawianie.");return;
     }
     selectedSheet=hit.id;
+    if(rotatableSigns.has(hit.kind))setSheetAngle(hit.angle||0,false);
     const corner=worldToScreen(hit.x+hit.w,hit.y+hit.h);
     sheetDrag={id:ev.pointerId,token:state.edit.documentToken,start:world,base:hit,item:{...hit},resize:Math.hypot(corner.x-p.x,corner.y-p.y)<12};
     canvas.setPointerCapture(ev.pointerId);requestDraw();
