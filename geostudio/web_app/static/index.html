@@ -146,6 +146,9 @@
   <div class="ribbon-group"><div class="section-label">Wybrany element</div><div class="tool-row">
     <button type="button" class="tool-button" id="sheet-edit" disabled>Tekst i czcionka</button>
     <button type="button" class="tool-button" id="sheet-remove" disabled>Usuń</button>
+    <label id="sheet-rotate-wrap" hidden title="Obrót zaznaczonego znaku">Obrót
+      <input type="range" id="sheet-rotate" min="-180" max="180" step="1" value="0">
+      <output id="sheet-rotate-value">0°</output></label>
   </div></div>
 </div>
 <div id="ribbon-panel-export" class="ribbon-panel" data-ribbon-panel="export" role="tabpanel" aria-labelledby="ribbon-tab-export" hidden>

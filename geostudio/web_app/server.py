@@ -183,7 +183,9 @@ def create_app(workspace: PreviewWorkspace | None = None, *,
         return HTMLResponse(template.replace(
             "__GEOSTUDIO_LOCAL_TOKEN__", escape(token, quote=True)))
 
-    @app.get("/api/version")
+    # Poza /api/: w trybie zakładek każde /api/* wymaga nagłówka dokumentu,
+    # a wersja programu jest wspólna dla wszystkich map.
+    @app.get("/version")
     async def app_version():
         from . import updater
         return {"version": updater.current_version()}

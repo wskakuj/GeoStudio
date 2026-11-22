@@ -246,7 +246,7 @@
     const badge=$("app-version");
     if(!badge)return;
     let version="";
-    try{ version=(await api("/api/version")).version||""; }catch(_){}
+    try{ version=(await api("/version")).version||""; }catch(_){}
     badge.textContent="v"+(version||"—");
     badge.title="Wersja "+version+". Kliknij, aby sprawdzić aktualizacje.";
     badge.dataset.version=version;
@@ -5906,6 +5906,12 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
     const items=sheetItems(),selected=items.find(i=>i.id===selectedSheet);
     $("sheet-edit").disabled=!selected||GeoStudioSheet.signs.includes(selected.kind);
     $("sheet-remove").disabled=!selected;
+    const rotatable=!!selected&&rotatableSigns.has(selected.kind);
+    $("sheet-rotate-wrap").hidden=!rotatable;
+    if(rotatable){
+      $("sheet-rotate").value=String(Math.round(selected.angle||0));
+      $("sheet-rotate-value").value=Math.round(selected.angle||0)+"°";
+    }
     GeoStudioSheet.paint(ctx,items,worldToScreen,state.scale,state.edit?.compilationScale||5000,insertMode()?selectedSheet:null);
     if(selected&&rotatableSigns.has(selected.kind)){
       const h=rotateHandlePos(selected);
@@ -5922,12 +5928,10 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
         w:w*z*sheetWorldPerPixel(),h:h*z*sheetWorldPerPixel(),
         text:kind==="compartment"?$("sheet-number").value||"1":GeoStudioSheet.defaultText(kind,state.meta?.name||"")};
 
-      labelCtx.save();labelCtx.globalAlpha=.72;
+      // Podgląd = dokładnie ten sam glif, który trafi do MAP. Bez ramki
+      // całego pola 48x16, bo była większa od samego znaku i myliła.
+      labelCtx.save();labelCtx.globalAlpha=.85;
       GeoStudioSheet.paint(labelCtx,[ghost],worldToScreen,state.scale,state.edit?.compilationScale||5000);
-      const a=worldToScreen(ghost.x,ghost.y);
-      labelCtx.globalAlpha=.9;labelCtx.strokeStyle="#008c80";labelCtx.lineWidth=1;
-      labelCtx.setLineDash([4,3]);
-      labelCtx.strokeRect(a.x,a.y,ghost.w*state.scale,ghost.h*state.scale);
       labelCtx.restore();
     }
   }
@@ -6093,6 +6097,19 @@ inform("Klikaj mapę, aby wstawiać kolejne oznaczenia. Naciśnij Esc lub wybier
     requestDraw();
   },true);
   $("sheet-remove").addEventListener("click",()=>saveSheet(sheetItems().filter(i=>i.id!==selectedSheet)));
+  let rotateCommit=null;
+  $("sheet-rotate").addEventListener("input",e=>{
+    const item=sheetItems().find(i=>i.id===selectedSheet);
+    if(!item||!rotatableSigns.has(item.kind))return;
+    item.angle=Number(e.target.value);
+    $("sheet-rotate-value").value=Math.round(item.angle)+"°";
+    requestDraw();
+    clearTimeout(rotateCommit);
+    rotateCommit=setTimeout(()=>{
+      const current=sheetItems().find(i=>i.id===selectedSheet);
+      if(current)saveSheet(sheetItems().map(i=>i.id===current.id?current:i));
+    },400);
+  });
   let fontDraft=null;
   const sheetLines=$("sheet-lines");
   function fontRuns(){
