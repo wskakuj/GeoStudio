@@ -134,6 +134,43 @@
       if(!tabs.size)await newTab();
     }catch(e){error(e.message);tab.close.disabled=false;}
   }
+  async function initVersionBadge(){
+    const badge=$("app-version");
+    if(!badge)return;
+    let version="";
+    try{ version=(await request("/version")).version||""; }catch(_){}
+    badge.textContent="v"+(version||"—");
+    badge.title="Wersja "+version+". Kliknij, aby sprawdzić aktualizacje.";
+    badge.addEventListener("click",async()=>{
+      const bridge=window.pywebview?.api;
+      if(!bridge?.check_update){
+        error("Sprawdzanie aktualizacji działa w aplikacji okienkowej.");
+        return;
+      }
+      badge.classList.add("is-checking");badge.textContent="sprawdzam…";
+      try{
+        const info=await bridge.check_update();
+        badge.classList.remove("is-checking");
+        badge.textContent="v"+(info.current||version);
+        if(info.available){
+          badge.classList.add("is-stale");
+          badge.title="Dostępna wersja "+info.version+". Kliknij, aby zainstalować.";
+          if(window.confirm("Dostępna jest nowa wersja: "+info.version+
+              "\n(obecnie "+info.current+")\n\nPobrać i zainstalować teraz?")){
+            badge.textContent="aktualizuję…";
+            await bridge.install_update();
+          }
+        }else{
+          badge.classList.remove("is-stale");
+          badge.title="Wersja "+info.current+" jest aktualna.";
+        }
+      }catch(err){
+        badge.classList.remove("is-checking");
+        badge.textContent="v"+(version||"—");
+        error("Nie udało się sprawdzić aktualizacji: "+(err.message||err));
+      }
+    });
+  }
   window.GeoStudioTabs={status,openConverted(id){append(id);select(id);},newMap:()=>newTab(true),openFileInNew:(file,style)=>newTab(false,file,style)};
   $("add-tab").addEventListener("click",()=>newTab());
   window.addEventListener("beforeunload",event=>{
@@ -146,6 +183,8 @@
       const result=await request("/api/documents");
       limit=result.limit||10;
       ready=true;
+      // Token jest już znany, więc /version odpowie.
+      initVersionBadge();
       for(const id of result.documents)append(id);
       if(tabs.size)select([...tabs.keys()][0]);else await newTab();
       updateControls();
