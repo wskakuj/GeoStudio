@@ -263,4 +263,4 @@ def test_opening_another_map_clears_history(window, tmp_path, monkeypatch):
     window.open_map()
     assert window.history.can_undo is False
     assert window.history.is_dirty is False
-    assert window.windowTitle() == "GeoStudio v0.14 — INNA.MAP"
+    assert window.windowTitle() == "GeoStudio v0.15 — INNA.MAP"

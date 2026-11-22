@@ -1,7 +1,8 @@
 name: Windows release
 on:
   push:
-    branches: [main]
+    branches:
+      - main
     paths:
       - "geostudio/**"
       - "assets/**"
@@ -12,7 +13,7 @@ permissions:
   contents: write
 jobs:
   build:
-    if: github.event_name == 'workflow_dispatch' || startsWith(github.event.head_commit.message, 'release: v0.15.0')
+    if: ${{ github.ref == 'refs/heads/main' && (github.event_name == 'workflow_dispatch' || startsWith(github.event.head_commit.message, 'release: v0.15.0')) }}
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4

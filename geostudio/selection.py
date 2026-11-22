@@ -16,7 +16,7 @@ from dataclasses import dataclass, field
 from PySide6.QtGui import QPainterPath
 
 from .geomap import GeoMap, GeoObject
-from .geometry_index import GeometryIndex
+from .geometry_index import GeometryIndex, point_in_ring
 from .interactions import SnapResult, find_snap
 from .scene_builder import object_path
 
@@ -102,8 +102,57 @@ def rectangle_candidates(ctx: SelectionContext, x0: float, y0: float,
         ys = [point.y for point in obj.points]
         if max(xs) < left or min(xs) > right or max(ys) < bottom or min(ys) > top:
             continue
-        matches.append(obj)
+        if _geometry_intersects_rectangle(obj, left, bottom, right, top):
+            matches.append(obj)
     return matches
+
+
+def _geometry_intersects_rectangle(obj: GeoObject, left: float, bottom: float,
+                                   right: float, top: float) -> bool:
+    """Exact segment/area intersection for a map-coordinate rectangle."""
+    parts = [[(point.x, point.y) for point in part]
+             for part in obj.display_parts if part]
+    if not parts:
+        parts = [[(point.x, point.y) for point in obj.points]]
+
+    def inside(point: tuple[float, float]) -> bool:
+        return left <= point[0] <= right and bottom <= point[1] <= top
+
+    corners = [(left, bottom), (right, bottom), (right, top), (left, top)]
+
+    def orientation(a, b, c) -> float:
+        return (b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0])
+
+    def on_segment(a, b, p) -> bool:
+        return (min(a[0], b[0]) <= p[0] <= max(a[0], b[0]) and
+                min(a[1], b[1]) <= p[1] <= max(a[1], b[1]) and
+                abs(orientation(a, b, p)) <= 1e-10)
+
+    def segments_intersect(a, b, c, d) -> bool:
+        o1, o2 = orientation(a, b, c), orientation(a, b, d)
+        o3, o4 = orientation(c, d, a), orientation(c, d, b)
+        if ((o1 > 1e-10 and o2 < -1e-10 or o1 < -1e-10 and o2 > 1e-10) and
+                (o3 > 1e-10 and o4 < -1e-10 or o3 < -1e-10 and o4 > 1e-10)):
+            return True
+        return ((abs(o1) <= 1e-10 and on_segment(a, b, c)) or
+                (abs(o2) <= 1e-10 and on_segment(a, b, d)) or
+                (abs(o3) <= 1e-10 and on_segment(c, d, a)) or
+                (abs(o4) <= 1e-10 and on_segment(c, d, b)))
+
+    rect_edges = list(zip(corners, corners[1:] + corners[:1]))
+    for part in parts:
+        if any(inside(point) for point in part):
+            return True
+        segments = list(zip(part, part[1:]))
+        if len(part) > 2 and part[0] != part[-1]:
+            segments.append((part[-1], part[0]))
+        if any(segments_intersect(a, b, c, d)
+               for a, b in segments for c, d in rect_edges):
+            return True
+        if (len(part) >= 4 and part[0] == part[-1] and
+                any(point_in_ring(x, y, part[:-1]) for x, y in corners)):
+            return True
+    return False
 
 
 def toggle_selection(selected: list[str], uid: str) -> list[str]:
