@@ -4332,6 +4332,20 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
           ctx.strokeStyle="#0b9e8f";ctx.lineWidth=1.5;
           ctx.strokeRect(...[rect[0],rect[1],rect[2]-rect[0],rect[3]-rect[1]]);
         }
+        // Wysięgnik: linia od etykiety do punktu zaczepienia w poligonie
+        // (natywne L 2 / L 3, bity 64/128 flagi).
+        if(label.leader&&label.leader.direction){
+          const anchor=worldToScreen(label.leader.y,-label.leader.x);
+          const startX=label.leader.direction==="left"?rect[0]:rect[2];
+          const startY=cy;
+          ctx.save();
+          ctx.strokeStyle=label.color||"#4A5056";
+          ctx.lineWidth=state.exporting?Math.max(.7,size*.06):Math.max(.8,size*.06);
+          ctx.beginPath();ctx.moveTo(startX,startY);ctx.lineTo(anchor.x,anchor.y);ctx.stroke();
+          ctx.beginPath();ctx.arc(anchor.x,anchor.y,Math.max(1.5,size*.09),0,Math.PI*2);
+          ctx.fillStyle=label.color||"#4A5056";ctx.fill();
+          ctx.restore();
+        }
         ctx.font=font;
         for(let i=0;i<lines.length;i++){
           const line=lines[i].slice(0,100);
