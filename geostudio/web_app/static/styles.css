@@ -2073,3 +2073,7 @@ body[data-theme="dark"] #raster-summary[data-result="ready"] strong { color:#93e
 .leader-button{flex:1;padding:6px 10px;border-radius:8px;cursor:pointer;
   border:1px solid #cfd8e3;background:#f6f8fb;color:#26313f;font-size:12px}
 .leader-button[aria-pressed="true"]{border-color:#2664db;background:#2664db;color:#fff;font-weight:600}
+
+/* Sekcja „Blok” w zakładce Edycja. */
+.block-code{width:96px;padding:6px 8px;border-radius:8px;border:1px solid #cfd8e3;
+  background:#f6f8fb;color:#26313f;font:12px ui-monospace,monospace}

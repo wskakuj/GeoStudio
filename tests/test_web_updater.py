@@ -161,7 +161,7 @@ def test_update_dialog_is_compact(tmp_path):
     assert "showUpdatePrompt(info.current" in tabs
     assert "Pobrać i zainstalować teraz" not in tabs
     assert ".update-card" in css and ".update-actions" in css
-    assert "Pobierz i zainstaluj" in tabs
+    assert "Zainstaluj teraz" in tabs
 
 
 def test_update_script_searches_registry_hives_and_drives(tmp_path):

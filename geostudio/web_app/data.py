@@ -605,6 +605,45 @@ class PreviewWorkspace:
             self._doc.set_label_leader(obj.uid, slot, True, anchor, prefer_left)
             return
 
+    def select_by_code(self, code: str, bbox=None, limit: int = 5000) -> dict:
+        """Zwraca ID obiektów o danym kodzie (opcjonalnie w prostokącie).
+
+        ``bbox`` to ``[west, south, east, north]`` w jednostkach mapy.
+        Służy przyciskom z sekcji „Blok”: zaznacz wszystkie o kodzie albo
+        tylko te w wybranym fragmencie mapy.
+        """
+        with self._lock:
+            if self._index is None or self._doc is None:
+                raise ValueError("Najpierw otwórz mapę GEO-MAP.")
+            if not isinstance(code, str) or not code.strip() or len(code) > 8:
+                raise ValueError("Podaj kod obiektu, np. 5310.")
+            code = code.strip()
+            if not code.isdigit():
+                raise ValueError("Kod obiektu składa się z cyfr.")
+            area = None
+            if bbox is not None:
+                if (not isinstance(bbox, (list, tuple)) or len(bbox) != 4
+                        or not all(_valid_number(value) for value in bbox)):
+                    raise ValueError("Nieprawidłowy prostokąt zaznaczania.")
+                west, south, east, north = (float(value) for value in bbox)
+                if west > east:
+                    west, east = east, west
+                if south > north:
+                    south, north = north, south
+                area = (west, south, east, north)
+            limit = max(1, min(MAX_BULK_EDIT_OBJECTS, int(limit)))
+            ids: list[str] = []
+            for entry in self._entries:
+                if entry.obj.code != code:
+                    continue
+                if area is not None and not _intersects(entry.bbox, area):
+                    continue
+                ids.append(entry.fid)
+                if len(ids) >= limit:
+                    break
+            return {"code": code, "ids": ids, "count": len(ids),
+                    "limited": len(ids) >= limit, "bbox": list(area) if area else None}
+
     def set_label_leader(self, fid: str, slot: int, enabled: bool,
                          anchor=None, prefer_left=None, *,
                          document_token=None, revision=None) -> dict:

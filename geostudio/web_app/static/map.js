@@ -256,12 +256,12 @@
               <path d="M12 3v11m0 0 4-4m-4 4-4-4M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2"/>
             </svg>
           </div>
-          <h2 id="update-title">Dostępna aktualizacja</h2>
+          <h2 id="update-title">Dostępna nowa wersja</h2>
           <p class="update-version">${version}</p>
-          <p class="update-current">masz ${current}</p>
+          <p class="update-current">Zainstalować teraz? Masz ${current}.</p>
           <div class="update-actions">
-            <button type="button" class="update-later">Później</button>
-            <button type="button" class="update-install">Pobierz i zainstaluj</button>
+            <button type="button" class="update-later">Nie teraz</button>
+            <button type="button" class="update-install">Zainstaluj teraz</button>
           </div>
         </div>`;
       const close=answer=>{overlay.remove();document.removeEventListener("keydown",onKey);resolve(answer);};
@@ -1332,6 +1332,43 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
     }catch(error){
       inform("Nie zmieniono wysięgnika: "+error.message,true);
     }
+  }
+  // Sekcja „Blok”: zaznaczanie po kodzie — cała mapa albo fragment.
+  async function selectByCode(bbox){
+    const code=($("block-code").value||"").trim();
+    if(!/^\d{1,8}$/.test(code)){
+      inform("Wpisz kod obiektu, np. 5310.",true);
+      return;
+    }
+    try{
+      const result=await api("/api/select/code",{
+        method:"POST",headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({code,bbox:bbox||null,limit:5000})});
+      if(!result.count){
+        inform("Brak obiektów o kodzie "+code+(bbox?" w tym fragmencie":"")+".",true);
+        return;
+      }
+      const ids=result.ids;
+      state.active=ids[0];
+      state.pinned=new Set(ids.slice(1));
+      updateSelectionCount();updateLeaderButtons();requestDraw();
+      await selectFeature(ids[0]);
+      inform("Zaznaczono "+display(result.count)+" obiektów o kodzie "+code+
+        (bbox?" w zaznaczonym fragmencie":"")+"."+
+        (result.limited?" Limit 5000 obiektów.":""));
+    }catch(error){
+      inform("Nie zaznaczono: "+error.message,true);
+    }
+  }
+  function startBlockRectangle(){
+    const code=($("block-code").value||"").trim();
+    if(!/^\d{1,8}$/.test(code)){
+      inform("Wpisz kod obiektu, np. 5310.",true);
+      return;
+    }
+    state.blockRectPicking=true;state.blockRectDrag=null;
+    canvas.style.cursor="crosshair";
+    inform("Przeciągnij prostokąt na mapie — zaznaczę obiekty o kodzie "+code+".");
   }
   function selectedObjectIds() {
     const ids=new Set(state.pinned);
@@ -4457,6 +4494,13 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
     // The map remains rendered in native screen-space vector precision.
     renderScreenLabels(features);drawGcpMapMarkers();
     drawSheetItems();
+    if(state.blockRectDrag){
+      const d=state.blockRectDrag;
+      ctx.save();ctx.strokeStyle="#2664db";ctx.lineWidth=1.5;ctx.setLineDash([6,4]);
+      ctx.strokeRect(Math.min(d.start.x,d.end.x),Math.min(d.start.y,d.end.y),
+                     Math.abs(d.end.x-d.start.x),Math.abs(d.end.y-d.start.y));
+      ctx.restore();
+    }
     drawExportAreaOverlay();
     drawDraftPolygon();drawMagnetMarker();drawVertexTool();
     updateScaleReadout();
@@ -6205,6 +6249,33 @@ inform("Klikaj mapę, aby wstawiać kolejne oznaczenia. Naciśnij Esc lub wybier
     canvas.setPointerCapture(ev.pointerId);requestDraw();
   },true);
   // Przeciąganie punktu zaczepienia wysięgnika (tryb „Etykiety”).
+  // Prostokąt blokowy: rysowanie i zatwierdzenie.
+  canvas.addEventListener("pointerdown",ev=>{
+    if(!state.blockRectPicking||ev.button!==0)return;
+    ev.stopImmediatePropagation();ev.preventDefault();
+    const p=eventCoords(ev);
+    state.blockRectDrag={id:ev.pointerId,start:p,end:p};
+    try{canvas.setPointerCapture(ev.pointerId);}catch(_){}
+  },true);
+  canvas.addEventListener("pointermove",ev=>{
+    if(!state.blockRectDrag||state.blockRectDrag.id!==ev.pointerId)return;
+    ev.stopImmediatePropagation();
+    state.blockRectDrag.end=eventCoords(ev);
+    requestDraw();
+  },true);
+  canvas.addEventListener("pointerup",async ev=>{
+    if(!state.blockRectDrag||state.blockRectDrag.id!==ev.pointerId)return;
+    ev.stopImmediatePropagation();
+    const drag=state.blockRectDrag;state.blockRectDrag=null;
+    state.blockRectPicking=false;canvas.style.cursor="";
+    const a=screenToWorld(drag.start.x,drag.start.y);
+    const b=screenToWorld(drag.end.x,drag.end.y);
+    if(Math.abs(a.x-b.x)<0.01&&Math.abs(a.y-b.y)<0.01){requestDraw();return;}
+    const bbox=[Math.min(a.x,b.x),Math.min(a.y,b.y),
+                Math.max(a.x,b.x),Math.max(a.y,b.y)];
+    requestDraw();
+    await selectByCode(bbox);
+  },true);
   window.addEventListener("pointerdown",ev=>{
     if(state.tool!=="labels"||!state.edit||!state.labelAnchors?.length)return;
     const p=eventCoords(ev);
@@ -7021,6 +7092,10 @@ inform("Klikaj mapę, aby wstawiać kolejne oznaczenia. Naciśnij Esc lub wybier
   });
   $("layout-form").addEventListener("submit",event=>{event.preventDefault();exportLayout(false);});
 
+  link("block-select-all",()=>selectByCode(null));
+  link("block-select-rect",startBlockRectangle);
+  link("block-clear",()=>{state.pinned=new Set();selectFeature(null);
+    inform("Wyczyszczono zaznaczenie.");});
   link("leader-a1",()=>toggleLeader("A1"));
   link("leader-a2",()=>toggleLeader("A2"));
   link("tool-export-baked",downloadNativeCutouts);

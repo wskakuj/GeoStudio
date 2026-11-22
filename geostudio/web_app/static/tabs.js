@@ -148,12 +148,12 @@
               <path d="M12 3v11m0 0 4-4m-4 4-4-4M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2"/>
             </svg>
           </div>
-          <h2 id="update-title">Dostępna aktualizacja</h2>
+          <h2 id="update-title">Dostępna nowa wersja</h2>
           <p class="update-version">${version}</p>
-          <p class="update-current">masz ${current}</p>
+          <p class="update-current">Zainstalować teraz? Masz ${current}.</p>
           <div class="update-actions">
-            <button type="button" class="update-later">Później</button>
-            <button type="button" class="update-install">Pobierz i zainstaluj</button>
+            <button type="button" class="update-later">Nie teraz</button>
+            <button type="button" class="update-install">Zainstaluj teraz</button>
           </div>
         </div>`;
       const close=answer=>{overlay.remove();document.removeEventListener("keydown",onKey);resolve(answer);};
