@@ -142,7 +142,45 @@ def test_leader_shortcuts_are_q_and_w():
     assert 'if(key!=="q"&&key!=="e")return;' not in js
 
 
-def test_label_move_refreshes_in_background():
+def test_label_move_refreshes_only_the_viewport():
+    """Pełny reload dokumentu kasował listę etykiet i blokował kolejne chwycenie."""
     from pathlib import Path
     js = Path("geostudio/web_app/static/map.js").read_text(encoding="utf-8")
-    assert "setTimeout(()=>{refreshEditedDocument(drag.fid).catch(()=>{});},0);" in js
+    assert "setTimeout(()=>{refreshEditedDocument(drag.fid)" not in js
+    assert "scheduleViewport(true);" in js
+
+
+def test_anchor_clicked_on_map_lands_where_clicked():
+    """Kółko podaje [północ, wschód]; kotwica musi trafić w kliknięty punkt."""
+    workspace = _map_with_label()
+    status = workspace.editing_status()
+    features = workspace.viewport((0, -1e6, 1e6, 1e6), limit=3000)["features"]
+    feature = next(f for f in features if f["code"] == "5310"
+                   and not any(item.get("leader") for item in f["labels"]))
+    west, south, east, north = feature["bbox"]
+    click = [(south + north) / 2, (west + east) / 2]      # [północ, wschód]
+    workspace.set_label_leader(feature["id"], 2, True, click, True,
+                               document_token=status["documentToken"],
+                               revision=status["revision"])
+    updated = workspace.viewport((0, -1e6, 1e6, 1e6), limit=3000)["features"]
+    changed = next(f for f in updated if f["id"] == feature["id"])
+    label = next(l for l in changed["labels"] if l["field"] == "A1")
+    anchor_north = -label["leader"]["y"]
+    anchor_east = label["leader"]["x"]
+    distance = ((anchor_east - click[1]) ** 2 + (anchor_north - click[0]) ** 2) ** 0.5
+    assert distance < 0.5
+
+
+def test_canvas_sends_north_east_anchor():
+    from pathlib import Path
+    js = Path("geostudio/web_app/static/map.js").read_text(encoding="utf-8")
+    assert "north:-world.y,east:world.x" in js
+    assert "anchor:[world.north,world.east]" in js
+    assert "anchor:[drag.point.north,drag.point.east]" in js
+
+
+def test_edit_lock_has_watchdog():
+    from pathlib import Path
+    js = Path("geostudio/web_app/static/map.js").read_text(encoding="utf-8")
+    assert "editBusySince" in js
+    assert "odblokowano edycję" in js

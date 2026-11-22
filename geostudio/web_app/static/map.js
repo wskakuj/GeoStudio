@@ -143,6 +143,18 @@
     }
     return res.json();
   };
+  // Zabezpieczenie: jeśli jakakolwiek operacja nie zwolni blokady edycji,
+  // program po chwili wraca do życia zamiast wisieć do restartu.
+  setInterval(()=>{
+    if(!state.editBusy)return;
+    const since=state.editBusySince||0;
+    if(!since){state.editBusySince=Date.now();return;}
+    if(Date.now()-since>20000){
+      state.editBusy=false;state.editBusySince=0;
+      inform("Operacja trwała zbyt długo — odblokowano edycję.",true);
+      updateEditState(state.edit);requestDraw();
+    }
+  },4000);
   function updateEditState(status) {
     if(!status)return;
     // Cached viewport geometry is scoped to an edit revision.
@@ -402,7 +414,7 @@
       inform("Nie wprowadzono zmian.");
       return;
     }
-    state.editBusy=true;updateEditState(state.edit);
+    state.editBusy=true;state.editBusySince=Date.now();updateEditState(state.edit);
     $("inspector-apply").disabled=true;
     try {
       const response=await api("/api/object/"+encodeURIComponent(fid)+"/fields",{
@@ -424,7 +436,7 @@
     if(state.editBusy||!state.edit)return;
     if(direction==="undo"&&!state.edit.canUndo)return;
     if(direction==="redo"&&!state.edit.canRedo)return;
-    state.editBusy=true;updateEditState(state.edit);
+    state.editBusy=true;state.editBusySince=Date.now();updateEditState(state.edit);
     try {
       const response=await api("/api/edit/"+direction,{
         method:"POST",headers:{"Content-Type":"application/json"},
@@ -843,7 +855,7 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
     const code=$("outline-style-code").value;
     const stroke=$("outline-style-color").value;
     const strokeWidth=Number($("outline-style-width").value);
-    state.editBusy=true;updateEditState(state.edit);
+    state.editBusy=true;state.editBusySince=Date.now();updateEditState(state.edit);
     $("outline-style-apply").disabled=true;
     $("outline-style-reset").disabled=true;
     try{
@@ -863,7 +875,7 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
       $("outline-style-summary").textContent="Nie zapisano: "+error.message;
       inform("Błąd obrysu: "+error.message,true);
     }finally{
-      state.editBusy=false;updateEditState(state.edit);
+      state.editBusy=false;state.editBusySince=0;updateEditState(state.edit);
       $("outline-style-apply").disabled=false;
       $("outline-style-reset").disabled=false;
     }
@@ -1204,7 +1216,7 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
       " fragmentów w "+display(report.changedObjects)+
       " obiektach?\n\nWszystkie zmiany cofniesz jednym Ctrl+Z. "+
       "Oryginalny MAP nie zostanie nadpisany."))return;
-    state.editBusy=true;updateEditState(state.edit);
+    state.editBusy=true;state.editBusySince=Date.now();updateEditState(state.edit);
     $("replace-apply").disabled=true;
     try{
       const res=await api("/api/replace/apply",{
@@ -1221,7 +1233,7 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
       invalidateReplacePreview();
       inform("Nie wykonano zamiany: "+err.message,true);
     }finally{
-      state.editBusy=false;updateEditState(state.edit);
+      state.editBusy=false;state.editBusySince=0;updateEditState(state.edit);
     }
   }
 
@@ -1507,7 +1519,7 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
       " obiektów. Całą operację można cofnąć Ctrl+Z."))
       return;
     const button=$("bulk-apply");
-    state.editBusy=true;updateEditState(state.edit);
+    state.editBusy=true;state.editBusySince=Date.now();updateEditState(state.edit);
     button.disabled=true;$("bulk-preview").disabled=true;
     try{
       const result=await api("/api/bulk/apply",{
@@ -1531,7 +1543,7 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
         ". Ponownie sprawdź podgląd.";
       inform("Edycja zbiorowa: "+error.message,true);
     }finally{
-      state.editBusy=false;updateEditState(state.edit);
+      state.editBusy=false;state.editBusySince=0;updateEditState(state.edit);
       button.disabled=true;$("bulk-preview").disabled=false;
     }
   }
@@ -1660,7 +1672,7 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
          "Potwierdź przesunięcie "+display(preview.report.selected)+
          " obiektów. Cofnij: Ctrl+Z."))
       return;
-    state.editBusy=true;updateEditState(state.edit);
+    state.editBusy=true;state.editBusySince=Date.now();updateEditState(state.edit);
     $("move-apply").disabled=true;$("move-preview").disabled=true;
     try{
       const result=await api("/api/move/apply",{
@@ -1681,7 +1693,7 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
         ". Ponów podgląd.";
       inform("Przesunięcie: "+error.message,true);
     }finally{
-      state.editBusy=false;updateEditState(state.edit);
+      state.editBusy=false;state.editBusySince=0;updateEditState(state.edit);
       $("move-apply").disabled=true;$("move-preview").disabled=false;
     }
   }
@@ -1697,7 +1709,7 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
       allowDetach:true,
       snapDistance:0
     };
-    state.editBusy=true;updateEditState(state.edit);
+    state.editBusy=true;state.editBusySince=Date.now();updateEditState(state.edit);
     try{
       const report=await api("/api/move/preview",{
         method:"POST",headers:{"Content-Type":"application/json"},
@@ -1790,7 +1802,7 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
     }
     const request={...editRequestBody(),
       operation:{action:"copy",ids,dx:0,dy}};
-    state.editBusy=true;updateEditState(state.edit);
+    state.editBusy=true;state.editBusySince=Date.now();updateEditState(state.edit);
     try{
       const report=await api("/api/objects/preview",{
         method:"POST",headers:{"Content-Type":"application/json"},
@@ -1804,7 +1816,7 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
       const created=result.createdIds||[];
       state.pinned=new Set(created);
       state.active=created[0]||null;
-      state.editBusy=false;updateEditState(state.edit);
+      state.editBusy=false;state.editBusySince=0;updateEditState(state.edit);
       setTool("move");
       await refreshEditedDocument(state.active);
       updateSelectionCount();
@@ -1868,7 +1880,7 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
     let request;
     try{request={...editRequestBody(),operation:objectOperation("create")};}
     catch(error){$("create-summary").textContent=error.message;return;}
-    state.editBusy=true;updateEditState(state.edit);
+    state.editBusy=true;state.editBusySince=Date.now();updateEditState(state.edit);
     $("create-apply").disabled=true;
     $("create-summary").textContent="Tworzę poligon i sprawdzam topologię…";
     try{
@@ -1890,7 +1902,7 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
       state.drawPoints=[];state.drawHover=null;state.drawSnap=null;
       state.pinned.clear();state.active=null;state.detail=null;
       $("create-a1").value="";$("create-a2").value="";
-      state.editBusy=false;updateEditState(state.edit);
+      state.editBusy=false;state.editBusySince=0;updateEditState(state.edit);
       // A drawing session continues until the user explicitly presses S,
       // Escape (when no nodes are left), or chooses another tool.
       setTool("draw");
@@ -1901,7 +1913,7 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
       $("create-summary").textContent="Nie utworzono: "+error.message;
       inform("Błąd tworzenia poligonu: "+error.message,true);
     }finally{
-      state.editBusy=false;updateEditState(state.edit);
+      state.editBusy=false;state.editBusySince=0;updateEditState(state.edit);
       $("create-apply").disabled=false;
     }
   }
@@ -1921,7 +1933,7 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
     if(which==="copy"&&seen.report.selected>=100&&!window.confirm(
         "Potwierdź utworzenie "+display(seen.report.selected)+" kopii?"))
       return;
-    state.editBusy=true;updateEditState(state.edit);
+    state.editBusy=true;state.editBusySince=Date.now();updateEditState(state.edit);
     $(which+"-apply").disabled=true;
     try{
       const result=await api("/api/objects/apply",{
@@ -1935,7 +1947,7 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
       state.pinned=new Set(newIds);
       state.active=newIds[0]||null;
       state.drawPoints=[];state.drawHover=null;
-      state.editBusy=false;updateEditState(state.edit);
+      state.editBusy=false;state.editBusySince=0;updateEditState(state.edit);
       setTool("select");
       await refreshEditedDocument(state.active);
       updateSelectionCount();
@@ -1947,7 +1959,7 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
       $(which+"-summary").textContent="Nie zapisano: "+error.message;
       inform("Operacja przerwana: "+error.message,true);
     }finally{
-      state.editBusy=false;updateEditState(state.edit);
+      state.editBusy=false;state.editBusySince=0;updateEditState(state.edit);
     }
   }
   async function deleteObjects() {
@@ -1957,7 +1969,7 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
       inform("Zaznacz od 1 do 5 000 obiektów do usunięcia.",true);return;
     }
     const request={...editRequestBody(),operation:{action:"delete",ids}};
-    state.editBusy=true;updateEditState(state.edit);
+    state.editBusy=true;state.editBusySince=Date.now();updateEditState(state.edit);
     try{
       const report=await api("/api/objects/preview",{
         method:"POST",headers:{"Content-Type":"application/json"},
@@ -2112,7 +2124,7 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
     if(which!=="split"&&current.report.metadataWarning&&!window.confirm(
       "Scalenie/podział wymaga ręcznego sprawdzenia danych powierzchniowych "+
       "A4/A6 w GEO-MAP. Czy kontynuować?"))return;
-    state.editBusy=true;updateEditState(state.edit);
+    state.editBusy=true;state.editBusySince=Date.now();updateEditState(state.edit);
     try{
       const res=await api("/api/geometry/apply",{
         method:"POST",headers:{"Content-Type":"application/json"},
@@ -2125,7 +2137,7 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
       state.lineEditId=null;state.cutIds=[];
       state.pinned=new Set(res.createdIds||[]);
       state.active=res.createdIds?.[0]||null;
-      state.editBusy=false;updateEditState(state.edit);
+      state.editBusy=false;state.editBusySince=0;updateEditState(state.edit);
       setTool("select");
       await refreshEditedDocument(state.active);
       updateSelectionCount();
@@ -2147,7 +2159,7 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
       inform("Zaznacz 1–100 poligonów do poprawy kierunku.",true);return;
     }
     const request={...editRequestBody(),operation:{action,ids}};
-    state.editBusy=true;updateEditState(state.edit);
+    state.editBusy=true;state.editBusySince=Date.now();updateEditState(state.edit);
     try{
       const report=await api("/api/geometry/preview",{
         method:"POST",headers:{"Content-Type":"application/json"},
@@ -3511,7 +3523,7 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
       inform("Skala opracowania musi być 1:N, N od 100 do 1000000.",true);
       return;
     }
-    state.editBusy=true;updateEditState(state.edit);
+    state.editBusy=true;state.editBusySince=Date.now();updateEditState(state.edit);
     try{
       const status=await api("/api/compilation-scale",{
         method:"POST",headers:{"Content-Type":"application/json"},
@@ -3578,7 +3590,7 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
       color:$("label-settings-color").value,
       bold:$("label-settings-bold").checked
     };
-    state.editBusy=true;updateEditState(state.edit);
+    state.editBusy=true;state.editBusySince=Date.now();updateEditState(state.edit);
     try{
       const status=await api("/api/labels/settings",{
         method:"POST",headers:{"Content-Type":"application/json"},
@@ -4197,7 +4209,7 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
       return;
     }
     const fid=state.active,code=state.detail.code;
-    state.editBusy=true;updateEditState(state.edit);
+    state.editBusy=true;state.editBusySince=Date.now();updateEditState(state.edit);
     updateDeleteNodeButton();
     try {
       const response=await api("/api/object/"+
@@ -4222,7 +4234,7 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
     }catch(error){
       inform("Nie udało się usunąć węzła: "+error.message,true);
     }finally{
-      state.editBusy=false;updateEditState(state.edit);
+      state.editBusy=false;state.editBusySince=0;updateEditState(state.edit);
       updateDeleteNodeButton();requestDraw();
     }
   }
@@ -4236,7 +4248,7 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
     if(!before)return;
     if(!drag.follow&&Math.hypot(drag.preview.x-before.x,drag.preview.y-before.y)*
        state.scale<.5){requestDraw();return;}
-    state.editBusy=true;updateEditState(state.edit);
+    state.editBusy=true;state.editBusySince=Date.now();updateEditState(state.edit);
     try {
       // Native GEO-MAP coordinate order: X=northing, Y=easting.
       const response=await api("/api/object/"+encodeURIComponent(drag.fid)+"/vertex",{
@@ -6061,16 +6073,16 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
     const y=Math.round(drag.label.x*1000)/1000;
     const body={...editRequestBody(),
       fid:drag.fid,field:drag.field,x,y};
-    state.editBusy=true;updateEditState(state.edit);
+    state.editBusy=true;state.editBusySince=Date.now();updateEditState(state.edit);
     try{
       const result=await api("/api/labels/move",{
         method:"POST",headers:{"Content-Type":"application/json"},
         body:JSON.stringify(body)
       });
       updateEditState(result);
-      // Odświeżenie w tle: czekanie na pełny reload blokowało możliwość
-      // chwycenia kolejnej etykiety zaraz po puszczeniu poprzedniej.
-      setTimeout(()=>{refreshEditedDocument(drag.fid).catch(()=>{});},0);
+      // Tylko odświeżenie widoku — pełny reload dokumentu kasował listę
+      // etykiet i blokował chwycenie kolejnej (program „przestawał reagować”).
+      scheduleViewport(true);
       inform("Przeniesiono osobną etykietę "+drag.field+
         " na X: "+x.toFixed(3)+", Y: "+y.toFixed(3)+
         ". Ctrl+Z cofa. Zapisz MAP i towarzyszący JSON.");
@@ -6081,7 +6093,7 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
       inform("Etykieta nie została przeniesiona: "+error.message,true);
       scheduleViewport(true);
     }finally{
-      state.editBusy=false;updateEditState(state.edit);
+      state.editBusy=false;state.editBusySince=0;updateEditState(state.edit);
       requestDraw();
     }
   }
@@ -6297,7 +6309,8 @@ inform("Klikaj mapę, aby wstawiać kolejne oznaczenia. Naciśnij Esc lub wybier
     if(!selected){inform("Najpierw chwyć etykietę A1 lub A2 lewym przyciskiem.",true);return;}
     ev.preventDefault();ev.stopImmediatePropagation();
     const p=eventCoords(ev),world=screenToWorld(p.x,p.y);
-    await setLeaderAnchor(selected,world);
+    // screenToWorld zwraca (wschód, -północ), a API oczekuje [północ, wschód].
+    await setLeaderAnchor(selected,{north:-world.y,east:world.x});
   },true);
   window.addEventListener("keydown",ev=>{
     if(!state.leaderMode||!state.edit)return;
@@ -6317,7 +6330,7 @@ inform("Klikaj mapę, aby wstawiać kolejne oznaczenia. Naciśnij Esc lub wybier
         method:"POST",headers:{"Content-Type":"application/json"},
         body:JSON.stringify({fid:selected.fid,
           slot:selected.field==="A1"?2:3,enabled:true,
-          anchor:[world.x,world.y],
+          anchor:[world.north,world.east],
           documentToken:state.edit.documentToken,revision:state.edit.revision})});
       updateEditState(result);
       setTimeout(()=>{refreshEditedDocument(state.active).catch(()=>{});},0);
@@ -6361,7 +6374,8 @@ inform("Klikaj mapę, aby wstawiać kolejne oznaczenia. Naciśnij Esc lub wybier
     const others=(state.labelAnchors||[]).filter(a=>
       a.fid===state.anchorDrag.fid&&a.slot!==state.anchorDrag.slot);
     const near=others.find(a=>Math.hypot(p.x-a.x,p.y-a.y)<=12);
-    state.anchorDrag.point=near?screenToWorld(near.x,near.y):world;
+    const world2=near?screenToWorld(near.x,near.y):world;
+    state.anchorDrag.point={north:-world2.y,east:world2.x};
     state.anchorDrag.snap=!!near;
     requestDraw();
   },true);
@@ -6372,7 +6386,7 @@ inform("Klikaj mapę, aby wstawiać kolejne oznaczenia. Naciśnij Esc lub wybier
       const result=await api("/api/labels/leader",{
         method:"POST",headers:{"Content-Type":"application/json"},
         body:JSON.stringify({fid:drag.fid,slot:drag.slot,enabled:true,
-          anchor:[drag.point.x,drag.point.y],
+          anchor:[drag.point.north,drag.point.east],
           documentToken:state.edit.documentToken,revision:state.edit.revision})});
       updateEditState(result);
       await refreshEditedDocument(state.active);
