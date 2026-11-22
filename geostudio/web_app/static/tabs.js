@@ -134,6 +134,38 @@
       if(!tabs.size)await newTab();
     }catch(e){error(e.message);tab.close.disabled=false;}
   }
+
+  // Kompaktowe okno aktualizacji: wersja + dwie akcje, bez ściany tekstu.
+  function showUpdatePrompt(current,version){
+    return new Promise(resolve=>{
+      const overlay=document.createElement("div");
+      overlay.className="update-overlay";
+      overlay.innerHTML=`
+        <div class="update-card" role="dialog" aria-modal="true" aria-labelledby="update-title">
+          <div class="update-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"
+                 stroke-linecap="round" stroke-linejoin="round">
+              <path d="M12 3v11m0 0 4-4m-4 4-4-4M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2"/>
+            </svg>
+          </div>
+          <h2 id="update-title">Dostępna aktualizacja</h2>
+          <p class="update-version">${version}</p>
+          <p class="update-current">masz ${current}</p>
+          <div class="update-actions">
+            <button type="button" class="update-later">Później</button>
+            <button type="button" class="update-install">Pobierz i zainstaluj</button>
+          </div>
+        </div>`;
+      const close=answer=>{overlay.remove();document.removeEventListener("keydown",onKey);resolve(answer);};
+      const onKey=event=>{if(event.key==="Escape")close(false);};
+      overlay.querySelector(".update-later").addEventListener("click",()=>close(false));
+      overlay.querySelector(".update-install").addEventListener("click",()=>close(true));
+      overlay.addEventListener("click",event=>{if(event.target===overlay)close(false);});
+      document.addEventListener("keydown",onKey);
+      document.body.append(overlay);
+      overlay.querySelector(".update-install").focus();
+    });
+  }
   function waitForBridge(timeout=4000){
     return new Promise(resolve=>{
       const started=Date.now();
@@ -168,8 +200,7 @@
         if(info.available){
           badge.classList.add("is-stale");
           badge.title="Dostępna wersja "+info.version+". Kliknij, aby zainstalować.";
-          if(window.confirm("Dostępna jest nowa wersja: "+info.version+
-              "\n(obecnie "+info.current+")\n\nPobrać i zainstalować teraz?")){
+          if(await showUpdatePrompt(info.current,info.version)){
             badge.textContent="aktualizuję…";
             await bridge.install_update();
           }

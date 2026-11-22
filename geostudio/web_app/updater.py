@@ -44,7 +44,7 @@ def is_newer(latest: str, current: str) -> bool:
 
 # Musi być zgodna z pyproject.toml; używana, gdy metadane pakietu nie są
 # spakowane (PyInstaller kopiuje je przez --copy-metadata geostudio-pl).
-FALLBACK_VERSION = "2.0.11"
+FALLBACK_VERSION = "2.0.12"
 
 
 def current_version() -> str:
@@ -130,22 +130,12 @@ def _ps_literal(value: str) -> str:
     return "'" + str(value).replace("'", "''") + "'"
 
 
-def build_update_script(url: str, target: Path, version: str = "") -> str:
-    """Skrypt PowerShell z oknem postępu (WinForms), jak w FORESTLY.
-
-    Pobieranie jest w całości synchroniczne: czytamy strumień odpowiedzi
-    porcjami i między porcjami wołamy DoEvents(). Wcześniejsza wersja opierała
-    się na zdarzeniach WebClienta (Register-ObjectEvent -Action), których
-    `$script:done` żyje w osobnym runspace — pętla nigdy nie widziała końca
-    pobrania, więc okno stało z pełnym paskiem i nie uruchamiało instalatora.
-    """
-    label = ("Pobieranie wersji " + version).strip()
-    return f"""
+UPDATE_SCRIPT_TEMPLATE = r"""
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
 
 $form = New-Object System.Windows.Forms.Form
-$form.Text = 'GeoStudio 2.0 — aktualizacja'
+$form.Text = 'GeoStudio 2.0 - aktualizacja'
 $form.ClientSize = New-Object System.Drawing.Size(480, 150)
 $form.StartPosition = 'CenterScreen'
 $form.TopMost = $true
@@ -154,7 +144,7 @@ $form.MaximizeBox = $false
 $form.MinimizeBox = $false
 
 $title = New-Object System.Windows.Forms.Label
-$title.Text = {_ps_literal(label)}
+$title.Text = '__LABEL__'
 $title.Font = New-Object System.Drawing.Font('Segoe UI', 10, [System.Drawing.FontStyle]::Bold)
 $title.SetBounds(16, 14, 440, 22)
 $form.Controls.Add($title)
@@ -166,7 +156,7 @@ $bar.Maximum = 100
 $form.Controls.Add($bar)
 
 $status = New-Object System.Windows.Forms.Label
-$status.Text = 'Łączenie z GitHub…'
+$status.Text = 'Laczenie z GitHub...'
 $status.SetBounds(16, 74, 440, 20)
 $form.Controls.Add($status)
 
@@ -174,25 +164,23 @@ $form.Show()
 $form.Refresh()
 [System.Windows.Forms.Application]::DoEvents()
 
-$target = {_ps_literal(str(target))}
-$url = {_ps_literal(url)}
+$target = '__TARGET__'
+$url = '__URL__'
 
-function Fail($message) {{
-    $status.Text = 'Błąd pobierania'
+function Fail($message) {
+    $status.Text = 'Blad pobierania'
     $form.Refresh()
-    [System.Windows.Forms.MessageBox]::Show($message, 'GeoStudio 2.0 — aktualizacja') | Out-Null
+    [System.Windows.Forms.MessageBox]::Show($message, 'GeoStudio 2.0 - aktualizacja') | Out-Null
     $form.Close()
     exit 1
-}}
+}
 
-try {{
-    if (Test-Path $target) {{ Remove-Item $target -Force -ErrorAction SilentlyContinue }}
+try {
+    if (Test-Path $target) { Remove-Item $target -Force -ErrorAction SilentlyContinue }
 
     $request = [System.Net.HttpWebRequest]::Create($url)
     $request.UserAgent = 'GeoStudio-Updater'
     $request.AllowAutoRedirect = $true
-    # GitHub przekierowuje na objects.githubusercontent.com; bez proxy
-    # systemowego pobieranie nie stoi na martwym tunelu.
     $request.Proxy = $null
     $request.Timeout = 30000
     $request.ReadWriteTimeout = 60000
@@ -202,61 +190,89 @@ try {{
     $output = [System.IO.File]::Create($target)
     $buffer = New-Object byte[] 1048576
     $received = 0
-    $lastTick = 0
 
-    while (($read = $input.Read($buffer, 0, $buffer.Length)) -gt 0) {{
+    while (($read = $input.Read($buffer, 0, $buffer.Length)) -gt 0) {
         $output.Write($buffer, 0, $read)
         $received += $read
-        if ($total -gt 0) {{
+        if ($total -gt 0) {
             $value = [int](100 * $received / $total)
-            if ($value -gt 100) {{ $value = 100 }}
+            if ($value -gt 100) { $value = 100 }
             $bar.Value = $value
-            $status.Text = ('Pobrano {{0:N1}} z {{1:N1}} MB' -f ($received / 1MB), ($total / 1MB))
-        }} else {{
-            $status.Text = ('Pobrano {{0:N1}} MB' -f ($received / 1MB))
-        }}
+            $status.Text = ('Pobrano {0:N1} z {1:N1} MB' -f ($received / 1MB), ($total / 1MB))
+        } else {
+            $status.Text = ('Pobrano {0:N1} MB' -f ($received / 1MB))
+        }
         $form.Refresh()
         [System.Windows.Forms.Application]::DoEvents()
-    }}
+    }
 
     $output.Flush()
     $output.Close()
     $input.Close()
     $response.Close()
 
-    if (-not (Test-Path $target) -or (Get-Item $target).Length -lt 1024) {{
+    if (-not (Test-Path $target) -or (Get-Item $target).Length -lt 1024) {
         Fail 'Pobrany plik jest pusty lub niekompletny.'
-    }}
+    }
 
     $bar.Value = 100
-    $status.Text = 'Pobrano — uruchamiam instalator…'
+    $status.Text = 'Pobrano - instaluje...'
     $form.Refresh()
     [System.Windows.Forms.Application]::DoEvents()
 
-    # Plik z internetu ma znacznik „z sieci” — bez tego Windows potrafi go
-    # zablokować i instalator nie startuje.
-    try {{ Unblock-File -Path $target -ErrorAction Stop }} catch {{ }}
+    try { Unblock-File -Path $target -ErrorAction Stop } catch { }
 
     Start-Sleep -Milliseconds 600
     $form.Close()
 
-    # Instalujemy cicho i czekamy na koniec, żeby potem uruchomić program.
-    $installer = Start-Process -FilePath $target `
-        -ArgumentList '/SILENT', '/CLOSEAPPLICATIONS' -PassThru
+    $installer = Start-Process -FilePath $target -ArgumentList '/SILENT', '/CLOSEAPPLICATIONS' -PassThru
     $installer.WaitForExit()
 
-    $exe = Join-Path $env:LOCALAPPDATA 'Programs\\GeoStudio2\\GeoStudio2.exe'
-    if (Test-Path $exe) {{
+    # Sciezka instalacji bywa inna (starsza wersja mogla wybrac inny katalog),
+    # wiec szukamy: rejestr -> typowa lokalizacja -> skan Programow.
+    $exe = $null
+    $uninstall = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\{A755B3EB-320E-4139-8A44-FA5FB6912C9A}_is1'
+    for ($attempt = 0; $attempt -lt 10 -and -not $exe; $attempt++) {
+        if (Test-Path $uninstall) {
+            $location = (Get-ItemProperty $uninstall -ErrorAction SilentlyContinue).InstallLocation
+            if ($location) {
+                $candidate = Join-Path $location 'GeoStudio2.exe'
+                if (Test-Path $candidate) { $exe = $candidate }
+            }
+        }
+        if (-not $exe) {
+            $candidate = Join-Path $env:LOCALAPPDATA 'Programs\GeoStudio2\GeoStudio2.exe'
+            if (Test-Path $candidate) { $exe = $candidate }
+        }
+        if (-not $exe) {
+            $found = Get-ChildItem (Join-Path $env:LOCALAPPDATA 'Programs') -Filter 'GeoStudio2.exe' -Recurse -Depth 2 -ErrorAction SilentlyContinue | Select-Object -First 1
+            if ($found) { $exe = $found.FullName }
+        }
+        if (-not $exe) { Start-Sleep -Milliseconds 500 }
+    }
+
+    if ($exe) {
         Start-Process -FilePath $exe
-    }} else {{
-        [System.Windows.Forms.MessageBox]::Show(
-            'Zainstalowano, ale nie znaleziono GeoStudio2.exe w ' + $exe,
-            'GeoStudio 2.0 — aktualizacja') | Out-Null
-    }}
-}} catch {{
-    Fail ("Nie udało się pobrać aktualizacji:`n" + $_.Exception.Message)
-}}
+    } else {
+        Start-Process explorer.exe (Join-Path $env:LOCALAPPDATA 'Programs')
+    }
+} catch {
+    Fail ('Nie udalo sie pobrac aktualizacji: ' + $_.Exception.Message)
+}
 """
+
+
+def build_update_script(url: str, target: Path, version: str = "") -> str:
+    """Skrypt PowerShell z oknem postępu (WinForms), jak w FORESTLY.
+
+    Szablon jest zwykłym stringiem (r-string), a podstawiamy tylko trzy
+    wartości — dzięki temu nie ma walki z nawiasami i backslashami f-stringa.
+    """
+    label = ("Pobieranie wersji " + version).strip()
+    return (UPDATE_SCRIPT_TEMPLATE
+            .replace("__LABEL__", label.replace("'", "''"))
+            .replace("__TARGET__", str(target).replace("'", "''"))
+            .replace("__URL__", url.replace("'", "''")))
 
 
 def start_update(url: str, version: str = "",
