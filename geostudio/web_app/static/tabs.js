@@ -134,6 +134,18 @@
       if(!tabs.size)await newTab();
     }catch(e){error(e.message);tab.close.disabled=false;}
   }
+  function waitForBridge(timeout=4000){
+    return new Promise(resolve=>{
+      const started=Date.now();
+      const tick=()=>{
+        const bridge=window.pywebview?.api;
+        if(bridge?.check_update)return resolve(bridge);
+        if(Date.now()-started>timeout)return resolve(bridge||null);
+        setTimeout(tick,120);
+      };
+      tick();
+    });
+  }
   async function initVersionBadge(){
     const badge=$("app-version");
     if(!badge)return;
@@ -142,9 +154,10 @@
     badge.textContent="v"+(version||"—");
     badge.title="Wersja "+version+". Kliknij, aby sprawdzić aktualizacje.";
     badge.addEventListener("click",async()=>{
-      const bridge=window.pywebview?.api;
+      // pywebview wstrzykuje mostek asynchronicznie — daj mu chwilę.
+      const bridge=await waitForBridge();
       if(!bridge?.check_update){
-        error("Sprawdzanie aktualizacji działa w aplikacji okienkowej.");
+        error("Mostek aplikacji nie jest gotowy. Spróbuj ponownie za chwilę.");
         return;
       }
       badge.classList.add("is-checking");badge.textContent="sprawdzam…";

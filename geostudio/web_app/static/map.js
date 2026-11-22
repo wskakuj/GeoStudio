@@ -251,15 +251,18 @@
     badge.title="Wersja "+version+". Kliknij, aby sprawdzić aktualizacje.";
     badge.dataset.version=version;
     badge.addEventListener("click",async()=>{
-      if(!nativeAPI()?.check_update){
-        inform("Sprawdzanie aktualizacji działa w aplikacji okienkowej. "+
-               "Pobierz najnowszą wersję ze strony wydań.",true);
+      // W trybie zakładek edytor jest w ramce, a mostek pywebview siedzi
+      // w oknie nadrzędnym.
+      const bridge=nativeAPI()||
+        (window.parent!==window?window.parent.pywebview?.api:null);
+      if(!bridge?.check_update){
+        inform("Mostek aplikacji nie jest gotowy. Spróbuj ponownie za chwilę.",true);
         return;
       }
       badge.classList.add("is-checking");
       badge.textContent="sprawdzam…";
       try{
-        const info=await nativeAPI().check_update();
+        const info=await bridge.check_update();
         badge.classList.remove("is-checking");
         badge.textContent="v"+(info.current||version);
         if(info.available){
@@ -268,7 +271,7 @@
           if(window.confirm("Dostępna jest nowa wersja: "+info.version+
               "\n(obecnie "+info.current+")\n\nPobrać i zainstalować teraz?")){
             badge.textContent="aktualizuję…";
-            await nativeAPI().install_update();
+            await bridge.install_update();
           }
         }else{
           badge.classList.remove("is-stale");

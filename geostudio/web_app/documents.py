@@ -1,6 +1,9 @@
 """Bounded independent MAP sessions for the classic multi-document editor."""
 from __future__ import annotations
 
+import os
+import threading
+
 from dataclasses import dataclass, field
 from secrets import token_hex
 from threading import RLock
@@ -77,6 +80,24 @@ class DocumentNativeBridge:
         session = self._registry.get(document_id)
         with session.native_lock:
             return getattr(session.native, operation)(*args)
+
+    # Sprawdzanie i instalacja aktualizacji nie zależą od konkretnej mapy,
+    # więc muszą być dostępne także z paska zakładek (bez document_id).
+    def check_update(self) -> dict:
+        from . import updater
+        info = updater.check_for_update()
+        if not info:
+            return {"available": False, "current": updater.current_version()}
+        return {"available": True, **info}
+
+    def install_update(self) -> dict:
+        from . import updater
+        info = updater.check_for_update()
+        if not info or not info.get("assetUrl"):
+            return {"started": False, "reason": "Brak nowszej wersji."}
+        updater.start_update(info["assetUrl"], info["version"])
+        threading.Timer(0.6, lambda: os._exit(0)).start()
+        return {"started": True}
 
 
 class ScopedAttribute:
