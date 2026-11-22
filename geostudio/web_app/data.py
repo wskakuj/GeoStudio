@@ -579,6 +579,7 @@ class PreviewWorkspace:
                     or not isinstance(item["id"],str) or len(item["id"])>80 or item["id"] in ids
                     or not isinstance(item["text"],str) or len(item["text"])>1500
                     or len(item["text"].splitlines())>16
+                    or (item["kind"]=="compartment" and (type(item.get("fontSize",12)) not in (int,float) or not 6<=item.get("fontSize",12)<=72))
                     or not all(type(item[k]) in (float,int) and isfinite(item[k]) and abs(item[k])<1e9
                                for k in ("x","y","w","h"))
                     or min(item["w"],item["h"])<=0):
@@ -595,7 +596,7 @@ class PreviewWorkspace:
                     raise ValueError("Nieprawidłowy zakres tekstu.")
                 st=run.get("style")
                 if (not isinstance(st,dict) or set(st)-{"family","size","bold","italic"}
-                        or st.get("family","Arial") not in ("Arial","Times New Roman","Georgia","Verdana","Courier New")
+                        or st.get("family","Arial") not in ("Arial","Times New Roman","Georgia","Verdana","Courier New","Calibri","Cambria","Tahoma","Trebuchet MS","Palatino Linotype","Garamond","Century Gothic","Franklin Gothic Medium","Book Antiqua")
                         or type(st.get("size",12)) is not int or not 4<=st.get("size",12)<=144
                         or any(type(st[k]) is not bool for k in ("bold","italic") if k in st)):
                     raise ValueError("Nieprawidłowa czcionka.")

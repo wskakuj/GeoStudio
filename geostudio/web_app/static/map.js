@@ -5807,7 +5807,7 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
     const box=canvas.getBoundingClientRect();
     return {x:ev.clientX-box.left,y:ev.clientY-box.top};
   }
-  let pendingSheet=null,selectedSheet=null,sheetDrag=null,sheetSaving=false,sheetSize=1;
+  let pendingSheet=null,selectedSheet=null,sheetDrag=null,sheetSaving=false,sheetSize=1,sheetCursor=null;
   const insertMode=()=>!$("ribbon-panel-insert").hidden;
   function sheetItems(){
     return (state.edit?.sheetItems||[]).map(i=>sheetDrag?.item.id===i.id?sheetDrag.item:i);
@@ -5817,6 +5817,14 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
     $("sheet-edit").disabled=!selected||GeoStudioSheet.signs.includes(selected.kind);
     $("sheet-remove").disabled=!selected;
     GeoStudioSheet.paint(ctx,items,worldToScreen,state.scale,state.edit?.compilationScale||5000,insertMode()?selectedSheet:null);
+    if(insertMode()&&pendingSheet&&sheetCursor){
+      const kind=pendingSheet,[w,h]=GeoStudioSheet.sizes[kind];
+      const z=kind==="compartment"?Number($("sheet-number-size").value)/12:sheetSize;
+      const ghost={id:"__preview__",kind,x:sheetCursor.x,y:sheetCursor.y,
+        w:w*z/state.scale,h:h*z/state.scale,
+        text:kind==="compartment"?$("sheet-number").value||"1":GeoStudioSheet.defaultText(kind,state.meta?.name||"")};
+      GeoStudioSheet.paint(ctx,[ghost],worldToScreen,state.scale,state.edit?.compilationScale||5000);
+    }
   }
   async function saveSheet(items){
     if(sheetSaving||state.editBusy)return;
@@ -5833,8 +5841,20 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
     const placed=numberPlacement;numberPlacement=null;
     if(!placed||$("sheet-number-dialog").returnValue!=="save"||placed.token!==state.edit?.documentToken)return;
     placed.item.text=$("sheet-number").value.trim();
-    if(placed.item.text){placed.item.h=Number($("sheet-number-size").value)/12*GeoStudioSheet.sizes.compartment[1]/state.scale;placed.item.w=GeoStudioSheet.sizes.compartment[0]/GeoStudioSheet.sizes.compartment[1]*placed.item.h;saveSheet([...sheetItems(),placed.item]);}
+    if(placed.item.text){
+      placed.item.fontSize=Number($("sheet-number-size").value);
+      placed.item.h=GeoStudioSheet.sizes.compartment[1]*(placed.item.fontSize/12)/state.scale;
+      placed.item.w=GeoStudioSheet.sizes.compartment[0]/GeoStudioSheet.sizes.compartment[1]*placed.item.h;
+      saveSheet([...sheetItems().filter(i=>i.id!==placed.item.id),placed.item]);
+    }
   });
+  $("sheet-number-size").oninput=()=>requestDraw();
+  $("sheet-number").oninput=()=>requestDraw();
+  canvas.addEventListener("pointermove",ev=>{
+    if(!insertMode()||!pendingSheet)return;
+    const p=eventCoords(ev);sheetCursor=screenToWorld(p.x,p.y);requestDraw();
+  },true);
+  canvas.addEventListener("pointerleave",()=>{sheetCursor=null;requestDraw();},true);
   $("sheet-size-factor").oninput=e=>{sheetSize=Number(e.target.value);$("sheet-size-value").value=Math.round(sheetSize*100)+"%";};
   $("sheet-place-sign").onclick=()=>{
     if(!state.meta)return inform("Najpierw otwórz mapę.",true);
@@ -5857,12 +5877,13 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
     if(pendingSheet){
       const kind=pendingSheet,[w,h]=GeoStudioSheet.sizes[kind];
       const factor=kind==="compartment"?Number($("sheet-number-size").value)/12:sheetSize;
-      const item={id:crypto.randomUUID(),kind,x:world.x,y:world.y,w:w*factor/state.scale,h:h*factor/state.scale,text:GeoStudioSheet.defaultText(kind,state.meta.name)};
+      const size=kind==="compartment"?Number($("sheet-number-size").value):12;
+      const item={id:crypto.randomUUID(),kind,x:world.x,y:world.y,w:w*factor/state.scale,h:h*factor/state.scale,text:GeoStudioSheet.defaultText(kind,state.meta.name),...(kind==="compartment"?{fontSize:size}:{})};
       selectedSheet=item.id;
       if(kind==="compartment"){
         numberPlacement={item,token:state.edit.documentToken};
         $("sheet-number").value=String(1+items.filter(i=>i.kind==="compartment").length);
-        $("sheet-number-size").value=String(Math.max(1,item.h*12));
+        $("sheet-number-size").value=String(item.fontSize||12);
         $("sheet-number-dialog").returnValue="cancel";
         $("sheet-number-dialog").showModal();$("sheet-number").select();return;
       }
@@ -5969,7 +5990,7 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
     requestDraw();
   },true);
   document.addEventListener("keydown",ev=>{
-    if(ev.key==="Escape"&&pendingSheet){pendingSheet=null;inform("Wstawianie zakończone.");requestDraw();return;}
+    if(ev.key==="Escape"&&pendingSheet){pendingSheet=null;sheetCursor=null;inform("Wstawianie zakończone.");requestDraw();return;}
     if((ev.key==="Delete"||ev.key==="Backspace")&&insertMode()&&selectedSheet&&!/INPUT|TEXTAREA|SELECT/.test(document.activeElement?.tagName||"")){
       ev.preventDefault();saveSheet(sheetItems().filter(i=>i.id!==selectedSheet));selectedSheet=null;requestDraw();
     }

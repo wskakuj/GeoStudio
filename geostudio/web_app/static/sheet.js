@@ -16,7 +16,7 @@ window.GeoStudioSheet = (() => {
     const path=(points,fill=null,stroke=ink)=>elements.push({points,fill,stroke});
     const rect=(x,y,w,h,fill=null)=>path([[x,y],[x+w,y],[x+w,y+h],[x,y+h],[x,y]],fill);
     if(signs.includes(item.kind))return [];
-    if(item.kind==="compartment"){label(w/2,h*.74,item.text,h*.7,true);}
+    if(item.kind==="compartment"){label(w/2,h*.74,item.text,12,true);}
     else if(["title","credits"].includes(item.kind)){
       const lines=item.text.split("\n"),title=item.kind==="title";
       if(title){path([[1,1],[w-1,1]]);path([[1,h-1],[w-1,h-1]]);}
@@ -61,7 +61,7 @@ window.GeoStudioSheet = (() => {
     }
     return elements;
   }
-  const families=["Arial","Times New Roman","Georgia","Verdana","Courier New"];
+  const families=["Arial","Times New Roman","Georgia","Verdana","Courier New","Calibri","Cambria","Tahoma","Trebuchet MS","Palatino Linotype","Garamond","Century Gothic","Franklin Gothic Medium","Book Antiqua"];
   const measure=document.createElement("canvas").getContext("2d");
   const fontSpec=s=>(s.italic?"italic ":"")+(s.bold?"bold ":"")+s.size+"px \""+(s.family||"Arial")+"\"";
   function textFor(item,scale){

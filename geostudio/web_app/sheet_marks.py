@@ -8,7 +8,7 @@ def primitives(item):
         # TX is the number. A1 is the native height of the sheet lettering.
         y=-item["y"]-item["h"]/2
         x=item["x"]+item["w"]/2
-        fields={"TX":item["text"],"A1":f'{item["h"]*.7:.3f}'}
+        fields={"TX":item["text"],"A1":str(item.get("fontSize",12))}
         return [("6900",[(y,x-item["w"]/4),(y,x+item["w"]/4)],False,"#111111",fields)]
     parts=[]
     def line(code,color,points,filled=False):
