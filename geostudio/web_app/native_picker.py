@@ -13,6 +13,7 @@ from hashlib import sha256
 import os
 from pathlib import Path
 import tempfile
+import threading
 import re
 from threading import RLock
 
@@ -530,8 +531,8 @@ class NativeMapPicker:
         info = updater.check_for_update()
         if not info or not info.get("assetUrl"):
             return {"started": False, "reason": "Brak nowszej wersji."}
-        installer = updater.download_with_progress(info["assetUrl"], info["version"])
-        updater.launch_installer(installer)
+        updater.start_update(info["assetUrl"], info["version"])
+        threading.Timer(0.6, lambda: os._exit(0)).start()
         return {"started": True}
 
     def save_over_source(self) -> dict:

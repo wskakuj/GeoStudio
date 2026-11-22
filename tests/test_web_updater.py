@@ -82,3 +82,35 @@ def test_launch_installer_refuses_outside_frozen(tmp_path, monkeypatch):
     monkeypatch.setattr(updater, "is_frozen", lambda: False)
     with pytest.raises(RuntimeError):
         updater.launch_installer(tmp_path / "x.exe")
+
+
+def test_update_script_shows_a_progress_window(tmp_path):
+    script = updater.build_update_script(
+        "https://example.com/setup.exe", tmp_path / "setup.exe", "v2.0.5")
+    # Okno WinForms z paskiem postępu i licznikiem MB.
+    assert "System.Windows.Forms.Form" in script
+    assert "ProgressBar" in script
+    assert "DownloadProgressChanged" in script
+    assert "Pobrano" in script and "MB" in script
+    # Adres i plik docelowy trafiają do skryptu jako literały PowerShell.
+    assert "https://example.com/setup.exe" in script
+    assert str(tmp_path / "setup.exe") in script
+    # Po pobraniu uruchamia instalator cicho.
+    assert "/SILENT" in script and "Start-Process" in script
+
+
+def test_update_script_quotes_apostrophes(tmp_path):
+    script = updater.build_update_script(
+        "https://example.com/o'brien.exe", tmp_path / "x.exe", "v2")
+    assert "o''brien.exe" in script
+
+
+def test_start_update_launches_powershell(monkeypatch, tmp_path):
+    calls = []
+    monkeypatch.setattr(updater.subprocess, "Popen",
+                        lambda args, **kwargs: calls.append(args))
+    target = updater.start_update("https://example.com/setup.exe", "v2.0.5")
+    assert target.name == "GeoStudio2-Setup-latest.exe"
+    assert calls and calls[0][0] == "powershell"
+    assert "-STA" in calls[0]
+    assert "https://example.com/setup.exe" in calls[0][-1]

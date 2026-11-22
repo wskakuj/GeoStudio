@@ -165,8 +165,11 @@ def check_updates_on_start(interactive: bool = True) -> None:
     if not interactive or not _ask_update(info):
         return
     try:
-        installer = updater.download_with_progress(info["assetUrl"], info["version"])
-        updater.launch_installer(installer)
+        updater.start_update(info["assetUrl"], info["version"])
+        # Okno pobierania żyje we własnym procesie PowerShell, więc program
+        # może się zamknąć — instalator uruchomi się po pobraniu.
+        time.sleep(0.5)
+        os._exit(0)
     except Exception as exc:
         _say("Aktualizacja nie powiodła się: " + str(exc))
 

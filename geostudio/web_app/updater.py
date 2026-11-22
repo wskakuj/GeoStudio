@@ -44,7 +44,7 @@ def is_newer(latest: str, current: str) -> bool:
 
 # Musi być zgodna z pyproject.toml; używana, gdy metadane pakietu nie są
 # spakowane (PyInstaller kopiuje je przez --copy-metadata geostudio-pl).
-FALLBACK_VERSION = "2.0.4"
+FALLBACK_VERSION = "2.0.5"
 
 
 def current_version() -> str:
@@ -126,43 +126,118 @@ def download_installer(url: str, target: Path | None = None,
     return target
 
 
-def download_with_progress(url: str, version: str = "") -> Path:
-    """Pobiera instalator pokazując okno postępu (używane przy aktualizacji)."""
-    import tkinter as tk
-    from tkinter import ttk
-    root = tk.Tk()
-    root.title("GeoStudio — aktualizacja")
-    root.resizable(False, False)
-    root.attributes("-topmost", True)
-    tk.Label(root, text=("Pobieranie wersji " + (version or "")).strip(),
-             font=("Segoe UI", 11, "bold"), anchor="w", padx=16, pady=(14, 4)
-             ).pack(fill="x")
-    label = tk.Label(root, text="Łączenie z GitHub…", anchor="w", padx=16)
-    label.pack(fill="x")
-    bar = ttk.Progressbar(root, length=360, mode="determinate", maximum=100)
-    bar.pack(padx=16, pady=12)
-    root.update_idletasks()
-    width = root.winfo_reqwidth()
-    root.geometry(f"{max(width, 400)}x{root.winfo_reqheight()}+"
-                  f"{(root.winfo_screenwidth()-400)//2}+"
-                  f"{(root.winfo_screenheight()-200)//2}")
+def _ps_literal(value: str) -> str:
+    return "'" + str(value).replace("'", "''") + "'"
 
-    def on_progress(done: int, total: int) -> None:
-        if total:
-            bar["value"] = min(100, done * 100 / total)
-            label.config(text=f"Pobrano {done/1048576:.1f} z {total/1048576:.1f} MB")
-        else:
-            label.config(text=f"Pobrano {done/1048576:.1f} MB")
-        root.update()
 
-    try:
-        path = download_installer(url, progress=on_progress)
-        bar["value"] = 100
-        label.config(text="Pobrano — uruchamiam instalator…")
-        root.update()
-        return path
-    finally:
-        root.destroy()
+def build_update_script(url: str, target: Path, version: str = "") -> str:
+    """Skrypt PowerShell z oknem postępu (WinForms), jak w FORESTLY.
+
+    Tk w wątku mostka bywa niewidoczne pod pywebview, a PowerShell ma własną
+    pętlę komunikatów i pokazuje normalne okno Windows.
+    """
+    label = ("Pobieranie wersji " + version).strip()
+    return f"""
+Add-Type -AssemblyName System.Windows.Forms
+Add-Type -AssemblyName System.Drawing
+
+$form = New-Object System.Windows.Forms.Form
+$form.Text = 'GeoStudio 2.0 — aktualizacja'
+$form.ClientSize = New-Object System.Drawing.Size(460, 140)
+$form.StartPosition = 'CenterScreen'
+$form.TopMost = $true
+$form.FormBorderStyle = 'FixedDialog'
+$form.MaximizeBox = $false
+$form.MinimizeBox = $false
+
+$title = New-Object System.Windows.Forms.Label
+$title.Text = {_ps_literal(label)}
+$title.Font = New-Object System.Drawing.Font('Segoe UI', 10, [System.Drawing.FontStyle]::Bold)
+$title.SetBounds(16, 14, 420, 22)
+$form.Controls.Add($title)
+
+$bar = New-Object System.Windows.Forms.ProgressBar
+$bar.SetBounds(16, 44, 420, 22)
+$bar.Minimum = 0
+$bar.Maximum = 100
+$form.Controls.Add($bar)
+
+$status = New-Object System.Windows.Forms.Label
+$status.Text = 'Łączenie z GitHub…'
+$status.SetBounds(16, 74, 420, 20)
+$form.Controls.Add($status)
+
+$form.Show()
+$form.Refresh()
+[System.Windows.Forms.Application]::DoEvents()
+
+$target = {_ps_literal(str(target))}
+$url = {_ps_literal(url)}
+$script:done = $false
+$script:failed = $null
+
+try {{
+    $request = [System.Net.HttpWebRequest]::Create($url)
+    $request.UserAgent = 'GeoStudio-Updater'
+    $response = $request.GetResponse()
+    $total = $response.ContentLength
+    $response.Close()
+
+    $client = New-Object System.Net.WebClient
+    $client.Headers.Add('User-Agent', 'GeoStudio-Updater')
+    Register-ObjectEvent -InputObject $client -EventName DownloadProgressChanged -Action {{
+        $received = $Event.SourceEventArgs.BytesReceived
+        if ($total -gt 0) {{
+            $value = [int](100 * $received / $total)
+            if ($value -gt 100) {{ $value = 100 }}
+            $bar.Value = $value
+            $status.Text = ('Pobrano {{0:N1}} z {{1:N1}} MB' -f ($received / 1MB), ($total / 1MB))
+        }} else {{
+            $status.Text = ('Pobrano {{0:N1}} MB' -f ($received / 1MB))
+        }}
+        $form.Refresh()
+    }} | Out-Null
+    Register-ObjectEvent -InputObject $client -EventName DownloadFileCompleted -Action {{
+        $script:done = $true
+        if ($Event.SourceEventArgs.Error) {{ $script:failed = $Event.SourceEventArgs.Error.Message }}
+    }} | Out-Null
+
+    $client.DownloadFileAsync([Uri]$url, $target)
+    while (-not $script:done) {{
+        [System.Windows.Forms.Application]::DoEvents()
+        Start-Sleep -Milliseconds 60
+    }}
+    if ($script:failed) {{ throw $script:failed }}
+
+    $bar.Value = 100
+    $status.Text = 'Pobrano — uruchamiam instalator…'
+    $form.Refresh()
+    Start-Sleep -Milliseconds 500
+    $form.Close()
+
+    Start-Process -FilePath $target -ArgumentList '/SILENT', '/CLOSEAPPLICATIONS', '/NORESTART'
+}} catch {{
+    $form.Close()
+    [System.Windows.Forms.MessageBox]::Show("Nie udało się pobrać aktualizacji:`n$_", 'GeoStudio 2.0') | Out-Null
+    exit 1
+}}
+"""
+
+
+def start_update(url: str, version: str = "",
+                 installer_name: str = "GeoStudio2-Setup-latest.exe") -> Path:
+    """Uruchamia okno pobierania (PowerShell) i zwraca ścieżkę instalatora."""
+    if not url:
+        raise ValueError("Brak adresu instalatora w wydaniu.")
+    target = Path(tempfile.gettempdir()) / installer_name
+    script = build_update_script(url, target, version)
+    creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+    subprocess.Popen(
+        ["powershell", "-NoProfile", "-STA", "-ExecutionPolicy", "Bypass",
+         "-Command", script],
+        close_fds=True, creationflags=creationflags,
+    )
+    return target
 
 
 def is_frozen() -> bool:
