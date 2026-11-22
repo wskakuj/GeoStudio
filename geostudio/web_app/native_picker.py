@@ -691,6 +691,13 @@ class NativeMapPicker:
             save_last_map_directory(self._settings,chosen.parent)
         except OSError:
             pass
+        # The work is on disk now, so the crash-recovery snapshot of the
+        # source map is stale: drop it instead of leaving megabytes behind.
+        if self._source_path is not None:
+            try:
+                self._recovery_store().discard(self._source_path)
+            except (OSError, ValueError):
+                pass
         return {"cancelled": False, "path": str(chosen),
                 "bytes": len(content), "nativeCutouts": burn_cutouts,
                 "topologyPath":str(companion) if overlay_bytes else None,
