@@ -5809,6 +5809,8 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
   }
   let pendingSheet=null,selectedSheet=null,sheetDrag=null,sheetSaving=false,sheetSize=1,sheetCursor=null;
   const insertMode=()=>!$("ribbon-panel-insert").hidden;
+  const singleSheetKinds=new Set(["title","credits","compass","symbols","species"]);
+  function sheetWorldPerPixel(){return (state.edit?.compilationScale||5000)/3779.527559;}
   function sheetItems(){
     return (state.edit?.sheetItems||[]).map(i=>sheetDrag?.item.id===i.id?sheetDrag.item:i);
   }
@@ -5821,9 +5823,9 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
       const kind=pendingSheet,[w,h]=GeoStudioSheet.sizes[kind];
       const z=kind==="compartment"?Number($("sheet-number-size").value)/12:sheetSize;
       const ghost={id:"__preview__",kind,x:sheetCursor.x,y:sheetCursor.y,
-        w:w*z/state.scale,h:h*z/state.scale,
+        w:w*z*sheetWorldPerPixel(),h:h*z*sheetWorldPerPixel(),
         text:kind==="compartment"?$("sheet-number").value||"1":GeoStudioSheet.defaultText(kind,state.meta?.name||"")};
-      GeoStudioSheet.paint(ctx,[ghost],worldToScreen,state.scale,state.edit?.compilationScale||5000);
+      GeoStudioSheet.paint(labelCtx,[ghost],worldToScreen,state.scale,state.edit?.compilationScale||5000);
     }
   }
   async function saveSheet(items){
@@ -5843,8 +5845,8 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
     placed.item.text=$("sheet-number").value.trim();
     if(placed.item.text){
       placed.item.fontSize=Number($("sheet-number-size").value);
-      placed.item.h=GeoStudioSheet.sizes.compartment[1]*(placed.item.fontSize/12)/state.scale;
-      placed.item.w=GeoStudioSheet.sizes.compartment[0]/GeoStudioSheet.sizes.compartment[1]*placed.item.h;
+      placed.item.h=GeoStudioSheet.sizes.compartment[1]*(placed.item.fontSize/12)*sheetWorldPerPixel();
+      placed.item.w=GeoStudioSheet.sizes.compartment[0]*sheetWorldPerPixel()*(placed.item.fontSize/12);
       saveSheet([...sheetItems().filter(i=>i.id!==placed.item.id),placed.item]);
     }
   });
@@ -5862,10 +5864,15 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
   };
   for(const btn of document.querySelectorAll("[data-sheet]"))btn.addEventListener("click",()=>{
     if(!state.meta)return inform("Najpierw otwórz mapę.",true);
-    pendingSheet=btn.dataset.sheet;inform("Klikaj mapę, aby wstawiać kolejne elementy. Naciśnij Esc, aby zakończyć.");
+    const kind=btn.dataset.sheet;
+    if(singleSheetKinds.has(kind)){
+      const existing=sheetItems().find(item=>item.kind===kind);
+      if(existing){selectedSheet=existing.id;pendingSheet=null;requestDraw();inform("Ten element już jest na mapie. Przeciągnij go, aby zmienić położenie.");return;}
+    }
+    pendingSheet=kind;inform("Kliknij mapę, aby umieścić element.");
   });
   canvas.addEventListener("pointerdown",ev=>{
-    if(!insertMode()||!state.meta||ev.button!==0)return;
+    if(!(insertMode()||state.tool==="select")||!state.meta||ev.button!==0)return;
     const p=eventCoords(ev),world=screenToWorld(p.x,p.y),items=sheetItems();
     const hit=items.slice().reverse().find(i=>{
       const a=worldToScreen(i.x,i.y);
@@ -5878,7 +5885,7 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
       const kind=pendingSheet,[w,h]=GeoStudioSheet.sizes[kind];
       const factor=kind==="compartment"?Number($("sheet-number-size").value)/12:sheetSize;
       const size=kind==="compartment"?Number($("sheet-number-size").value):12;
-      const item={id:crypto.randomUUID(),kind,x:world.x,y:world.y,w:w*factor/state.scale,h:h*factor/state.scale,text:GeoStudioSheet.defaultText(kind,state.meta.name),...(kind==="compartment"?{fontSize:size}:{})};
+      const item={id:crypto.randomUUID(),kind,x:world.x,y:world.y,w:w*factor*sheetWorldPerPixel(),h:h*factor*sheetWorldPerPixel(),text:GeoStudioSheet.defaultText(kind,state.meta.name),...(kind==="compartment"?{fontSize:size}:{})};
       selectedSheet=item.id;
       if(kind==="compartment"){
         numberPlacement={item,token:state.edit.documentToken};
@@ -5977,21 +5984,21 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
     fontDraft=null;
   });
   canvas.addEventListener("dblclick",ev=>{
-    if(!insertMode()||!state.meta)return;
+    if(!(insertMode()||state.tool==="select")||!state.meta)return;
     const p=eventCoords(ev),w=screenToWorld(p.x,p.y),items=sheetItems();
     const item=items.slice().reverse().find(i=>{const a=worldToScreen(i.x,i.y);return p.x>=a.x&&p.y>=a.y&&p.x<=a.x+i.w*state.scale&&p.y<=a.y+i.h*state.scale;});
     if(!item)return;
     ev.preventDefault();ev.stopImmediatePropagation();selectedSheet=item.id;pendingSheet=null;
     if(item.kind==="compartment"){
       numberPlacement={item:{...item},token:state.edit.documentToken,editing:true};
-      $("sheet-number").value=item.text;$("sheet-number-size").value=String(Math.max(1,item.h*12*state.scale/GeoStudioSheet.sizes.compartment[1]));
+      $("sheet-number").value=item.text;$("sheet-number-size").value=String(Math.max(6,Math.min(72,item.h*12/(GeoStudioSheet.sizes.compartment[1]*sheetWorldPerPixel()))));
       $("sheet-number-dialog").returnValue="cancel";$("sheet-number-dialog").showModal();$("sheet-number").select();
     }else if(["title","credits"].includes(item.kind))$("sheet-edit").click();
     requestDraw();
   },true);
   document.addEventListener("keydown",ev=>{
     if(ev.key==="Escape"&&pendingSheet){pendingSheet=null;sheetCursor=null;inform("Wstawianie zakończone.");requestDraw();return;}
-    if((ev.key==="Delete"||ev.key==="Backspace")&&insertMode()&&selectedSheet&&!/INPUT|TEXTAREA|SELECT/.test(document.activeElement?.tagName||"")){
+    if((ev.key==="Delete"||ev.key==="Backspace")&&(insertMode()||state.tool==="select")&&selectedSheet&&!/INPUT|TEXTAREA|SELECT/.test(document.activeElement?.tagName||"")){
       ev.preventDefault();saveSheet(sheetItems().filter(i=>i.id!==selectedSheet));selectedSheet=null;requestDraw();
     }
   },true);
