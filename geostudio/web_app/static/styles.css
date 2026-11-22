@@ -2031,3 +2031,13 @@ body[data-theme="dark"] #raster-summary[data-result="ready"] { background:#12392
 body[data-theme="dark"] #raster-summary[data-result="ready"] strong { color:#93e8af; }
 
 #trace-raster-choice { max-width:14em; align-self:center; }
+
+/* Wersja programu pod nazwą: zielona = aktualna, żółta = dostępna aktualizacja. */
+.version-badge{
+  margin-top:2px;align-self:flex-start;font:600 10.5px/1 ui-monospace,monospace;
+  padding:3px 7px;border-radius:999px;border:1px solid currentColor;cursor:pointer;
+  background:transparent;color:#2f9e6b;
+}
+.version-badge:hover{filter:brightness(1.15)}
+.version-badge.is-stale{color:#c58a1a}
+.version-badge.is-checking{color:#6b7c8f}

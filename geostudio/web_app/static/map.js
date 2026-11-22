@@ -25,7 +25,17 @@
     const bridge=window.parent.pywebview?.api;
     if(typeof bridge?.document_call!=="function")return null;
     return Object.fromEntries(scopedMethods.map(name=>[
-      name,async(...args)=>{nativePending++;try{return await bridge.document_call(documentId,name,args);}finally{nativePending--;}}
+      name,async(...args)=>{
+        nativePending++;
+        try{
+          // Wywołanie mostka, które nigdy się nie rozstrzygnie, blokowałoby
+          // zamykanie zakładki („Poczekaj na zakończenie operacji”).
+          const call=bridge.document_call(documentId,name,args);
+          const guard=new Promise((_,reject)=>setTimeout(
+            ()=>reject(new Error("Mostek natywny nie odpowiedział w 120 s.")),120000));
+          return await Promise.race([call,guard]);
+        }finally{nativePending--;}
+      }
     ]));
   };
   let pickerBusy=false,newDocumentOnFile=false,nativePending=0;
@@ -232,12 +242,56 @@
     return {documentToken:state.edit?.documentToken,
             revision:state.edit?.revision};
   }
+  async function initVersionBadge(){
+    const badge=$("app-version");
+    if(!badge)return;
+    let version="";
+    try{ version=(await api("/api/version")).version||""; }catch(_){}
+    badge.textContent="v"+(version||"—");
+    badge.title="Wersja "+version+". Kliknij, aby sprawdzić aktualizacje.";
+    badge.dataset.version=version;
+    badge.addEventListener("click",async()=>{
+      if(!nativeAPI()?.check_update){
+        inform("Sprawdzanie aktualizacji działa w aplikacji okienkowej. "+
+               "Pobierz najnowszą wersję ze strony wydań.",true);
+        return;
+      }
+      badge.classList.add("is-checking");
+      badge.textContent="sprawdzam…";
+      try{
+        const info=await nativeAPI().check_update();
+        badge.classList.remove("is-checking");
+        badge.textContent="v"+(info.current||version);
+        if(info.available){
+          badge.classList.add("is-stale");
+          badge.title="Dostępna wersja "+info.version+". Kliknij, aby zainstalować.";
+          if(window.confirm("Dostępna jest nowa wersja: "+info.version+
+              "\n(obecnie "+info.current+")\n\nPobrać i zainstalować teraz?")){
+            badge.textContent="aktualizuję…";
+            await nativeAPI().install_update();
+          }
+        }else{
+          badge.classList.remove("is-stale");
+          badge.title="Wersja "+info.current+" jest aktualna.";
+          inform("Program jest aktualny (v"+info.current+").");
+        }
+      }catch(error){
+        badge.classList.remove("is-checking");
+        badge.textContent="v"+(version||"—");
+        inform("Nie udało się sprawdzić aktualizacji: "+(error.message||error),true);
+      }
+    });
+  }
   function editorStatus(){
     return {name:state.meta?.name||"Nowa mapa",loaded:!!state.meta,
       dirty:!!state.edit?.dirty,theme:state.appTheme,
       busy:pickerBusy||nativePending>0||state.editBusy||recoveryBusy||state.auditBusy||
         !$("loading-overlay").hidden||
-        !!document.querySelector("dialog[open]")};
+        !!document.querySelector("dialog[open]"),
+      busyReasons:{pickerBusy,nativePending,editBusy:!!state.editBusy,
+        recoveryBusy,auditBusy:!!state.auditBusy,
+        overlay:!$("loading-overlay").hidden,
+        dialog:(document.querySelector("dialog[open]")||{}).id||""}};
   }
   function notifyHost(){
     host()?.status(documentId,editorStatus());
@@ -337,6 +391,7 @@
       updateEditState(response);
       if(response.changed) {
         await refreshEditedDocument(state.active);
+        notifyHost();
         inform(direction==="undo"?"Cofnięto zmianę w kopii.":"Ponowiono zmianę w kopii.");
       }
     }catch(error){
@@ -5838,9 +5893,10 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
     return {x:ev.clientX-box.left,y:ev.clientY-box.top};
   }
   let pendingSheet=null,selectedSheet=null,sheetDrag=null,sheetSaving=false,sheetSize=1,sheetCursor=null;
-  let sheetAngle=0;
+  let sheetRotate=null;
   const rotatableSigns=new Set(["clearcut","marsh","power","gas"]);
   const insertMode=()=>!$("ribbon-panel-insert").hidden;
+
   const singleSheetKinds=new Set(["title","credits","compass","symbols","species"]);
   function sheetWorldPerPixel(){return (state.edit?.compilationScale||5000)/3779.527559;}
   function sheetItems(){
@@ -5851,14 +5907,28 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
     $("sheet-edit").disabled=!selected||GeoStudioSheet.signs.includes(selected.kind);
     $("sheet-remove").disabled=!selected;
     GeoStudioSheet.paint(ctx,items,worldToScreen,state.scale,state.edit?.compilationScale||5000,insertMode()?selectedSheet:null);
+    if(selected&&rotatableSigns.has(selected.kind)){
+      const h=rotateHandlePos(selected);
+      ctx.save();ctx.strokeStyle="#2664db";ctx.fillStyle="#fff";ctx.lineWidth=1.5;
+      ctx.beginPath();ctx.moveTo(h.centre.x,h.centre.y);ctx.lineTo(h.x,h.y);ctx.stroke();
+      ctx.beginPath();ctx.arc(h.x,h.y,7,0,Math.PI*2);ctx.fill();ctx.stroke();
+      ctx.beginPath();ctx.arc(h.x,h.y,3,0,Math.PI*2);ctx.fillStyle="#2664db";ctx.fill();
+      ctx.restore();
+    }
     if(insertMode()&&pendingSheet&&sheetCursor){
       const kind=pendingSheet,[w,h]=GeoStudioSheet.sizes[kind];
       const z=kind==="compartment"?Number($("sheet-number-size").value)/12:sheetSize;
       const ghost={id:"__preview__",kind,x:sheetCursor.x,y:sheetCursor.y,
         w:w*z*sheetWorldPerPixel(),h:h*z*sheetWorldPerPixel(),
         text:kind==="compartment"?$("sheet-number").value||"1":GeoStudioSheet.defaultText(kind,state.meta?.name||"")};
-      if(rotatableSigns.has(kind)&&sheetAngle)ghost.angle=sheetAngle;
+
+      labelCtx.save();labelCtx.globalAlpha=.72;
       GeoStudioSheet.paint(labelCtx,[ghost],worldToScreen,state.scale,state.edit?.compilationScale||5000);
+      const a=worldToScreen(ghost.x,ghost.y);
+      labelCtx.globalAlpha=.9;labelCtx.strokeStyle="#008c80";labelCtx.lineWidth=1;
+      labelCtx.setLineDash([4,3]);
+      labelCtx.strokeRect(a.x,a.y,ghost.w*state.scale,ghost.h*state.scale);
+      labelCtx.restore();
     }
   }
   async function saveSheet(items){
@@ -5891,30 +5961,26 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
   },true);
   canvas.addEventListener("pointerleave",()=>{sheetCursor=null;requestDraw();},true);
   $("sheet-size-factor").oninput=e=>{sheetSize=Number(e.target.value);$("sheet-size-value").value=Math.round(sheetSize*100)+"%";};
-  function setSheetAngle(value, save){
-    sheetAngle=Math.round(Number(value)||0);
-    $("sheet-angle").value=String(sheetAngle);
-    $("sheet-angle-value").value=sheetAngle+"°";
-    const chosen=sheetItems().find(i=>i.id===selectedSheet);
-    if(save&&chosen&&rotatableSigns.has(chosen.kind)&&chosen.angle!==sheetAngle){
-      const updated={...chosen};
-      if(sheetAngle)updated.angle=sheetAngle;else delete updated.angle;
-      saveSheet(sheetItems().map(i=>i.id===updated.id?updated:i));
-      return;
-    }
-    requestDraw();
+  // Uchwyt obrotu nad zaznaczonym znakiem: pozycja w ekranie.
+  function rotateHandlePos(item){
+    const centre=worldToScreen(item.x+item.w/2,item.y+item.h/2);
+    const rad=Number(item.angle||0)*Math.PI/180;
+    const radius=Math.max(28,Math.max(item.w,item.h)*state.scale/2+22);
+    return {x:centre.x+Math.sin(rad)*radius,y:centre.y-Math.cos(rad)*radius,centre,radius};
   }
-  $("sheet-angle").oninput=e=>setSheetAngle(e.target.value,false);
-  $("sheet-angle").onchange=e=>setSheetAngle(e.target.value,true);
+  function hitRotateHandle(item,p){
+    if(!item||!rotatableSigns.has(item.kind))return false;
+    const h=rotateHandlePos(item);
+    return Math.hypot(p.x-h.x,p.y-h.y)<=11;
+  }
   $("sheet-sign").addEventListener("change",()=>{
     const kind=$("sheet-sign").value;
-    $("sheet-angle").disabled=!rotatableSigns.has(kind);
-    if(!rotatableSigns.has(kind))setSheetAngle(0,false);
+
   });
   $("sheet-place-sign").onclick=()=>{
     if(!state.meta)return inform("Najpierw otwórz mapę.",true);
     pendingSheet=$("sheet-sign").value;
-    $("sheet-angle").disabled=!rotatableSigns.has(pendingSheet);inform("Klikaj mapę, aby wstawiać kolejne oznaczenia. Naciśnij Esc lub wybierz inne narzędzie, aby zakończyć.");
+inform("Klikaj mapę, aby wstawiać kolejne oznaczenia. Naciśnij Esc lub wybierz inne narzędzie, aby zakończyć.");
   };
   for(const btn of document.querySelectorAll("[data-sheet]"))btn.addEventListener("click",()=>{
     if(!state.meta)return inform("Najpierw otwórz mapę.",true);
@@ -5928,6 +5994,12 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
   canvas.addEventListener("pointerdown",ev=>{
     if(!(insertMode()||state.tool==="select")||!state.meta||ev.button!==0)return;
     const p=eventCoords(ev),world=screenToWorld(p.x,p.y),items=sheetItems();
+    const active=items.find(i=>i.id===selectedSheet);
+    if(active&&hitRotateHandle(active,p)){
+      ev.stopImmediatePropagation();ev.preventDefault();
+      sheetRotate={id:ev.pointerId,token:state.edit?.documentToken,item:{...active}};
+      canvas.setPointerCapture(ev.pointerId);return;
+    }
     const hit=items.slice().reverse().find(i=>{
       const a=worldToScreen(i.x,i.y);
       return p.x>=a.x-5&&p.y>=a.y-5&&p.x<=a.x+i.w*state.scale+6&&p.y<=a.y+i.h*state.scale+6;
@@ -5939,7 +6011,7 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
       const kind=pendingSheet,[w,h]=GeoStudioSheet.sizes[kind];
       const factor=kind==="compartment"?Number($("sheet-number-size").value)/12:sheetSize;
       const size=kind==="compartment"?Number($("sheet-number-size").value):12;
-      const item={id:crypto.randomUUID(),kind,x:world.x,y:world.y,w:w*factor*sheetWorldPerPixel(),h:h*factor*sheetWorldPerPixel(),text:GeoStudioSheet.defaultText(kind,state.meta.name),...(kind==="compartment"?{fontSize:size}:{}),...(rotatableSigns.has(kind)&&sheetAngle?{angle:sheetAngle}:{})};
+      const item={id:crypto.randomUUID(),kind,x:world.x,y:world.y,w:w*factor*sheetWorldPerPixel(),h:h*factor*sheetWorldPerPixel(),text:GeoStudioSheet.defaultText(kind,state.meta.name),...(kind==="compartment"?{fontSize:size}:{})};
       selectedSheet=item.id;
       if(kind==="compartment"){
         numberPlacement={item,token:state.edit.documentToken};
@@ -5952,12 +6024,24 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
       inform("Klikaj dalej, aby wstawić następne. Esc kończy wstawianie.");return;
     }
     selectedSheet=hit.id;
-    if(rotatableSigns.has(hit.kind))setSheetAngle(hit.angle||0,false);
     const corner=worldToScreen(hit.x+hit.w,hit.y+hit.h);
     sheetDrag={id:ev.pointerId,token:state.edit.documentToken,start:world,base:hit,item:{...hit},resize:Math.hypot(corner.x-p.x,corner.y-p.y)<12};
     canvas.setPointerCapture(ev.pointerId);requestDraw();
   },true);
   canvas.addEventListener("pointermove",ev=>{
+    if(sheetRotate?.id===ev.pointerId){
+      ev.stopImmediatePropagation();
+      const p=eventCoords(ev),item=sheetRotate.item;
+      const centre=worldToScreen(item.x+item.w/2,item.y+item.h/2);
+      const deg=Math.atan2(p.x-centre.x,-(p.y-centre.y))*180/Math.PI;
+      const snapped=ev.shiftKey?Math.round(deg/15)*15:Math.round(deg);
+      const updated={...item,angle:((snapped+180)%360+360)%360-180};
+      sheetRotate.item=updated;
+      const live=sheetItems().map(i=>i.id===updated.id?updated:i);
+      GeoStudioSheet.paint(ctx,live,worldToScreen,state.scale,state.edit?.compilationScale||5000,selectedSheet);
+      requestDraw();
+      return;
+    }
     if(sheetDrag?.id!==ev.pointerId)return;
     ev.stopImmediatePropagation();
     const p=eventCoords(ev),w=screenToWorld(p.x,p.y),d=sheetDrag;
@@ -5971,6 +6055,14 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
     requestDraw();
   },true);
   for(const event of ["pointerup","pointercancel"])canvas.addEventListener(event,ev=>{
+    if(sheetRotate?.id===ev.pointerId){
+      ev.stopImmediatePropagation();
+      const r=sheetRotate;sheetRotate=null;
+      if(event==="pointerup"&&r.token===state.edit?.documentToken)
+        saveSheet(sheetItems().map(i=>i.id===r.item.id?r.item:i));
+      requestDraw();
+      return;
+    }
     if(sheetDrag?.id!==ev.pointerId)return;
     ev.stopImmediatePropagation();const d=sheetDrag;sheetDrag=null;
     if(event==="pointerup"&&d.token===state.edit?.documentToken&&JSON.stringify(d.base)!==JSON.stringify(d.item))
@@ -6808,4 +6900,5 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
       renderLayers();fitToMap();restoreCalibrations();
     }
   }).catch(err=>inform("Błąd lokalnej usługi: "+err.message,true)).finally(notifyHost);
+  initVersionBadge();
 })();
