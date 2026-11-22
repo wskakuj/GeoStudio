@@ -744,6 +744,7 @@ class PreviewWorkspace:
             "hasVisualStyles":bool(
                 self._label_positions or self._visual_user_styles()),
             "compilationScale":self._current_compilation_scale(),
+            "sheetGroups":dict(self._styles.get("cartography:sheet",{}).get("groups",{})),
             "sourceCompilationScale":self._source_compilation_scale,
         }
 

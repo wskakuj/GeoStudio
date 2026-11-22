@@ -1251,6 +1251,11 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
     inform("Odznaczono wszystkie obiekty.");
     requestDraw();
   }
+  async function refreshSheetGroupSelection(group){
+    const kind=group.itemId;
+    $("map-status").textContent="Znak z arkusza · "+group.members.length+" elementów";
+    inform("Zaznaczono cały znak ("+group.members.length+" elementów). Przesuń go narzędziem „Przesuń obiekt”.");
+  }
   function selectedObjectIds() {
     const ids=new Set(state.pinned);
     if(state.active)ids.add(state.active);
@@ -5776,7 +5781,34 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
           (selection.values().next().value||null)):fid;
       selectFeature(next);
   }
+  // Znak wstawiony z arkusza składa się z kilku obiektów MAP; kliknięcie
+  // w dowolny z nich zaznacza cały znak, żeby dało się go przesunąć razem.
+  function groupMembersOf(fid){
+    const groups=state.edit?.sheetGroups||{};
+    const feature=state.byId.get(fid);
+    const uid=feature?.uid||feature?.sourceUid;
+    if(!uid)return null;
+    for(const [itemId,uids] of Object.entries(groups)){
+      if(Array.isArray(uids)&&uids.includes(uid)){
+        const members=state.features.filter(f=>uids.includes(f.uid||f.sourceUid)).map(f=>f.id);
+        return members.length?{itemId,members}:null;
+      }
+    }
+    return null;
+  }
   async function selectFeature(fid) {
+    if(fid!==null){
+      const group=groupMembersOf(fid);
+      if(group&&group.members.length>1){
+        state.active=fid;state.detail=null;state.selectedVertex=null;
+        state.pinned=new Set(group.members.filter(id=>id!==fid));
+        state.sheetGroup={itemId:group.itemId,members:group.members};
+        updateDeleteNodeButton();updateSelectionCount();requestDraw();
+        await refreshSheetGroupSelection(group);
+        return;
+      }
+      state.sheetGroup=null;
+    }
     if(state.active!==fid)state.selectedVertex=null;
     state.active=fid;state.detail=null;updateDeleteNodeButton();updateInspector();
     updateSelectionCount();requestDraw();
@@ -6054,6 +6086,26 @@ inform("Klikaj mapę, aby wstawiać kolejne oznaczenia. Naciśnij Esc lub wybier
     const corner=worldToScreen(hit.x+hit.w,hit.y+hit.h);
     sheetDrag={id:ev.pointerId,token:state.edit.documentToken,start:world,base:hit,item:{...hit},resize:Math.hypot(corner.x-p.x,corner.y-p.y)<12};
     canvas.setPointerCapture(ev.pointerId);requestDraw();
+  },true);
+  window.addEventListener("pointermove",ev=>{
+    if(sheetRotate?.id!==ev.pointerId)return;
+    ev.preventDefault();ev.stopPropagation();
+    const p=eventCoords(ev),item=sheetRotate.item;
+    const centre=worldToScreen(item.x+item.w/2,item.y+item.h/2);
+    const deg=Math.atan2(p.x-centre.x,-(p.y-centre.y))*180/Math.PI;
+    const snapped=ev.shiftKey?Math.round(deg/15)*15:Math.round(deg);
+    const updated={...item,angle:((snapped+180)%360+360)%360-180};
+    sheetRotate.item=updated;
+    GeoStudioSheet.paint(ctx,sheetItems().map(i=>i.id===updated.id?updated:i),
+      worldToScreen,state.scale,state.edit?.compilationScale||5000,selectedSheet);
+    requestDraw();
+  },true);
+  window.addEventListener("pointerup",ev=>{
+    if(sheetRotate?.id!==ev.pointerId)return;
+    const r=sheetRotate;sheetRotate=null;
+    if(r.token===state.edit?.documentToken)
+      saveSheet(sheetItems().map(i=>i.id===r.item.id?r.item:i));
+    requestDraw();
   },true);
   canvas.addEventListener("pointermove",ev=>{
     if(sheetRotate?.id===ev.pointerId){
