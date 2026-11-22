@@ -74,3 +74,22 @@ def test_save_map_overwrites_existing_pair_after_confirmation(tmp_path, monkeypa
     assert result.get("cancelled") is not True
     assert target.is_file()
     assert target.read_bytes() != _map_bytes() or True  # nadpisane bez błędu
+
+
+def test_saving_a_copy_clears_the_recovery_snapshot(tmp_path, monkeypatch):
+    """Po zapisie kopii migawka odzyskiwania źródła nie jest już potrzebna."""
+    picker, ws, source = _picker(tmp_path, monkeypatch)
+    status = ws.editing_status()
+    ws.edit_fields("f0", {"A1": "888"}, document_token=status["documentToken"],
+                   revision=status["revision"])
+    store = picker._recovery_store()
+    picker.save_recovery()
+    assert store.candidate(source, picker._source_sha) is not None
+
+    target = tmp_path / "kopia.MAP"
+    monkeypatch.setattr(np, "_ask_save_as", lambda directory, initialfile: str(target))
+    picker._save_map(burn_cutouts=False)
+
+    assert store.candidate(source, picker._source_sha) is None, "migawka ma zniknąć"
+    leftovers = list((tmp_path / "recovery").glob("*")) if (tmp_path / "recovery").exists() else []
+    assert leftovers == [], leftovers
