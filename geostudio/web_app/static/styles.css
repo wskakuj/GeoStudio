@@ -2041,3 +2041,10 @@ body[data-theme="dark"] #raster-summary[data-result="ready"] strong { color:#93e
 .version-badge:hover{filter:brightness(1.15)}
 .version-badge.is-stale{color:#c58a1a}
 .version-badge.is-checking{color:#6b7c8f}
+
+/* Stan pobierania warstw WMS: zielono = OK, czerwono = błąd. */
+#underlay-layers.is-ok{border-color:#2f9e6b;color:#2f9e6b}
+#underlay-layers.is-error{border-color:#d9534f;color:#d9534f}
+#underlay-layers.is-busy{opacity:.75}
+#underlay-summary.is-ok{color:#2f9e6b}
+#underlay-summary.is-error{color:#d9534f}
