@@ -140,7 +140,7 @@
 <option value="boundary">Granice lasów · 5200</option>
 <option value="path">Ścieżki · 4588</option>
 <option value="shared">Współwłasność z ALP · 5219</option>
-</select><button type="button" id="sheet-place-sign" class="tool-button">Wstaw znak</button></div></div>
+</select><label>Wielkość <input type="range" id="sheet-size-factor" min="0.5" max="3" step="0.1" value="1"><output id="sheet-size-value">100%</output></label><button type="button" id="sheet-place-sign" class="tool-button">Wstawiaj znak</button></div></div>
   <div class="ribbon-group"><div class="section-label">Wybrany element</div><div class="tool-row">
     <button type="button" class="tool-button" id="sheet-edit" disabled>Tekst i czcionka</button>
     <button type="button" class="tool-button" id="sheet-remove" disabled>Usuń</button>
@@ -928,7 +928,7 @@
   </dialog>
 <dialog id="sheet-number-dialog" class="advanced-select-dialog bulk-dialog"><form method="dialog">
 <div class="dialog-head"><h2>Numer oddziału</h2></div>
-<label>Numer <input id="sheet-number" maxlength="24" required autocomplete="off"></label>
+<label>Numer <input id="sheet-number" maxlength="24" required autocomplete="off"></label><label>Wysokość tekstu <input id="sheet-number-size" type="number" min="1" max="2000" step="0.5" value="12"></label>
 <div class="dialog-actions"><button type="button" id="sheet-number-cancel" class="button ghost">Anuluj</button><button value="save" class="button primary">Wstaw 6900</button></div></form></dialog>
 <dialog id="sheet-text-dialog" class="advanced-select-dialog"><form method="dialog"><label>Tekst na mapie<br><textarea id="sheet-lines" rows="10" cols="46" maxlength="1500"></textarea></label><p>Formatowanie obejmie zaznaczony tekst. Bez zaznaczenia obejmie cały element.</p>
 <div class="tool-row"><label>Krój <select id="sheet-font"><option value="">Wybierz</option><option>Arial</option><option>Times New Roman</option><option>Georgia</option><option>Verdana</option><option>Courier New</option></select></label>

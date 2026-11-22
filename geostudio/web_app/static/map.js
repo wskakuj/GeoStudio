@@ -5807,7 +5807,7 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
     const box=canvas.getBoundingClientRect();
     return {x:ev.clientX-box.left,y:ev.clientY-box.top};
   }
-  let pendingSheet=null,selectedSheet=null,sheetDrag=null,sheetSaving=false;
+  let pendingSheet=null,selectedSheet=null,sheetDrag=null,sheetSaving=false,sheetSize=1;
   const insertMode=()=>!$("ribbon-panel-insert").hidden;
   function sheetItems(){
     return (state.edit?.sheetItems||[]).map(i=>sheetDrag?.item.id===i.id?sheetDrag.item:i);
@@ -5833,15 +5833,16 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
     const placed=numberPlacement;numberPlacement=null;
     if(!placed||$("sheet-number-dialog").returnValue!=="save"||placed.token!==state.edit?.documentToken)return;
     placed.item.text=$("sheet-number").value.trim();
-    if(placed.item.text)saveSheet([...sheetItems(),placed.item]);
+    if(placed.item.text){placed.item.h=Number($("sheet-number-size").value)/12*GeoStudioSheet.sizes.compartment[1]/state.scale;placed.item.w=GeoStudioSheet.sizes.compartment[0]/GeoStudioSheet.sizes.compartment[1]*placed.item.h;saveSheet([...sheetItems(),placed.item]);}
   });
+  $("sheet-size-factor").oninput=e=>{sheetSize=Number(e.target.value);$("sheet-size-value").value=Math.round(sheetSize*100)+"%";};
   $("sheet-place-sign").onclick=()=>{
     if(!state.meta)return inform("Najpierw otwórz mapę.",true);
-    pendingSheet=$("sheet-sign").value;inform("Kliknij na mapie, aby wstawić oznaczenie.");
+    pendingSheet=$("sheet-sign").value;inform("Klikaj mapę, aby wstawiać kolejne oznaczenia. Naciśnij Esc lub wybierz inne narzędzie, aby zakończyć.");
   };
   for(const btn of document.querySelectorAll("[data-sheet]"))btn.addEventListener("click",()=>{
     if(!state.meta)return inform("Najpierw otwórz mapę.",true);
-    pendingSheet=btn.dataset.sheet;inform("Kliknij miejsce na mapie, gdzie ma się znaleźć lewy górny róg elementu.");
+    pendingSheet=btn.dataset.sheet;inform("Klikaj mapę, aby wstawiać kolejne elementy. Naciśnij Esc, aby zakończyć.");
   });
   canvas.addEventListener("pointerdown",ev=>{
     if(!insertMode()||!state.meta||ev.button!==0)return;
@@ -5855,16 +5856,18 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
     if(sheetSaving||state.editBusy)return;
     if(pendingSheet){
       const kind=pendingSheet,[w,h]=GeoStudioSheet.sizes[kind];
-      const item={id:crypto.randomUUID(),kind,x:world.x,y:world.y,w:w/state.scale,h:h/state.scale,text:GeoStudioSheet.defaultText(kind,state.meta.name)};
-      selectedSheet=item.id;pendingSheet=null;
+      const factor=kind==="compartment"?Number($("sheet-number-size").value)/12:sheetSize;
+      const item={id:crypto.randomUUID(),kind,x:world.x,y:world.y,w:w*factor/state.scale,h:h*factor/state.scale,text:GeoStudioSheet.defaultText(kind,state.meta.name)};
+      selectedSheet=item.id;
       if(kind==="compartment"){
         numberPlacement={item,token:state.edit.documentToken};
         $("sheet-number").value=String(1+items.filter(i=>i.kind==="compartment").length);
+        $("sheet-number-size").value=String(Math.max(1,item.h*12));
         $("sheet-number-dialog").returnValue="cancel";
         $("sheet-number-dialog").showModal();$("sheet-number").select();return;
       }
       saveSheet([...items,item]);
-      inform("Przeciągnij element, aby go przesunąć. Prawy dolny uchwyt zmienia jego rozmiar.");return;
+      inform("Klikaj dalej, aby wstawić następne. Esc kończy wstawianie.");return;
     }
     selectedSheet=hit.id;
     const corner=worldToScreen(hit.x+hit.w,hit.y+hit.h);
@@ -5952,6 +5955,25 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
     }
     fontDraft=null;
   });
+  canvas.addEventListener("dblclick",ev=>{
+    if(!insertMode()||!state.meta)return;
+    const p=eventCoords(ev),w=screenToWorld(p.x,p.y),items=sheetItems();
+    const item=items.slice().reverse().find(i=>{const a=worldToScreen(i.x,i.y);return p.x>=a.x&&p.y>=a.y&&p.x<=a.x+i.w*state.scale&&p.y<=a.y+i.h*state.scale;});
+    if(!item)return;
+    ev.preventDefault();ev.stopImmediatePropagation();selectedSheet=item.id;pendingSheet=null;
+    if(item.kind==="compartment"){
+      numberPlacement={item:{...item},token:state.edit.documentToken,editing:true};
+      $("sheet-number").value=item.text;$("sheet-number-size").value=String(Math.max(1,item.h*12*state.scale/GeoStudioSheet.sizes.compartment[1]));
+      $("sheet-number-dialog").returnValue="cancel";$("sheet-number-dialog").showModal();$("sheet-number").select();
+    }else if(["title","credits"].includes(item.kind))$("sheet-edit").click();
+    requestDraw();
+  },true);
+  document.addEventListener("keydown",ev=>{
+    if(ev.key==="Escape"&&pendingSheet){pendingSheet=null;inform("Wstawianie zakończone.");requestDraw();return;}
+    if((ev.key==="Delete"||ev.key==="Backspace")&&insertMode()&&selectedSheet&&!/INPUT|TEXTAREA|SELECT/.test(document.activeElement?.tagName||"")){
+      ev.preventDefault();saveSheet(sheetItems().filter(i=>i.id!==selectedSheet));selectedSheet=null;requestDraw();
+    }
+  },true);
   canvas.addEventListener("pointerdown", ev=>{
     if(state.tool==="nodes"&&(ev.button===2||ev.button===1)){
       ev.preventDefault();
