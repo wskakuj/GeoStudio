@@ -2488,12 +2488,17 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
     if(!["","2180","2176","2177","2178","2179"].includes(chosen))return;
     const changed=chosen!==state.mapEPSG;
     state.mapEPSG=chosen;
+    // Bez potwierdzonego układu (brak PRJ) proponujemy układ wyliczony
+    // z zasięgu mapy, żeby WMS nie startował z pustym wyborem.
+    const guess=chosen||probablePolishCRS(state.meta?.bounds);
     for(const id of ["underlay-epsg","raster-epsg","crs-epsg"])
-      $(id).value=chosen;
-    const displayed=chosen||probablePolishCRS(state.meta?.bounds);
+      $(id).value=guess;
+    const displayed=guess;
     const option=Array.from($("crs-epsg").options).find(entry=>entry.value===displayed);
     const status=$("status-map-crs");
-    status.textContent=displayed && option ? "Układ: "+option.textContent+(chosen?"":" (prawdopodobny)") : "Układ nieustalony";
+    status.textContent=displayed && option
+      ? "Układ: "+option.textContent+(chosen?"":" (prawdopodobny — potwierdź w razie potrzeby)")
+      : "Układ nieustalony";
     status.title=chosen?"Układ ustawiony dla tej mapy.":"Ocena na podstawie zakresu współrzędnych całej mapy. Układ możesz potwierdzić w Podkłady → Układy EPSG.";
     if(!changed)return;
     // A visually calibrated JPG/PNG or a .world raster is positioned in
