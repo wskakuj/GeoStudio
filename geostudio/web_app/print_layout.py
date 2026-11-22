@@ -287,6 +287,39 @@ def _draw_pdf_labels(c, features: list[dict], options: dict, layout: dict, point
             painted += 1
 
 
+def _sheet_font(family, bold, italic, default):
+    if not family and not bold and not italic:
+        return default
+    families={
+        "Arial": ("arial","LiberationSans","Helvetica"),
+        "Verdana": ("verdana","DejaVuSans","Helvetica"),
+        "Times New Roman": ("times","LiberationSerif","Times"),
+        "Georgia": ("georgia","DejaVuSerif","Times"),
+        "Courier New": ("cour","LiberationMono","Courier"),
+    }
+    win,linux,standard=families.get(family,families["Arial"])
+    variant=("Bold" if bold else "")+("Italic" if italic else "")
+    name="Sheet"+win+(variant or "Regular")
+    if name in pdfmetrics.getRegisteredFontNames():return name
+    suffix=("z" if bold and italic else "b" if bold else "i" if italic else "")
+    if win=="arial":suffix={"b":"bd","z":"bi"}.get(suffix,suffix)
+    if win=="cour":suffix={"b":"bd","z":"bi"}.get(suffix,suffix)
+    if win in ("georgia","times","verdana") and bold and italic:suffix="z"
+    if win=="times" and bold and italic:suffix="bi"
+    if win=="times" and bold and not italic:suffix="bd"
+    alt=(variant or "Regular")
+    if linux=="DejaVuSans":alt=alt.replace("Italic","Oblique")
+    files=[Path("C:/Windows/Fonts")/(win+suffix+".ttf"),
+           Path("/usr/share/fonts/truetype/liberation2")/(linux+"-"+alt+".ttf"),
+           Path("/usr/share/fonts/truetype/dejavu")/(linux+("-"+alt if variant else "")+".ttf")]
+    for path in files:
+        if path.is_file():
+            pdfmetrics.registerFont(TTFont(name,str(path)))
+            return name
+    if standard=="Times":return "Times-"+(variant or "Roman")
+    return standard+("-"+variant.replace("Italic","Oblique") if variant else "")
+
+
 def _sheet_inserts(c, inserts, point, per_m, font):
     if not isinstance(inserts,list) or len(inserts)>100:
         raise ValueError("Zbyt wiele elementów arkusza.")
@@ -302,7 +335,7 @@ def _sheet_inserts(c, inserts, point, per_m, font):
         if not isinstance(size,list) or len(size)!=2 or min(map(number,size))<=0:
             raise ValueError("Nieprawidłowe proporcje elementu.")
         shapes=item.get("shapes")
-        if not isinstance(shapes,list) or len(shapes)>250:
+        if not isinstance(shapes,list) or len(shapes)>1800:
             raise ValueError("Nieprawidłowe oznaczenia w legendzie.")
         c.saveState()
         c.translate(x,y)
@@ -312,9 +345,10 @@ def _sheet_inserts(c, inserts, point, per_m, font):
             if not isinstance(s,dict):
                 raise ValueError("Nieprawidłowy znak.")
             if "text" in s:
-                c.setFillColor(colors.HexColor("#202020"));c.setFont(font,number(s.get("size")))
+                c.setFillColor(colors.HexColor("#202020"))
+                c.setFont(_sheet_font(s.get("family"),s.get("bold"),s.get("italic"),font),number(s.get("size")))
                 draw=c.drawCentredString if s.get("center") else c.drawString
-                draw(number(s.get("x")),-number(s.get("y")),_text(s.get("text"),1500))
+                draw(number(s.get("x")),-number(s.get("y")),str(s.get("text",""))[:1500])
             else:
                 pts=s.get("points")
                 if not isinstance(pts,list) or not 2<=len(pts)<=32:

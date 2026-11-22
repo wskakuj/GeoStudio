@@ -123,14 +123,26 @@
 </div>
 <div id="ribbon-panel-insert" class="ribbon-panel" data-ribbon-panel="insert" role="tabpanel" aria-labelledby="ribbon-tab-insert" hidden>
   <div class="ribbon-group"><div class="section-label">Elementy arkusza</div><div class="tool-row">
+    <button type="button" class="tool-button" data-sheet="compartment">Numer oddziału · 6900</button>
     <button type="button" class="tool-button" data-sheet="title">Tytuł mapy</button>
     <button type="button" class="tool-button" data-sheet="compass">Róża kierunków</button>
     <button type="button" class="tool-button" data-sheet="credits">Wykonawca</button>
     <button type="button" class="tool-button" data-sheet="symbols">Legenda oznaczeń</button>
     <button type="button" class="tool-button" data-sheet="species">Legenda gatunków</button>
   </div></div>
+  <div class="ribbon-group"><div class="section-label">Oznaczenie na mapie</div><div class="tool-row"><select id="sheet-sign" aria-label="Oznaczenie na mapie">
+<option value="conifer">Płazowina iglasta · 1431</option>
+<option value="deciduous">Płazowina liściasta · 1432</option>
+<option value="clearcut">Zrąb · 5200</option>
+<option value="marsh">Bagno · 1461 + 2613</option>
+<option value="power">Linia energetyczna · 2364</option>
+<option value="gas">Gazociąg · 5741 + 2613</option>
+<option value="boundary">Granice lasów · 5200</option>
+<option value="path">Ścieżki · 4588</option>
+<option value="shared">Współwłasność z ALP · 5219</option>
+</select><button type="button" id="sheet-place-sign" class="tool-button">Wstaw znak</button></div></div>
   <div class="ribbon-group"><div class="section-label">Wybrany element</div><div class="tool-row">
-    <button type="button" class="tool-button" id="sheet-edit" disabled>Edytuj tekst</button>
+    <button type="button" class="tool-button" id="sheet-edit" disabled>Tekst i czcionka</button>
     <button type="button" class="tool-button" id="sheet-remove" disabled>Usuń</button>
   </div></div>
 </div>
@@ -914,6 +926,16 @@
     <div class="select-content"><p class="select-explain">Systemowe okno wyboru plików nie zadziałało. Użyj standardowego wyboru pliku.</p></div>
     <div class="select-actions"><button type="button" id="map-picker-cancel" class="button ghost">Anuluj</button><button type="button" id="map-picker-retry" class="button primary">Wybierz plik</button></div>
   </dialog>
-<dialog id="sheet-text-dialog"><form method="dialog"><label>Tekst na mapie<br><textarea id="sheet-lines" rows="10" cols="46" maxlength="1500"></textarea></label><div><button value="cancel">Anuluj</button> <button value="save">Zapisz</button></div></form></dialog>
+<dialog id="sheet-number-dialog" class="advanced-select-dialog bulk-dialog"><form method="dialog">
+<div class="dialog-head"><h2>Numer oddziału</h2></div>
+<label>Numer <input id="sheet-number" maxlength="24" required autocomplete="off"></label>
+<div class="dialog-actions"><button type="button" id="sheet-number-cancel" class="button ghost">Anuluj</button><button value="save" class="button primary">Wstaw 6900</button></div></form></dialog>
+<dialog id="sheet-text-dialog" class="advanced-select-dialog"><form method="dialog"><label>Tekst na mapie<br><textarea id="sheet-lines" rows="10" cols="46" maxlength="1500"></textarea></label><p>Formatowanie obejmie zaznaczony tekst. Bez zaznaczenia obejmie cały element.</p>
+<div class="tool-row"><label>Krój <select id="sheet-font"><option value="">Wybierz</option><option>Arial</option><option>Times New Roman</option><option>Georgia</option><option>Verdana</option><option>Courier New</option></select></label>
+<label>Rozmiar <input type="number" min="4" max="144" id="sheet-size" style="width:5em"></label>
+<button type="button" id="sheet-bold"><b>Pogrubienie</b></button>
+<button type="button" id="sheet-italic"><i>Kursywa</i></button></div>
+<canvas id="sheet-sample" width="410" height="200" aria-label="Podgląd formatowania"></canvas>
+<div><button value="cancel">Anuluj</button> <button value="save">Zapisz</button></div></form></dialog>
 </body>
 </html>

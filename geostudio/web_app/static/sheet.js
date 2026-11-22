@@ -1,17 +1,23 @@
 /* Sheet geometry uses the same logical units on the canvas and in print. */
 window.GeoStudioSheet = (() => {
   const sizes={title:[370,142],credits:[290,170],compass:[106,106],symbols:[400,192],species:[410,263]};
+  const signs=["conifer","deciduous","clearcut","marsh","power","gas","boundary","path","shared"];
+  for(const kind of signs)sizes[kind]=[48,16];
+  sizes.compartment=[54,32];
   function defaultText(type,map){
+    if(type==="compartment")return "1";
     if(type==="title")return ["Mapa gospodarcza lasu","wsi "+map.replace(/\.map$/i,""),"gm. …   pow. …","woj. …","01.01.2027 – 31.12.2036","Stan na 30.06.2026"].join("\n");
     if(type==="credits")return ["Wykonawca","Agencja Cezar","Pracownia Urządzania Lasu","05-300 Mińsk Mazowiecki · ul. Boczna 28","Kierownik robót · mgr inż. Cezary Piotrkowicz","Taksatorzy · mgr Artur Kwiatkowski","Stanisław Olszewski","Wykreślił · Damian Zieliński"].join("\n");
     return "";
   }
-  function shapes(item,scale){
+  function baseShapes(item,scale){
     const elements=[],[w,h]=sizes[item.kind],ink="#202020";
     const label=(x,y,text,size,center=false)=>elements.push({text,x,y,size,center});
     const path=(points,fill=null,stroke=ink)=>elements.push({points,fill,stroke});
     const rect=(x,y,w,h,fill=null)=>path([[x,y],[x+w,y],[x+w,y+h],[x,y+h],[x,y]],fill);
-    if(["title","credits"].includes(item.kind)){
+    if(signs.includes(item.kind))return [];
+    if(item.kind==="compartment"){label(w/2,h*.74,item.text,h*.7,true);}
+    else if(["title","credits"].includes(item.kind)){
       const lines=item.text.split("\n"),title=item.kind==="title";
       if(title){path([[1,1],[w-1,1]]);path([[1,h-1],[w-1,h-1]]);}
       const step=(h-12)/lines.length;
@@ -55,13 +61,47 @@ window.GeoStudioSheet = (() => {
     }
     return elements;
   }
+  const families=["Arial","Times New Roman","Georgia","Verdana","Courier New"];
+  const measure=document.createElement("canvas").getContext("2d");
+  const fontSpec=s=>(s.italic?"italic ":"")+(s.bold?"bold ":"")+s.size+"px \""+(s.family||"Arial")+"\"";
+  function textFor(item,scale){
+    return baseShapes(item,scale).filter(s=>s.text!==undefined).map(s=>s.text).join("\n");
+  }
+  function shapes(item,scale){
+    const base=baseShapes(item,scale);
+    if(!item.runs?.length)return base;
+    const result=[];
+    let offset=0;
+    for(const s of base){
+      if(s.text===undefined){result.push(s);continue;}
+      const start=offset,end=start+s.text.length;
+      offset=end+1;
+      let pos=start;
+      const pieces=[];
+      function add(to,style={}){
+        if(to<=pos)return;
+        const part={...s,...style,text:s.text.slice(pos-start,to-start),center:false};
+        measure.font=fontSpec(part);
+        pieces.push([part,measure.measureText(part.text).width]);pos=to;
+      }
+      for(const run of item.runs){
+        if(run.end<=pos||run.start>=end)continue;
+        add(Math.max(pos,run.start));
+        add(Math.min(run.end,end),run.style);
+      }
+      add(end);
+      let x=s.x-(s.center?pieces.reduce((n,p)=>n+p[1],0)/2:0);
+      for(const [part,width] of pieces){result.push({...part,x});x+=width;}
+    }
+    return result;
+  }
   function paint(g,items,project,zoom,scale,selection){
     for(const item of items){
       const p=project(item.x,item.y),[w,h]=sizes[item.kind];
       const width=item.w*zoom,height=item.h*zoom;
       g.save();g.translate(p.x,p.y);g.scale(width/w,height/h);g.lineWidth=.65;
       for(const s of shapes(item,scale)){
-        if(s.text!==undefined){g.fillStyle="#202020";g.font=s.size+"px Arial, sans-serif";g.textAlign=s.center?"center":"left";g.fillText(s.text,s.x,s.y);}
+        if(s.text!==undefined){g.fillStyle="#202020";g.font=fontSpec(s);g.textAlign=s.center?"center":"left";g.fillText(s.text,s.x,s.y);}
         else{g.beginPath();s.points.forEach(([x,y],i)=>i?g.lineTo(x,y):g.moveTo(x,y));if(s.fill){g.fillStyle=s.fill;g.fill();}if(s.stroke){g.strokeStyle=s.stroke;g.stroke();}}
       }
       g.restore();
@@ -70,5 +110,5 @@ window.GeoStudioSheet = (() => {
       }
     }
   }
-  return {sizes,defaultText,shapes,paint};
+  return {sizes,signs,defaultText,shapes,paint,textFor,families};
 })();

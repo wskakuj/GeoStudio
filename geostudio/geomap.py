@@ -823,7 +823,8 @@ class GeoMap:
         return clone.to_bytes()
 
     def append_polygon(self, points: list[tuple[float,float]], code='5216',
-                       label='', fields: dict[str, str] | None = None) -> str:
+                       label='', fields: dict[str, str] | None = None, *,
+                       pen: int = 8553090, fill: int = 0) -> str:
         if len(points) < 3:
             raise ValueError('A polygon needs at least three vertices')
         if not re.fullmatch(r'\d{4}', code):
@@ -847,7 +848,9 @@ class GeoMap:
             if any(ch in value for ch in '\r\n]'):
                 raise ValueError('Attributes cannot include a newline or ]')
         uid = str(uuid.uuid4()).upper()
-        records = [f'*{code} 8553090  15          0', f':ID[{uid}]']
+        if any(type(v) is not int or not 0<=v<=0xFFFFFF for v in (pen,fill)):
+            raise ValueError('Invalid COLORREF')
+        records = [f'*{code} {pen}  15          {fill}', f':ID[{uid}]']
         for key in ('A1','A2','A3','A4','A5','A6','TX','MP','DT','KR'):
             if key in attrs:
                 records.append(f':{key}[{attrs[key]}]')
@@ -865,7 +868,8 @@ class GeoMap:
         return uid
 
     def append_polyline(self, points: list[tuple[float, float]], code='6900',
-                        label='', fields: dict[str, str] | None = None) -> str:
+                        label='', fields: dict[str, str] | None = None, *,
+                       pen: int = 8553090, fill: int = 0) -> str:
         """Create a real open GEO-MAP line (no automatic polygon closure).
 
         Attribute and P-record preservation follows append_polygon, but a
@@ -890,7 +894,9 @@ class GeoMap:
         if any(any(char in value for char in '\r\n]') for value in attrs.values()):
             raise ValueError('Attributes cannot include a newline or ]')
         uid = str(uuid.uuid4()).upper()
-        records = [f'*{code} 8553090  15          0', f':ID[{uid}]']
+        if any(type(v) is not int or not 0<=v<=0xFFFFFF for v in (pen,fill)):
+            raise ValueError('Invalid COLORREF')
+        records = [f'*{code} {pen}  15          {fill}', f':ID[{uid}]']
         for key in ('A1', 'A2', 'A3', 'A4', 'A5', 'A6', 'TX', 'MP', 'DT', 'KR'):
             if key in attrs:
                 records.append(f':{key}[{attrs[key]}]')

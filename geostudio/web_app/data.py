@@ -20,6 +20,7 @@ import json
 import re
 import base64
 
+from .sheet_marks import KINDS as SHEET_SIGNS, NUMBER as SHEET_NUMBER, primitives as sheet_primitives
 from geostudio.geomap import GeoMap
 from geostudio.forest_classes import forest_class_value
 from geostudio.map_layout import detect_source_compilation_scale, validated_compilation_scale, DEFAULT_SCALE
@@ -573,8 +574,8 @@ class PreviewWorkspace:
             raise ValueError("Arkusz może zawierać do 100 elementów.")
         ids=set()
         for item in items:
-            if (not isinstance(item,dict) or set(item)!={"id","kind","x","y","w","h","text"}
-                    or item["kind"] not in ("title","credits","compass","symbols","species")
+            if (not isinstance(item,dict) or set(item)-{"runs"}!={"id","kind","x","y","w","h","text"}
+                    or item["kind"] not in ("title","credits","compass","symbols","species",SHEET_NUMBER,*SHEET_SIGNS)
                     or not isinstance(item["id"],str) or len(item["id"])>80 or item["id"] in ids
                     or not isinstance(item["text"],str) or len(item["text"])>1500
                     or len(item["text"].splitlines())>16
@@ -582,18 +583,86 @@ class PreviewWorkspace:
                                for k in ("x","y","w","h"))
                     or min(item["w"],item["h"])<=0):
                 raise ValueError("Nieprawidłowy element arkusza.")
+            if item["kind"]==SHEET_NUMBER and not re.fullmatch(r"[\w./ -]{1,24}",item["text"]):
+                raise ValueError("Numer oddziału musi mieć od 1 do 24 znaków.")
+            runs=item.get("runs",[])
+            if not isinstance(runs,list) or len(runs)>1500:
+                raise ValueError("Nieprawidłowe formatowanie tekstu.")
+            end=0
+            for run in runs:
+                if (not isinstance(run,dict) or type(run.get("start")) is not int
+                        or type(run.get("end")) is not int or not end<=run["start"]<run["end"]<=3000):
+                    raise ValueError("Nieprawidłowy zakres tekstu.")
+                st=run.get("style")
+                if (not isinstance(st,dict) or set(st)-{"family","size","bold","italic"}
+                        or st.get("family","Arial") not in ("Arial","Times New Roman","Georgia","Verdana","Courier New")
+                        or type(st.get("size",12)) is not int or not 4<=st.get("size",12)<=144
+                        or any(type(st[k]) is not bool for k in ("bold","italic") if k in st)):
+                    raise ValueError("Nieprawidłowa czcionka.")
+                end=run["end"]
             ids.add(item["id"])
+        return items
+
+    def _live_sheet_items(self):
+        record=self._styles.get("cartography:sheet",{})
+        groups=record.get("groups",{})
+        items=[]
+        for item in record.get("items",[]):
+            if item["kind"] in (*SHEET_SIGNS,SHEET_NUMBER):
+                ids=groups.get(item["id"],[])
+                parts=sheet_primitives(item)
+                if not isinstance(ids,list) or len(ids)!=len(parts):
+                    continue
+                for uid,(code,pts,filled,_,fields) in zip(ids,parts):
+                    obj=self._doc.by_id.get(uid)
+                    if not obj or obj.code!=code or any(obj.fields.get(k)!=v for k,v in fields.items()):
+                        break
+                    actual=[(p.x,p.y) for p in obj.points]
+                    coords=[(round(x,3),round(y,3)) for x,y in pts]
+                    if filled:
+                        if not obj.is_closed:break
+                        actual=actual[:-1]
+                    if actual!=coords and not (filled and actual==[coords[0],*coords[:0:-1]]):
+                        break
+                else:
+                    items.append(item)
+            else:
+                items.append(item)
         return items
 
     def set_sheet_items(self, items, *, document_token, revision):
         with self._lock:
             self._require_edit(document_token,revision)
             self._validate_sheet_items(items)
+            old={i["id"]:i for i in self._live_sheet_items()}
+            record=self._styles.get("cartography:sheet",{})
+            groups={k:v for k,v in record.get("groups",{}).items() if k in old}
+            ids={i["id"] for i in items}
             with self._history.begin("Elementy arkusza"):
-                if items:
-                    self._styles["cartography:sheet"]={"items":items}
-                else:
-                    self._styles.pop("cartography:sheet",None)
+                for key in set(groups)-ids:
+                    self._doc.delete_objects(groups.pop(key))
+                for item in items:
+                    key=item["id"]
+                    if item["kind"] not in (*SHEET_SIGNS,SHEET_NUMBER) or old.get(key)==item:continue
+                    if key in groups and all(old[key].get(field)==item.get(field)
+                            for field in ("kind","x","y","w","h","text")):
+                        continue
+                    parts=sheet_primitives(item)
+                    if key in groups:
+                        if old[key]["kind"]!=item["kind"]:raise ValueError("Nie można zmienić rodzaju znaku.")
+                        for uid,(_,points,filled,_,fields) in zip(groups[key],parts):
+                            self._doc.replace_simple_geometry(uid,points,closed=filled)
+                            for field,value in fields.items():
+                                self._doc.update_field(uid,field,value)
+                    else:
+                        groups[key]=[]
+                        for code,points,filled,color,fields in parts:
+                            pen=int.from_bytes(bytes.fromhex(color[1:]),"little")
+                            append=self._doc.append_polygon if filled else self._doc.append_polyline
+                            groups[key].append(append(points,code=code,fields=fields,pen=pen,fill=pen if filled else 0))
+                if items:self._styles["cartography:sheet"]={"items":items,"groups":groups}
+                else:self._styles.pop("cartography:sheet",None)
+            self._reindex(self._doc,self._doc.filename)
             self._revision+=1
             return self._editing_status()
 
@@ -647,7 +716,7 @@ class PreviewWorkspace:
     def _editing_status(self) -> dict:
         history = self._history
         return {
-            "sheetItems": self._styles.get("cartography:sheet",{}).get("items",[]),
+            "sheetItems": self._live_sheet_items(),
             "dirty": bool(history and history.is_dirty),
             "canUndo": bool(history and history.can_undo),
             "canRedo": bool(history and history.can_redo),
@@ -1769,7 +1838,8 @@ class PreviewWorkspace:
                 elif action=="create_line":
                     created=[self._doc.append_polyline(
                         plan["coordinates"],code=operation["code"],
-                        fields=operation["fields"])]
+                        fields=operation["fields"],
+                        pen=0xFF0000 if operation["code"]=="5214" else 8553090)]
                 else:
                     self._doc.replace_simple_geometry(
                         selected[0].uid,plan["coordinates"],closed=False)
@@ -2543,7 +2613,13 @@ class PreviewWorkspace:
                 if isinstance(key, str) and isinstance(value, dict):
                     styles[key[:220]] = value
         if "cartography:sheet" in styles:
-            self._validate_sheet_items(styles["cartography:sheet"].get("items"))
+            sheet=styles["cartography:sheet"]
+            self._validate_sheet_items(sheet.get("items"))
+            groups=sheet.get("groups",{})
+            if (not isinstance(groups,dict) or len(groups)>100 or
+                    any(not isinstance(ids,list) or len(ids)>10 or
+                        any(not isinstance(uid,str) for uid in ids) for ids in groups.values())):
+                raise ValueError("Nieprawidłowe obiekty oznaczeń arkusza.")
         pos = payload.get("labels", {})
         labels={}
         if isinstance(pos,dict) and len(pos)<=50000:
@@ -2633,8 +2709,8 @@ class PreviewWorkspace:
             fill_color = "#111111"
             opacity = 100
 
-        stroke = _color(code_style.get("stroke"), "#FF0000" if obj.code == "5310" else border)
-        width_default=(3. if obj.code == "5310" else max(.8,min(3.,cdf.width)) if cdf and cdf.width>0
+        stroke = _color(code_style.get("stroke"), "#FF0000" if obj.code == "5310" else "#0000FF" if obj.code == "5214" else border)
+        width_default=(3. if obj.code == "5310" else 2. if obj.code == "5214" else max(.8,min(3.,cdf.width)) if cdf and cdf.width>0
                        else 1.)
         width = min(12, max(.5, float(code_style.get(
             "stroke_width",width_default)))) \
@@ -2644,6 +2720,8 @@ class PreviewWorkspace:
         dash=[max(.5,sym_dash[0]*3),max(.5,sym_dash[1]*3)] if sym_dash else (
             [6,4] if sym_dash is None and lay and lay.line_id.endswith(".008")
             else [])
+        if obj.code=="5214":
+            dash=[8,4]
         symbols=self._carto_sym.get(obj.code,[]) if len(obj.points)==1 else []
         segments=simple_point_segments(symbols)[:64]
         circles=simple_point_circles(symbols)[:32]
@@ -2753,6 +2831,11 @@ class PreviewWorkspace:
 
     def _labels(self, entry: _Entry) -> list[dict]:
         obj = entry.obj
+        if obj.code=="6900":
+            groups=self._styles.get("cartography:sheet",{}).get("groups",{})
+            if any(obj.uid in ids for ids in groups.values()) and any(
+                    i["kind"]==SHEET_NUMBER and obj.uid in groups.get(i["id"],[]) for i in self._live_sheet_items()):
+                return []
         code_config = self._styles.get("labels:code:" + obj.code, {})
         overrides = code_config.get("fields") if isinstance(code_config, dict) else None
         if obj.code == "5310":
