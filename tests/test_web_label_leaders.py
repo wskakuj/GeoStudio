@@ -124,3 +124,25 @@ def test_reset_clears_all_leaders_in_one_step():
     after = [f for f in workspace.viewport((0, -1e6, 1e6, 1e6), limit=3000)["features"]
              if any(item.get("leader") for item in f["labels"])]
     assert after == []
+
+
+def test_renderer_uses_east_south_anchor():
+    """Kotwica w payloadzie to (wschód, -północ) — bez podwójnego minusa."""
+    from pathlib import Path
+    js = Path("geostudio/web_app/static/map.js").read_text(encoding="utf-8")
+    assert "worldToScreen(label.leader.x,label.leader.y)" in js
+    assert "worldToScreen(label.leader.y,-label.leader.x)" not in js
+
+
+def test_leader_shortcuts_are_q_and_w():
+    from pathlib import Path
+    js = Path("geostudio/web_app/static/map.js").read_text(encoding="utf-8")
+    assert 'if(key!=="q"&&key!=="w")return;' in js
+    # E jest zajęte przez edycję atrybutów.
+    assert 'if(key!=="q"&&key!=="e")return;' not in js
+
+
+def test_label_move_refreshes_in_background():
+    from pathlib import Path
+    js = Path("geostudio/web_app/static/map.js").read_text(encoding="utf-8")
+    assert "setTimeout(()=>{refreshEditedDocument(drag.fid).catch(()=>{});},0);" in js

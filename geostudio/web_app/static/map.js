@@ -4408,7 +4408,10 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
         // (natywne L 2 / L 3, bity 64/128 flagi).
         if(label.leader&&label.leader.direction){
           if(!state.labelAnchors)state.labelAnchors=[];
-          const anchor=worldToScreen(label.leader.y,-label.leader.x);
+          // leader.x = wschód, leader.y = -północ (tak jak label.x/label.y).
+          // Wcześniej był tu podwójny minus i kotwica lądowała w lustrzanym
+          // punkcie daleko poza mapą.
+          const anchor=worldToScreen(label.leader.x,label.leader.y);
           const startX=label.leader.direction==="left"?rect[0]:rect[2];
           const startY=cy;
           ctx.save();
@@ -6065,7 +6068,9 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
         body:JSON.stringify(body)
       });
       updateEditState(result);
-      await refreshEditedDocument(drag.fid);
+      // Odświeżenie w tle: czekanie na pełny reload blokowało możliwość
+      // chwycenia kolejnej etykiety zaraz po puszczeniu poprzedniej.
+      setTimeout(()=>{refreshEditedDocument(drag.fid).catch(()=>{});},0);
       inform("Przeniesiono osobną etykietę "+drag.field+
         " na X: "+x.toFixed(3)+", Y: "+y.toFixed(3)+
         ". Ctrl+Z cofa. Zapisz MAP i towarzyszący JSON.");
@@ -6276,7 +6281,7 @@ inform("Klikaj mapę, aby wstawiać kolejne oznaczenia. Naciśnij Esc lub wybier
     requestDraw();
     await selectByCode(bbox);
   },true);
-  // Tryb „Wysięgniki”: kółko ustawia punkt zaczepienia, Q/E zmienia stronę.
+  // Tryb „Wysięgniki”: kółko ustawia punkt zaczepienia, Q/W zmienia stronę.
   let leaderPress=null;
   canvas.addEventListener("pointerdown",ev=>{
     if(!state.leaderMode||!state.edit||ev.button!==1)return;
@@ -6298,7 +6303,8 @@ inform("Klikaj mapę, aby wstawiać kolejne oznaczenia. Naciśnij Esc lub wybier
     if(!state.leaderMode||!state.edit)return;
     if(ev.target instanceof HTMLInputElement||ev.target instanceof HTMLTextAreaElement)return;
     const key=ev.key.toLowerCase();
-    if(key!=="q"&&key!=="e")return;
+    // Q/W, bo E otwiera edycję atrybutów.
+    if(key!=="q"&&key!=="w")return;
     const selected=state.labelSelected;
     if(!selected){inform("Najpierw chwyć etykietę A1 lub A2.",true);return;}
     ev.preventDefault();
@@ -6314,7 +6320,7 @@ inform("Klikaj mapę, aby wstawiać kolejne oznaczenia. Naciśnij Esc lub wybier
           anchor:[world.x,world.y],
           documentToken:state.edit.documentToken,revision:state.edit.revision})});
       updateEditState(result);
-      await refreshEditedDocument(state.active);
+      setTimeout(()=>{refreshEditedDocument(state.active).catch(()=>{});},0);
       inform("Punkt zaczepienia wysięgnika ustawiony ("+selected.field+").");
     }catch(error){
       inform("Nie ustawiono kotwicy: "+error.message,true);
@@ -7176,7 +7182,7 @@ inform("Klikaj mapę, aby wstawiać kolejne oznaczenia. Naciśnij Esc lub wybier
     if(state.leaderMode)state.tool="labels";
     canvas.style.cursor=state.leaderMode?"crosshair":"";
     inform(state.leaderMode?
-      "Tryb wysięgników: LPM przesuwa etykietę, kółko ustawia zaczepienie, Q/E zmienia stronę.":
+      "Tryb wysięgników: LPM przesuwa etykietę, kółko ustawia zaczepienie, Q/W zmienia stronę.":
       "Tryb wysięgników wyłączony.");
     requestDraw();
   });
