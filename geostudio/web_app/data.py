@@ -572,14 +572,46 @@ class PreviewWorkspace:
                 selection_before=(obj.uid,)
             ):
                 self._label_positions.setdefault(obj.uid,{})[field]=point
-            if self._doc.to_bytes()!=before:
-                raise ValueError("Naruszono geometrię MAP podczas przesuwania etykiety.")
+                # Dla 5310 zapisujemy też natywny rekord L, żeby pozycja
+                # przetrwała samo zapisanie MAP (bez pliku towarzyszącego).
+                if obj.code == "5310" and field in ("A1", "A2"):
+                    base = _label_anchor(obj)
+                    self._doc.set_label_offset(
+                        obj.uid, 2 if field == "A1" else 3,
+                        round(point[0] - base[0], 3),
+                        round(point[1] - base[1], 3))
+            after=self._doc.to_bytes()
+            if after!=before:
+                # Wolno zmienić wyłącznie rekordy etykiet (L), nigdy geometrię.
+                old_lines=before.splitlines(keepends=True)
+                new_lines=after.splitlines(keepends=True)
+                if len(old_lines)!=len(new_lines):
+                    raise ValueError("Naruszono geometrię MAP podczas przesuwania etykiety.")
+                for index,(a,b) in enumerate(zip(old_lines,new_lines)):
+                    if a==b:
+                        continue
+                    # Wolno zmienić rekord etykiety oraz nagłówek pliku
+                    # (;# ...), który niesie licznik zmian. Geometria nie.
+                    if a.startswith(b"L ") or a.startswith(b";#"):
+                        continue
+                    raise ValueError("Naruszono geometrię MAP podczas przesuwania etykiety.")
             # Przesunięcie napisu na drugą stronę kotwicy zmienia kierunek
             # wysięgnika: 69 (w prawo) <-> 133 (w lewo).
             self._sync_leader_direction(obj, field, point)
             self._revision+=1
             return {**self._editing_status(),"changed":True,
                     "fid":fid,"field":field,"point":point}
+
+    def _label_inside(self, obj, point) -> bool:
+        """Czy punkt (północ, wschód) leży w obrysie obiektu."""
+        if not obj.is_closed:
+            return True
+        try:
+            from shapely.geometry import Point
+            return bool(geometry_of(obj).contains(
+                Point(float(point[0]), float(point[1]))))
+        except Exception:
+            return True
 
     def _sync_leader_direction(self, obj, field: str, point) -> None:
         """Ustawia bit wysięgnika zgodnie ze stroną, po której stoi napis."""
@@ -3069,13 +3101,14 @@ class PreviewWorkspace:
         # Natywne rekordy L 2/L 3 niosą własny wysięgnik (bity 64/128 flagi
         # i punkt zaczepienia). Slot 2 to A1, slot 3 to A2.
         leaders = {}
+        natives = {}
         if self._doc is not None and obj.uid:
             from ..geomap import label_records
             # Punkt zaczepienia w rekordzie L jest WZGLĘDNY wobec punktu
             # bazowego poligonu (tego samego, co pozycja napisu). Wcześniej
             # brałem go jako współrzędne świata — stąd linie lecące do (0,0).
-            for slot, record in label_records(
-                    self._doc.lines[obj.start:obj.end]).items():
+            natives = label_records(self._doc.lines[obj.start:obj.end])
+            for slot, record in natives.items():
                 if not record.get("leader"):
                     continue
                 offset = record.get("anchor") or (0.0, 0.0)
@@ -3090,6 +3123,15 @@ class PreviewWorkspace:
                 continue
             style = overrides.get(field, {}) if isinstance(overrides, dict) else {}
             location = pos.get(field) if isinstance(pos, dict) else None
+            if obj.code == "5310" and field in ("A1", "A2"):
+                native = natives.get(2 if field == "A1" else 3)
+                if native and (native.get("dx") or native.get("dy")):
+                    candidate = [center[0] + native["dx"],
+                                 center[1] + native["dy"]]
+                    # Offset z pliku bierzemy tylko wtedy, gdy napis wypada
+                    # w obrębie poligonu — inaczej zostajemy przy środku.
+                    if self._label_inside(obj, candidate):
+                        location = candidate
             if (isinstance(location, (list, tuple)) and len(location) == 2
                 and all(_valid_number(c) for c in location)):
                 northing, easting = float(location[0]), float(location[1])
