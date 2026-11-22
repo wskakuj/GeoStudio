@@ -2048,3 +2048,21 @@ body[data-theme="dark"] #raster-summary[data-result="ready"] strong { color:#93e
 #underlay-layers.is-busy{opacity:.75}
 #underlay-summary.is-ok{color:#2f9e6b}
 #underlay-summary.is-error{color:#d9534f}
+
+/* Okno aktualizacji — kompaktowe, bez ściany tekstu. */
+.update-overlay{position:fixed;inset:0;z-index:9999;display:grid;place-items:center;
+  background:rgba(12,18,28,.55);backdrop-filter:blur(2px)}
+.update-card{width:min(330px,86vw);padding:22px 22px 16px;border-radius:16px;text-align:center;
+  background:#fff;color:#16202e;box-shadow:0 24px 60px rgba(9,14,22,.35);
+  font:14px/1.4 "Segoe UI",system-ui,sans-serif}
+.update-icon{width:40px;height:40px;margin:0 auto 10px;display:grid;place-items:center;
+  border-radius:12px;background:#e8f0ff;color:#2664db}
+.update-icon svg{width:22px;height:22px}
+.update-card h2{margin:0;font-size:15px;font-weight:600}
+.update-version{margin:6px 0 0;font:600 20px/1.2 ui-monospace,monospace;color:#2664db}
+.update-current{margin:2px 0 16px;font-size:12px;color:#6b7c8f}
+.update-actions{display:flex;gap:8px}
+.update-actions button{flex:1;padding:9px 12px;border-radius:10px;font-size:13px;cursor:pointer;
+  border:1px solid #cfd8e3;background:#f6f8fb;color:#26313f}
+.update-actions button:hover{filter:brightness(.97)}
+.update-actions .update-install{border-color:#2664db;background:#2664db;color:#fff;font-weight:600}

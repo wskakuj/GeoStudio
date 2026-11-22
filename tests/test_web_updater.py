@@ -142,3 +142,23 @@ def test_tabs_badge_waits_for_the_bridge():
     assert "function waitForBridge(" in js
     assert "pywebview?.api" in js
     assert "Mostek aplikacji nie jest gotowy" in js
+
+
+def test_update_script_finds_install_dir_in_registry(tmp_path):
+    script = updater.build_update_script(
+        "https://example.com/setup.exe", tmp_path / "setup.exe", "2.0.12")
+    # Nie zgadujemy jednej ścieżki: rejestr, typowa lokalizacja, skan Programów.
+    assert "CurrentVersion" in script and "InstallLocation" in script
+    assert "Get-ChildItem" in script and "GeoStudio2.exe" in script
+
+
+def test_update_dialog_is_compact(tmp_path):
+    from pathlib import Path
+    tabs = Path("geostudio/web_app/static/tabs.js").read_text(encoding="utf-8")
+    css = Path("geostudio/web_app/static/tabs.css").read_text(encoding="utf-8")
+    assert "function showUpdatePrompt(" in tabs
+    # Okno aktualizacji nie może być systemowym confirmem.
+    assert "showUpdatePrompt(info.current" in tabs
+    assert "Pobrać i zainstalować teraz" not in tabs
+    assert ".update-card" in css and ".update-actions" in css
+    assert "Pobierz i zainstaluj" in tabs
