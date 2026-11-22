@@ -183,6 +183,11 @@ def create_app(workspace: PreviewWorkspace | None = None, *,
         return HTMLResponse(template.replace(
             "__GEOSTUDIO_LOCAL_TOKEN__", escape(token, quote=True)))
 
+    @app.get("/api/version")
+    async def app_version():
+        from . import updater
+        return {"version": updater.current_version()}
+
     @app.get("/styles.css")
     async def styles():
         return FileResponse(ROOT / "styles.css", media_type="text/css")

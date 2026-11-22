@@ -10,12 +10,39 @@ window.GeoStudioSheet = (() => {
     if(type==="credits")return ["Wykonawca","Agencja Cezar","Pracownia Urządzania Lasu","05-300 Mińsk Mazowiecki · ul. Boczna 28","Kierownik robót · mgr inż. Cezary Piotrkowicz","Taksatorzy · mgr Artur Kwiatkowski","Stanisław Olszewski","Wykreślił · Damian Zieliński"].join("\n");
     return "";
   }
+  // Geometria znaków 1:1 z serwerem (sheet_marks.primitives), żeby podgląd
+  // przy kursorze pokazywał dokładnie to, co zostanie wpisane do MAP.
+  const S=(pts,color,filled=false)=>[pts,color,filled];
+  const signPaths={
+    conifer:[S([[17,14],[22,2],[27,14]],"#24813b")],
+    deciduous:[S([[22,15],[22,11],[18,10],[17,6],[19,2],[24,2],[27,6],[26,10],[22,11]],"#24813b")],
+    clearcut:[S([[9,4],[23,4],[23,12],[9,12],[9,4]],"#111111",true),
+              S([[23,12],[39,12]],"#111111")],
+    marsh:[S([[2,3],[13,3]],"#497842"),S([[2,8],[13,8]],"#497842"),S([[2,13],[13,13]],"#497842"),
+           S([[34,3],[45,3]],"#497842"),S([[34,8],[45,8]],"#497842"),S([[34,13],[45,13]],"#497842"),
+           S([[15,6],[19,11],[23,6],[27,11],[31,6]],"#3874a0")],
+    power:[S([[1,8],[47,8]],"#415c9b"),S([[13,4],[19,8],[13,12]],"#26334a"),
+           S([[31,4],[37,8],[31,12]],"#26334a")],
+    gas:[S([[1,4],[47,4],[47,12],[1,12],[1,4]],"#edce39",true),
+         S([[13,4],[19,8],[13,12]],"#26334a"),S([[31,4],[37,8],[31,12]],"#26334a")],
+    boundary:[S([[1,6],[47,6],[47,10],[1,10],[1,6]],"#ce2532",true)],
+    path:[S([[1,8],[9,8]],"#444444"),S([[13,8],[21,8]],"#444444"),
+          S([[25,8],[33,8]],"#444444"),S([[37,8],[45,8]],"#444444")],
+    shared:[S([[1,1],[47,1],[47,15],[1,15],[1,1]],"#45bbbb",true)]
+  };
+  function signShapes(item){
+    const paths=signPaths[item.kind];
+    if(!paths)return [];
+    return paths.map(([points,color,filled])=>({
+      points:points.map(([u,v])=>[u*item.w/48,v*item.h/16]),
+      fill:filled?color:null,stroke:color}));
+  }
   function baseShapes(item,scale){
     const elements=[],[w,h]=sizes[item.kind],ink="#202020";
     const label=(x,y,text,size,center=false)=>elements.push({text,x,y,size,center});
     const path=(points,fill=null,stroke=ink)=>elements.push({points,fill,stroke});
     const rect=(x,y,w,h,fill=null)=>path([[x,y],[x+w,y],[x+w,y+h],[x,y+h],[x,y]],fill);
-    if(signs.includes(item.kind))return [];
+    if(signs.includes(item.kind))return signShapes(item);
     if(item.kind==="compartment"){label(w/2,h*.74,item.text,12,true);}
     else if(["title","credits"].includes(item.kind)){
       const lines=item.text.split("\n"),title=item.kind==="title";

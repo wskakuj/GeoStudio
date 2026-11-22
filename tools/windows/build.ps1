@@ -18,6 +18,7 @@ $Args = @(
     # never exits, so the CI step hangs until the job timeout.
     "--disable-windowed-traceback",
     "--name", "GeoStudio2",
+    "--icon", "geostudio.ico",
     "--collect-data", "geostudio.web_app",
     "--collect-submodules", "webview",
     "--hidden-import", "uvicorn.logging",

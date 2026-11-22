@@ -1,8 +1,9 @@
-#define MyAppName "GeoStudio 2.0 (Preview 8)"
-#define MyAppVersion "2.0.1"
+#define MyAppName "GeoStudio 2.0"
+#define MyAppVersion "2.0.2"
 #define MyAppExe "GeoStudio2.exe"
 
 [Setup]
+SetupIconFile=..\..\geostudio.ico
 AppId={{A755B3EB-320E-4139-8A44-FA5FB6912C9A}
 AppName={#MyAppName}
 AppVersion={#MyAppVersion}
@@ -14,7 +15,7 @@ PrivilegesRequired=lowest
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
 OutputDir=..\..\dist\installer
-OutputBaseFilename=GeoStudio2-Setup-2.0.1-x64
+OutputBaseFilename=GeoStudio2-Setup-2.0.2-x64
 Compression=lzma2
 SolidCompression=yes
 WizardStyle=modern
@@ -29,7 +30,7 @@ Source: "..\..\dist\GeoStudio2\*"; DestDir: "{app}"; Flags: ignoreversion recurs
 
 [Icons]
 Name: "{autoprograms}\GeoStudio 2.0 (Preview)"; Filename: "{app}\{#MyAppExe}"
-Name: "{autodesktop}\GeoStudio 2.0 (Preview)"; Filename: "{app}\{#MyAppExe}"; Tasks: desktopicon
+Name: "{autodesktop}\GeoStudio 2.0"; Filename: "{app}\{#MyAppExe}"; IconFilename: "{app}\{#MyAppExe}"; Tasks: desktopicon
 
 [Tasks]
 Name: "desktopicon"; Description: "Utwórz skrót na pulpicie"; Flags: unchecked
