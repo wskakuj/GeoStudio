@@ -100,6 +100,10 @@ window.GeoStudioSheet = (() => {
       const p=project(item.x,item.y),[w,h]=sizes[item.kind];
       const width=item.w*zoom,height=item.h*zoom;
       g.save();g.translate(p.x,p.y);g.scale(width/w,height/h);g.lineWidth=.65;
+      // Obrót wokół środka znaku; kąt w stopniach, dodatni = w prawo.
+      if(item.angle){
+        g.translate(w/2,h/2);g.rotate(Number(item.angle)*Math.PI/180);g.translate(-w/2,-h/2);
+      }
       for(const s of shapes(item,scale)){
         if(s.text!==undefined){g.fillStyle="#202020";g.font=fontSpec(s);g.textAlign=s.center?"center":"left";g.fillText(s.text,s.x,s.y);}
         else{g.beginPath();s.points.forEach(([x,y],i)=>i?g.lineTo(x,y):g.moveTo(x,y));if(s.fill){g.fillStyle=s.fill;g.fill();}if(s.stroke){g.strokeStyle=s.stroke;g.stroke();}}
