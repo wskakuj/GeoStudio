@@ -6,12 +6,12 @@ on:
       source_ref:
         description: Branch or commit to package
         required: true
-        default: feat/raster-trace-5310
+        default: main
         type: string
       release_tag:
-        description: GitHub release tag
+        description: GitHub release tag (np. v2.0.0)
         required: true
-        default: v0.14.0-preview.8
+        default: v2.0.0
         type: string
 
 permissions:
@@ -59,6 +59,5 @@ jobs:
 
             Źródło: `${{ inputs.source_ref }}` (`${{ steps.source.outputs.sha }}`).
             Instalator tworzy instalację dla bieżącego użytkownika.
-            To wydanie ma status prerelease.
-          prerelease: true
-          files: dist/installer/GeoStudio2-Setup-preview8-x64.exe
+          prerelease: false
+          files: dist/installer/*.exe

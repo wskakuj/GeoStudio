@@ -43,21 +43,23 @@ jobs:
       - name: Check installer output
         shell: pwsh
         run: |
-          $exe = "dist/installer/GeoStudio2-Setup-preview8-x64.exe"
-          if (!(Test-Path $exe)) { throw "Missing installer EXE" }
-          if ((Get-Item $exe).Length -lt 1000000) {
-            throw "Installer unexpectedly small"
+          # Nazwa instalatora zawiera wersję (2.0.0), więc szukamy maską,
+          # a nie zaszytym plikiem "preview8".
+          $exe = Get-ChildItem "dist/installer/*.exe" | Select-Object -First 1
+          if (-not $exe) { throw "Missing installer EXE" }
+          if ($exe.Length -lt 1000000) {
+            throw "Installer unexpectedly small: $($exe.Name)"
           }
-          Write-Host "Installer created: $exe"
+          Write-Host "Installer created: $($exe.FullName)"
       - uses: actions/upload-artifact@v4
         with:
-          name: GeoStudio2-Setup-preview8-x64
-          path: dist/installer/GeoStudio2-Setup-preview8-x64.exe
+          name: GeoStudio2-Setup-x64
+          path: dist/installer/*.exe
           if-no-files-found: error
           retention-days: 14
       - uses: actions/upload-artifact@v4
         with:
-          name: GeoStudio2-portable-preview8-x64
+          name: GeoStudio2-portable-x64
           path: dist/GeoStudio2/
           if-no-files-found: error
           retention-days: 14
