@@ -4448,7 +4448,7 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
   function openLayoutDialog(resume=false){
     if(!state.meta||!state.edit)return;
     if(resume!==true){
-      $("layout-title").value=state.meta.name.replace(/\.map$/i,"");
+      $("layout-title").value="";
       // Do not derive export scale from state.scale (current zoom).
       $("layout-scale").value=String(state.edit.compilationScale||5000);
     }
@@ -4589,7 +4589,7 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
       })),
       paper:$("layout-paper").value,
       orientation:$("layout-orientation").value,
-      title:$("layout-title").value.trim().slice(0,100)||"Mapa GEO-MAP",
+      title:$("layout-title").value.trim().slice(0,100),
       frame:false,
       frameColor:$("layout-frame-color").value,
       frameWidthMm,
@@ -4634,7 +4634,7 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
       bounds,denominator,dpi,pxPerUnit,width,height,margin,head,foot,
       legend,fullWidth,fullHeight,tiled,
       orientation:width>=height?"landscape":"portrait",
-      title:$("layout-title").value.trim().slice(0,100)||"Mapa GEO-MAP",
+      title:$("layout-title").value.trim().slice(0,100),
       frame:false,north:false,
       scaleBar:false,
       showLegend:false,
@@ -5251,7 +5251,7 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
   }
   async function exportLayout(print=false){
     if(!state.meta||!state.edit||state.editBusy)return;
-    const button=$("layout-export"),printButton=$("layout-print");
+    const button=$("layout-export"),printButton=null;
     let options;
     try{
       options=$("layout-format").value==="pdf"
@@ -5265,7 +5265,7 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
         "eksport zapisze całą mapę w jednym obrazie.",true);
       return;
     }
-    button.disabled=true;printButton.disabled=true;
+    button.disabled=true;if(printButton)printButton.disabled=true;
     try{
       const basename=state.meta.name.replace(/\.map$/i,"")
         .replace(/[^a-zA-Z0-9\p{L}\p{N}._ -]+/gu,"_").slice(0,90)||
@@ -5335,7 +5335,7 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
     }catch(error){
       exportInfo("Eksport nieudany: "+error.message);
       inform("Eksport nieudany: "+error.message,true);
-    }finally{button.disabled=false;printButton.disabled=false;}
+    }finally{button.disabled=false;if(printButton)printButton.disabled=false;}
   }
 
   // Stage 15: non-destructive map audit; all positions are normal Canvas world
@@ -5991,9 +5991,32 @@ inform("Klikaj mapę, aby wstawiać kolejne oznaczenia. Naciśnij Esc lub wybier
     }
     pendingSheet=kind;inform("Kliknij mapę, aby umieścić element.");
   });
+  canvas.addEventListener("contextmenu",ev=>{
+    if(insertMode()||state.tool==="select")ev.preventDefault();
+  },true);
   canvas.addEventListener("pointerdown",ev=>{
-    if(!(insertMode()||state.tool==="select")||!state.meta||ev.button!==0)return;
+    if(!(insertMode()||state.tool==="select")||!state.meta)return;
+    if(ev.button!==0&&ev.button!==2)return;
+    if(ev.button===2){
+      const p=eventCoords(ev),items=sheetItems();
+      const hit=items.slice().reverse().find(i=>{
+        const a=worldToScreen(i.x,i.y);
+        return p.x>=a.x-6&&p.y>=a.y-6&&p.x<=a.x+i.w*state.scale+6&&p.y<=a.y+i.h*state.scale+6;
+      });
+      if(!hit||!rotatableSigns.has(hit.kind))return;
+    }
     const p=eventCoords(ev),world=screenToWorld(p.x,p.y),items=sheetItems();
+    const under=items.slice().reverse().find(i=>{
+      const a=worldToScreen(i.x,i.y);
+      return p.x>=a.x-6&&p.y>=a.y-6&&p.x<=a.x+i.w*state.scale+6&&p.y<=a.y+i.h*state.scale+6;
+    });
+    // Prawy przycisk na znaku kierunkowym = obrót ruchem myszy.
+    if(ev.button===2&&under&&rotatableSigns.has(under.kind)){
+      ev.stopImmediatePropagation();ev.preventDefault();
+      selectedSheet=under.id;
+      sheetRotate={id:ev.pointerId,token:state.edit?.documentToken,item:{...under}};
+      canvas.setPointerCapture(ev.pointerId);requestDraw();return;
+    }
     const active=items.find(i=>i.id===selectedSheet);
     if(active&&hitRotateHandle(active,p)){
       ev.stopImmediatePropagation();ev.preventDefault();
@@ -6754,7 +6777,7 @@ inform("Klikaj mapę, aby wstawiać kolejne oznaczenia. Naciśnij Esc lub wybier
     else requestDraw();
   });
   $("layout-form").addEventListener("submit",event=>{event.preventDefault();exportLayout(false);});
-  link("layout-print",()=>exportLayout(true));
+
   link("tool-export-baked",downloadNativeCutouts);
   link("inspector-edit-toggle",()=>{
     toggleInspectorEdit($("inspector-edit").hidden);

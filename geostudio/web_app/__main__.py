@@ -165,7 +165,7 @@ def check_updates_on_start(interactive: bool = True) -> None:
     if not interactive or not _ask_update(info):
         return
     try:
-        installer = updater.download_installer(info["assetUrl"])
+        installer = updater.download_with_progress(info["assetUrl"], info["version"])
         updater.launch_installer(installer)
     except Exception as exc:
         _say("Aktualizacja nie powiodła się: " + str(exc))

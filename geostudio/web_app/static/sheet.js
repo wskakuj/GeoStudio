@@ -42,7 +42,9 @@ window.GeoStudioSheet = (() => {
     const label=(x,y,text,size,center=false)=>elements.push({text,x,y,size,center});
     const path=(points,fill=null,stroke=ink)=>elements.push({points,fill,stroke});
     const rect=(x,y,w,h,fill=null)=>path([[x,y],[x+w,y],[x+w,y+h],[x,y+h],[x,y]],fill);
-    if(signs.includes(item.kind))return signShapes(item);
+    // Znaki wstawione na mapę są już prawdziwą geometrią w MAP — rysujemy je
+    // tylko w podglądzie, żeby nie dublować ich na ekranie.
+    if(signs.includes(item.kind))return item.id==="__preview__"?signShapes(item):[];
     if(item.kind==="compartment"){label(w/2,h*.74,item.text,12,true);}
     else if(["title","credits"].includes(item.kind)){
       const lines=item.text.split("\n"),title=item.kind==="title";

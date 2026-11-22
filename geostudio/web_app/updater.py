@@ -44,7 +44,7 @@ def is_newer(latest: str, current: str) -> bool:
 
 # Musi być zgodna z pyproject.toml; używana, gdy metadane pakietu nie są
 # spakowane (PyInstaller kopiuje je przez --copy-metadata geostudio-pl).
-FALLBACK_VERSION = "2.0.2"
+FALLBACK_VERSION = "2.0.3"
 
 
 def current_version() -> str:
@@ -98,8 +98,13 @@ def check_for_update(current: str | None = None, timeout: float = 6.0) -> dict |
 
 
 def download_installer(url: str, target: Path | None = None,
-                       timeout: float = 120.0, progress=None) -> Path:
-    """Pobiera instalator do pliku tymczasowego; progress(done, total)."""
+                       timeout: float = 120.0, progress=None,
+                       show_window: bool = False) -> Path:
+    """Pobiera instalator do pliku tymczasowego; progress(done, total).
+
+    ``show_window`` otwiera okno postępu (Tk) na czas pobierania — bez niego
+    użytkownik widzi tylko ciszę do chwili startu instalatora.
+    """
     if not url:
         raise ValueError("Brak adresu instalatora w wydaniu.")
     target = target or Path(tempfile.gettempdir()) / "GeoStudio2-Setup-latest.exe"
@@ -119,6 +124,45 @@ def download_installer(url: str, target: Path | None = None,
     if target.stat().st_size <= 0:
         raise ValueError("Pobrany instalator jest pusty.")
     return target
+
+
+def download_with_progress(url: str, version: str = "") -> Path:
+    """Pobiera instalator pokazując okno postępu (używane przy aktualizacji)."""
+    import tkinter as tk
+    from tkinter import ttk
+    root = tk.Tk()
+    root.title("GeoStudio — aktualizacja")
+    root.resizable(False, False)
+    root.attributes("-topmost", True)
+    tk.Label(root, text=("Pobieranie wersji " + (version or "")).strip(),
+             font=("Segoe UI", 11, "bold"), anchor="w", padx=16, pady=(14, 4)
+             ).pack(fill="x")
+    label = tk.Label(root, text="Łączenie z GitHub…", anchor="w", padx=16)
+    label.pack(fill="x")
+    bar = ttk.Progressbar(root, length=360, mode="determinate", maximum=100)
+    bar.pack(padx=16, pady=12)
+    root.update_idletasks()
+    width = root.winfo_reqwidth()
+    root.geometry(f"{max(width, 400)}x{root.winfo_reqheight()}+"
+                  f"{(root.winfo_screenwidth()-400)//2}+"
+                  f"{(root.winfo_screenheight()-200)//2}")
+
+    def on_progress(done: int, total: int) -> None:
+        if total:
+            bar["value"] = min(100, done * 100 / total)
+            label.config(text=f"Pobrano {done/1048576:.1f} z {total/1048576:.1f} MB")
+        else:
+            label.config(text=f"Pobrano {done/1048576:.1f} MB")
+        root.update()
+
+    try:
+        path = download_installer(url, progress=on_progress)
+        bar["value"] = 100
+        label.config(text="Pobrano — uruchamiam instalator…")
+        root.update()
+        return path
+    finally:
+        root.destroy()
 
 
 def is_frozen() -> bool:
