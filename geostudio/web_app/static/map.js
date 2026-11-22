@@ -5801,7 +5801,9 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
   // w dowolny z nich zaznacza cały znak, żeby dało się go przesunąć razem.
   function groupMembersOf(fid){
     const groups=state.edit?.sheetGroups||{};
-    const feature=state.byId.get(fid);
+    // state.byId nie istnieje — wcześniejsza wersja rzucała TypeError przy
+    // KAŻDYM kliknięciu, więc nie dało się nic zaznaczyć ani edytować.
+    const feature=state.features.find(f=>f.id===fid);
     const uid=feature?.uid||feature?.sourceUid;
     if(!uid)return null;
     for(const [itemId,uids] of Object.entries(groups)){

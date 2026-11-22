@@ -44,7 +44,7 @@ def is_newer(latest: str, current: str) -> bool:
 
 # Musi być zgodna z pyproject.toml; używana, gdy metadane pakietu nie są
 # spakowane (PyInstaller kopiuje je przez --copy-metadata geostudio-pl).
-FALLBACK_VERSION = "2.0.8"
+FALLBACK_VERSION = "2.0.9"
 
 
 def current_version() -> str:
@@ -239,7 +239,20 @@ try {{
 
     Start-Sleep -Milliseconds 600
     $form.Close()
-    Start-Process -FilePath $target -ArgumentList '/SILENT', '/CLOSEAPPLICATIONS', '/NORESTART'
+
+    # Instalujemy cicho i czekamy na koniec, żeby potem uruchomić program.
+    $installer = Start-Process -FilePath $target `
+        -ArgumentList '/SILENT', '/CLOSEAPPLICATIONS' -PassThru
+    $installer.WaitForExit()
+
+    $exe = Join-Path $env:LOCALAPPDATA 'Programs\\GeoStudio2\\GeoStudio2.exe'
+    if (Test-Path $exe) {{
+        Start-Process -FilePath $exe
+    }} else {{
+        [System.Windows.Forms.MessageBox]::Show(
+            'Zainstalowano, ale nie znaleziono GeoStudio2.exe w ' + $exe,
+            'GeoStudio 2.0 — aktualizacja') | Out-Null
+    }}
 }} catch {{
     Fail ("Nie udało się pobrać aktualizacji:`n" + $_.Exception.Message)
 }}
