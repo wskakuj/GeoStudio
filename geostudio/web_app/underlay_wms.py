@@ -170,8 +170,14 @@ def layers_for(preset: str) -> tuple:
     return layers
 
 
+# Dla GUGiK pokazujemy tylko jedną, używaną warstwę: granice i numery działek.
+KIEG_KEEP = frozenset({KIEG_PARCELS})
+
+
 def list_layers(preset: str) -> dict:
     layers = layers_for(preset)
+    if preset == "kieg":
+        layers = tuple(layer for layer in layers if layer.name in KIEG_KEEP)
     return {
         "preset": preset,
         "name": PRESETS[preset][0],
@@ -199,6 +205,8 @@ def map_png(preset: str, layer: str, epsg: int,
     if not all(isfinite(v) for v in (xmin, ymin, xmax, ymax)) or xmin >= xmax or ymin >= ymax:
         raise ValueError("Nieprawidłowy zasięg obrazu WMS.")
     candidates = layers_for(preset)
+    if preset == "kieg" and layer not in KIEG_KEEP:
+        raise ValueError("Dla GUGiK dostępna jest tylko warstwa granic i numerów działek.")
     choice = next((entry for entry in candidates if entry.name == layer), None)
     parcel = preset == "kieg" and layer in PARCEL_LAYERS
     if choice is None or (not parcel and f"EPSG:{epsg}" not in choice.crs):
