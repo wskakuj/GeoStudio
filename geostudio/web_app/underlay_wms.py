@@ -329,7 +329,8 @@ def _wmts_layers(preset: str) -> tuple:
 def _wmts_image(preset: str, layer: str, epsg: int, bounds,
                 width: int, height: int) -> bytes:
     """Składa obraz z kafelków WMTS i przycina do żądanego rozmiaru."""
-    from ..wmts_service import gettile_url, pick_matrix, tile_range
+    from ..wmts_service import (gettile_url, mosaic_origin, pick_matrix,
+                                tile_selection)
     from concurrent.futures import ThreadPoolExecutor
     from io import BytesIO
     from PIL import Image
@@ -342,8 +343,8 @@ def _wmts_image(preset: str, layer: str, epsg: int, bounds,
         raise ValueError("Serwer WMTS nie obsługuje wybranego układu EPSG.")
     pixel_size = max(1e-9, (bounds.max_x - bounds.min_x) / max(1, width))
     matrix = pick_matrix(matrix_set, pixel_size)
-    col0, row0, col1, row1 = tile_range(matrix, bounds.min_x, bounds.min_y,
-                                        bounds.max_x, bounds.max_y)
+    col0, row0, col1, row1, swapped = tile_selection(
+        matrix, bounds.min_x, bounds.min_y, bounds.max_x, bounds.max_y)
     if (col1 - col0 + 1) * (row1 - row0 + 1) > 36:
         raise ValueError("Zbyt wiele kafelków WMTS dla tego kadru.")
     base = _preset(preset)
@@ -371,7 +372,6 @@ def _wmts_image(preset: str, layer: str, epsg: int, bounds,
         tiles = list(pool.map(lambda item: fetch(*item), urls))
 
     res = matrix.resolution()
-    left, top = matrix.top_left
     sheet = Image.new("RGB",
                       (matrix.tile_width * (col1 - col0 + 1),
                        matrix.tile_height * (row1 - row0 + 1)))
@@ -385,8 +385,7 @@ def _wmts_image(preset: str, layer: str, epsg: int, bounds,
         sheet.paste(tile, ((col - col0) * matrix.tile_width,
                            (row - row0) * matrix.tile_height))
     # Kadr w metrach -> piksele sklejonej mozaiki.
-    origin_x = left + col0 * matrix.tile_width * res
-    origin_y = top - row0 * matrix.tile_height * res
+    origin_x, origin_y = mosaic_origin(matrix, col0, row0, swapped)
     box = (int(round((bounds.min_x - origin_x) / res)),
            int(round((origin_y - bounds.max_y) / res)),
            int(round((bounds.max_x - origin_x) / res)),
