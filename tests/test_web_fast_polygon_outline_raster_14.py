@@ -172,7 +172,7 @@ def test_code_wide_preset_editor_and_enter_shortcut_are_visible():
     # Zapas bbox pokrywa wzmocniony magnes węzłów (16 px).
     assert "const pad=20/Math.max(.000001,state.scale);" in js
     assert 'if(state.tool==="draw")return;' in js
-    assert 'if(["cut","line","line-edit"].includes(state.tool)&&state.meta)' in js
+    assert 'if(["cut","line","line-edit","link"].includes(state.tool)&&state.meta)' in js
 
 
 def test_5310_A1_A2_never_culled_for_overlap_zoom_or_label_cap():

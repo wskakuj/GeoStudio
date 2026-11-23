@@ -115,7 +115,7 @@ def test_local_only_api_file_upload_and_inspector(client, sample_map):
     page = c.get("/")
     assert page.status_code == 200
     assert 'name="api-token"' in page.text
-    assert "Nowa perspektywa" in page.text
+    assert "Nowy standard pracy" in page.text
     assert c.get("/map.js").status_code == 200
     assert c.get("/styles.css").status_code == 200
     response = c.post("/api/map", content=sample_map, headers={

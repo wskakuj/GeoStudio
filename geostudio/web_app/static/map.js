@@ -2037,7 +2037,53 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
       if($("create-dialog").open)$("create-a1").focus({preventScroll:true});
     });
   }
+  // Znak łącznika (kod 4100): z odcinka start–koniec budujemy „Z"-kę
+  // w środku odcinka, obróconą wzdłuż niego — tak jak w mapach GEO-MAP.
+  function connectorPoints(start, end){
+    const dx=end[0]-start[0], dy=end[1]-start[1];
+    const len=Math.hypot(dx,dy);
+    if(len<0.001)return null;
+    const ux=dx/len, uy=dy/len;          // wzdłuż odcinka
+    const nx=-uy, ny=ux;                 // prostopadle
+    const mid=[(start[0]+end[0])/2,(start[1]+end[1])/2];
+    const L=Math.max(6,Math.min(40,len*0.45));   // długość znaku
+    const H=Math.max(4,L*0.55);                  // wysokość zygzaka
+    const at=(along,across)=>[
+      Math.round((mid[0]+ux*along+nx*across)*1000)/1000,
+      Math.round((mid[1]+uy*along+ny*across)*1000)/1000];
+    return [at(-L/2,-H/2), at(-L/2,H/2), at(L/2,-H/2), at(L/2,H/2)];
+  }
+  async function finishConnector(){
+    if(state.drawPoints.length<2){
+      inform("Łącznik wymaga punktu początkowego i końcowego.",true);return;
+    }
+    const start=state.drawPoints[0], end=state.drawPoints[1];
+    const points=connectorPoints(start,end);
+    if(!points){inform("Punkty łącznika są zbyt blisko siebie.",true);return;}
+    if(state.editBusy||!state.edit)return;
+    const body={...editRequestBody(),
+      operation:{action:"create_line",code:"4100",points,fields:{}}};
+    const post=(path,data)=>api(path,{method:"POST",
+      headers:{"Content-Type":"application/json"},body:JSON.stringify(data)});
+    state.editBusy=true;state.editBusySince=Date.now();updateEditState(state.edit);
+    try{
+      const preview=await post("/api/geometry/preview",body);
+      if(preview.canApply===false)
+        throw Error(preview.message||"Nieprawidłowy łącznik.");
+      const result=await post("/api/geometry/apply",{...body,previewKey:preview.previewKey});
+      updateEditState(result);
+      state.drawPoints=[];state.drawSnap=null;state.drawHover=null;
+      await refreshLabelsNow();
+      inform("Dodano łącznik (4100). Ctrl+Z cofa.");
+    }catch(error){
+      inform("Nie udało się dodać łącznika: "+error.message,true);
+    }finally{
+      state.editBusy=false;state.editBusySince=0;updateEditState(state.edit);
+      requestDraw();
+    }
+  }
   async function finishGeometryDrawing() {
+    if(state.tool==="link"){await finishConnector();return;}
     if(state.tool==="draw"){finishDrawPolygon();return;}
     if(state.tool==="cut"){
       if(state.drawPoints.length<2){
@@ -2275,7 +2321,7 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
       control.setAttribute("aria-pressed",String(state.drawMagnet));
     }
     if(!state.drawMagnet)state.drawSnap=null;
-    if(state.drawCursorWorld&&["draw","cut","line","line-edit"].includes(state.tool))
+    if(state.drawCursorWorld&&["draw","cut","line","line-edit","link"].includes(state.tool))
       updateDrawingHover(state.drawCursorWorld,false);
     inform(state.drawMagnet
       ?"Magnes rysowania włączony: 7 px do węzła, 5 px do linii. Alt — bez przyciągania."
@@ -2335,7 +2381,7 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
     return target;
   }
   function drawMagnetMarker() {
-    if(!state.drawSnap||!["draw","cut","line","line-edit"].includes(state.tool))
+    if(!state.drawSnap||!["draw","cut","line","line-edit","link"].includes(state.tool))
       return;
     const p=worldToScreen(state.drawSnap.point.x,state.drawSnap.point.y);
     ctx.save();
@@ -2355,7 +2401,7 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
     ctx.restore();
   }
   function drawDraftPolygon() {
-    if(!["draw","cut","line","line-edit"].includes(state.tool)||
+    if(!["draw","cut","line","line-edit","link"].includes(state.tool)||
        !state.drawPoints.length)return;
     const points=state.drawPoints.map(p=>[p[1],-p[0]]);
     if(state.drawHover)points.push([state.drawHover.y,-state.drawHover.x]);
@@ -3825,7 +3871,7 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
     shell.classList.toggle("moving-objects",tool==="move");
     shell.classList.toggle("drawing-objects",tool==="draw");
     shell.classList.toggle("labels-editing",tool==="labels");
-    if(!["draw","cut","line","line-edit"].includes(tool)){
+    if(!["draw","cut","line","line-edit","link"].includes(tool)){
       state.drawPoints=[];state.drawHover=null;
       state.drawSnap=null;state.drawCursorWorld=null;
     }
@@ -3835,9 +3881,10 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
       ["select","tool-select"],["pan","tool-pan"],["nodes","tool-nodes"],
       ["move","tool-move"],["draw","tool-new-polygon"],
       ["labels","tool-label-move"],
-      ["cut","tool-split"],["line","tool-line"],
+      ["cut","tool-split"],["line","tool-line"],["link","tool-link"],
       ["select","float-select"],["pan","float-pan"],["nodes","float-nodes"],
-      ["move","float-move"],["draw","float-draw"],["line","float-line"]
+      ["move","float-move"],["draw","float-draw"],["line","float-line"],
+      ["link","float-link"]
     ])$(id).classList.toggle("active",name===tool||
       (name==="line"&&tool==="line-edit"));
     if(tool==="nodes"&&(!state.detail||!state.detail.closed))
@@ -6159,6 +6206,34 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
     if(detail.geometryTruncated)addField(geom,"Uwaga","Wyświetlono tylko pierwsze 500 punktów.");
     if(detail.points.length)addField(geom,"X / Y",
       detail.points[0].x.toFixed(3)+" / "+detail.points[0].y.toFixed(3));
+    // Rodzaj linii: tylko dla obiektów otwartych (linie, łączniki).
+    const styleSection=$("inspector-line-style-section");
+    styleSection.hidden=detail.closed!==false;
+    if(!styleSection.hidden){
+      const select=$("inspector-line-style");
+      const dash=detail.style?.dash;
+      select.value=Array.isArray(dash)&&dash.length?dash.join(","):"";
+    }
+  }
+  async function setInspectorLineStyle(){
+    if(!state.active||!state.edit||state.editBusy)return;
+    const raw=$("inspector-line-style").value;
+    const dash=raw?raw.split(",").map(Number):[];
+    state.editBusy=true;state.editBusySince=Date.now();updateEditState(state.edit);
+    try{
+      const result=await api("/api/objects/dash",{
+        method:"POST",headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({uid:state.detail?.sourceUid||state.active,dash,
+          documentToken:state.edit.documentToken,revision:state.edit.revision})
+      });
+      updateEditState(result);
+      await refreshLabelsNow();
+      inform("Zmieniono rodzaj linii. Ctrl+Z cofa.");
+    }catch(error){
+      inform("Nie zmieniono rodzaju linii: "+error.message,true);
+    }finally{
+      state.editBusy=false;state.editBusySince=0;updateEditState(state.edit);
+    }
   }
   function updateSelectionCount(){
     const n=state.pinned.size+(state.active&&!state.pinned.has(state.active)?1:0);
@@ -7053,7 +7128,7 @@ inform("Klikaj mapę, aby wstawiać kolejne oznaczenia. Naciśnij Esc lub wybier
   canvas.addEventListener("dblclick",ev=>{
     // Double-click is often produced by two fast point placements.
     // It must NEVER end polygon drawing: use Enter or the first vertex.
-    if(["cut","line","line-edit"].includes(state.tool)&&state.meta){
+    if(["cut","line","line-edit","link"].includes(state.tool)&&state.meta){
       ev.preventDefault();ev.stopPropagation();finishGeometryDrawing();return;
     }
     if(state.tool==="draw")return;
@@ -7186,7 +7261,7 @@ inform("Klikaj mapę, aby wstawiać kolejne oznaczenia. Naciśnij Esc lub wybier
     if((ev.ctrlKey||ev.metaKey)&&ev.key.toLowerCase()==="d"){
       ev.preventDefault();quickDuplicate();return;
     }
-    if(["draw","cut","line","line-edit"].includes(state.tool)&&ev.key==="Enter"){
+    if(["draw","cut","line","line-edit","link"].includes(state.tool)&&ev.key==="Enter"){
       ev.preventDefault();finishGeometryDrawing();return;
     }
     if(state.tool==="nodes"&&state.detail&&state.selectedVertex!==null&&
@@ -7304,6 +7379,8 @@ inform("Klikaj mapę, aby wstawiać kolejne oznaczenia. Naciśnij Esc lub wybier
   link("tool-split",startSplit);
   link("tool-winding",repairWinding);
   link("tool-line",()=>setTool("line"));
+  link("tool-link",()=>setTool("link"));
+  $("inspector-line-style").addEventListener("change",setInspectorLineStyle);
   link("line-close",()=>$("line-dialog").close());
   link("line-back",()=>$("line-dialog").close());
   link("line-preview",()=>previewGeometryForm("line"));
@@ -7551,6 +7628,7 @@ inform("Klikaj mapę, aby wstawiać kolejne oznaczenia. Naciśnij Esc lub wybier
   link("tool-delete-node",deleteSelectedVertex);
   link("float-nodes",()=>setTool("nodes"));
   link("float-line",()=>setTool("line"));
+  link("float-link",()=>setTool("link"));
   link("float-draw",()=>setTool("draw"));
   link("float-snap",toggleDrawMagnet);
   $("opt-snap").addEventListener("change",ev=>{state.snapEnabled=ev.target.checked;});

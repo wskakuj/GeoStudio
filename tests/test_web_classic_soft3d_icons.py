@@ -45,19 +45,22 @@ def test_soft3d_tool_coverage_and_unique_gradient_ids():
     assert len(parser.ids) == len(set(parser.ids))
     ribbon = {key: value for key, value in parser.buttons.items()
               if key.startswith("tool-") and "tool-button" in value["class"].split()}
-    # Zakładka „Eksport” usunięta (4 przyciski mniej: 39 -> 35).
-    assert len(ribbon) == 35
+    # Zakładka „Eksport” usunięta (39 -> 35), „Cofnij/Ponów” przeniesione do
+    # nagłówka (35 -> 33), nowy przycisk „Łącznik” w Tworzeniu (33 -> 34).
+    assert len(ribbon) == 34
     assert all(value["icons"] == 1 for value in ribbon.values())
     floating = {key: value for key, value in parser.buttons.items()
                 if key.startswith("float-")}
-    assert len(floating) == 10
+    # 10 + „Łącznik” w szybkim przyborniku.
+    assert len(floating) == 11
     assert all(value["icons"] == 1 for value in floating.values())
     assert parser.buttons["btn-theme"]["icons"] == 2
     assert parser.buttons["btn-export"]["icons"] == 1
     assert "btn-export-label" in parser.ids
     # „Zapisz na oryginale mapy” usunięty (jego ikona trafiła do „Zapisz kopię
     # mapy”), a razem z zakładką Eksport zniknęły 4 ikony narzędzi.
-    assert len(parser.gradients) == 56
+    # 56 + dwa gradienty ikony „Łącznik” (wstążka + przybornik).
+    assert len(parser.gradients) == 58
     assert sorted(parser.gradients) == sorted(parser.fills)
 
 
