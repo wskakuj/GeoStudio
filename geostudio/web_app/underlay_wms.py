@@ -38,24 +38,33 @@ class NoRedirect(HTTPRedirectHandler):
         return None
 
 
-_CONNECTIONS: dict[str, "http.client.HTTPSConnection"] = {}
-_CONNECTION_LOCK = threading.Lock()
+# Połączenia TLS per WĄTEK. Jeden wspólny HTTPSConnection dla wszystkich wątków
+# nie jest bezpieczny: przy dwóch kafelkach pobieranych równolegle wątki
+# wchodziły sobie na to samo gniazdo, co kończyło się zrywaniem żądania,
+# błędnie odczytaną odpowiedzią albo zamknięciem połączenia drugiego wątku.
+_CONNECTIONS = threading.local()
+
+
+def _thread_pool() -> dict:
+    pool = getattr(_CONNECTIONS, "pool", None)
+    if pool is None:
+        pool = {}
+        _CONNECTIONS.pool = pool
+    return pool
 
 
 def _connection(host: str) -> "http.client.HTTPSConnection":
-    """Połączenie TLS z utrzymaniem (keep-alive) — bez nowego handshake
-    przy każdym przesunięciu mapy."""
-    with _CONNECTION_LOCK:
-        conn = _CONNECTIONS.get(host)
-        if conn is None:
-            conn = http.client.HTTPSConnection(host, timeout=15)
-            _CONNECTIONS[host] = conn
-        return conn
+    """Połączenie TLS z utrzymaniem (keep-alive), przypisane do bieżącego wątku."""
+    pool = _thread_pool()
+    conn = pool.get(host)
+    if conn is None:
+        conn = http.client.HTTPSConnection(host, timeout=15)
+        pool[host] = conn
+    return conn
 
 
 def _drop_connection(host: str) -> None:
-    with _CONNECTION_LOCK:
-        conn = _CONNECTIONS.pop(host, None)
+    conn = _thread_pool().pop(host, None)
     if conn is not None:
         try:
             conn.close()
@@ -72,7 +81,7 @@ def _download(url: str, max_bytes: int) -> bytes:
     host = parsed.hostname
     path = parsed.path + ("?" + parsed.query if parsed.query else "")
     headers = {"User-Agent": "GeoStudio-2-WMS/12A",
-               "Accept": "image/png, application/xml, text/xml",
+               "Accept": "image/png, image/jpeg, application/xml, text/xml",
                "Connection": "keep-alive"}
     last: Exception | None = None
     # Trzy próby z krótkim odstępem: Geoportal potrafi zerwać połączenie
