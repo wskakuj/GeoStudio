@@ -45,7 +45,7 @@ def test_timeout_falls_back_to_a_smaller_image(monkeypatch):
         return _png(64, 64)
 
     monkeypatch.setattr(underlay_wms, "_download", download)
-    monkeypatch.setattr(underlay_wms, "layers_for", lambda preset: [Layer()])
+    monkeypatch.setattr(underlay_wms, "layers_for", lambda preset, url=None: [Layer()])
     # Wyłączamy kafelki, żeby sprawdzić właśnie odwrót do mniejszego obrazu.
     monkeypatch.setattr(underlay_wms, "ORTO_TILE_LIMIT", 10_000_000)
     underlay_wms.clear_cache()

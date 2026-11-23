@@ -14,7 +14,7 @@ class _Layer:
 
 
 def test_kieg_lists_only_parcels(monkeypatch):
-    monkeypatch.setattr(underlay_wms, "layers_for", lambda preset: (
+    monkeypatch.setattr(underlay_wms, "layers_for", lambda preset, url=None: (
         _Layer("dzialki,numery_dzialek", "Granice i numery działek"),
         _Layer("budynki", "Budynki"),
         _Layer("uzytki", "Użytki"),
@@ -25,7 +25,7 @@ def test_kieg_lists_only_parcels(monkeypatch):
 
 
 def test_other_presets_keep_every_layer(monkeypatch):
-    monkeypatch.setattr(underlay_wms, "layers_for", lambda preset: (
+    monkeypatch.setattr(underlay_wms, "layers_for", lambda preset, url=None: (
         _Layer("orto_standard", "Ortofoto"),
         _Layer("orto_high", "Ortofoto HD"),
     ))
