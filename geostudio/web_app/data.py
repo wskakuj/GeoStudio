@@ -3337,10 +3337,14 @@ class PreviewWorkspace:
         return result
 
     def _feature(self, entry: _Entry, overlay_objects=(),
-                 overlay_rank=None) -> dict:
+                 overlay_rank=None, native: bool = False) -> dict:
         obj=entry.obj
         parts=[[[p.y,-p.x] for p in segment]
                for segment in obj.display_parts if segment]
+        # Geometria bez wycięć — maska auto-wkreślania musi widzieć CAŁY
+        # istniejący poligon, także ten przycięty wizualnie przez sąsiada.
+        native_parts=[[[p.y,-p.x] for p in segment]
+                      for segment in obj.display_parts if segment]
         visible_area=obj.area_m2
         mask_count=0
         if obj.is_closed and overlay_objects:
@@ -3381,13 +3385,15 @@ class PreviewWorkspace:
                             if entry.layer == "Użytki" else None),
                 "bbox":entry.bbox,"closed":obj.is_closed,
                 "geometry":parts,"style":self._style(entry),
+                **({"nativeGeometry":native_parts} if native else {}),
                 "labels":self._labels(entry) if parts else [],
                 "baseAreaM2":obj.area_m2,
                 "visibleAreaM2":visible_area,
                 "reversibleCutout":mask_count>0}
 
     def viewport(self, bounds: tuple[float, float, float, float],
-                 limit: int = MAX_RENDER_FEATURES, offset: int = 0) -> dict:
+                 limit: int = MAX_RENDER_FEATURES, offset: int = 0,
+                 *, native: bool = False) -> dict:
         """Query only the visible spatial region; never serialize all map data."""
         west, south, east, north = bounds
         if not all(isfinite(v) for v in bounds) or west > east or south > north:
@@ -3446,7 +3452,7 @@ class PreviewWorkspace:
                 overlay_by_code.setdefault(obj.code,[]).append(obj)
             return {
                 "features":[self._feature(entry,
-                    overlay_by_code.get(entry.obj.code,()),rank)
+                    overlay_by_code.get(entry.obj.code,()),rank,native)
                     for entry in visible[offset:offset + limit]],
                 "limited":total>offset+limit,"total":total,
             }

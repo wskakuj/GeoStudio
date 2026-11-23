@@ -337,9 +337,11 @@ def create_app(workspace: PreviewWorkspace | None = None, *,
 
     @app.get("/api/viewport")
     async def viewport(xmin: float, ymin: float, xmax: float, ymax: float,
-                       limit: int = MAX_RENDER_FEATURES, offset: int = 0):
+                       limit: int = MAX_RENDER_FEATURES, offset: int = 0,
+                       native: bool = False):
         try:
-            return state.viewport((xmin, ymin, xmax, ymax), limit, offset)
+            return state.viewport((xmin, ymin, xmax, ymax), limit, offset,
+                                  native=native)
         except ValueError as exc:
             raise HTTPException(400, str(exc)) from exc
 

@@ -561,8 +561,10 @@
       if(nativeAPI()?.save_map) {
         const saved=await nativeAPI().save_map();
         if(saved&&!saved.cancelled){
-          // Po zapisie odświeżamy status, żeby znacznik „Niezapisane zmiany”
-          // zniknął — wcześniej zostawał, bo nikt nie odpytał serwera.
+          // Znacznik „Niezapisane zmiany” czyścimy NATYCHMIAST lokalnie —
+          // zapis się udał, więc stan pamięci jest już na dysku. Potem
+          // dociągamy status z serwera, żeby zsynchronizować revision.
+          if(state.edit){state.edit.dirty=false;updateEditState(state.edit);}
           try{
             const status=await api("/api/edit/status");
             if(status&&status.documentToken===state.edit?.documentToken)
@@ -1792,6 +1794,7 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
       action:"create",code:$("create-code").value,
       fields:Object.fromEntries(["a1","a2"].filter(key=>$("create-"+key).value)
         .map(key=>[key.toUpperCase(),$("create-"+key).value])),
+      mergeSameA1:!!$("create-merge-a1")?.checked,
       points:state.drawPoints.map(p=>p.slice())
     };
     throw Error("Nieznana operacja.");
@@ -1928,7 +1931,10 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
       setTool("draw");
       await refreshEditedDocument(null);
       updateSelectionCount();
-      inform("Poligon utworzony. Rysuj następny — tryb N nadal aktywny.");
+      inform(result.mergedSameA1
+        ?"Poligon utworzony i scalony z "+result.mergedSameA1+
+          " wydzieleniem o tym samym A1. Rysuj następny — tryb N aktywny."
+        :"Poligon utworzony. Rysuj następny — tryb N nadal aktywny.");
     }catch(error){
       $("create-summary").textContent="Nie utworzono: "+error.message;
       inform("Błąd tworzenia poligonu: "+error.message,true);
@@ -2748,7 +2754,9 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
     // włączony, więc starsze warstwy zostawały z obrazem z poprzedniego kadru.
     // Większy zapas (22%) niż wcześniej: drobne przesunięcia mapy mieszczą się
     // w pobranym obrazie, więc nie trzeba nic dociągać.
-    const bounds=boundsFromViewport(.22);
+    // Zapas 45%: przy przesuwaniu mapy obraz zwykle jeszcze pokrywa kadr,
+    // więc zamiast czekać na serwer dostajesz go z pamięci.
+    const bounds=boundsFromViewport(.45);
     const size=underlayRequestDimensions(bounds);
     const documentToken=state.edit?.documentToken;
     await Promise.all(targets.map(item=>refreshUnderlayItem(
@@ -2974,8 +2982,19 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
         canvas.focus({preventScroll:true});requestDraw();
       },
       async featuresIn(bounds){
+        // native=1: maska musi widzieć CAŁE istniejące poligony, także te
+        // przycięte wizualnie przez sąsiada — inaczej propozycja wchodzi
+        // na już wkreślone wydzielenie.
         const features=[];
-        await forEachExportPage(bounds,batch=>features.push(...batch));
+        let offset=0;
+        for(;;){
+          const qs=new URLSearchParams({xmin:bounds[0],ymin:bounds[1],
+            xmax:bounds[2],ymax:bounds[3],limit:4000,offset,native:"1"});
+          const data=await api("/api/viewport?"+qs.toString());
+          features.push(...data.features);
+          if(features.length>=data.total||!data.features.length)break;
+          offset+=data.features.length;
+        }
         return features;
       },
       magnetEnabled:()=>state.drawMagnet,
