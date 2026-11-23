@@ -510,10 +510,16 @@ def _stitch(tiles: list[bytes], width: int, height: int,
     from io import BytesIO
     images = [Image.open(BytesIO(raw)).convert("RGB") for raw in tiles]
     canvas = Image.new("RGB", (width, height))
-    canvas.paste(images[0], (0, 0))
-    canvas.paste(images[1], (left_w, 0))
-    canvas.paste(images[2], (0, top_h))
-    canvas.paste(images[3], (left_w, top_h))
+    # Kafelki dzielimy po (północ, wschód):
+    #   0 = północ mała, wschód mały   -> LEWY DOLNY
+    #   1 = północ duża, wschód mały   -> LEWY GÓRNY
+    #   2 = północ mała, wschód duży   -> PRAWY DOLNY
+    #   3 = północ duża, wschód duży   -> PRAWY GÓRNY
+    # Oś Y obrazu rośnie w dół, więc większa północ ląduje WYŻEJ.
+    canvas.paste(images[1], (0, 0))
+    canvas.paste(images[3], (left_w, 0))
+    canvas.paste(images[0], (0, top_h))
+    canvas.paste(images[2], (left_w, top_h))
     out = BytesIO()
     canvas.save(out, format="JPEG", quality=88, optimize=True)
     return out.getvalue()
