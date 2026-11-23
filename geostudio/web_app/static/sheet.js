@@ -139,7 +139,27 @@ window.GeoStudioSheet = (() => {
     for(const item of items){
       const p=project(item.x,item.y),[w,h]=sizes[item.kind];
       const width=item.w*zoom,height=item.h*zoom;
-      g.save();g.translate(p.x,p.y);g.scale(width/w,height/h);g.lineWidth=.65;
+      g.save();g.translate(p.x,p.y);
+      if(item.kind==="compartment"){
+        // Numer 6900 rysujemy wprost w jego pudełku: rozmiar czcionki wynika
+        // z wysokości pudełka, więc cyfra wypełnia je i NIE jest rozciągnięta.
+        const px=Math.max(4,height*.78);
+        if(item.angle){
+          g.translate(width/2,height/2);g.rotate(Number(item.angle)*Math.PI/180);
+          g.translate(-width/2,-height/2);
+        }
+        g.fillStyle="#202020";
+        g.font="600 "+px.toFixed(2)+"px Arial, Helvetica, sans-serif";
+        g.textAlign="center";g.textBaseline="middle";
+        g.fillText(String(item.text||""),width/2,height/2);
+        g.restore();
+        if(selection===item.id){
+          g.save();g.strokeStyle="#2664db";g.strokeRect(p.x,p.y,width,height);
+          g.fillStyle="#2664db";g.fillRect(p.x+width-5,p.y+height-5,10,10);g.restore();
+        }
+        continue;
+      }
+      g.scale(width/w,height/h);g.lineWidth=.65;
       // Obrót wokół środka znaku; kąt w stopniach, dodatni = w prawo.
       if(item.angle){
         g.translate(w/2,h/2);g.rotate(Number(item.angle)*Math.PI/180);g.translate(-w/2,-h/2);
