@@ -6224,6 +6224,15 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
 
   const singleSheetKinds=new Set(["title","credits","compass","symbols","species"]);
   function sheetWorldPerPixel(){return (state.edit?.compilationScale||5000)/3779.527559;}
+  // Pudełko numeru 6900 = faktyczny rozmiar napisu (nie całe pole arkusza).
+  function compartmentBox(text, fontSize){
+    const chars=Math.max(1,String(text||"").trim().length||1);
+    const size=Math.max(6,Number(fontSize)||12);
+    const unitsW=Math.max(size*0.75,chars*size*0.62);
+    const unitsH=size*1.3;
+    const per=sheetWorldPerPixel();
+    return {w:unitsW*per,h:unitsH*per};
+  }
   function sheetItems(){
     return (state.edit?.sheetItems||[]).map(i=>sheetDrag?.item.id===i.id?sheetDrag.item:i);
   }
@@ -6249,9 +6258,12 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
     if(insertMode()&&pendingSheet&&sheetCursor){
       const kind=pendingSheet,[w,h]=GeoStudioSheet.sizes[kind];
       const chosen=pendingNumber||{text:"",size:12};
-      const z=kind==="compartment"?chosen.size/12:sheetSize;
+      const z=sheetSize;
+      const ghostBox=kind==="compartment"?compartmentBox(chosen.text,chosen.size)
+        :{w:w*z*sheetWorldPerPixel(),h:h*z*sheetWorldPerPixel()};
       const ghost={id:"__preview__",kind,x:sheetCursor.x,y:sheetCursor.y,
-        w:w*z*sheetWorldPerPixel(),h:h*z*sheetWorldPerPixel(),
+        w:ghostBox.w,h:ghostBox.h,
+        ...(kind==="compartment"?{fontSize:chosen.size}:{}),
         text:kind==="compartment"?chosen.text:GeoStudioSheet.defaultText(kind,state.meta?.name||"")};
 
       // Podgląd = dokładnie ten sam glif, który trafi do MAP. Bez ramki
@@ -6279,10 +6291,8 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
     const size=Number($("sheet-number-size").value)||12;
     if(editing){
       // Edycja istniejącego numeru (dwuklik na mapie).
-      const factor=size/12;
-      const item={...editing,text,fontSize:size,
-        h:GeoStudioSheet.sizes.compartment[1]*factor*sheetWorldPerPixel(),
-        w:GeoStudioSheet.sizes.compartment[0]*factor*sheetWorldPerPixel()};
+      const box=compartmentBox(text,size);
+      const item={...editing,text,fontSize:size,w:box.w,h:box.h};
       saveSheet([...sheetItems().filter(i=>i.id!==item.id),item]);
       inform("Zmieniono numer na "+text+".");
       return;
@@ -6389,9 +6399,11 @@ inform("Klikaj mapę, aby wstawiać kolejne oznaczenia. Naciśnij Esc lub wybier
     if(pendingSheet){
       const kind=pendingSheet,[w,h]=GeoStudioSheet.sizes[kind];
       const chosen=pendingNumber||{text:"",size:12};
-      const factor=kind==="compartment"?chosen.size/12:sheetSize;
+      const factor=sheetSize;
       const size=kind==="compartment"?chosen.size:12;
-      const item={id:crypto.randomUUID(),kind,x:world.x,y:world.y,w:w*factor*sheetWorldPerPixel(),h:h*factor*sheetWorldPerPixel(),text:kind==="compartment"?chosen.text:GeoStudioSheet.defaultText(kind,state.meta.name),...(kind==="compartment"?{fontSize:size}:{})};
+      const box=kind==="compartment"?compartmentBox(chosen.text,chosen.size)
+        :{w:w*factor*sheetWorldPerPixel(),h:h*factor*sheetWorldPerPixel()};
+      const item={id:crypto.randomUUID(),kind,x:world.x,y:world.y,w:box.w,h:box.h,text:kind==="compartment"?chosen.text:GeoStudioSheet.defaultText(kind,state.meta.name),...(kind==="compartment"?{fontSize:size}:{})};
       selectedSheet=item.id;
       if(kind==="compartment"){
         // Numer i wielkość są już znane z okna — wstawiamy od razu.
