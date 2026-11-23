@@ -457,6 +457,7 @@ function openRasterTracing(item, view) {
       <button type="button" class="select-close trace-close" title="Zakończ wkreślanie (Esc)" aria-label="Zakończ wkreślanie">×</button></div>
     <div class="trace-map-options"><label>Kontury <select><option value="5">Grubsze</option><option value="3">Także cienkie</option><option value="7">Tylko bardzo grube</option></select></label>
       <label><input type="checkbox" class="trace-magnet"> Magnes</label>
+      <label title="Nowe wydzielenie z tym samym A1 scala się z istniejącym, nawet gdy leży daleko"><input type="checkbox" class="trace-merge-a1" checked> Scalaj po A1</label>
       <button type="button" class="button ghost trace-fit">Cały raster</button></div>
     <div class="trace-map-save"><label>A1 <input class="trace-a1" autocomplete="off"></label>
       <button type="button" class="button primary trace-save">Zatwierdź 5310</button></div>
@@ -550,6 +551,7 @@ function openRasterTracing(item, view) {
     if(busy||drag||ev.key!=="Delete"||!activeNode)return;
     ev.preventDefault();ev.stopPropagation();removeVertex(activeNode);
   };
+  const mergeA1=panel.querySelector(".trace-merge-a1");
   const magnet=panel.querySelector(".trace-magnet");
   magnet.checked=view.magnetEnabled();
   magnet.onchange=()=>{if(magnet.checked!==view.magnetEnabled())view.toggleMagnet();};
@@ -585,7 +587,11 @@ function openRasterTracing(item, view) {
     if(magnet.checked&&!ev.altKey){
       // Keep subpixel MAP coordinates all the way to the object creation API.
       const world=worldAt(p.x,p.y);
-      const hit=window.GeoStudioDrawingSnap.snapPoint(world,drag.targets,{scale:ratio/Math.sqrt(Math.abs(det*sx*sy))});
+      // Mocniejszy magnes w auto-wkreślaniu: węzły łapią z 18 px,
+      // krawędzie z 8 px (wcześniej domyślne 7/5 px).
+      const hit=window.GeoStudioDrawingSnap.snapPoint(world,drag.targets,
+        {scale:ratio/Math.sqrt(Math.abs(det*sx*sy)),
+         vertexPixels:18,edgePixels:8});
       if(hit.kind){target=pixelAt(hit.point.x,hit.point.y);snapHit=hit;}
     }
     for(const vertex of drag.vertices){vertex[0]=target.x;vertex[1]=target.y;}
@@ -667,7 +673,7 @@ function openRasterTracing(item, view) {
   }
   function editAt(p,button){
     if(!trace||busy||fitPending||!outline?.length)return;
-    if(button===1){removeVertex(nearestVertex(p,8));return;}
+    if(button===1){removeVertex(nearestVertex(p,14));return;}
     if(button!==2||outline.length>=500)return;
     let best=10/cssScale(),at=-1,point;
     for(let i=0;i<outline.length;i++){
@@ -679,7 +685,7 @@ function openRasterTracing(item, view) {
       const q=[x+f*dx,y+f*dy],distance=Math.hypot(p.x-q[0],p.y-q[1]);
       if(distance<best){best=distance;at=i+1;point=q;}
     }
-    if(at>=0 && !nearestVertex(p,2)){
+    if(at>=0 && !nearestVertex(p,4)){
       outline.splice(at,0,point);activeNode=point;keepDraft();draw();
     }
 
@@ -776,7 +782,8 @@ function openRasterTracing(item, view) {
     try{
       const points=outline;
       if(points.length>500)throw Error("Wspólny obrys przekracza limit 500 węzłów.");
-      await view.add(sourceOutline,a1.value.trim(),nativeOutline);
+      await view.add(sourceOutline,a1.value.trim(),nativeOutline,
+        {mergeSameA1:!!mergeA1?.checked});
       completed.push(points);
       invalidateFit();
       for(const id of selected)trace.shapes.delete(id);
