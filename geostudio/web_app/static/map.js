@@ -2726,7 +2726,7 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
     // Serwer przyjmuje do 3 mln pikseli, ale ortofoto w tej wielkości
     // renderuje się dłużej niż nasz limit czasu — dlatego dla podkładów
     // ograniczamy się do ~1 mln pikseli (ok. 1000x1000).
-    const maxPixels=1200000;
+    const maxPixels=800000;
     if(width*height>maxPixels){
       const ratio=Math.sqrt(maxPixels/(width*height));
       width=Math.max(128,Math.floor(width*ratio));
@@ -2774,6 +2774,9 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
     });
     if(item.url)params.set("url",item.url);
     if(item.time)params.set("time",item.time);
+    // Gdzie ma wylądować nowy obraz — używane do rozciągnięcia starego
+    // w czasie pobierania, żeby mapa nie robiła się pusta.
+    item.pendingBounds=bounds.slice();
     item.loading=true;
     try{
       const response=await documentFetch("/api/underlay/wms/map?"+params,{
@@ -2797,10 +2800,11 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
       if(!item.visible||id!==item.ticket||
          documentToken!==state.edit?.documentToken)return;
       item.image=image;item.bounds=bounds;item.loading=false;
+      item.pendingBounds=null;
       requestDraw();renderRasterLayers();
     }catch(error){
       if(error.name==="AbortError"||id!==item.ticket)return;
-      item.loading=false;renderRasterLayers();
+      item.loading=false;item.pendingBounds=null;renderRasterLayers();
       inform("Podkład "+item.title+": "+error.message,true);
     }
   }
@@ -2845,7 +2849,9 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
     // Rysujemy po kolei wszystkie włączone podkłady WMS.
     for(const item of underlays){
       if(!item.visible||!item.image||!item.bounds)continue;
-      const bounds=item.bounds;
+      // Podczas pobierania nowego kadru rozciągamy poprzedni obraz na obszar
+      // docelowy — mapa nie robi się pusta, a po chwili ostry obraz go zastępuje.
+      const bounds=(item.loading&&item.pendingBounds)?item.pendingBounds:item.bounds;
       const top=worldToScreen(bounds[0],bounds[1]);
       const bottom=worldToScreen(bounds[2],bounds[3]);
       ctx.save();ctx.globalAlpha=item.opacity;

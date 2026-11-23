@@ -39,7 +39,7 @@ def test_ortofoto_requests_png_first(monkeypatch):
     assert "FORMAT=image%2Fpng" in seen[0] or "FORMAT=image/png" in seen[0]
 
 
-def test_large_frame_is_one_request_when_png_works(monkeypatch):
+def test_large_frame_is_fetched_in_tiles(monkeypatch):
     calls = []
 
     def download(url, max_bytes):
@@ -54,8 +54,10 @@ def test_large_frame_is_one_request_when_png_works(monkeypatch):
     data, media = underlay_wms.map_image("standard", "ortho", 2180,
                                          0, 0, 2000, 2000, 1600, 1600)
     # Kafelki są dopiero ostatnią deską ratunku — nie przy pierwszym żądaniu.
-    assert len(calls) == 1
-    assert media == "image/png"
+    # Duży kadr idzie kafelkami (2 wątki) — szybciej niż jedno wielkie żądanie.
+    assert len(calls) > 1
+    # Sklejone kafelki zapisujemy jako JPEG.
+    assert media == "image/jpeg"
 
 
 def test_small_frame_is_one_request(monkeypatch):
@@ -67,4 +69,5 @@ def test_small_frame_is_one_request(monkeypatch):
                                                       "crs": ["EPSG:2180"]})(),))
     underlay_wms.clear_cache()
     underlay_wms.map_image("standard", "ortho", 2180, 0, 0, 100, 100, 512, 512)
+    # 512x512 = 262 tys. pikseli, poniżej progu kafelków: jedno żądanie.
     assert len(calls) == 1
