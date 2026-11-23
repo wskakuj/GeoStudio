@@ -33,7 +33,8 @@ def test_anchor_drag_does_not_reload_the_document():
     start = JS.index('window.addEventListener("pointerup",async ev=>{')
     block = JS[start:start + 900]
     assert "refreshEditedDocument" not in block
-    assert "scheduleViewport(true);" in block
+    # Po zmianie kotwicy pobieramy świeże etykiety (nie pełny reload dokumentu).
+    assert "refreshLabelsNow();" in block
 
 
 def test_leader_mode_does_not_hijack_the_tool():
@@ -54,3 +55,10 @@ def test_s_key_toggles_leader_mode():
 def test_all_visible_wms_layers_refresh():
     assert "const targets=underlays.filter(item=>item.visible);" in JS
     assert "async function refreshUnderlayItem(" in JS
+
+
+def test_label_changes_force_a_viewport_refetch():
+    """Gdy cała mapa jest w pamięci, scheduleViewport() rysował STARE etykiety."""
+    assert "async function refreshLabelsNow(){" in JS
+    assert "state.localMapReady=false;" in JS
+    assert JS.count("await refreshLabelsNow();") >= 5

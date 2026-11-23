@@ -1348,7 +1348,7 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
         body:JSON.stringify({fid:feature.id,slot,enabled,
           documentToken:state.edit.documentToken,revision:state.edit.revision})});
       updateEditState(result);
-      await refreshEditedDocument(state.active);
+      await refreshLabelsNow();
       inform((enabled?"Włączono":"Wyłączono")+" wysięgnik "+field+".");
     }catch(error){
       inform("Nie zmieniono wysięgnika: "+error.message,true);
@@ -4643,6 +4643,16 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
       }
     }
   }
+  // Wymusza ponowne pobranie geometrii z serwera. Po zmianie rekordów L
+  // (etykiety, wysięgniki) samo scheduleViewport() nie wystarcza: gdy cała
+  // mapa jest w pamięci, kończy się na requestDraw() i rysuje STARE etykiety.
+  async function refreshLabelsNow(){
+    state.viewportFeatureCache.clear();
+    state.localMapReady=false;
+    state.inspectorCache.clear();
+    await refreshViewport();
+    requestDraw();
+  }
   function scheduleViewport(now=false) {
     scheduleUnderlayRefresh();
     clearTimeout(state.refreshTimer);
@@ -6419,7 +6429,7 @@ inform("Klikaj mapę, aby wstawiać kolejne oznaczenia. Naciśnij Esc lub wybier
           anchor:[world.north,world.east],
           documentToken:state.edit.documentToken,revision:state.edit.revision})});
       updateEditState(result);
-      setTimeout(()=>{refreshEditedDocument(state.active).catch(()=>{});},0);
+      await refreshLabelsNow();
       inform("Punkt zaczepienia wysięgnika ustawiony ("+selected.field+").");
     }catch(error){
       inform("Nie ustawiono kotwicy: "+error.message,true);
@@ -6437,7 +6447,7 @@ inform("Klikaj mapę, aby wstawiać kolejne oznaczenia. Naciśnij Esc lub wybier
           anchor:anchor,preferLeft:left,
           documentToken:state.edit.documentToken,revision:state.edit.revision})});
       updateEditState(result);
-      await refreshEditedDocument(state.active);
+      await refreshLabelsNow();
       inform("Wysięgnik "+selected.field+" wychodzi z "+(left?"lewej":"prawej")+" strony.");
     }catch(error){
       inform("Nie zmieniono strony wysięgnika: "+error.message,true);
@@ -6475,7 +6485,7 @@ inform("Klikaj mapę, aby wstawiać kolejne oznaczenia. Naciśnij Esc lub wybier
           anchor:[drag.point.north,drag.point.east],
           documentToken:state.edit.documentToken,revision:state.edit.revision})});
       updateEditState(result);
-      scheduleViewport(true);
+      await refreshLabelsNow();
       inform(drag.snap?"Kotwica przyciągnięta do drugiej etykiety.":"Przesunięto punkt zaczepienia wysięgnika.");
     }catch(error){
       inform("Nie przesunięto kotwicy: "+error.message,true);
@@ -7316,7 +7326,7 @@ inform("Klikaj mapę, aby wstawiać kolejne oznaczenia. Naciśnij Esc lub wybier
           scale:Number(state.edit.compilationScale)||5000,
           documentToken:state.edit.documentToken,revision:state.edit.revision})});
       updateEditState(result);
-      scheduleViewport(true);
+      await refreshLabelsNow();
       const stats=result.stats||{};
       inform(result.changed?
         ("Ułożono etykiety: "+display(stats.objects||0)+" poligonów · w środku "+
