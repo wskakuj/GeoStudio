@@ -68,7 +68,8 @@ def test_reject_unsupported_sources_epsg_layers_and_non_images(stubbed_wms,monke
             underlay_wms.map_png(**spec)
     monkeypatch.setattr(underlay_wms, "_download",
                         lambda url, limit: b"<ServiceException>blocked</ServiceException>")
-    with pytest.raises(ValueError, match="inne niż"):
+    # Komunikat błędu z Geoportalu jest teraz przekazywany dosłownie.
+    with pytest.raises(ValueError, match="blocked"):
         underlay_wms.map_png("standard","ortho",2180,700000,-515000,
                              700600,-514500,800,600)
 

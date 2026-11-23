@@ -11,6 +11,7 @@ from collections import OrderedDict
 from functools import lru_cache
 import http.client
 import threading
+import time
 from io import BytesIO
 from urllib.error import HTTPError, URLError
 from urllib.request import HTTPRedirectHandler, Request, build_opener
@@ -74,7 +75,11 @@ def _download(url: str, max_bytes: int) -> bytes:
                "Accept": "image/png, application/xml, text/xml",
                "Connection": "keep-alive"}
     last: Exception | None = None
-    for attempt in range(2):
+    # Trzy próby z krótkim odstępem: Geoportal potrafi zerwać połączenie
+    # przy serii żądań (kafelki), a natychmiastowa powtórka zwykle wystarcza.
+    for attempt in range(3):
+        if attempt:
+            time.sleep(0.15 * attempt)
         try:
             conn = _connection(host)
             conn.request("GET", path, headers=headers)
@@ -91,9 +96,12 @@ def _download(url: str, max_bytes: int) -> bytes:
             # Zerwane połączenie keep-alive: nowe i jedna ponowna próba.
             last = exc
             _drop_connection(host)
-            if attempt:
+            if attempt == 2:
                 break
-    raise RuntimeError("Nie można pobrać danych WMS z Geoportalu.") from last
+    reason = type(last).__name__ if last else "nieznany błąd"
+    raise RuntimeError(
+        "Nie można pobrać danych WMS z Geoportalu (" + reason +
+        "). Spróbuj ponownie za chwilę.") from last
 
 
 _CACHE: "OrderedDict[tuple, bytes]" = OrderedDict()
@@ -196,39 +204,91 @@ ORTO_FORMAT = "image/jpeg"
 ORTO_TILE_LIMIT = 1_200_000        # powyżej tylu pikseli dzielimy na kafelki
 
 
+def _is_image(content: bytes) -> bool:
+    return (content.startswith(b"\xff\xd8") or
+            content.startswith(b"\x89PNG\r\n\x1a\n") or
+            content.startswith(b"GIF8"))
+
+
 def _fetch_orto_tile(base, layer, crs, bounds, width, height):
-    url = getmap_url(base, layer, crs, bounds, width, height, version="1.1.1",
-                     image_format=ORTO_FORMAT, transparent=False)
-    content = _download(url, MAX_WMS_BYTES)
-    # Serwer może zignorować FORMAT i odesłać PNG — przyjmujemy oba.
-    if not (content.startswith(b"\xff\xd8") or
-            content.startswith(b"\x89PNG\r\n\x1a\n")):
-        raise ValueError("WMS zwrócił dane inne niż obraz; sprawdź warstwę i EPSG.")
-    return content
+    """Pobiera kafelek ortofoto. JPEG, a przy odmowie serwera — PNG.
+
+    Geoportal bywa, że odrzuca FORMAT=image/jpeg (albo odpowiada komunikatem
+    błędu), dlatego każde żądanie ma wersję zapasową w PNG, zamiast kończyć
+    się komunikatem „Nie można pobrać danych WMS”.
+    """
+    attempts = (
+        ("image/jpeg", False),
+        ("image/png", True),
+    )
+    last_error = None
+    for image_format, transparent in attempts:
+        url = getmap_url(base, layer, crs, bounds, width, height,
+                         version="1.1.1", image_format=image_format,
+                         transparent=transparent)
+        try:
+            content = _download(url, MAX_WMS_BYTES)
+        except Exception as exc:                      # noqa: BLE001
+            last_error = exc
+            continue
+        if _is_image(content):
+            return content
+        # Serwer odesłał komunikat błędu zamiast obrazu — próbujemy dalej.
+        last_error = ValueError(_service_exception(content))
+    raise ValueError(str(last_error or "WMS nie zwrócił obrazu."))
+
+
+def _service_exception(content: bytes) -> str:
+    """Wyciąga czytelny komunikat z ServiceExceptionReport WMS."""
+    import re
+    text = content[:2000].decode("utf-8", "replace")
+    match = re.search(r"<ServiceException[^>]*>(.*?)</ServiceException>", text, re.S)
+    if match:
+        message = re.sub(r"<[^>]+>", " ", match.group(1)).strip()
+        if message:
+            return "Geoportal: " + " ".join(message.split())[:200]
+    return "WMS zwrócił dane inne niż obraz (sprawdź warstwę i EPSG)."
+
+
+def _stitch(tiles: list[bytes], width: int, height: int,
+            left_w: int, top_h: int) -> bytes:
+    from PIL import Image
+    from io import BytesIO
+    images = [Image.open(BytesIO(raw)).convert("RGB") for raw in tiles]
+    canvas = Image.new("RGB", (width, height))
+    canvas.paste(images[0], (0, 0))
+    canvas.paste(images[1], (left_w, 0))
+    canvas.paste(images[2], (0, top_h))
+    canvas.paste(images[3], (left_w, top_h))
+    out = BytesIO()
+    canvas.save(out, format="JPEG", quality=88, optimize=True)
+    return out.getvalue()
+
+
+def _to_jpeg(raw: bytes) -> bytes:
+    if raw.startswith(b"\xff\xd8"):
+        return raw
+    try:
+        from PIL import Image
+        from io import BytesIO
+        out = BytesIO()
+        Image.open(BytesIO(raw)).convert("RGB").save(
+            out, format="JPEG", quality=88, optimize=True)
+        return out.getvalue()
+    except Exception:                                 # noqa: BLE001
+        return raw
 
 
 def _fetch_orto(base, layer, crs, bounds, width, height) -> bytes:
-    """Ortofoto: JPEG zamiast PNG, duże kadry pobierane równolegle.
+    """Ortofoto: JPEG i kafelki, ale zawsze z bezpiecznym odwrotem.
 
-    PNG dla 2048x2048 potrafi mieć kilka MB, JPEG jest kilkakrotnie mniejszy
-    i szybciej renderuje się po stronie Geoportalu. Duże kadry dzielimy na
-    cztery kafelki pobierane jednocześnie — jeden duży GetMap bywa wolniejszy
-    niż cztery mniejsze.
+    Duże kadry dzielimy na cztery kafelki pobierane po dwa naraz — cztery
+    jednoczesne żądania potrafiły wywołać odmowę serwera. Jeśli kafelkowanie
+    zawiedzie choć raz, wracamy do JEDNEGO żądania na cały kadr.
     """
     if width * height <= ORTO_TILE_LIMIT:
-        raw = _fetch_orto_tile(base, layer, crs, bounds, width, height)
-        if raw.startswith(b"\xff\xd8"):
-            return raw
-        # PNG od serwera -> JPEG, żeby klient dostał lekki obraz.
-        try:
-            from PIL import Image
-            from io import BytesIO
-            out = BytesIO()
-            Image.open(BytesIO(raw)).convert("RGB").save(
-                out, format="JPEG", quality=88, optimize=True)
-            return out.getvalue()
-        except Exception:
-            return raw
+        return _to_jpeg(_fetch_orto_tile(base, layer, crs, bounds, width, height))
+
     mid_x = (bounds.min_x + bounds.max_x) / 2
     mid_y = (bounds.min_y + bounds.max_y) / 2
     left_w = width // 2
@@ -242,22 +302,16 @@ def _fetch_orto(base, layer, crs, bounds, width, height) -> bytes:
         (WMSBounds(mid_x, mid_y, bounds.max_x, bounds.max_y), right_w, bottom_h),
     ]
     from concurrent.futures import ThreadPoolExecutor
-    with ThreadPoolExecutor(max_workers=4) as pool:
-        futures = [pool.submit(_fetch_orto_tile, base, layer, crs,
-                               part, part_w, part_h)
-                   for part, part_w, part_h in parts]
-        images = [future.result() for future in futures]
-    from PIL import Image
-    from io import BytesIO
-    tiles = [Image.open(BytesIO(raw)).convert("RGB") for raw in images]
-    canvas = Image.new("RGB", (width, height))
-    canvas.paste(tiles[0], (0, 0))
-    canvas.paste(tiles[1], (left_w, 0))
-    canvas.paste(tiles[2], (0, top_h))
-    canvas.paste(tiles[3], (left_w, top_h))
-    out = BytesIO()
-    canvas.save(out, format="JPEG", quality=88, optimize=True)
-    return out.getvalue()
+    try:
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            futures = [pool.submit(_fetch_orto_tile, base, layer, crs,
+                                   part, part_w, part_h)
+                       for part, part_w, part_h in parts]
+            images = [future.result() for future in futures]
+        return _stitch(images, width, height, left_w, top_h)
+    except Exception:                                 # noqa: BLE001
+        # Odwrót: jedno żądanie na cały kadr (wolniejsze, ale niezawodne).
+        return _to_jpeg(_fetch_orto_tile(base, layer, crs, bounds, width, height))
 
 
 def map_image(preset: str, layer: str, epsg: int,
