@@ -29,7 +29,7 @@ def test_ortofoto_requests_png_first(monkeypatch):
 
     monkeypatch.setattr(underlay_wms, "_download", download)
     monkeypatch.setattr(underlay_wms, "layers_for",
-                        lambda preset: (type("L", (), {"name": "ortho",
+                        lambda preset, url=None: (type("L", (), {"name": "ortho",
                                                       "crs": ["EPSG:2180"]})(),))
     underlay_wms.clear_cache()
     data, media = underlay_wms.map_image("standard", "ortho", 2180,
@@ -48,7 +48,7 @@ def test_large_frame_is_one_request_when_png_works(monkeypatch):
 
     monkeypatch.setattr(underlay_wms, "_download", download)
     monkeypatch.setattr(underlay_wms, "layers_for",
-                        lambda preset: (type("L", (), {"name": "ortho",
+                        lambda preset, url=None: (type("L", (), {"name": "ortho",
                                                       "crs": ["EPSG:2180"]})(),))
     underlay_wms.clear_cache()
     data, media = underlay_wms.map_image("standard", "ortho", 2180,
@@ -63,7 +63,7 @@ def test_small_frame_is_one_request(monkeypatch):
     monkeypatch.setattr(underlay_wms, "_download",
                         lambda url, size: (calls.append(url), _jpeg())[1])
     monkeypatch.setattr(underlay_wms, "layers_for",
-                        lambda preset: (type("L", (), {"name": "ortho",
+                        lambda preset, url=None: (type("L", (), {"name": "ortho",
                                                       "crs": ["EPSG:2180"]})(),))
     underlay_wms.clear_cache()
     underlay_wms.map_image("standard", "ortho", 2180, 0, 0, 100, 100, 512, 512)

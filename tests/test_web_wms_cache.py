@@ -21,7 +21,7 @@ def test_cache_returns_the_same_bytes(monkeypatch):
 
     monkeypatch.setattr(underlay_wms, "_download", fake_download)
     monkeypatch.setattr(underlay_wms, "layers_for",
-                        lambda preset: (type("L", (), {"name": "orto",
+                        lambda preset, url=None: (type("L", (), {"name": "orto",
                                                       "crs": ["EPSG:2180"]})(),))
     first = underlay_wms.map_png("standard", "orto", 2180, 0, 0, 100, 100, 256, 256)
     second = underlay_wms.map_png("standard", "orto", 2180, 0, 0, 100, 100, 256, 256)
@@ -34,7 +34,7 @@ def test_cache_is_bounded(monkeypatch):
     underlay_wms.clear_cache()
     monkeypatch.setattr(underlay_wms, "_download", lambda url, size: PNG)
     monkeypatch.setattr(underlay_wms, "layers_for",
-                        lambda preset: (type("L", (), {"name": "orto",
+                        lambda preset, url=None: (type("L", (), {"name": "orto",
                                                       "crs": ["EPSG:2180"]})(),))
     monkeypatch.setattr(underlay_wms, "_CACHE_MAX_ENTRIES", 3)
     for step in range(6):
@@ -74,6 +74,11 @@ def test_download_reuses_connection(monkeypatch):
     assert len(created) == 1
 
 
-def test_download_rejects_foreign_host():
+def test_download_rejects_private_and_insecure_hosts():
+    # Od 2.0.48 własny serwer jest dozwolony, ale tylko publiczny i po https.
     with pytest.raises(ValueError):
-        underlay_wms._download("https://example.com/wms", 1000)
+        underlay_wms._download("https://127.0.0.1/wms", 1000)
+    with pytest.raises(ValueError):
+        underlay_wms._download("http://example.com/wms", 1000)
+    with pytest.raises(ValueError):
+        underlay_wms._download("https://192.168.0.10/wms", 1000)

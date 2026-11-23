@@ -807,9 +807,12 @@
         <option value="standard">Geoportal — ortofotomapa standardowa</option>
         <option value="high">Geoportal — ortofotomapa wysokiej rozdzielczości</option>
         <option value="kieg">GUGiK — działki ewidencyjne i numery</option>
+        <option value="custom">Własny serwer WMS…</option>
       </select>
-      <label for="underlay-url">Adres WMS (oficjalny serwer GUGiK)</label>
-      <input id="underlay-url" readonly type="text" value="https://mapy.geoportal.gov.pl/wss/service/PZGIK/ORTO/WMS/StandardResolution" title="W tej wersji testowej dostępne są oficjalne adresy Geoportalu">
+      <label for="underlay-url">Adres WMS</label>
+      <input id="underlay-url" type="text" spellcheck="false"
+             value="https://mapy.geoportal.gov.pl/wss/service/PZGIK/ORTO/WMS/StandardResolution"
+             placeholder="https://twoj-serwer/wms" title="Adres GetCapabilities wybranego serwera WMS (tylko https)">
       <div class="underlay-layer-line">
         <label for="underlay-layer">Warstwa WMS</label>
         <button type="button" id="underlay-layers" class="button ghost">Pobierz warstwy</button>

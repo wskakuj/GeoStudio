@@ -2469,11 +2469,17 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
   }
   async function loadUnderlayLayers(){
     const preset=$("underlay-preset").value;
+    if(preset==="custom"&&!/^https:\/\/[^\s]+\.[^\s]+/.test(currentWmsUrl())){
+      wmsLayersState("error","Podaj adres własnego serwera WMS (https://…).");
+      return;
+    }
     const options=$("underlay-layer");
     options.replaceChildren(new Option("Wczytywanie warstw Geoportalu…",""));
     wmsLayersState("busy","Pobieranie listy warstw WMS…");
     try{
-      const response=await api("/api/underlay/wms/layers?preset="+encodeURIComponent(preset));
+      const params=new URLSearchParams({preset});
+      if(preset==="custom")params.set("url",currentWmsUrl());
+      const response=await api("/api/underlay/wms/layers?"+params);
       if($("underlay-preset").value!==preset)return;
       options.replaceChildren();
       for(const entry of response.layers){
@@ -2593,7 +2599,19 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
     kieg:"https://integracja.gugik.gov.pl/cgi-bin/KrajowaIntegracjaEwidencjiGruntow"
   };
   function showWmsPresetAddress(){
-    $("underlay-url").value=wmsPresetUrls[$("underlay-preset").value]||"";
+    const preset=$("underlay-preset").value;
+    const field=$("underlay-url");
+    if(preset==="custom"){
+      // Własny serwer: adres wpisuje użytkownik, więc go nie nadpisujemy.
+      field.readOnly=false;
+      field.focus();
+      return;
+    }
+    field.readOnly=true;
+    field.value=wmsPresetUrls[preset]||"";
+  }
+  function currentWmsUrl(){
+    return String($("underlay-url").value||"").trim();
   }
   function openUnderlayDialog(){
     if(!state.meta){inform("Najpierw otwórz mapę MAP.");return;}
@@ -2726,6 +2744,7 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
       xmax:String(bounds[2]),ymax:String(bounds[3]),
       width:String(size.width),height:String(size.height)
     });
+    if(item.url)params.set("url",item.url);
     item.loading=true;
     try{
       const response=await documentFetch("/api/underlay/wms/map?"+params,{
@@ -2775,6 +2794,7 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
                                    entry.epsg===epsg);
     if(!item){
       item={id:"wms"+(++underlaySerial),preset,layer,epsg,title,
+            url:preset==="custom"?currentWmsUrl():"",
             image:null,bounds:null,
             opacity:Number($("underlay-opacity").value)/100||.75,
             visible:true,loading:false,ticket:0,timer:null,abort:null};

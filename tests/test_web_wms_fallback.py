@@ -35,7 +35,7 @@ def test_png_is_tried_first_and_jpeg_later(monkeypatch):
         return _png()
 
     monkeypatch.setattr(underlay_wms, "_download", download)
-    monkeypatch.setattr(underlay_wms, "layers_for", lambda preset: [Layer()])
+    monkeypatch.setattr(underlay_wms, "layers_for", lambda preset, url=None: [Layer()])
     underlay_wms.clear_cache()
     data, media = underlay_wms.map_image("standard", "ortho", 2180, 0, 0, 100, 100, 256, 256)
     assert media == "image/png"
@@ -50,7 +50,7 @@ def test_tiling_failure_falls_back_to_single_request(monkeypatch):
         return _png(1600, 1600)
 
     monkeypatch.setattr(underlay_wms, "_download", download)
-    monkeypatch.setattr(underlay_wms, "layers_for", lambda preset: [Layer()])
+    monkeypatch.setattr(underlay_wms, "layers_for", lambda preset, url=None: [Layer()])
     underlay_wms.clear_cache()
     data, media = underlay_wms.map_image("standard", "ortho", 2180, 0, 0, 2000, 2000, 1600, 1600)
     assert media == "image/png"
@@ -78,7 +78,7 @@ def test_last_error_message_is_the_service_exception(monkeypatch):
                 b"</ServiceException></ServiceExceptionReport>")
 
     monkeypatch.setattr(underlay_wms, "_download", download)
-    monkeypatch.setattr(underlay_wms, "layers_for", lambda preset: [Layer()])
+    monkeypatch.setattr(underlay_wms, "layers_for", lambda preset, url=None: [Layer()])
     underlay_wms.clear_cache()
     with pytest.raises(RuntimeError, match="Layer not defined"):
         underlay_wms.map_image("standard", "ortho", 2180, 0, 0, 100, 100, 256, 256)

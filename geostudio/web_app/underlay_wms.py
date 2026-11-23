@@ -24,6 +24,8 @@ PRESETS = {
     "standard": ("Ortofotomapa standardowa", "https://mapy.geoportal.gov.pl/wss/service/PZGIK/ORTO/WMS/StandardResolution"),
     "high": ("Ortofotomapa wysoka rozdzielczość", "https://mapy.geoportal.gov.pl/wss/service/PZGIK/ORTO/WMS/HighResolution"),
     "kieg": ("Działki ewidencyjne i numery — GUGiK", "https://integracja.gugik.gov.pl/cgi-bin/KrajowaIntegracjaEwidencjiGruntow"),
+    # Własny serwer: adres podaje użytkownik, więc nie ma go w tabeli.
+    "custom": ("Własny serwer WMS", ""),
 }
 # An explicit user choice is mandatory; no inference from MAP coordinates.
 SUPPORTED_EPSG = frozenset((2180, 2176, 2177, 2178, 2179))
@@ -86,10 +88,52 @@ def _drop_connection(host: str) -> None:
             pass
 
 
+OFFICIAL_HOSTS = frozenset({"mapy.geoportal.gov.pl",
+                            "integracja.gugik.gov.pl",
+                            "integracja02.gugik.gov.pl"})
+# Adresy, pod które NIE wolno wysyłać żądań (ochrona przed SSRF).
+_BLOCKED_HOSTS = frozenset({"localhost", "localhost.localdomain",
+                            "metadata.google.internal", "instance-data"})
+_PRIVATE_PREFIXES = ("10.", "127.", "169.254.", "192.168.", "0.", "100.64.",
+                     "172.16.", "172.17.", "172.18.", "172.19.", "172.20.",
+                     "172.21.", "172.22.", "172.23.", "172.24.", "172.25.",
+                     "172.26.", "172.27.", "172.28.", "172.29.", "172.30.",
+                     "172.31.")
+
+
+def validate_service_url(url: str) -> str:
+    """Sprawdza adres własnego serwera WMS i zwraca go bez zmian.
+
+    Dozwolony jest dowolny publiczny serwer HTTPS; blokujemy adresy lokalne
+    i prywatne, żeby aplikacja nie mogła zostać użyta do skanowania sieci.
+    """
+    if not isinstance(url, str) or not url.strip():
+        raise ValueError("Podaj adres serwera WMS.")
+    parsed = urlsplit(url.strip())
+    if parsed.scheme != "https":
+        raise ValueError("Adres serwera WMS musi zaczynać się od https://")
+    if not parsed.hostname:
+        raise ValueError("Adres serwera WMS jest nieprawidłowy.")
+    if parsed.username or parsed.password:
+        raise ValueError("Adres nie może zawierać loginu ani hasła.")
+    host = parsed.hostname.lower()
+    if host in _BLOCKED_HOSTS or host.startswith(_PRIVATE_PREFIXES):
+        raise ValueError("Adresy lokalne i prywatne nie są dozwolone.")
+    if host in {"::1", "[::1]"} or host.startswith("fd") or host.startswith("fe80"):
+        raise ValueError("Adresy lokalne i prywatne nie są dozwolone.")
+    return url.strip()
+
+
 def _download(url: str, max_bytes: int) -> bytes:
     parsed = urlsplit(url)
-    if parsed.scheme != "https" or parsed.hostname not in {"mapy.geoportal.gov.pl", "integracja.gugik.gov.pl", "integracja02.gugik.gov.pl"} or parsed.port not in (None, 443):
-        raise ValueError("Dozwolone są wyłącznie oficjalne usługi Geoportalu.")
+    if parsed.scheme != "https":
+        raise ValueError("Adres usługi musi używać https://.")
+    if parsed.port not in (None, 443):
+        raise ValueError("Dozwolony jest wyłącznie port 443.")
+    if parsed.hostname in OFFICIAL_HOSTS:
+        pass
+    else:
+        validate_service_url(url)
     if parsed.username or parsed.password:
         raise ValueError("Nieprawidłowy adres usługi.")
     host = parsed.hostname
@@ -174,14 +218,27 @@ def clear_cache() -> None:
         _CACHE_BYTES = 0
 
 
-def _preset(name: str) -> str:
+def _preset(name: str, url: str | None = None) -> str:
     if name not in PRESETS:
         raise ValueError("Nieznane źródło ortofotomapy.")
+    if name == "custom":
+        return validate_service_url(url or "")
     return PRESETS[name][1]
 
 
+def layers_for(preset: str, url: str | None = None) -> tuple:
+    if preset == "custom":
+        xml = _download(capabilities_url(validate_service_url(url or "")),
+                        4_000_000)
+        layers = parse_capabilities(xml)
+        if not layers:
+            raise ValueError("Serwer nie udostępnił nazwanych warstw WMS.")
+        return layers
+    return _layers_for_preset(preset)
+
+
 @lru_cache(maxsize=3)
-def layers_for(preset: str) -> tuple:
+def _layers_for_preset(preset: str) -> tuple:
     if preset == "kieg":
         # The published GetMap example provides these layers in PL-1992,
         # independently of availability of the capabilities catalogue.
@@ -201,17 +258,22 @@ def layers_for(preset: str) -> tuple:
     return layers
 
 
+# Zgodność ze starym API: layers_for() nie jest już bezpośrednio cache'owana
+# (adres własnego serwera zmienia wynik), ale czyszczenie cache zostaje.
+layers_for.cache_clear = _layers_for_preset.cache_clear
+
+
 # Dla GUGiK pokazujemy tylko jedną, używaną warstwę: granice i numery działek.
 KIEG_KEEP = frozenset({KIEG_PARCELS})
 
 
-def list_layers(preset: str) -> dict:
-    layers = layers_for(preset)
+def list_layers(preset: str, url: str | None = None) -> dict:
+    layers = layers_for(preset, url)
     if preset == "kieg":
         layers = tuple(layer for layer in layers if layer.name in KIEG_KEEP)
     return {
         "preset": preset,
-        "name": PRESETS[preset][0],
+        "name": PRESETS[preset][0] or validate_service_url(url or ""),
         "layers": [
             {"id": layer.name, "title": layer.title, "epsg": sorted(SUPPORTED_EPSG) if preset == "kieg" and layer.name in PARCEL_LAYERS else sorted(
                 int(x.split(":")[1]) for x in layer.crs
@@ -373,9 +435,10 @@ def _fetch_orto_tiles(base, layer, crs, bounds, width, height) -> bytes:
 
 def map_image(preset: str, layer: str, epsg: int,
               xmin: float, ymin: float, xmax: float, ymax: float,
-              width: int, height: int) -> tuple[bytes, str]:
+              width: int, height: int, url: str | None = None) -> tuple[bytes, str]:
     """Obraz podkładu wraz z typem MIME (JPEG dla ortofoto, PNG dla GUGiK)."""
-    data = map_png(preset, layer, epsg, xmin, ymin, xmax, ymax, width, height)
+    data = map_png(preset, layer, epsg, xmin, ymin, xmax, ymax, width, height,
+                   url)
     # Typ MIME wynika z faktycznej zawartości, nie z założenia.
     if data.startswith(b"\xff\xd8"):
         media = "image/jpeg"
@@ -388,8 +451,8 @@ def map_image(preset: str, layer: str, epsg: int,
 
 def map_png(preset: str, layer: str, epsg: int,
             xmin: float, ymin: float, xmax: float, ymax: float,
-            width: int, height: int) -> bytes:
-    base = _preset(preset)
+            width: int, height: int, url: str | None = None) -> bytes:
+    base = _preset(preset, url)
     if epsg not in SUPPORTED_EPSG:
         raise ValueError("Wybierz poprawny układ EPSG mapy (2180 lub 2176–2179).")
     if (type(width) is not int or type(height) is not int or
@@ -398,7 +461,7 @@ def map_png(preset: str, layer: str, epsg: int,
         raise ValueError("Nieprawidłowa rozdzielczość podkładu.")
     if not all(isfinite(v) for v in (xmin, ymin, xmax, ymax)) or xmin >= xmax or ymin >= ymax:
         raise ValueError("Nieprawidłowy zasięg obrazu WMS.")
-    candidates = layers_for(preset)
+    candidates = layers_for(preset, url)
     if preset == "kieg" and layer not in KIEG_KEEP:
         raise ValueError("Dla GUGiK dostępna jest tylko warstwa granic i numerów działek.")
     choice = next((entry for entry in candidates if entry.name == layer), None)
@@ -407,7 +470,8 @@ def map_png(preset: str, layer: str, epsg: int,
         raise ValueError("Wybrana warstwa nie obsługuje tego EPSG.")
     # Canvas world (horizontal=easting, vertical=-northing) -> GEO-MAP X/Y.
     bounds = WMSBounds(min_x=-ymax, min_y=xmin, max_x=-ymin, max_y=xmax)
-    key = _cache_key(preset, layer, epsg, xmin, ymin, xmax, ymax, width, height)
+    key = _cache_key(preset + "|" + (url or ""), layer, epsg,
+                     xmin, ymin, xmax, ymax, width, height)
     cached = _cache_get(key)
     if cached is not None:
         return cached
