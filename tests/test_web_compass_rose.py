@@ -4,6 +4,7 @@ from __future__ import annotations
 from pathlib import Path
 
 JS = Path("geostudio/web_app/static/sheet.js").read_text(encoding="utf-8")
+MAP_JS = Path("geostudio/web_app/static/map.js").read_text(encoding="utf-8")
 
 
 def test_both_halves_are_filled():
@@ -20,3 +21,10 @@ def test_rose_has_four_black_and_four_white_halves():
 
 def test_compass_labels_sit_beyond_the_tips():
     assert 'const [x,y]=rotate(0,-44);' in JS
+
+
+def test_point_symbols_are_bigger_than_before():
+    """Graniczniki (SYM) były kilkupikselowe — teraz skala 7 px i grubsza kreska."""
+    assert "const SYMBOL_SCALE=7;" in MAP_JS
+    assert "p.x+x1*scale" in MAP_JS
+    assert "Math.max(1.4,Math.min(4,style.pointSize||1))" in MAP_JS

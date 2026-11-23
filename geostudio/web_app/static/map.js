@@ -3921,6 +3921,8 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
     ctx.fill("evenodd");
     ctx.globalAlpha=1;
   }
+  // Skala symboli punktowych SYM (graniczniki) w pikselach ekranu na jednostkę.
+  const SYMBOL_SCALE=7;
   function renderStroke(feature) {
     const style=feature.style;
     const exportRatio=state.exporting&&state.exportDpi===600?2:1;
@@ -3931,21 +3933,24 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
       const circles=style.symbolCircles||[];
       ctx.save();
       ctx.strokeStyle=style.stroke;
-      ctx.lineWidth=Math.max(.8,Math.min(3,style.strokeWidth||1))*exportRatio;
+      ctx.lineWidth=Math.max(1.1,Math.min(3.6,style.strokeWidth||1))*exportRatio;
       if(segments.length||circles.length){
         ctx.beginPath();
+        // Symbole punktowe (graniczniki) były za małe: skala 5 px na jednostkę
+        // SYM dawała kilkupikselowe znaczki. 7 px i grubsza kreska są czytelne.
+        const scale=SYMBOL_SCALE*exportRatio;
         for(const [x1,y1,x2,y2] of segments.slice(0,64)){
-          ctx.moveTo(p.x+x1*5*exportRatio,p.y-y1*5*exportRatio);
-          ctx.lineTo(p.x+x2*5*exportRatio,p.y-y2*5*exportRatio);
+          ctx.moveTo(p.x+x1*scale,p.y-y1*scale);
+          ctx.lineTo(p.x+x2*scale,p.y-y2*scale);
         }
         for(const [x,y,radius] of circles.slice(0,32)){
-          ctx.moveTo(p.x+x*5*exportRatio+radius*5*exportRatio,p.y-y*5*exportRatio);
-          ctx.arc(p.x+x*5*exportRatio,p.y-y*5*exportRatio,radius*5*exportRatio,0,2*Math.PI);
+          ctx.moveTo(p.x+x*scale+radius*scale,p.y-y*scale);
+          ctx.arc(p.x+x*scale,p.y-y*scale,radius*scale,0,2*Math.PI);
         }
         ctx.stroke();
       }else{
         ctx.fillStyle=style.stroke;ctx.beginPath();
-        ctx.arc(p.x,p.y,Math.max(.6,Math.min(2,style.pointSize||1))*exportRatio,
+        ctx.arc(p.x,p.y,Math.max(1.4,Math.min(4,style.pointSize||1))*exportRatio,
                 0,Math.PI*2);
         ctx.fill();
       }
