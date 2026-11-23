@@ -24,9 +24,24 @@ PRESETS = {
     "standard": ("Ortofotomapa standardowa", "https://mapy.geoportal.gov.pl/wss/service/PZGIK/ORTO/WMS/StandardResolution"),
     "high": ("Ortofotomapa wysoka rozdzielczość", "https://mapy.geoportal.gov.pl/wss/service/PZGIK/ORTO/WMS/HighResolution"),
     "kieg": ("Działki ewidencyjne i numery — GUGiK", "https://integracja.gugik.gov.pl/cgi-bin/KrajowaIntegracjaEwidencjiGruntow"),
+    # Kafelkowy WMTS (szybszy dla dużych kadrów).
+    "standard_wmts": ("Geoportal — ortofotomapa standardowa (WMTS)",
+                      "https://mapy.geoportal.gov.pl/wss/service/PZGIK/ORTO/WMTS/StandardResolution"),
+    "high_wmts": ("Geoportal — ortofotomapa wysoka (WMTS)",
+                  "https://mapy.geoportal.gov.pl/wss/service/PZGIK/ORTO/WMTS/HighResolution"),
+    # WMS z osią czasu — ortofotomapa archiwalna.
+    "standard_time": ("Geoportal — ortofotomapa archiwalna standardowa",
+                      "https://mapy.geoportal.gov.pl/wss/service/PZGIK/ORTO/WMS/StandardResolutionTime"),
+    "high_time": ("Geoportal — ortofotomapa archiwalna wysoka",
+                  "https://mapy.geoportal.gov.pl/wss/service/PZGIK/ORTO/WMS/HighResolutionTime"),
     # Własny serwer: adres podaje użytkownik, więc nie ma go w tabeli.
     "custom": ("Własny serwer WMS", ""),
 }
+
+# Presety kafelkowe obsługiwane przez WMTS, nie przez WMS GetMap.
+WMTS_PRESETS = frozenset({"standard_wmts", "high_wmts"})
+# Presety z osią czasu: wymagają parametru TIME (albo zostawiamy domyślny).
+TIME_PRESETS = frozenset({"standard_time", "high_time"})
 # An explicit user choice is mandatory; no inference from MAP coordinates.
 SUPPORTED_EPSG = frozenset((2180, 2176, 2177, 2178, 2179))
 KIEG_IMAGE_URL = "https://integracja02.gugik.gov.pl/cgi-bin/KrajowaIntegracjaEwidencjiGruntow"
@@ -227,6 +242,8 @@ def _preset(name: str, url: str | None = None) -> str:
 
 
 def layers_for(preset: str, url: str | None = None) -> tuple:
+    if preset in WMTS_PRESETS:
+        return _wmts_layers(preset)
     if preset == "custom":
         xml = _download(capabilities_url(validate_service_url(url or "")),
                         4_000_000)
@@ -267,6 +284,96 @@ layers_for.cache_clear = _layers_for_preset.cache_clear
 KIEG_KEEP = frozenset({KIEG_PARCELS})
 
 
+@lru_cache(maxsize=4)
+def _wmts_capabilities(preset: str):
+    from ..wmts_service import parse_capabilities as parse_wmts
+    xml = _download(_wmts_capabilities_url(preset), 8_000_000)
+    sets = parse_wmts(xml)
+    if not sets:
+        raise ValueError("Serwer WMTS nie udostępnił zestawów matryc kafelków.")
+    return sets
+
+
+def _wmts_capabilities_url(preset: str) -> str:
+    from ..wmts_service import capabilities_url as wmts_capabilities_url
+    return wmts_capabilities_url(_preset(preset))
+
+
+@lru_cache(maxsize=4)
+def _wmts_layers(preset: str) -> tuple:
+    """Warstwy WMTS: nazwa z Capabilities, obsługiwane polskie EPSG."""
+    sets = _wmts_capabilities(preset)
+    crs_sets = {entry.crs.upper() for entry in sets}
+    supported = tuple(sorted(f"EPSG:{epsg}" for epsg in SUPPORTED_EPSG
+                             if f"EPSG:{epsg}" in crs_sets))
+    if not supported:
+        raise ValueError("Serwer WMTS nie obsługuje polskich układów EPSG.")
+    # Geoportal publikuje jedną warstwę ortofoto o nazwie "Raster".
+    from ..wms_service import WMSLayerInfo
+    return (WMSLayerInfo("Raster", "Ortofotomapa (WMTS)", supported),)
+
+
+def _wmts_image(preset: str, layer: str, epsg: int, bounds,
+                width: int, height: int) -> bytes:
+    """Składa obraz z kafelków WMTS i przycina do żądanego rozmiaru."""
+    from ..wmts_service import gettile_url, pick_matrix, tile_range
+    from concurrent.futures import ThreadPoolExecutor
+    from io import BytesIO
+    from PIL import Image
+
+    sets = _wmts_capabilities(preset)
+    wanted = f"EPSG:{epsg}".upper()
+    matrix_set = next((entry for entry in sets
+                       if entry.crs.upper() == wanted), None)
+    if matrix_set is None:
+        raise ValueError("Serwer WMTS nie obsługuje wybranego układu EPSG.")
+    pixel_size = max(1e-9, (bounds.max_x - bounds.min_x) / max(1, width))
+    matrix = pick_matrix(matrix_set, pixel_size)
+    col0, row0, col1, row1 = tile_range(matrix, bounds.min_x, bounds.min_y,
+                                        bounds.max_x, bounds.max_y)
+    if (col1 - col0 + 1) * (row1 - row0 + 1) > 36:
+        raise ValueError("Zbyt wiele kafelków WMTS dla tego kadru.")
+    base = _preset(preset)
+    urls = [(row, col) for row in range(row0, row1 + 1)
+            for col in range(col0, col1 + 1)]
+
+    def fetch(row, col):
+        url = gettile_url(base, layer, matrix_set.identifier, matrix.identifier,
+                          row, col)
+        return _download(url, MAX_WMS_BYTES)
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        tiles = list(pool.map(lambda item: fetch(*item), urls))
+
+    res = matrix.resolution()
+    left, top = matrix.top_left
+    sheet = Image.new("RGB",
+                      (matrix.tile_width * (col1 - col0 + 1),
+                       matrix.tile_height * (row1 - row0 + 1)))
+    for (row, col), raw in zip(urls, tiles):
+        try:
+            tile = Image.open(BytesIO(raw)).convert("RGB")
+        except Exception as exc:                      # noqa: BLE001
+            raise ValueError("Kafelek WMTS nie jest obrazem.") from exc
+        sheet.paste(tile, ((col - col0) * matrix.tile_width,
+                           (row - row0) * matrix.tile_height))
+    # Kadr w metrach -> piksele sklejonej mozaiki.
+    origin_x = left + col0 * matrix.tile_width * res
+    origin_y = top - row0 * matrix.tile_height * res
+    box = (int(round((bounds.min_x - origin_x) / res)),
+           int(round((origin_y - bounds.max_y) / res)),
+           int(round((bounds.max_x - origin_x) / res)),
+           int(round((origin_y - bounds.min_y) / res)))
+    box = (max(0, box[0]), max(0, box[1]),
+           min(sheet.width, box[2]), min(sheet.height, box[3]))
+    if box[2] <= box[0] or box[3] <= box[1]:
+        raise ValueError("Kadr nie pokrywa się z kafelkami WMTS.")
+    cropped = sheet.crop(box).resize((width, height), Image.LANCZOS)
+    out = BytesIO()
+    cropped.save(out, format="JPEG", quality=88, optimize=True)
+    return out.getvalue()
+
+
 def list_layers(preset: str, url: str | None = None) -> dict:
     layers = layers_for(preset, url)
     if preset == "kieg":
@@ -290,11 +397,13 @@ ORTO_TILE_LIMIT = 1_200_000        # powyżej tylu pikseli dzielimy na kafelki
 
 
 def _fetch_once(base, layer, crs, bounds, width, height, *, version,
-                image_format, transparent):
+                image_format, transparent, time: str | None = None):
     """Jedno żądanie GetMap. Zwraca bajty obrazu albo podnosi wyjątek."""
     url = getmap_url(base, layer, crs, bounds, width, height,
                      version=version, image_format=image_format,
                      transparent=transparent)
+    if time:
+        url = url + "&TIME=" + str(time)
     content = _download(url, MAX_WMS_BYTES)
     if _is_image(content):
         return content
@@ -375,7 +484,8 @@ def _fetch_orto_smaller(base, layer, crs, bounds, width, height) -> bytes | None
     return None
 
 
-def _fetch_orto(base, layer, crs, bounds, width, height) -> bytes:
+def _fetch_orto(base, layer, crs, bounds, width, height,
+                time: str | None = None) -> bytes:
     """Ortofoto z pełnym łańcuchem odwrotów.
 
     1. jedno żądanie PNG (zachowanie sprzed 2.0.30 — zawsze działało),
@@ -388,7 +498,7 @@ def _fetch_orto(base, layer, crs, bounds, width, height) -> bytes:
         try:
             raw = _fetch_once(base, layer, crs, bounds, width, height,
                               version=version, image_format=image_format,
-                              transparent=transparent)
+                              transparent=transparent, time=time)
         except Exception as exc:                      # noqa: BLE001
             errors.append(str(exc))
             continue
@@ -435,10 +545,11 @@ def _fetch_orto_tiles(base, layer, crs, bounds, width, height) -> bytes:
 
 def map_image(preset: str, layer: str, epsg: int,
               xmin: float, ymin: float, xmax: float, ymax: float,
-              width: int, height: int, url: str | None = None) -> tuple[bytes, str]:
+              width: int, height: int, url: str | None = None,
+              time: str | None = None) -> tuple[bytes, str]:
     """Obraz podkładu wraz z typem MIME (JPEG dla ortofoto, PNG dla GUGiK)."""
     data = map_png(preset, layer, epsg, xmin, ymin, xmax, ymax, width, height,
-                   url)
+                   url, time)
     # Typ MIME wynika z faktycznej zawartości, nie z założenia.
     if data.startswith(b"\xff\xd8"):
         media = "image/jpeg"
@@ -451,7 +562,8 @@ def map_image(preset: str, layer: str, epsg: int,
 
 def map_png(preset: str, layer: str, epsg: int,
             xmin: float, ymin: float, xmax: float, ymax: float,
-            width: int, height: int, url: str | None = None) -> bytes:
+            width: int, height: int, url: str | None = None,
+            time: str | None = None) -> bytes:
     base = _preset(preset, url)
     if epsg not in SUPPORTED_EPSG:
         raise ValueError("Wybierz poprawny układ EPSG mapy (2180 lub 2176–2179).")
@@ -470,15 +582,18 @@ def map_png(preset: str, layer: str, epsg: int,
         raise ValueError("Wybrana warstwa nie obsługuje tego EPSG.")
     # Canvas world (horizontal=easting, vertical=-northing) -> GEO-MAP X/Y.
     bounds = WMSBounds(min_x=-ymax, min_y=xmin, max_x=-ymin, max_y=xmax)
-    key = _cache_key(preset + "|" + (url or ""), layer, epsg,
-                     xmin, ymin, xmax, ymax, width, height)
+    key = _cache_key(preset + "|" + (url or "") + "|" + (time or ""), layer,
+                     epsg, xmin, ymin, xmax, ymax, width, height)
     cached = _cache_get(key)
     if cached is not None:
         return cached
     if parcel:
         content = _parcel_image(layer, epsg, bounds, width, height)
+    elif preset in WMTS_PRESETS:
+        content = _wmts_image(preset, layer, epsg, bounds, width, height)
     else:
-        content = _fetch_orto(base, layer, f"EPSG:{epsg}", bounds, width, height)
+        content = _fetch_orto(base, layer, f"EPSG:{epsg}", bounds, width, height,
+                              time=time)
     _cache_put(key, content)
     return content
 

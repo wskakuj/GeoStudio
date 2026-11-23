@@ -2596,11 +2596,20 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
   const wmsPresetUrls={
     standard:"https://mapy.geoportal.gov.pl/wss/service/PZGIK/ORTO/WMS/StandardResolution",
     high:"https://mapy.geoportal.gov.pl/wss/service/PZGIK/ORTO/WMS/HighResolution",
-    kieg:"https://integracja.gugik.gov.pl/cgi-bin/KrajowaIntegracjaEwidencjiGruntow"
+    kieg:"https://integracja.gugik.gov.pl/cgi-bin/KrajowaIntegracjaEwidencjiGruntow",
+    standard_wmts:"https://mapy.geoportal.gov.pl/wss/service/PZGIK/ORTO/WMTS/StandardResolution",
+    high_wmts:"https://mapy.geoportal.gov.pl/wss/service/PZGIK/ORTO/WMTS/HighResolution",
+    standard_time:"https://mapy.geoportal.gov.pl/wss/service/PZGIK/ORTO/WMS/StandardResolutionTime",
+    high_time:"https://mapy.geoportal.gov.pl/wss/service/PZGIK/ORTO/WMS/HighResolutionTime"
   };
+  const timePresets=new Set(["standard_time","high_time"]);
   function showWmsPresetAddress(){
     const preset=$("underlay-preset").value;
     const field=$("underlay-url");
+    // Data archiwalna tylko dla źródeł z osią czasu.
+    const isTime=timePresets.has(preset);
+    $("underlay-time").hidden=!isTime;
+    $("underlay-time-label").hidden=!isTime;
     if(preset==="custom"){
       // Własny serwer: adres wpisuje użytkownik, więc go nie nadpisujemy.
       field.readOnly=false;
@@ -2745,6 +2754,7 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
       width:String(size.width),height:String(size.height)
     });
     if(item.url)params.set("url",item.url);
+    if(item.time)params.set("time",item.time);
     item.loading=true;
     try{
       const response=await documentFetch("/api/underlay/wms/map?"+params,{
@@ -2795,6 +2805,8 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
     if(!item){
       item={id:"wms"+(++underlaySerial),preset,layer,epsg,title,
             url:preset==="custom"?currentWmsUrl():"",
+            time:timePresets.has(preset)?
+              String($("underlay-time").value||"").trim():"",
             image:null,bounds:null,
             opacity:Number($("underlay-opacity").value)/100||.75,
             visible:true,loading:false,ticket:0,timer:null,abort:null};
