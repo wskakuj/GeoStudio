@@ -784,6 +784,19 @@ def create_app(workspace: PreviewWorkspace | None = None, *,
         except (ValueError,TypeError) as exc:
             raise HTTPException(400,str(exc)) from exc
 
+    @app.post("/api/objects/dash")
+    async def set_object_dash(request: Request):
+        data=await edit_payload(request)
+        try:
+            return state.set_line_dash(
+                data.get("uid"), data.get("dash"),
+                document_token=data.get("documentToken"),
+                revision=data.get("revision"))
+        except RuntimeError as exc:
+            raise HTTPException(409,str(exc)) from exc
+        except (ValueError,TypeError) as exc:
+            raise HTTPException(400,str(exc)) from exc
+
     @app.post("/api/labels/auto-layout-5310")
     async def auto_layout_5310(request: Request):
         data=await edit_payload(request)

@@ -561,13 +561,28 @@
       <div class="select-content">
         <p id="line-count" class="select-explain">Narysuj linię co najmniej 2 punktami.</p>
         <div class="select-grid">
-          <div><label for="line-code">Kod nowej linii</label>
-            <select id="line-code">
-              <option value="5214">5214 — linia obrębu</option>
-              <option value="6900">6900 — linia</option>
-              <option value="6000">6000 — oprawa/linia</option>
-              <option value="6301">6301 — linia</option>
-              <option value="2364">2364 — linia</option>
+          <div><label for="line-code">Kod nowej linii (możesz wpisać własny)</label>
+            <input id="line-code" type="text" list="line-code-list"
+                   inputmode="numeric" pattern="[0-9]{3,6}" maxlength="6"
+                   value="5214" autocomplete="off">
+            <datalist id="line-code-list">
+              <option value="5214">linia obrębu</option>
+              <option value="6900">linia</option>
+              <option value="6000">oprawa/linia</option>
+              <option value="6301">linia</option>
+              <option value="2364">linia</option>
+              <option value="4100">linia</option>
+              <option value="7900">linia</option>
+            </datalist>
+          </div>
+          <div><label for="line-style">Rodzaj linii</label>
+            <select id="line-style">
+              <option value="solid">ciągła</option>
+              <option value="dashed">przerywana</option>
+              <option value="dotted">kropkowana</option>
+              <option value="dashdot">kreska–kropka</option>
+              <option value="dashdotdot">kreska–kropka–kropka</option>
+              <option value="longdash">długa kreska</option>
             </select>
           </div>
           <div><label for="line-a1">A1 (opcjonalne)</label>

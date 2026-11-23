@@ -188,7 +188,9 @@ def test_5214_visible_in_line_tool_and_selected_delete_no_confirmation():
     root=Path(__file__).resolve().parents[1]/"geostudio/web_app/static"
     html=(root/"index.html").read_text("utf-8")
     js=(root/"map.js").read_text("utf-8")
-    assert '<option value="5214">5214 — linia obrębu</option>' in html
+    # Kod linii jest teraz polem tekstowym z podpowiedziami (własny kod).
+    assert '<option value="5214">linia obrębu</option>' in html
+    assert 'id="line-code" type="text" list="line-code-list"' in html
     assert 'state.selectedVertex!==null' in js
     delete=js[js.index("  async function deleteObjects() {"):
               js.index("  function finishDrawPolygon()",js.index("  async function deleteObjects() {"))]
