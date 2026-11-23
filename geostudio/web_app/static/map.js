@@ -1692,7 +1692,8 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
       state.movePreview=null;
       $("move-dialog").close();
       if(result.changed){
-        await refreshEditedDocument(state.active);
+        // Świeża geometria: dopasowanie granic sąsiada musi być widoczne.
+        await refreshLabelsNow();
         inform("Przesunięto "+display(result.movedObjects)+
           " obiektów. Wycięcia poligonów tego samego kodu są odwracalne.");
       }
@@ -1736,7 +1737,9 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
       });
       updateEditState(result);
       if(result.changed){
-        await refreshEditedDocument(state.active);
+        // Pełne odświeżenie geometrii: bez tego ekran pokazywał STARE obrysy
+        // z cache i wycięcie sąsiada (dopasowanie granic) było niewidoczne.
+        await refreshLabelsNow();
         const snap=result.snapApplied?" · przyciągnięto do granicy":
           ghost.snap?" · magnes: "+ghost.snap.kind:"";
         const cut=result.hasReversibleMasks?" Wycięto fragmenty poligonów pod spodem.":"";

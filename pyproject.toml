@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "geostudio-pl"
-version = "2.0.52"
+version = "2.0.53"
 description = "Experimental desktop editor / viewer for GEO-MAP v8 textual files"
 readme = "README.md"
 requires-python = ">=3.11"

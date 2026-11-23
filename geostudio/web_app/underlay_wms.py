@@ -188,8 +188,8 @@ def _download(url: str, max_bytes: int) -> bytes:
 
 _CACHE: "OrderedDict[tuple, bytes]" = OrderedDict()
 _CACHE_BYTES = 0
-_CACHE_LIMIT = 48 * 1024 * 1024
-_CACHE_MAX_ENTRIES = 96
+_CACHE_LIMIT = 128 * 1024 * 1024
+_CACHE_MAX_ENTRIES = 160
 _CACHE_LOCK = threading.Lock()
 
 
