@@ -4051,13 +4051,30 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
     const selected=new Set(state.pinned);
     if(state.active!==null) selected.add(state.active);
     if(!selected.size) return;
+    // Zaznaczenie rysujemy jako OBRYS DWUWARSTWOWY: szeroka biała otoczka
+    // i wąska kolorowa linia. Na czerwonym 5310 pomarańczowy cień ginął,
+    // a biała otoczka odcina obiekt od dowolnego tła.
     for(const feature of features) {
       if(!selected.has(feature.id)) continue;
+      const active=state.active===feature.id;
       addPath(feature.geometry);
-      ctx.strokeStyle=state.active===feature.id?"#f28b4b":"#04ac9b";
-      ctx.lineWidth=state.active===feature.id?3.5:2.4;
-      ctx.shadowBlur=7;ctx.shadowColor="#ffffff";
-      ctx.stroke();ctx.shadowBlur=0;
+      // Delikatne wypełnienie aktywnego obiektu — plama koloru jest
+      // czytelniejsza niż sam obrys na gęstej mapie.
+      if(active){
+        ctx.fillStyle="rgba(27,107,255,.13)";
+        ctx.fill("evenodd");
+      }
+      ctx.lineJoin="round";ctx.lineCap="round";
+      // 1) jasna otoczka
+      ctx.strokeStyle="rgba(255,255,255,.95)";
+      ctx.lineWidth=active?8:6;
+      ctx.stroke();
+      // 2) kolor zaznaczenia (niebieski — kontrastuje z czerwienią 5310)
+      ctx.strokeStyle=active?"#1B6BFF":"#00C2A8";
+      ctx.lineWidth=active?4:3;
+      ctx.setLineDash(active?[]:[6,4]);
+      ctx.stroke();
+      ctx.setLineDash([]);
     }
   }
   function nativeWorldPoint(point) {
