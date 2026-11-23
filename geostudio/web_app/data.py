@@ -1009,6 +1009,47 @@ class PreviewWorkspace:
             self._revision+=1
             return {**self._editing_status(),"changed":True}
 
+    def set_line_dash(self, uid: str, dash, *, document_token: str,
+                      revision: int) -> dict:
+        """Ustawia rodzaj linii (wzór kresek) dla jednego obiektu."""
+        with self._lock:
+            if self._doc is None:
+                raise ValueError("Najpierw otwórz mapę GEO-MAP.")
+            self._require_edit(document_token, revision)
+            # Klient podaje uid obiektu; mapa _lookup jest kluczowana id-kami,
+            # więc szukamy po uid w dokumentach.
+            entry = self._lookup.get(uid)
+            if entry is None:
+                for candidate in self._lookup.values():
+                    if candidate.obj.uid == uid:
+                        entry = candidate
+                        break
+            if entry is None:
+                raise ValueError("Nie znaleziono obiektu na mapie.")
+            if not isinstance(dash, list) or len(dash) > 8:
+                raise ValueError("Wzór linii musi być listą do 8 liczb.")
+            values = []
+            for value in dash:
+                if type(value) not in (int, float) or not 0 < value <= 60:
+                    raise ValueError("Wzór linii: liczby od 0 do 60.")
+                values.append(round(float(value), 2))
+            if len(values) == 1:
+                raise ValueError("Wzór linii musi mieć 0 albo co najmniej 2 liczby.")
+            current = self._styles.get(uid, {})
+            if list(current.get("dash") or []) == values:
+                return {**self._editing_status(), "changed": False}
+            with self._history.begin("Rodzaj linii"):
+                if values:
+                    self._styles[uid] = {**current, "dash": values}
+                else:
+                    rest = {k: v for k, v in current.items() if k != "dash"}
+                    if rest:
+                        self._styles[uid] = rest
+                    else:
+                        self._styles.pop(uid, None)
+            self._revision += 1
+            return {**self._editing_status(), "changed": True}
+
     def _editing_status(self) -> dict:
         history = self._history
         return {
@@ -2050,8 +2091,12 @@ class PreviewWorkspace:
                     raise ValueError("Wybrany obiekt nie jest obsługiwaną linią.")
             else:
                 code=operation.get("code")
-                if code not in {"5214","6900","6000","6301","2364"}:
-                    raise ValueError("Wybierz kod linii 5214, 6900, 6000, 6301 lub 2364.")
+                # Dowolny 4-cyfrowy kod GEO-MAP — użytkownik może wpisać własny,
+                # a nie tylko wybrać z listy gotowych.
+                if (not isinstance(code,str) or not code.isdigit()
+                        or not 3<=len(code)<=6):
+                    raise ValueError(
+                        "Kod linii musi być liczbą (3–6 cyfr), np. 5214 albo 6900.")
                 attrs=operation.get("fields")
                 if not isinstance(attrs,dict) or set(attrs)-{"A1","A2"}:
                     raise ValueError("Linia obsługuje A1/A2.")
@@ -3026,6 +3071,10 @@ class PreviewWorkspace:
             else [])
         if obj.code=="5214":
             dash=[8,4]
+        # Ręcznie wybrany rodzaj linii (przerywana, kropkowana itd.) ma
+        # pierwszeństwo nad wzorcem z kodu.
+        if isinstance(item_style.get("dash"),list):
+            dash=[float(x) for x in item_style["dash"]][:8]
         symbols=self._carto_sym.get(obj.code,[]) if len(obj.points)==1 else []
         segments=simple_point_segments(symbols)[:64]
         circles=simple_point_circles(symbols)[:32]

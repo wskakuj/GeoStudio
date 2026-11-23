@@ -1,5 +1,5 @@
 #define MyAppName "GeoStudio 2.0"
-#define MyAppVersion "2.0.45"
+#define MyAppVersion "2.0.46"
 #define MyAppExe "GeoStudio2.exe"
 
 [Setup]
@@ -15,7 +15,7 @@ PrivilegesRequired=lowest
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
 OutputDir=..\..\dist\installer
-OutputBaseFilename=GeoStudio2-Setup-2.0.45-x64
+OutputBaseFilename=GeoStudio2-Setup-2.0.46-x64
 Compression=lzma2
 SolidCompression=yes
 WizardStyle=modern

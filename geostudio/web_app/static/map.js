@@ -2077,6 +2077,32 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
     setTool("line-edit");
     inform("Narysuj nowy przebieg wybranej linii. Enter — sprawdź i zapisz.");
   }
+  // Rodzaje linii jako wzory kresek (w jednostkach ekranu).
+  const LINE_STYLES={
+    solid:[],
+    dashed:[8,4],
+    dotted:[2,3],
+    dashdot:[10,3,2,3],
+    dashdotdot:[10,3,2,3,2,3],
+    longdash:[16,5],
+  };
+  function selectedLineStyle(){
+    return LINE_STYLES[$("line-style")?.value]||[];
+  }
+  async function applyLineStyle(uid){
+    const dash=selectedLineStyle();
+    if(!uid)return;
+    try{
+      const result=await api("/api/objects/dash",{
+        method:"POST",headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({uid,dash,
+          documentToken:state.edit.documentToken,revision:state.edit.revision})});
+      updateEditState(result);
+      await refreshLabelsNow();
+    }catch(error){
+      inform("Nie ustawiono rodzaju linii: "+error.message,true);
+    }
+  }
   function operationForGeometry(which) {
     if(which==="split")return {
       action:"split",ids:state.cutIds.slice(),
@@ -2087,8 +2113,13 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
       if(state.tool==="line-edit")return {
         action:"edit_line",ids:[state.lineEditId],points
       };
+      const rawCode=String($("line-code").value||"").trim();
+      if(!/^\d{3,6}$/.test(rawCode)){
+        inform("Kod linii musi być liczbą (3–6 cyfr), np. 5214 albo 6900.",true);
+        throw Error("Nieprawidłowy kod linii.");
+      }
       return {
-        action:"create_line",code:$("line-code").value,points,
+        action:"create_line",code:rawCode,points,
         fields:Object.fromEntries(["a1","a2"].filter(k=>$("line-"+k).value)
           .map(k=>[k.toUpperCase(),$("line-"+k).value]))
       };
@@ -2162,6 +2193,9 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
       setTool("select");
       await refreshEditedDocument(state.active);
       updateSelectionCount();
+      // Rodzaj linii nakładamy na nowo utworzony obiekt.
+      if(which==="line"&&(res.createdUids||[]).length)
+        await applyLineStyle(res.createdUids[0]);
       inform("Geometria zapisana w kopii roboczej. Ctrl+Z cofa.");
     }catch(error){
       state.geometryPreview=null;
