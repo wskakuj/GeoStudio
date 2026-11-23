@@ -44,7 +44,7 @@ const feature={
  bbox:[0,0,20,20],
  geometry:[[[0,0],[20,0],[20,20],[0,20],[0,0]]]
 };
-const options={scale:10,enabled:true,vertexPixels:7,edgePixels:5};
+const options={scale:10,enabled:true,vertexPixels:16,edgePixels:5};
 let hit=snapPoint({x:0.02,y:0.02},[feature],options);
 assert.equal(hit.kind,'węzeł');
 assert.deepEqual(hit.point,{x:0,y:0});
@@ -64,8 +64,12 @@ assert.deepEqual(hit.point,{x:8,y:0.4});
 // The cursor threshold is fixed in SCREEN pixels, not GEO-MAP metres.
 hit=snapPoint({x:8,y:4},[feature],{...options,scale:1});
 assert.equal(hit.kind,'krawędź');
-hit=snapPoint({x:8,y:6},[feature],{...options,scale:1});
+hit=snapPoint({x:8,y:1.2},[feature],options);
 assert.equal(hit.kind,null);
+// Węzły mają większy promień niż krawędzie (magnes 16 px vs 5 px).
+hit=snapPoint({x:0.6,y:0.6},[feature],options);
+assert.equal(hit.kind,'węzeł');
+assert.deepEqual(hit.point,{x:0,y:0});
 // Hidden layers are not valid snap targets.
 hit=snapPoint({x:8,y:0.4},[{...feature,visible:false}],options);
 assert.equal(hit.kind,null);
@@ -77,9 +81,11 @@ def test_magnet_applies_to_all_draw_tools_uses_actual_clicked_point_and_alt():
     assert "state.drawMagnet" in src
     assert 'link("tool-draw-snap",toggleDrawMagnet)' in src
     assert 'window.GeoStudioDrawingSnap' in src
-    assert "vertexPixels:7,edgePixels:5" in src
+    # Magnes węzłów wzmocniony (16 px); krawędzie bez zmian (5 px), żeby
+    # nadal dało się wkreślać linie tuż obok istniejącej granicy.
+    assert "vertexPixels:16,edgePixels:5" in src
     assert "const candidates=state.features.filter(f=>isVisible(f)&&" in src
-    assert "const pad=12/Math.max(.000001,state.scale);" in src
+    assert "const pad=20/Math.max(.000001,state.scale);" in src
     assert "drawingSnapAt(world,ev.altKey)" in src
     assert '["draw","cut","line","line-edit"]' in src
     assert "renderScreenLabels(features);drawGcpMapMarkers();" in src

@@ -2237,18 +2237,19 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
     if(state.tool==="draw"&&state.drawPoints.length>=3){
       const first=state.drawPoints[0];
       const point={x:first[1],y:-first[0]};
-      if(Math.hypot(world.x-point.x,world.y-point.y)*state.scale<=10)
+      if(Math.hypot(world.x-point.x,world.y-point.y)*state.scale<=16)
         return {point,kind:"start",code:null,targetId:null};
     }
     // Avoid scanning every segment of the entire loaded MAP for every
     // pointermove. A 12px padded bbox contains all 7px vertex / 5px
     // segment snap targets, even at the smallest zoom.
-    const pad=12/Math.max(.000001,state.scale);
+    // Zapas musi pokryć największy promień magnesu (16 px) plus margines.
+    const pad=20/Math.max(.000001,state.scale);
     const candidates=state.features.filter(f=>isVisible(f)&&
       f.bbox[0]<=world.x+pad&&f.bbox[2]>=world.x-pad&&
       f.bbox[1]<=world.y+pad&&f.bbox[3]>=world.y-pad);
     return helper.snapPoint(world,candidates,{scale:state.scale,
-      enabled:true,bypass:altPressed,vertexPixels:7,edgePixels:5});
+      enabled:true,bypass:altPressed,vertexPixels:16,edgePixels:5});
   }
   function appendDrawingPoint(ev,p){
     if(!state.meta||state.editBusy)return;
@@ -4035,9 +4036,15 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
     }
     return best;
   }
+  // Węzły łapią kursor z większego promienia niż krawędzie — inaczej przy
+  // wkreślaniu poligonu mysz łatwo „uciekała" z punktu zaczepienia.
+  const VERTEX_SNAP_PX=18;
+  const EDGE_SNAP_PX=11;
   function previewSnap(world) {
     if(!state.snapEnabled)return {point:world,kind:null,code:null};
-    const radius=11/state.scale;
+    const radius=Math.max(VERTEX_SNAP_PX,EDGE_SNAP_PX)/state.scale;
+    const vertexRadius=VERTEX_SNAP_PX/state.scale;
+    const edgeRadius=EDGE_SNAP_PX/state.scale;
     let bestVertex=null,bestEdge=null;
     for(const feature of state.features){
       if(feature.id===state.active)continue;
@@ -4063,7 +4070,7 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
         for(let i=0;i<part.length;i++){
           const point=part[i];
           const dist=Math.hypot(point[0]-world.x,point[1]-world.y);
-          if(dist<=radius&&(!bestVertex||dist<bestVertex.dist))
+          if(dist<=vertexRadius&&(!bestVertex||dist<bestVertex.dist))
             bestVertex={dist,point:{x:point[0],y:point[1]},kind:"węzeł",code:feature.code};
           if(i===0)continue;
           const a=part[i-1], b=point;
@@ -4073,11 +4080,12 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
             ((world.x-a[0])*dx+(world.y-a[1])*dy)/len));
           const px=a[0]+t*dx,py=a[1]+t*dy;
           const d=Math.hypot(px-world.x,py-world.y);
-          if(d<=radius&&(!bestEdge||d<bestEdge.dist))
+          if(d<=edgeRadius&&(!bestEdge||d<bestEdge.dist))
             bestEdge={dist:d,point:{x:px,y:py},kind:"krawędź",code:feature.code};
         }
       }
     }
+    // Węzeł wygrywa z krawędzią — to on jest celem „magnesu".
     const match=bestVertex||bestEdge;
     if(match&&state.sharedNodes){
       const active=editableVertices()[state.vertexDrag?.index];
