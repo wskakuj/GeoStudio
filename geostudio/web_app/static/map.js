@@ -7059,7 +7059,13 @@ inform("Klikaj mapę, aby wstawiać kolejne oznaczenia. Naciśnij Esc lub wybier
       toolbar.scrollLeft+=ev.deltaY;
     }
   },{passive:false});
-  const link=(id,callback)=>$(id).addEventListener("click",callback);
+  // Odporny na brak elementu: usunięcie przycisku nie może wywalić startu
+  // (wcześniej TypeError przerywał inicjalizację: motyw i dopasowanie mapy).
+  const link=(id,callback)=>{
+    const element=$(id);
+    if(!element){console.warn("Brak elementu interfejsu:",id);return;}
+    element.addEventListener("click",callback);
+  };
   link("btn-open",chooseMap);
   link("tool-open",chooseMap);
   link("empty-open",chooseMap);
@@ -7256,7 +7262,6 @@ inform("Klikaj mapę, aby wstawiać kolejne oznaczenia. Naciśnij Esc lub wybier
   link("tool-undo",()=>historyStep("undo"));
   link("tool-redo",()=>historyStep("redo"));
   link("btn-export",downloadMapCopy);
-  link("btn-save-source",saveOverSource);
   link("btn-layout",openLayoutDialog);
   link("layout-close",()=>$("layout-dialog").close());
   $("layout-format").addEventListener("change",updateExportFormatControls);
