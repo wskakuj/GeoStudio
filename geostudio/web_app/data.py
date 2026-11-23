@@ -1793,7 +1793,8 @@ class PreviewWorkspace:
         allowed_keys={
             "copy":{"action","ids","dx","dy"},
             "delete":{"action","ids"},
-            "create":{"action","code","points","fields","clipRasterOverlap"},
+            "create":{"action","code","points","fields","clipRasterOverlap",
+                      "mergeSameA1"},
         }[action]
         if set(payload)-allowed_keys:
             raise ValueError("Nieznane pola polecenia.")
@@ -1953,6 +1954,7 @@ class PreviewWorkspace:
             selected=plan["selected"]
             before=b"".join(self._doc.lines)
             created=[]
+            merged=0
             with self._history.begin(
                 {"copy":"Kopiuj poligony","delete":"Usuń poligony",
                  "create":"Nowy poligon"}[action],
@@ -1974,8 +1976,13 @@ class PreviewWorkspace:
                         plan["coords"],code=payload["code"],
                         fields=payload["fields"])]
                     self._raise_to_top(created)
+                    merged=self._merge_same_a1(created[0],payload)
+                    if merged:
+                        merged_note=merged
                 # For append/copy, all original MAP records must survive.
-                if action!="delete":
+                # Wyjątek: świadome scalanie po A1 usuwa rekordy scalonych
+                # obiektów (odwracalne przez Ctrl+Z), więc prefiks się zmienia.
+                if action!="delete" and not merged:
                     if not b"".join(self._doc.lines).startswith(
                             before):
                         raise ValueError(
@@ -1987,9 +1994,47 @@ class PreviewWorkspace:
             self._bulk_preview_key=""
             return {**self._editing_status(),"changed":True,"action":action,
                     "affected":payload.get("ids",[]),
+                    "mergedSameA1":merged if action=="create" else 0,
                     "createdUids":created,
                     "createdIds":[self._object_id[id(self._doc.by_id[uid])]
                                   for uid in created]}
+
+    def _merge_same_a1(self, created_uid: str, payload: dict) -> int:
+        """Scala nowy poligon z istniejącymi 5310 o tym samym A1.
+
+        Działa także dla obiektów odległych od siebie: GEO-MAP dopuszcza
+        wieloczęściowy obrys w jednym obiekcie. Zwraca liczbę scalonych.
+        """
+        if payload.get("mergeSameA1") is not True:
+            return 0
+        if payload.get("code") != "5310":
+            return 0
+        value = str((payload.get("fields") or {}).get("A1", "") or "").strip()
+        if not value:
+            return 0
+        target = self._doc.by_id.get(created_uid)
+        if target is None:
+            return 0
+        others = [obj for obj in self._doc.objects
+                  if obj.uid != created_uid and obj.code == "5310"
+                  and obj.is_closed
+                  and str(obj.fields.get("A1", "") or "").strip() == value]
+        if not others:
+            return 0
+        rings = [list(ring) for ring in rings_from_shape(geometry_of(target))]
+        for obj in others:
+            try:
+                rings.extend(rings_from_shape(geometry_of(obj)))
+            except ValueError:
+                continue
+        if len(rings) > 200:
+            raise ValueError("Scalenie utworzyłoby zbyt wiele części obrysu.")
+        self._doc.replace_polygon_components(created_uid, rings)
+        self._doc.delete_objects([obj.uid for obj in others])
+        remaining = [uid for uid in self._overlay_uids()
+                     if uid not in {obj.uid for obj in others}]
+        self._styles[TOPOLOGY_STACK_KEY] = {"uids": remaining[-5000:]}
+        return len(others)
 
     def _geometry_plan(self, operation: dict, *,
                        document_token: str, revision: int) -> dict:

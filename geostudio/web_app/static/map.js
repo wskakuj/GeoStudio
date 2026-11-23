@@ -2976,10 +2976,12 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
       isVisible,
       fitOutline:points=>api("/api/underlay/raster/fit",{method:"POST",
         headers:{"Content-Type":"application/json"},body:JSON.stringify({documentToken:token,revision,points})}),
-      async add(points,a1,fitted){
+      async add(points,a1,fitted,options){
         if(state.editBusy||state.edit.documentToken!==token||state.edit.revision!==revision)
           throw Error("Mapa została zmieniona. Otwórz wykrywanie ponownie.");
-        const body={documentToken:token,revision,operation:{action:"create",code:"5310",clipRasterOverlap:true,fields:a1?{A1:a1}:{},points}};
+        const body={documentToken:token,revision,operation:{action:"create",code:"5310",
+          clipRasterOverlap:true,mergeSameA1:options?.mergeSameA1===true,
+          fields:a1?{A1:a1}:{},points}};
         const post=(path,data)=>api(path,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(data)});
         state.editBusy=true;
         try{
@@ -2987,6 +2989,8 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
           if(preview.adjustedPoints && JSON.stringify(preview.adjustedPoints)!==JSON.stringify(fitted))throw Error("Granica wymaga ponownego dopasowania. Wybierz fragment ponownie.");
           const result=await post("/api/objects/apply",{...body,previewKey:preview.previewKey});
           revision=result.revision;updateEditState(result);
+          if(result.mergedSameA1)
+            inform("Scalono z "+result.mergedSameA1+" wydzieleniem o tym samym A1.");
         }finally{state.editBusy=false;updateEditState(state.edit);}
       },
       refresh:()=>refreshEditedDocument(null)
