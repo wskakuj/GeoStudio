@@ -187,3 +187,39 @@ def test_row_never_exceeds_matrix_height():
         matrix, 0.0, 990000.0, 3000.0, 1000000.0)
     assert row1 < matrix.matrix_height
     assert col1 < matrix.matrix_width
+
+
+def test_tiles_fill_the_requested_frame_without_stretching(monkeypatch):
+    """Obraz musi mieć dokładnie żądany rozmiar i proporcje kadru."""
+    def download(url, size):
+        return CAPABILITIES if "GetCapabilities" in url else _jpeg()
+
+    monkeypatch.setattr(underlay_wms, "_download", download)
+    underlay_wms._wmts_capabilities.cache_clear()
+    underlay_wms._wmts_layer_info.cache_clear()
+    underlay_wms._wmts_layers.cache_clear()
+    underlay_wms.clear_cache()
+    # Kadr 4000 x 2000 m -> obraz 400 x 200 px (proporcje 2:1).
+    data, media = underlay_wms.map_image(
+        "standard_wmts", "Raster", 2180,
+        996000, -1000, 1000000, 3000, 400, 200)
+    image = Image.open(BytesIO(data))
+    assert image.size == (400, 200)
+
+
+def test_axis_swap_does_not_stretch(monkeypatch):
+    swapped_caps = CAPABILITIES.replace(b"<TopLeftCorner>0 1000000</TopLeftCorner>",
+                                        b"<TopLeftCorner>1000000 0</TopLeftCorner>")
+
+    def download(url, size):
+        return swapped_caps if "GetCapabilities" in url else _jpeg()
+
+    monkeypatch.setattr(underlay_wms, "_download", download)
+    underlay_wms._wmts_capabilities.cache_clear()
+    underlay_wms._wmts_layer_info.cache_clear()
+    underlay_wms._wmts_layers.cache_clear()
+    underlay_wms.clear_cache()
+    data, media = underlay_wms.map_image(
+        "standard_wmts", "Raster", 2180,
+        990000, -3000, 1000000, 0, 300, 200)
+    assert Image.open(BytesIO(data)).size == (300, 200)

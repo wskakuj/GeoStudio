@@ -329,8 +329,7 @@ def _wmts_layers(preset: str) -> tuple:
 def _wmts_image(preset: str, layer: str, epsg: int, bounds,
                 width: int, height: int) -> bytes:
     """Składa obraz z kafelków WMTS i przycina do żądanego rozmiaru."""
-    from ..wmts_service import (gettile_url, mosaic_origin, pick_matrix,
-                                tile_selection)
+    from ..wmts_service import gettile_url, pick_matrix, tile_selection
     from concurrent.futures import ThreadPoolExecutor
     from io import BytesIO
     from PIL import Image
@@ -372,9 +371,19 @@ def _wmts_image(preset: str, layer: str, epsg: int, bounds,
         tiles = list(pool.map(lambda item: fetch(*item), urls))
 
     res = matrix.resolution()
-    sheet = Image.new("RGB",
-                      (matrix.tile_width * (col1 - col0 + 1),
-                       matrix.tile_height * (row1 - row0 + 1)))
+    span_x = res * matrix.tile_width
+    span_y = res * matrix.tile_height
+    first, second = matrix.top_left
+    # swapped=True: TopLeftCorner = (wschód, północ), więc kolumna biegnie po
+    # wschodzie, a wiersz po północy. W przeciwnym razie kolumna to północ.
+    # Obraz docelowy ma zawsze x = wschód i y = -północ (układ canvasu).
+    out = Image.new("RGB", (width, height))
+    if width <= 0 or height <= 0:
+        raise ValueError("Nieprawidłowy rozmiar obrazu WMTS.")
+    east_span = max(1e-9, bounds.max_y - bounds.min_y)
+    north_span = max(1e-9, bounds.max_x - bounds.min_x)
+    px_x = width / east_span
+    px_y = height / north_span
     for (row, col), raw in zip(urls, tiles):
         try:
             tile = Image.open(BytesIO(raw)).convert("RGB")
@@ -382,22 +391,27 @@ def _wmts_image(preset: str, layer: str, epsg: int, bounds,
             detail = _service_exception(raw)
             raise ValueError(
                 "Kafelek WMTS nie jest obrazem — " + detail) from exc
-        sheet.paste(tile, ((col - col0) * matrix.tile_width,
-                           (row - row0) * matrix.tile_height))
-    # Kadr w metrach -> piksele sklejonej mozaiki.
-    origin_x, origin_y = mosaic_origin(matrix, col0, row0, swapped)
-    box = (int(round((bounds.min_x - origin_x) / res)),
-           int(round((origin_y - bounds.max_y) / res)),
-           int(round((bounds.max_x - origin_x) / res)),
-           int(round((origin_y - bounds.min_y) / res)))
-    box = (max(0, box[0]), max(0, box[1]),
-           min(sheet.width, box[2]), min(sheet.height, box[3]))
-    if box[2] <= box[0] or box[3] <= box[1]:
-        raise ValueError("Kadr nie pokrywa się z kafelkami WMTS.")
-    cropped = sheet.crop(box).resize((width, height), Image.LANCZOS)
-    out = BytesIO()
-    cropped.save(out, format="JPEG", quality=88, optimize=True)
-    return out.getvalue()
+        if swapped:
+            east0 = first + col * span_x
+            east1 = east0 + span_x
+            north1 = second - row * span_y
+            north0 = north1 - span_y
+        else:
+            north0 = first + col * span_x
+            north1 = north0 + span_x
+            east1 = second - row * span_y
+            east0 = east1 - span_y
+        x0 = (east0 - bounds.min_y) * px_x
+        x1 = (east1 - bounds.min_y) * px_x
+        y0 = (bounds.max_x - north1) * px_y
+        y1 = (bounds.max_x - north0) * px_y
+        target_w = max(1, int(round(x1 - x0)))
+        target_h = max(1, int(round(y1 - y0)))
+        out.paste(tile.resize((target_w, target_h), Image.LANCZOS),
+                  (int(round(x0)), int(round(y0))))
+    buffer = BytesIO()
+    out.save(buffer, format="JPEG", quality=88, optimize=True)
+    return buffer.getvalue()
 
 
 def list_layers(preset: str, url: str | None = None) -> dict:
