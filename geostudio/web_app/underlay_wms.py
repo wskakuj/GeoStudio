@@ -315,10 +315,11 @@ def _wmts_layers(preset: str) -> tuple:
     """Warstwy WMTS: nazwy z Capabilities, obsługiwane polskie EPSG."""
     sets = _wmts_capabilities(preset)
     crs_sets = {entry.crs.upper() for entry in sets}
-    supported = tuple(sorted(f"EPSG:{epsg}" for epsg in SUPPORTED_EPSG
-                             if f"EPSG:{epsg}" in crs_sets))
-    if not supported:
+    if not any(f"EPSG:{epsg}" in crs_sets for epsg in SUPPORTED_EPSG):
         raise ValueError("Serwer WMTS nie obsługuje polskich układów EPSG.")
+    # Kafelki istnieją zwykle tylko dla EPSG:2180, ale dla pozostałych układów
+    # schodzimy na równoważny WMS — dlatego zgłaszamy wszystkie obsługiwane.
+    supported = tuple(sorted(f"EPSG:{epsg}" for epsg in SUPPORTED_EPSG))
     from ..wms_service import WMSLayerInfo
     published = _wmts_layer_info(preset)
     return tuple(WMSLayerInfo(layer.identifier, layer.title or layer.identifier,
@@ -341,7 +342,9 @@ def _wmts_image(preset: str, layer: str, epsg: int, bounds,
     if matrix_set is None:
         raise ValueError("Serwer WMTS nie obsługuje wybranego układu EPSG.")
     pixel_size = max(1e-9, (bounds.max_x - bounds.min_x) / max(1, width))
-    matrix = pick_matrix(matrix_set, pixel_size)
+    # Poziom dobieramy o jeden stopień DROBNIEJSZY niż żądany piksel: kafelki
+    # zbyt zgrubne bywają puste (czarne) na brzegach zasięgu opracowania.
+    matrix = pick_matrix(matrix_set, pixel_size / 2.0)
     col0, row0, col1, row1, swapped = tile_selection(
         matrix, bounds.min_x, bounds.min_y, bounds.max_x, bounds.max_y)
     if (col1 - col0 + 1) * (row1 - row0 + 1) > 36:
@@ -411,7 +414,22 @@ def _wmts_image(preset: str, layer: str, epsg: int, bounds,
                   (int(round(x0)), int(round(y0))))
     buffer = BytesIO()
     out.save(buffer, format="JPEG", quality=88, optimize=True)
-    return buffer.getvalue()
+    data = buffer.getvalue()
+    if _looks_blank(out):
+        raise ValueError("Serwer WMTS zwrócił puste (czarne) kafelki.")
+    return data
+
+
+def _looks_blank(image) -> bool:
+    """Czy obraz jest praktycznie jednolity i ciemny (brak danych)."""
+    try:
+        from PIL import ImageStat
+        small = image.convert("L").resize((32, 32))
+        stat = ImageStat.Stat(small)
+        mean, stddev = stat.mean[0], stat.stddev[0]
+    except Exception:                                 # noqa: BLE001
+        return False
+    return mean < 26 and stddev < 12
 
 
 def list_layers(preset: str, url: str | None = None) -> dict:
@@ -634,7 +652,15 @@ def map_png(preset: str, layer: str, epsg: int,
     if parcel:
         content = _parcel_image(layer, epsg, bounds, width, height)
     elif preset in WMTS_PRESETS:
-        content = _wmts_image(preset, layer, epsg, bounds, width, height)
+        # WMTS ma kafelki tylko w układach, które opublikował serwer (zwykle
+        # EPSG:2180). Dla innych układów — albo gdy kafelki są puste — wracamy
+        # do równoważnego podkładu WMS, który obsługuje wszystkie polskie EPSG.
+        fallback = "standard" if preset == "standard_wmts" else "high"
+        try:
+            content = _wmts_image(preset, layer, epsg, bounds, width, height)
+        except (ValueError, RuntimeError):
+            content = _fetch_orto(_preset(fallback), layer, f"EPSG:{epsg}",
+                                  bounds, width, height)
     else:
         content = _fetch_orto(base, layer, f"EPSG:{epsg}", bounds, width, height,
                               time=time)
