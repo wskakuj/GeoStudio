@@ -204,38 +204,22 @@ ORTO_FORMAT = "image/jpeg"
 ORTO_TILE_LIMIT = 1_200_000        # powyżej tylu pikseli dzielimy na kafelki
 
 
+def _fetch_once(base, layer, crs, bounds, width, height, *, version,
+                image_format, transparent):
+    """Jedno żądanie GetMap. Zwraca bajty obrazu albo podnosi wyjątek."""
+    url = getmap_url(base, layer, crs, bounds, width, height,
+                     version=version, image_format=image_format,
+                     transparent=transparent)
+    content = _download(url, MAX_WMS_BYTES)
+    if _is_image(content):
+        return content
+    raise ValueError(_service_exception(content))
+
+
 def _is_image(content: bytes) -> bool:
     return (content.startswith(b"\xff\xd8") or
             content.startswith(b"\x89PNG\r\n\x1a\n") or
             content.startswith(b"GIF8"))
-
-
-def _fetch_orto_tile(base, layer, crs, bounds, width, height):
-    """Pobiera kafelek ortofoto. JPEG, a przy odmowie serwera — PNG.
-
-    Geoportal bywa, że odrzuca FORMAT=image/jpeg (albo odpowiada komunikatem
-    błędu), dlatego każde żądanie ma wersję zapasową w PNG, zamiast kończyć
-    się komunikatem „Nie można pobrać danych WMS”.
-    """
-    attempts = (
-        ("image/jpeg", False),
-        ("image/png", True),
-    )
-    last_error = None
-    for image_format, transparent in attempts:
-        url = getmap_url(base, layer, crs, bounds, width, height,
-                         version="1.1.1", image_format=image_format,
-                         transparent=transparent)
-        try:
-            content = _download(url, MAX_WMS_BYTES)
-        except Exception as exc:                      # noqa: BLE001
-            last_error = exc
-            continue
-        if _is_image(content):
-            return content
-        # Serwer odesłał komunikat błędu zamiast obrazu — próbujemy dalej.
-        last_error = ValueError(_service_exception(content))
-    raise ValueError(str(last_error or "WMS nie zwrócił obrazu."))
 
 
 def _service_exception(content: bytes) -> str:
@@ -248,6 +232,20 @@ def _service_exception(content: bytes) -> str:
         if message:
             return "Geoportal: " + " ".join(message.split())[:200]
     return "WMS zwrócił dane inne niż obraz (sprawdź warstwę i EPSG)."
+
+
+def _to_jpeg(raw: bytes) -> bytes:
+    if raw.startswith(b"\xff\xd8"):
+        return raw
+    try:
+        from PIL import Image
+        from io import BytesIO
+        out = BytesIO()
+        Image.open(BytesIO(raw)).convert("RGB").save(
+            out, format="JPEG", quality=88, optimize=True)
+        return out.getvalue()
+    except Exception:                                 # noqa: BLE001
+        return raw
 
 
 def _stitch(tiles: list[bytes], width: int, height: int,
@@ -265,30 +263,48 @@ def _stitch(tiles: list[bytes], width: int, height: int,
     return out.getvalue()
 
 
-def _to_jpeg(raw: bytes) -> bytes:
-    if raw.startswith(b"\xff\xd8"):
-        return raw
-    try:
-        from PIL import Image
-        from io import BytesIO
-        out = BytesIO()
-        Image.open(BytesIO(raw)).convert("RGB").save(
-            out, format="JPEG", quality=88, optimize=True)
-        return out.getvalue()
-    except Exception:                                 # noqa: BLE001
-        return raw
+# Kolejność prób dla ortofoto. NAJPIERW dokładnie to, co działało przed 2.0.30
+# (jedno żądanie, PNG, z przezroczystością) — szybkość jest warta zachodu tylko
+# wtedy, gdy obraz w ogóle się pobiera.
+ORTO_ATTEMPTS = (
+    ("1.1.1", "image/png", True),
+    ("1.3.0", "image/png", True),
+    ("1.1.1", "image/jpeg", False),
+    ("1.3.0", "image/jpeg", False),
+)
 
 
 def _fetch_orto(base, layer, crs, bounds, width, height) -> bytes:
-    """Ortofoto: JPEG i kafelki, ale zawsze z bezpiecznym odwrotem.
+    """Ortofoto z pełnym łańcuchem odwrotów.
 
-    Duże kadry dzielimy na cztery kafelki pobierane po dwa naraz — cztery
-    jednoczesne żądania potrafiły wywołać odmowę serwera. Jeśli kafelkowanie
-    zawiedzie choć raz, wracamy do JEDNEGO żądania na cały kadr.
+    1. jedno żądanie PNG (zachowanie sprzed 2.0.30 — zawsze działało),
+    2. to samo w WMS 1.3.0 (niektóre usługi przyjmują tylko tę wersję),
+    3. JPEG (mniejszy transfer),
+    4. na końcu kafelki — tylko gdy wszystko inne zawiodło.
     """
-    if width * height <= ORTO_TILE_LIMIT:
-        return _to_jpeg(_fetch_orto_tile(base, layer, crs, bounds, width, height))
+    errors = []
+    for version, image_format, transparent in ORTO_ATTEMPTS:
+        try:
+            raw = _fetch_once(base, layer, crs, bounds, width, height,
+                              version=version, image_format=image_format,
+                              transparent=transparent)
+        except Exception as exc:                      # noqa: BLE001
+            errors.append(str(exc))
+            continue
+        return _to_jpeg(raw) if image_format == "image/jpeg" else raw
 
+    if width * height > ORTO_TILE_LIMIT:
+        try:
+            return _fetch_orto_tiles(base, layer, crs, bounds, width, height)
+        except Exception as exc:                      # noqa: BLE001
+            errors.append(str(exc))
+
+    # Zgłaszamy najkonkretniejszy komunikat (np. treść ServiceException).
+    detail = next((e for e in errors if "Geoportal:" in e), errors[-1] if errors else "")
+    raise RuntimeError(detail or "Nie można pobrać obrazu ortofoto.")
+
+
+def _fetch_orto_tiles(base, layer, crs, bounds, width, height) -> bytes:
     mid_x = (bounds.min_x + bounds.max_x) / 2
     mid_y = (bounds.min_y + bounds.max_y) / 2
     left_w = width // 2
@@ -302,16 +318,13 @@ def _fetch_orto(base, layer, crs, bounds, width, height) -> bytes:
         (WMSBounds(mid_x, mid_y, bounds.max_x, bounds.max_y), right_w, bottom_h),
     ]
     from concurrent.futures import ThreadPoolExecutor
-    try:
-        with ThreadPoolExecutor(max_workers=2) as pool:
-            futures = [pool.submit(_fetch_orto_tile, base, layer, crs,
-                                   part, part_w, part_h)
-                       for part, part_w, part_h in parts]
-            images = [future.result() for future in futures]
-        return _stitch(images, width, height, left_w, top_h)
-    except Exception:                                 # noqa: BLE001
-        # Odwrót: jedno żądanie na cały kadr (wolniejsze, ale niezawodne).
-        return _to_jpeg(_fetch_orto_tile(base, layer, crs, bounds, width, height))
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        futures = [pool.submit(_fetch_once, base, layer, crs, part, part_w,
+                               part_h, version="1.1.1",
+                               image_format="image/png", transparent=True)
+                   for part, part_w, part_h in parts]
+        images = [future.result() for future in futures]
+    return _stitch(images, width, height, left_w, top_h)
 
 
 def map_image(preset: str, layer: str, epsg: int,

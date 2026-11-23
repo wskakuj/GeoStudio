@@ -8,18 +8,24 @@ from PIL import Image
 from geostudio.web_app import underlay_wms
 
 
+def _png(width=64, height=64, color=(20, 120, 200)):
+    buffer = BytesIO()
+    Image.new("RGB", (width, height), color).save(buffer, format="PNG")
+    return buffer.getvalue()
+
+
 def _jpeg(width=64, height=64, color=(20, 120, 200)):
     buffer = BytesIO()
     Image.new("RGB", (width, height), color).save(buffer, format="JPEG")
     return buffer.getvalue()
 
 
-def test_ortofoto_requests_jpeg(monkeypatch):
+def test_ortofoto_requests_png_first(monkeypatch):
     seen = []
 
     def download(url, max_bytes):
         seen.append(url)
-        return _jpeg()
+        return _png() if "png" in url.lower() else _jpeg()
 
     monkeypatch.setattr(underlay_wms, "_download", download)
     monkeypatch.setattr(underlay_wms, "layers_for",
@@ -28,17 +34,17 @@ def test_ortofoto_requests_jpeg(monkeypatch):
     underlay_wms.clear_cache()
     data, media = underlay_wms.map_image("standard", "ortho", 2180,
                                          0, 0, 100, 100, 256, 256)
-    assert media == "image/jpeg"
-    assert data.startswith(b"\xff\xd8")
-    assert "FORMAT=image%2Fjpeg" in seen[0] or "FORMAT=image/jpeg" in seen[0]
+    # Najpierw idzie wersja sprawdzona w praktyce: PNG z przezroczystością.
+    assert media == "image/png"
+    assert "FORMAT=image%2Fpng" in seen[0] or "FORMAT=image/png" in seen[0]
 
 
-def test_large_frame_is_split_into_parallel_tiles(monkeypatch):
+def test_large_frame_is_one_request_when_png_works(monkeypatch):
     calls = []
 
     def download(url, max_bytes):
         calls.append(url)
-        return _jpeg()
+        return _png() if "png" in url.lower() else _jpeg()
 
     monkeypatch.setattr(underlay_wms, "_download", download)
     monkeypatch.setattr(underlay_wms, "layers_for",
@@ -47,9 +53,9 @@ def test_large_frame_is_split_into_parallel_tiles(monkeypatch):
     underlay_wms.clear_cache()
     data, media = underlay_wms.map_image("standard", "ortho", 2180,
                                          0, 0, 2000, 2000, 1600, 1600)
-    assert len(calls) == 4            # cztery kafelki
-    assert media == "image/jpeg"
-    assert Image.open(BytesIO(data)).size == (1600, 1600)
+    # Kafelki są dopiero ostatnią deską ratunku — nie przy pierwszym żądaniu.
+    assert len(calls) == 1
+    assert media == "image/png"
 
 
 def test_small_frame_is_one_request(monkeypatch):
