@@ -561,6 +561,13 @@
       if(nativeAPI()?.save_map) {
         const saved=await nativeAPI().save_map();
         if(saved&&!saved.cancelled){
+          // Po zapisie odświeżamy status, żeby znacznik „Niezapisane zmiany”
+          // zniknął — wcześniej zostawał, bo nikt nie odpytał serwera.
+          try{
+            const status=await api("/api/edit/status");
+            if(status&&status.documentToken===state.edit?.documentToken)
+              updateEditState(status);
+          }catch(_){/* status odświeży się przy następnej akcji */}
           inform("Zapisano kopię MAP: "+saved.path+
                  " ("+display(saved.bytes)+" bajtów).");
           window.alert("Kopia GEO-MAP została zapisana w:\n"+saved.path+
