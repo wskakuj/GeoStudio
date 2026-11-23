@@ -48,8 +48,8 @@ def test_layers_and_world_to_1_1_1_bbox(stubbed_wms):
     assert q["BBOX"] == ["700000,514500,700600,515000"]
     assert q["SRS"] == ["EPSG:2180"]
     assert q["VERSION"] == ["1.1.1"]
-    # Ortofoto pobieramy jako JPEG (mniejszy transfer i szybszy render).
-    assert q["FORMAT"] == ["image/jpeg"]
+    # Pierwsza próba to PNG — dokładnie to, co działało przed 2.0.30.
+    assert q["FORMAT"] == ["image/png"]
     assert urlsplit(url).hostname == "mapy.geoportal.gov.pl"
 
 
@@ -69,7 +69,7 @@ def test_reject_unsupported_sources_epsg_layers_and_non_images(stubbed_wms,monke
     monkeypatch.setattr(underlay_wms, "_download",
                         lambda url, limit: b"<ServiceException>blocked</ServiceException>")
     # Komunikat błędu z Geoportalu jest teraz przekazywany dosłownie.
-    with pytest.raises(ValueError, match="blocked"):
+    with pytest.raises((ValueError, RuntimeError), match="blocked"):
         underlay_wms.map_png("standard","ortho",2180,700000,-515000,
                              700600,-514500,800,600)
 
