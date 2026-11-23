@@ -300,17 +300,30 @@ def _wmts_capabilities_url(preset: str) -> str:
 
 
 @lru_cache(maxsize=4)
+def _wmts_layer_info(preset: str) -> tuple:
+    """Warstwy WMTS z Capabilities: nazwa, style, formaty, zestawy matryc."""
+    from ..wmts_service import parse_layers
+    xml = _download(_wmts_capabilities_url(preset), 8_000_000)
+    layers = parse_layers(xml)
+    if not layers:
+        raise ValueError("Serwer WMTS nie opublikował żadnej warstwy.")
+    return layers
+
+
+@lru_cache(maxsize=4)
 def _wmts_layers(preset: str) -> tuple:
-    """Warstwy WMTS: nazwa z Capabilities, obsługiwane polskie EPSG."""
+    """Warstwy WMTS: nazwy z Capabilities, obsługiwane polskie EPSG."""
     sets = _wmts_capabilities(preset)
     crs_sets = {entry.crs.upper() for entry in sets}
     supported = tuple(sorted(f"EPSG:{epsg}" for epsg in SUPPORTED_EPSG
                              if f"EPSG:{epsg}" in crs_sets))
     if not supported:
         raise ValueError("Serwer WMTS nie obsługuje polskich układów EPSG.")
-    # Geoportal publikuje jedną warstwę ortofoto o nazwie "Raster".
     from ..wms_service import WMSLayerInfo
-    return (WMSLayerInfo("Raster", "Ortofotomapa (WMTS)", supported),)
+    published = _wmts_layer_info(preset)
+    return tuple(WMSLayerInfo(layer.identifier, layer.title or layer.identifier,
+                              supported)
+                 for layer in published)
 
 
 def _wmts_image(preset: str, layer: str, epsg: int, bounds,
@@ -334,12 +347,24 @@ def _wmts_image(preset: str, layer: str, epsg: int, bounds,
     if (col1 - col0 + 1) * (row1 - row0 + 1) > 36:
         raise ValueError("Zbyt wiele kafelków WMTS dla tego kadru.")
     base = _preset(preset)
+    # Styl i format bierzemy z Capabilities — serwer odrzuca nieznane wartości.
+    published = next((entry for entry in _wmts_layer_info(preset)
+                      if entry.identifier == layer), None)
+    style = published.styles[0] if published and published.styles else "default"
+    image_format = "image/jpeg"
+    if published and published.formats:
+        for candidate in ("image/jpeg", "image/png"):
+            if candidate in published.formats:
+                image_format = candidate
+                break
+        else:
+            image_format = published.formats[0]
     urls = [(row, col) for row in range(row0, row1 + 1)
             for col in range(col0, col1 + 1)]
 
     def fetch(row, col):
         url = gettile_url(base, layer, matrix_set.identifier, matrix.identifier,
-                          row, col)
+                          row, col, style=style, image_format=image_format)
         return _download(url, MAX_WMS_BYTES)
 
     with ThreadPoolExecutor(max_workers=2) as pool:
@@ -354,7 +379,9 @@ def _wmts_image(preset: str, layer: str, epsg: int, bounds,
         try:
             tile = Image.open(BytesIO(raw)).convert("RGB")
         except Exception as exc:                      # noqa: BLE001
-            raise ValueError("Kafelek WMTS nie jest obrazem.") from exc
+            detail = _service_exception(raw)
+            raise ValueError(
+                "Kafelek WMTS nie jest obrazem — " + detail) from exc
         sheet.paste(tile, ((col - col0) * matrix.tile_width,
                            (row - row0) * matrix.tile_height))
     # Kadr w metrach -> piksele sklejonej mozaiki.
@@ -420,7 +447,11 @@ def _service_exception(content: bytes) -> str:
     """Wyciąga czytelny komunikat z ServiceExceptionReport WMS."""
     import re
     text = content[:2000].decode("utf-8", "replace")
-    match = re.search(r"<ServiceException[^>]*>(.*?)</ServiceException>", text, re.S)
+    # WMS: ServiceException, WMTS/OGC: ExceptionText w ExceptionReport.
+    match = (re.search(r"<ServiceException[^>]*>(.*?)</ServiceException>", text, re.S)
+             or re.search(r"<ExceptionText[^>]*>(.*?)</ExceptionText>", text, re.S)
+             or re.search(r"<ows:ExceptionText[^>]*>(.*?)</ows:ExceptionText>",
+                          text, re.S))
     if match:
         message = re.sub(r"<[^>]+>", " ", match.group(1)).strip()
         if message:
