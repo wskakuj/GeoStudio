@@ -864,7 +864,7 @@ class PreviewWorkspace:
             raise ValueError("Arkusz może zawierać do 100 elementów.")
         ids=set()
         for item in items:
-            if (not isinstance(item,dict) or set(item)-{"runs","angle"}!={"id","kind","x","y","w","h","text"}
+            if (not isinstance(item,dict) or set(item)-{"runs","angle","fontSize"}!={"id","kind","x","y","w","h","text"}
                     or item["kind"] not in ("title","credits","compass","symbols","species",SHEET_NUMBER,*SHEET_SIGNS)
                     or not isinstance(item["id"],str) or len(item["id"])>80 or item["id"] in ids
                     or not isinstance(item["text"],str) or len(item["text"])>1500

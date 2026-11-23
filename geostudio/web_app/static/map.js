@@ -6217,6 +6217,7 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
     return {x:ev.clientX-box.left,y:ev.clientY-box.top};
   }
   let pendingSheet=null,selectedSheet=null,sheetDrag=null,sheetSaving=false,sheetSize=1,sheetCursor=null;
+  let pendingNumber=null,numberEdit=null;
   let sheetRotate=null;
   const rotatableSigns=new Set(["clearcut","marsh","power","gas"]);
   const insertMode=()=>!$("ribbon-panel-insert").hidden;
@@ -6247,10 +6248,11 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
     }
     if(insertMode()&&pendingSheet&&sheetCursor){
       const kind=pendingSheet,[w,h]=GeoStudioSheet.sizes[kind];
-      const z=kind==="compartment"?Number($("sheet-number-size").value)/12:sheetSize;
+      const chosen=pendingNumber||{text:"",size:12};
+      const z=kind==="compartment"?chosen.size/12:sheetSize;
       const ghost={id:"__preview__",kind,x:sheetCursor.x,y:sheetCursor.y,
         w:w*z*sheetWorldPerPixel(),h:h*z*sheetWorldPerPixel(),
-        text:kind==="compartment"?$("sheet-number").value||"1":GeoStudioSheet.defaultText(kind,state.meta?.name||"")};
+        text:kind==="compartment"?chosen.text:GeoStudioSheet.defaultText(kind,state.meta?.name||"")};
 
       // Podgląd = dokładnie ten sam glif, który trafi do MAP. Bez ramki
       // całego pola 48x16, bo była większa od samego znaku i myliła.
@@ -6268,18 +6270,28 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
     }catch(err){inform(err.message,true);}
     finally{sheetSaving=false;requestDraw();}
   }
-  let numberPlacement=null;
   $("sheet-number-cancel").onclick=()=>$("sheet-number-dialog").close("cancel");
   $("sheet-number-dialog").addEventListener("close",()=>{
-    const placed=numberPlacement;numberPlacement=null;
-    if(!placed||$("sheet-number-dialog").returnValue!=="save"||placed.token!==state.edit?.documentToken)return;
-    placed.item.text=$("sheet-number").value.trim();
-    if(placed.item.text){
-      placed.item.fontSize=Number($("sheet-number-size").value);
-      placed.item.h=GeoStudioSheet.sizes.compartment[1]*(placed.item.fontSize/12)*sheetWorldPerPixel();
-      placed.item.w=GeoStudioSheet.sizes.compartment[0]*sheetWorldPerPixel()*(placed.item.fontSize/12);
-      saveSheet([...sheetItems().filter(i=>i.id!==placed.item.id),placed.item]);
+    const editing=numberEdit;numberEdit=null;
+    if($("sheet-number-dialog").returnValue!=="save")return;
+    const text=$("sheet-number").value.trim();
+    if(!text)return;
+    const size=Number($("sheet-number-size").value)||12;
+    if(editing){
+      // Edycja istniejącego numeru (dwuklik na mapie).
+      const factor=size/12;
+      const item={...editing,text,fontSize:size,
+        h:GeoStudioSheet.sizes.compartment[1]*factor*sheetWorldPerPixel(),
+        w:GeoStudioSheet.sizes.compartment[0]*factor*sheetWorldPerPixel()};
+      saveSheet([...sheetItems().filter(i=>i.id!==item.id),item]);
+      inform("Zmieniono numer na "+text+".");
+      return;
     }
+    // Nowy numer: zapamiętujemy wybór i czekamy na kliknięcie na mapie.
+    pendingNumber={text,size};
+    pendingSheet="compartment";
+    inform("Kliknij mapę, aby wstawić numer "+text+".");
+    requestDraw();
   });
   $("sheet-number-size").oninput=()=>requestDraw();
   $("sheet-number").oninput=()=>requestDraw();
@@ -6310,9 +6322,25 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
     pendingSheet=$("sheet-sign").value;
 inform("Klikaj mapę, aby wstawiać kolejne oznaczenia. Naciśnij Esc lub wybierz inne narzędzie, aby zakończyć.");
   };
+  // 6900: NAJPIERW pytamy o numer i wielkość, POTEM klikamy miejsce na mapie.
+  function openNumberDialog(editing){
+    numberEdit=editing||null;
+    const ok=$("sheet-number-ok");
+    if(ok)ok.textContent=editing?"Zapisz zmianę":"Dalej — wskaż miejsce";
+    $("sheet-number").value=editing?editing.text:"";
+    $("sheet-number-size").value=String(editing?(editing.fontSize||12):12);
+    $("sheet-number-dialog").returnValue="cancel";
+    $("sheet-number-dialog").showModal();
+    $("sheet-number").select();
+  }
   for(const btn of document.querySelectorAll("[data-sheet]"))btn.addEventListener("click",()=>{
     if(!state.meta)return inform("Najpierw otwórz mapę.",true);
     const kind=btn.dataset.sheet;
+    if(kind==="compartment"){
+      pendingSheet=null;sheetCursor=null;requestDraw();
+      openNumberDialog(null);
+      return;
+    }
     if(singleSheetKinds.has(kind)){
       const existing=sheetItems().find(item=>item.kind===kind);
       if(existing){selectedSheet=existing.id;pendingSheet=null;requestDraw();inform("Ten element już jest na mapie. Przeciągnij go, aby zmienić położenie.");return;}
@@ -6360,16 +6388,17 @@ inform("Klikaj mapę, aby wstawiać kolejne oznaczenia. Naciśnij Esc lub wybier
     if(sheetSaving||state.editBusy)return;
     if(pendingSheet){
       const kind=pendingSheet,[w,h]=GeoStudioSheet.sizes[kind];
-      const factor=kind==="compartment"?Number($("sheet-number-size").value)/12:sheetSize;
-      const size=kind==="compartment"?Number($("sheet-number-size").value):12;
-      const item={id:crypto.randomUUID(),kind,x:world.x,y:world.y,w:w*factor*sheetWorldPerPixel(),h:h*factor*sheetWorldPerPixel(),text:GeoStudioSheet.defaultText(kind,state.meta.name),...(kind==="compartment"?{fontSize:size}:{})};
+      const chosen=pendingNumber||{text:"",size:12};
+      const factor=kind==="compartment"?chosen.size/12:sheetSize;
+      const size=kind==="compartment"?chosen.size:12;
+      const item={id:crypto.randomUUID(),kind,x:world.x,y:world.y,w:w*factor*sheetWorldPerPixel(),h:h*factor*sheetWorldPerPixel(),text:kind==="compartment"?chosen.text:GeoStudioSheet.defaultText(kind,state.meta.name),...(kind==="compartment"?{fontSize:size}:{})};
       selectedSheet=item.id;
       if(kind==="compartment"){
-        numberPlacement={item,token:state.edit.documentToken};
-        $("sheet-number").value=String(1+items.filter(i=>i.kind==="compartment").length);
-        $("sheet-number-size").value=String(item.fontSize||12);
-        $("sheet-number-dialog").returnValue="cancel";
-        $("sheet-number-dialog").showModal();$("sheet-number").select();return;
+        // Numer i wielkość są już znane z okna — wstawiamy od razu.
+        pendingNumber=null;
+        saveSheet([...items,item]);
+        inform("Wstawiono numer "+chosen.text+". Klikaj dalej albo naciśnij Esc.");
+        return;
       }
       saveSheet([...items,item]);
       inform("Klikaj dalej, aby wstawić następne. Esc kończy wstawianie.");return;
@@ -6677,9 +6706,8 @@ inform("Klikaj mapę, aby wstawiać kolejne oznaczenia. Naciśnij Esc lub wybier
     if(!item)return;
     ev.preventDefault();ev.stopImmediatePropagation();selectedSheet=item.id;pendingSheet=null;
     if(item.kind==="compartment"){
-      numberPlacement={item:{...item},token:state.edit.documentToken,editing:true};
-      $("sheet-number").value=item.text;$("sheet-number-size").value=String(Math.max(6,Math.min(72,item.h*12/(GeoStudioSheet.sizes.compartment[1]*sheetWorldPerPixel()))));
-      $("sheet-number-dialog").returnValue="cancel";$("sheet-number-dialog").showModal();$("sheet-number").select();
+      // Dwuklik na numerze 6900 = edycja numeru i wielkości.
+      openNumberDialog(item);
     }else if(["title","credits"].includes(item.kind))$("sheet-edit").click();
     requestDraw();
   },true);
