@@ -686,7 +686,8 @@ class GeoMap:
         self.lines[positions[0]:positions[-1]+1]=written
         self._parse()
 
-    def set_label_offset(self, uid: str, slot: int, dx: float, dy: float) -> int:
+    def set_label_offset(self, uid: str, slot: int, dx: float, dy: float,
+                         *, reparse: bool = True) -> int:
         """Zapisuje przesunięcie napisu w natywnym rekordzie L.
 
         ``dx, dy`` są względne wobec punktu bazowego poligonu — tak jak
@@ -714,13 +715,15 @@ class GeoMap:
                 for index_of, value in enumerate(numbers))
             eol = b"\r\n" if raw.endswith(b"\r\n") else b"\n"
             self.lines[index] = ("L " + str(slot) + " " + text).encode("ascii") + eol
-            self._parse()
+            if reparse:
+                self._parse()
             return 1
         return 0
 
     def set_label_leader(self, uid: str, slot: int, enabled: bool,
                          anchor: tuple[float, float] | None = None,
-                         prefer_left: bool | None = None) -> int:
+                         prefer_left: bool | None = None,
+                         *, reparse: bool = True) -> int:
         """Włącza/wyłącza wysięgnik etykiety w natywnym rekordzie L.
 
         ``slot`` 2 to A1, 3 to A2. Włączenie ustawia bit 64 (w prawo) albo
@@ -760,7 +763,8 @@ class GeoMap:
                 for index_of, value in enumerate(numbers))
             eol = b"\r\n" if raw.endswith(b"\r\n") else b"\n"
             self.lines[index] = ("L " + str(slot) + " " + text).encode("ascii") + eol
-            self._parse()
+            if reparse:
+                self._parse()
             return 1
         return 0
 

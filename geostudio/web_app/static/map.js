@@ -7306,6 +7306,27 @@ inform("Klikaj mapę, aby wstawiać kolejne oznaczenia. Naciśnij Esc lub wybier
     requestDraw();
   }
   link("labels-mode",toggleLeaderMode);
+  link("labels-auto",async()=>{
+    if(!state.edit){inform("Najpierw otwórz mapę.",true);return;}
+    const scope=state.pinned.size?"selected":"all";
+    try{
+      const result=await api("/api/labels/auto-layout-5310",{
+        method:"POST",headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({scope,ids:[...state.pinned].concat(state.active?[state.active]:[]),
+          scale:Number(state.edit.compilationScale)||5000,
+          documentToken:state.edit.documentToken,revision:state.edit.revision})});
+      updateEditState(result);
+      scheduleViewport(true);
+      const stats=result.stats||{};
+      inform(result.changed?
+        ("Ułożono etykiety: "+display(stats.objects||0)+" poligonów · w środku "+
+         display(stats.inside||0)+" · na wysięgniku "+display(stats.leaders||0)+
+         ". Ctrl+Z cofa."):
+        "Nie było czego układać.");
+    }catch(error){
+      inform("Nie ułożono etykiet: "+error.message,true);
+    }
+  });
   window.addEventListener("keydown",ev=>{
     if(ev.target instanceof HTMLInputElement||ev.target instanceof HTMLTextAreaElement)return;
     if(ev.ctrlKey||ev.metaKey||ev.altKey)return;

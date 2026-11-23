@@ -639,6 +639,75 @@ class PreviewWorkspace:
             self._doc.set_label_leader(obj.uid, slot, True, anchor, prefer_left)
             return
 
+    def auto_layout_5310_labels(self, scope: str = "all", scale: int = 5000,
+                                ids=None, *, document_token=None,
+                                revision=None) -> dict:
+        """Automatycznie układa etykiety A1/A2 dla poligonów 5310.
+
+        Jedna atomowa operacja w historii — Ctrl+Z cofa całe ułożenie.
+        """
+        with self._lock:
+            if self._doc is None:
+                raise ValueError("Najpierw otwórz mapę GEO-MAP.")
+            self._require_edit(document_token, revision)
+            if scope not in ("all", "selected"):
+                raise ValueError("Zakres musi być 'all' albo 'selected'.")
+            if type(scale) is not int or not 100 <= scale <= 1_000_000:
+                raise ValueError("Skala opracowania musi mieć mianownik 100–1000000.")
+            from .label_layout import auto_layout_5310_labels as engine
+            wanted = set(ids or []) if scope == "selected" else None
+            if scope == "selected" and not wanted:
+                raise ValueError("Zaznacz poligony 5310, które mają zostać ułożone.")
+            prepared = []
+            for entry in self._entries:
+                obj = entry.obj
+                if obj.code != "5310" or not obj.is_closed:
+                    continue
+                if wanted is not None and entry.fid not in wanted:
+                    continue
+                try:
+                    shape = geometry_of(obj)
+                except ValueError:
+                    continue
+                if shape is None or shape.is_empty:
+                    continue
+                prepared.append((obj.uid, shape, _label_anchor(obj),
+                                 str(obj.fields.get("A1", "") or ""),
+                                 str(obj.fields.get("A2", "") or "")))
+            if not prepared:
+                return {**self._editing_status(), "changed": False,
+                        "stats": {"objects": 0, "inside": 0, "leaders": 0}}
+            result = engine(prepared, scale=scale)
+            if not result["changes"]:
+                return {**self._editing_status(), "changed": False,
+                        "stats": result["stats"]}
+            with self._history.begin(
+                    "Ułożenie etykiet A1/A2 (" + str(len(result["changes"])) +
+                    " obiektów)",
+                    selection_before=tuple(change["uid"]
+                                           for change in result["changes"])):
+                # Rekordy L piszemy bez ponownego parsowania po każdym wpisie
+                # (to było 84 pełne parsowania mapy = kilkanaście sekund).
+                for change in result["changes"]:
+                    for field, spec in change["labels"].items():
+                        slot = 2 if field == "A1" else 3
+                        self._doc.set_label_offset(change["uid"], slot,
+                                                   spec["dx"], spec["dy"],
+                                                   reparse=False)
+                        flags = int(spec["flags"])
+                        if flags & (64 | 128):
+                            self._doc.set_label_leader(
+                                change["uid"], slot, True, spec.get("anchor"),
+                                prefer_left=bool(flags & 128), reparse=False)
+                        else:
+                            self._doc.set_label_leader(change["uid"], slot, False,
+                                                       reparse=False)
+                self._doc._parse()
+            self._reindex(self._doc, self._doc.filename)
+            self._revision += 1
+            return {**self._editing_status(), "changed": True,
+                    "stats": result["stats"]}
+
     def reset_label_leaders(self, ids=None, *, document_token=None,
                             revision=None) -> dict:
         """Zeruje wysięgniki: czyści bity 64/128, kotwice i przesunięcia.

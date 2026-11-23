@@ -1,0 +1,93 @@
+"""Automatyczne układanie etykiet A1/A2 dla poligonów 5310."""
+from __future__ import annotations
+
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).parent))
+
+from shapely.geometry import box  # noqa: E402
+
+from geostudio.web_app.label_layout import (  # noqa: E402
+    FLAG_LEFT, FLAG_PLAIN, FLAG_RIGHT, auto_layout_5310_labels, polylabel,
+    text_size)
+
+
+def _layout(objects, scale=5000):
+    return auto_layout_5310_labels(objects, scale=scale)
+
+
+def test_large_polygon_gets_both_labels_inside():
+    big = box(0, 0, 300, 300)
+    result = _layout([("u1", big, (150.0, 150.0), "02r", "6OL55|0.26")])
+    change = result["changes"][0]
+    assert change["mode"] == "inside"
+    assert change["labels"]["A1"]["flags"] == FLAG_PLAIN
+    assert change["labels"]["A2"]["flags"] == FLAG_PLAIN
+    assert change["labels"]["A1"]["dx"] == 0
+    assert result["stats"]["leaders"] == 0
+
+
+def test_narrow_polygon_keeps_a1_inside_and_puts_a2_on_leader():
+    strip = box(0, 0, 400, 14)          # wąski, długi pas
+    result = _layout([("u2", strip, (7.0, 200.0), "02c", "OL55|0.02")])
+    change = result["changes"][0]
+    assert change["labels"]["A1"]["flags"] == FLAG_PLAIN
+    leader = change["labels"]["A2"]
+    assert leader["flags"] in (FLAG_RIGHT, FLAG_LEFT)
+    assert result["stats"]["leaders"] >= 1
+
+
+def test_flag_matches_the_side_of_the_anchor():
+    # Pas 10 m: etykieta A2 (12,4 m wysokości) nie mieści się w środku.
+    strip = box(0, 0, 400, 10)
+    result = _layout([("u3", strip, (7.0, 200.0), "", "OL55|0.02")])
+    label = result["changes"][0]["labels"]["A2"]
+    # Napis na wschód od zaczepu => flaga 69, na zachód => 133.
+    if label["dx"] >= 0:
+        assert label["flags"] == FLAG_RIGHT
+    else:
+        assert label["flags"] == FLAG_LEFT
+
+
+def test_small_polygon_puts_both_on_leaders():
+    tiny = box(0, 0, 12, 12)
+    result = _layout([("u4", tiny, (6.0, 6.0), "02c", "OL55|0.02")])
+    change = result["changes"][0]
+    assert change["mode"] in ("external", "mixed")
+    assert result["stats"]["leaders"] >= 1
+
+
+def test_polylabel_stays_inside_concave_polygon():
+    from shapely.geometry import Point, Polygon
+    shape = Polygon([(0, 0), (0, 100), (20, 100), (20, 20), (100, 20), (100, 0)])
+    x, y = polylabel(shape, precision=0.5)
+    assert shape.contains(Point(x, y))
+
+
+def test_text_size_grows_with_scale():
+    small = text_size("02r", 5000)
+    large = text_size("02r", 10000)
+    assert large[0] > small[0] and large[1] > small[1]
+
+
+def test_auto_layout_is_atomic_and_reversible():
+    from geostudio.web_app.data import PreviewWorkspace
+    source = Path("/scratch/input/02_BYSŁAWEK.MAP")
+    if not source.exists():
+        import pytest
+        pytest.skip("brak mapy testowej")
+    workspace = PreviewWorkspace()
+    workspace.load_map(source.read_bytes(), "02.MAP")
+    before = workspace._doc.to_bytes()
+    status = workspace.editing_status()
+    result = workspace.auto_layout_5310_labels(
+        "all", 5000, document_token=status["documentToken"],
+        revision=status["revision"])
+    assert result["changed"] is True
+    assert workspace._doc.to_bytes() != before
+    # Cofnięcie przywraca dokładnie poprzednie bajty (jedna operacja historii).
+    status = workspace.editing_status()
+    workspace.step_history("undo", document_token=status["documentToken"],
+                           revision=status["revision"])
+    assert workspace._doc.to_bytes() == before
