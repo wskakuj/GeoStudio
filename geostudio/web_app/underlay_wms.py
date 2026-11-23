@@ -659,13 +659,34 @@ def map_png(preset: str, layer: str, epsg: int,
         try:
             content = _wmts_image(preset, layer, epsg, bounds, width, height)
         except (ValueError, RuntimeError):
-            content = _fetch_orto(_preset(fallback), layer, f"EPSG:{epsg}",
-                                  bounds, width, height)
+            # Nazwa warstwy z WMTS nie musi istnieć w usłudze WMS
+            # (Geoportal: „Parameter 'layers' contains unacceptable layer
+            # names”). Dlatego nazwę bierzemy z capabilities WMS.
+            content = _fetch_orto(_preset(fallback),
+                                  _wms_layer_for(fallback, epsg, layer),
+                                  f"EPSG:{epsg}", bounds, width, height)
     else:
         content = _fetch_orto(base, layer, f"EPSG:{epsg}", bounds, width, height,
                               time=time)
     _cache_put(key, content)
     return content
+
+
+def _wms_layer_for(preset: str, epsg: int, preferred: str = "") -> str:
+    """Nazwa warstwy WMS: ta sama, jeśli istnieje, inaczej pierwsza dla EPSG."""
+    try:
+        candidates = _layers_for_preset(preset)
+    except (ValueError, RuntimeError):
+        return preferred
+    names = [entry.name for entry in candidates
+             if f"EPSG:{epsg}" in entry.crs]
+    if preferred in names:
+        return preferred
+    if names:
+        return names[0]
+    if preferred:
+        return preferred
+    raise ValueError("Usługa WMS nie udostępniła warstwy dla tego układu.")
 
 
 def _parcel_image(layer, epsg, bounds, width, height):

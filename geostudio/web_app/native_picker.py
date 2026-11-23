@@ -704,6 +704,10 @@ class NativeMapPicker:
             save_last_map_directory(self._settings,chosen.parent)
         except OSError:
             pass
+        # Stan roboczy jest już na dysku (jako kopia), więc znacznik
+        # „Niezapisane zmiany w pamięci” musi zgasnąć — wcześniej kopiowanie
+        # nie wołało mark_saved() i napis zostawał mimo zapisu.
+        self._workspace.mark_saved()
         # The work is on disk now, so the crash-recovery snapshot of the
         # source map is stale: drop it instead of leaving megabytes behind.
         if self._source_path is not None:
