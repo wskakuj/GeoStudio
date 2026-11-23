@@ -451,7 +451,7 @@ def list_layers(preset: str, url: str | None = None) -> dict:
 
 
 ORTO_FORMAT = "image/jpeg"
-ORTO_TILE_LIMIT = 1_200_000        # powyżej tylu pikseli dzielimy na kafelki
+ORTO_TILE_LIMIT = 450_000        # powyżej tylu pikseli dzielimy na kafelki
 
 
 def _fetch_once(base, layer, crs, bounds, width, height, *, version,
@@ -556,6 +556,14 @@ def _fetch_orto(base, layer, crs, bounds, width, height,
     4. na końcu kafelki — tylko gdy wszystko inne zawiodło.
     """
     errors = []
+    # Duży kadr: najpierw kafelki w 2 wątkach (serwer renderuje je szybciej),
+    # a dopiero potem jedno wielkie żądanie jako odwrót.
+    if width * height > ORTO_TILE_LIMIT:
+        try:
+            return _fetch_orto_tiles(base, layer, crs, bounds, width, height)
+        except Exception as exc:                      # noqa: BLE001
+            errors.append(str(exc))
+
     for version, image_format, transparent in ORTO_ATTEMPTS:
         try:
             raw = _fetch_once(base, layer, crs, bounds, width, height,
@@ -565,12 +573,6 @@ def _fetch_orto(base, layer, crs, bounds, width, height,
             errors.append(str(exc))
             continue
         return _to_jpeg(raw) if image_format == "image/jpeg" else raw
-
-    if width * height > ORTO_TILE_LIMIT:
-        try:
-            return _fetch_orto_tiles(base, layer, crs, bounds, width, height)
-        except Exception as exc:                      # noqa: BLE001
-            errors.append(str(exc))
 
     # Ostatnia próba: mniejszy obraz (serwer Geoportalu bywa wolny).
     smaller = _fetch_orto_smaller(base, layer, crs, bounds, width, height)

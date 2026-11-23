@@ -122,8 +122,9 @@ const b=src.indexOf('  function scheduleUnderlayRefresh(',a);
 const state={width:700,height:550,pixelRatio:2};
 const size=new Function('state',src.slice(a,b)+'return underlayRequestDimensions;')(state);
 const image=size([0,0,700,550]);
-assert.ok(image.width>=1200 && image.height>=900,JSON.stringify(image));
-assert.ok(image.width*image.height<=3000000);
+// Limit ~800 tys. pikseli (szybszy render Geoportalu), wciąż ostro na ekranie.
+assert.ok(image.width>=800 && image.height>=600,JSON.stringify(image));
+assert.ok(image.width*image.height<=900000,JSON.stringify(image));
 for(const b of [[0,0,1,1000],[0,0,1000,1],[0,0,1500,1000]]){
  const dim=size(b);
  assert.ok(dim.width>=128 && dim.height>=128);

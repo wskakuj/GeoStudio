@@ -52,7 +52,10 @@ def test_tiling_failure_falls_back_to_single_request(monkeypatch):
     monkeypatch.setattr(underlay_wms, "_download", download)
     monkeypatch.setattr(underlay_wms, "layers_for", lambda preset, url=None: [Layer()])
     underlay_wms.clear_cache()
-    data, media = underlay_wms.map_image("standard", "ortho", 2180, 0, 0, 2000, 2000, 1600, 1600)
+    # Kafelki wyłączamy, żeby sprawdzić właśnie odwrót do jednego żądania.
+    monkeypatch.setattr(underlay_wms, "ORTO_TILE_LIMIT", 10 ** 9)
+    data, media = underlay_wms.map_image("standard", "ortho", 2180, 0, 0,
+                                         2000, 2000, 1600, 1600)
     assert media == "image/png"
     assert Image.open(BytesIO(data)).size == (1600, 1600)
     assert len(calls) == 1        # jedno żądanie, bez kafelków
