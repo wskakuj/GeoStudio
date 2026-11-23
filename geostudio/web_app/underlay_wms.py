@@ -192,6 +192,89 @@ def list_layers(preset: str) -> dict:
     }
 
 
+ORTO_FORMAT = "image/jpeg"
+ORTO_TILE_LIMIT = 1_200_000        # powyżej tylu pikseli dzielimy na kafelki
+
+
+def _fetch_orto_tile(base, layer, crs, bounds, width, height):
+    url = getmap_url(base, layer, crs, bounds, width, height, version="1.1.1",
+                     image_format=ORTO_FORMAT, transparent=False)
+    content = _download(url, MAX_WMS_BYTES)
+    # Serwer może zignorować FORMAT i odesłać PNG — przyjmujemy oba.
+    if not (content.startswith(b"\xff\xd8") or
+            content.startswith(b"\x89PNG\r\n\x1a\n")):
+        raise ValueError("WMS zwrócił dane inne niż obraz; sprawdź warstwę i EPSG.")
+    return content
+
+
+def _fetch_orto(base, layer, crs, bounds, width, height) -> bytes:
+    """Ortofoto: JPEG zamiast PNG, duże kadry pobierane równolegle.
+
+    PNG dla 2048x2048 potrafi mieć kilka MB, JPEG jest kilkakrotnie mniejszy
+    i szybciej renderuje się po stronie Geoportalu. Duże kadry dzielimy na
+    cztery kafelki pobierane jednocześnie — jeden duży GetMap bywa wolniejszy
+    niż cztery mniejsze.
+    """
+    if width * height <= ORTO_TILE_LIMIT:
+        raw = _fetch_orto_tile(base, layer, crs, bounds, width, height)
+        if raw.startswith(b"\xff\xd8"):
+            return raw
+        # PNG od serwera -> JPEG, żeby klient dostał lekki obraz.
+        try:
+            from PIL import Image
+            from io import BytesIO
+            out = BytesIO()
+            Image.open(BytesIO(raw)).convert("RGB").save(
+                out, format="JPEG", quality=88, optimize=True)
+            return out.getvalue()
+        except Exception:
+            return raw
+    mid_x = (bounds.min_x + bounds.max_x) / 2
+    mid_y = (bounds.min_y + bounds.max_y) / 2
+    left_w = width // 2
+    right_w = width - left_w
+    top_h = height // 2
+    bottom_h = height - top_h
+    parts = [
+        (WMSBounds(bounds.min_x, bounds.min_y, mid_x, mid_y), left_w, top_h),
+        (WMSBounds(mid_x, bounds.min_y, bounds.max_x, mid_y), right_w, top_h),
+        (WMSBounds(bounds.min_x, mid_y, mid_x, bounds.max_y), left_w, bottom_h),
+        (WMSBounds(mid_x, mid_y, bounds.max_x, bounds.max_y), right_w, bottom_h),
+    ]
+    from concurrent.futures import ThreadPoolExecutor
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        futures = [pool.submit(_fetch_orto_tile, base, layer, crs,
+                               part, part_w, part_h)
+                   for part, part_w, part_h in parts]
+        images = [future.result() for future in futures]
+    from PIL import Image
+    from io import BytesIO
+    tiles = [Image.open(BytesIO(raw)).convert("RGB") for raw in images]
+    canvas = Image.new("RGB", (width, height))
+    canvas.paste(tiles[0], (0, 0))
+    canvas.paste(tiles[1], (left_w, 0))
+    canvas.paste(tiles[2], (0, top_h))
+    canvas.paste(tiles[3], (left_w, top_h))
+    out = BytesIO()
+    canvas.save(out, format="JPEG", quality=88, optimize=True)
+    return out.getvalue()
+
+
+def map_image(preset: str, layer: str, epsg: int,
+              xmin: float, ymin: float, xmax: float, ymax: float,
+              width: int, height: int) -> tuple[bytes, str]:
+    """Obraz podkładu wraz z typem MIME (JPEG dla ortofoto, PNG dla GUGiK)."""
+    data = map_png(preset, layer, epsg, xmin, ymin, xmax, ymax, width, height)
+    # Typ MIME wynika z faktycznej zawartości, nie z założenia.
+    if data.startswith(b"\xff\xd8"):
+        media = "image/jpeg"
+    elif data.startswith(b"\x89PNG\r\n\x1a\n"):
+        media = "image/png"
+    else:
+        media = "application/octet-stream"
+    return data, media
+
+
 def map_png(preset: str, layer: str, epsg: int,
             xmin: float, ymin: float, xmax: float, ymax: float,
             width: int, height: int) -> bytes:
@@ -220,11 +303,7 @@ def map_png(preset: str, layer: str, epsg: int,
     if parcel:
         content = _parcel_image(layer, epsg, bounds, width, height)
     else:
-        url = getmap_url(base, layer, f"EPSG:{epsg}", bounds, width, height,
-                         version="1.1.1")
-        content = _download(url, MAX_WMS_BYTES)
-        if not content.startswith(b"\x89PNG\r\n\x1a\n"):
-            raise ValueError("WMS zwrócił dane inne niż obraz PNG; sprawdź warstwę i EPSG.")
+        content = _fetch_orto(base, layer, f"EPSG:{epsg}", bounds, width, height)
     _cache_put(key, content)
     return content
 

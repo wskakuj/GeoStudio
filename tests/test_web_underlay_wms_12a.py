@@ -48,7 +48,8 @@ def test_layers_and_world_to_1_1_1_bbox(stubbed_wms):
     assert q["BBOX"] == ["700000,514500,700600,515000"]
     assert q["SRS"] == ["EPSG:2180"]
     assert q["VERSION"] == ["1.1.1"]
-    assert q["FORMAT"] == ["image/png"]
+    # Ortofoto pobieramy jako JPEG (mniejszy transfer i szybszy render).
+    assert q["FORMAT"] == ["image/jpeg"]
     assert urlsplit(url).hostname == "mapy.geoportal.gov.pl"
 
 
