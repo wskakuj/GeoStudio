@@ -818,7 +818,7 @@ function openRasterTracing(item, view) {
         if(!feature.closed)continue;
         if(feature.code!=="5310"&&feature.layer!=="Użytki Leśne")continue;
         g.beginPath();
-        for(const ring of feature.geometry){
+        for(const ring of (feature.nativeGeometry||feature.geometry)){
           ring.forEach(([x,y],i)=>{const p=pixelAt(x,y);i?g.lineTo(p.x,p.y):g.moveTo(p.x,p.y);});
           g.closePath();
         }
