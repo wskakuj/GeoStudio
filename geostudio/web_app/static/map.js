@@ -2774,9 +2774,6 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
     });
     if(item.url)params.set("url",item.url);
     if(item.time)params.set("time",item.time);
-    // Gdzie ma wylądować nowy obraz — używane do rozciągnięcia starego
-    // w czasie pobierania, żeby mapa nie robiła się pusta.
-    item.pendingBounds=bounds.slice();
     item.loading=true;
     try{
       const response=await documentFetch("/api/underlay/wms/map?"+params,{
@@ -2800,11 +2797,10 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
       if(!item.visible||id!==item.ticket||
          documentToken!==state.edit?.documentToken)return;
       item.image=image;item.bounds=bounds;item.loading=false;
-      item.pendingBounds=null;
       requestDraw();renderRasterLayers();
     }catch(error){
       if(error.name==="AbortError"||id!==item.ticket)return;
-      item.loading=false;item.pendingBounds=null;renderRasterLayers();
+      item.loading=false;renderRasterLayers();
       inform("Podkład "+item.title+": "+error.message,true);
     }
   }
@@ -2849,13 +2845,23 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
     // Rysujemy po kolei wszystkie włączone podkłady WMS.
     for(const item of underlays){
       if(!item.visible||!item.image||!item.bounds)continue;
-      // Podczas pobierania nowego kadru rozciągamy poprzedni obraz na obszar
-      // docelowy — mapa nie robi się pusta, a po chwili ostry obraz go zastępuje.
-      const bounds=(item.loading&&item.pendingBounds)?item.pendingBounds:item.bounds;
+      // Obraz rysujemy ZAWSZE na jego własnym zasięgu. Rozciąganie starego
+      // obrazu na nowy kadr (2.0.62) przesuwało ortofoto względem wektorów,
+      // bo obraz był liczony dla innego prostokąta.
+      const bounds=item.bounds;
       const top=worldToScreen(bounds[0],bounds[1]);
       const bottom=worldToScreen(bounds[2],bounds[3]);
-      ctx.save();ctx.globalAlpha=item.opacity;
+      ctx.save();
       ctx.imageSmoothingEnabled=true;ctx.imageSmoothingQuality="high";
+      // Gdy trwa pobieranie nowego kadru, pod spodem rysujemy ten sam obraz
+      // rozciągnięty na CAŁY ekran z małą przezroczystością. Widać „coś”
+      // natychmiast, ale georeferencja pozostaje poprawna, bo wierzchnia
+      // warstwa to zawsze obraz na swoim własnym zasięgu.
+      if(item.loading&&item.image&&item.bounds){
+        ctx.globalAlpha=item.opacity*0.45;
+        ctx.drawImage(item.image,0,0,state.width,state.height);
+      }
+      ctx.globalAlpha=item.opacity;
       ctx.drawImage(item.image,top.x,top.y,
                     bottom.x-top.x,bottom.y-top.y);
       ctx.restore();

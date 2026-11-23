@@ -46,9 +46,15 @@ def test_big_frame_uses_several_requests(monkeypatch):
     assert len(calls) > 1          # kafelki, nie jedno wielkie żądanie
 
 
-def test_old_image_is_stretched_while_loading():
-    # Podczas pobierania rysujemy poprzedni obraz na obszarze docelowym,
-    # żeby mapa nie robiła się pusta.
-    assert "const bounds=(item.loading&&item.pendingBounds)?item.pendingBounds:item.bounds;" in JS
-    assert "item.pendingBounds=bounds.slice();" in JS
-    assert "item.pendingBounds=null;" in JS
+def test_image_is_always_drawn_on_its_own_bounds():
+    # Rozciąganie starego obrazu na nowy kadr przesuwało ortofoto względem
+    # wektorów (2.0.62) — teraz georeferencja jest zawsze poprawna.
+    assert "const bounds=item.bounds;" in JS
+    assert "pendingBounds" not in JS
+
+
+def test_loading_preview_is_only_a_background_hint():
+    # Podczas pobierania widać rozmyte tło, ale wierzchnia warstwa to obraz
+    # na swoim zasięgu.
+    assert "if(item.loading&&item.image&&item.bounds){" in JS
+    assert "ctx.drawImage(item.image,0,0,state.width,state.height);" in JS
