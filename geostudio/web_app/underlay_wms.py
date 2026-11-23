@@ -53,12 +53,26 @@ def _thread_pool() -> dict:
     return pool
 
 
+# Geoportal renderuje ortofoto długo — 15 s to za mało i kończyło się
+# komunikatem o przekroczeniu czasu. GUGiK odpowiada szybko, więc ma krótszy
+# limit (szybciej widać prawdziwy błąd).
+HOST_TIMEOUTS = {
+    "mapy.geoportal.gov.pl": 60,
+    "integracja.gugik.gov.pl": 20,
+    "integracja02.gugik.gov.pl": 20,
+}
+
+
+def _timeout_for(host: str) -> int:
+    return HOST_TIMEOUTS.get(host, 20)
+
+
 def _connection(host: str) -> "http.client.HTTPSConnection":
     """Połączenie TLS z utrzymaniem (keep-alive), przypisane do bieżącego wątku."""
     pool = _thread_pool()
     conn = pool.get(host)
     if conn is None:
-        conn = http.client.HTTPSConnection(host, timeout=15)
+        conn = http.client.HTTPSConnection(host, timeout=_timeout_for(host))
         pool[host] = conn
     return conn
 
@@ -283,6 +297,22 @@ ORTO_ATTEMPTS = (
 )
 
 
+def _fetch_orto_smaller(base, layer, crs, bounds, width, height) -> bytes | None:
+    """Ostatnia deska ratunku: mniejszy obraz, żeby serwer zdążył odpowiedzieć."""
+    for factor in (0.7, 0.5):
+        small_w = max(128, int(width * factor))
+        small_h = max(128, int(height * factor))
+        if (small_w, small_h) == (width, height):
+            continue
+        try:
+            return _fetch_once(base, layer, crs, bounds, small_w, small_h,
+                               version="1.1.1", image_format="image/png",
+                               transparent=True)
+        except Exception:                             # noqa: BLE001
+            continue
+    return None
+
+
 def _fetch_orto(base, layer, crs, bounds, width, height) -> bytes:
     """Ortofoto z pełnym łańcuchem odwrotów.
 
@@ -307,6 +337,11 @@ def _fetch_orto(base, layer, crs, bounds, width, height) -> bytes:
             return _fetch_orto_tiles(base, layer, crs, bounds, width, height)
         except Exception as exc:                      # noqa: BLE001
             errors.append(str(exc))
+
+    # Ostatnia próba: mniejszy obraz (serwer Geoportalu bywa wolny).
+    smaller = _fetch_orto_smaller(base, layer, crs, bounds, width, height)
+    if smaller is not None:
+        return smaller
 
     # Zgłaszamy najkonkretniejszy komunikat (np. treść ServiceException).
     detail = next((e for e in errors if "Geoportal:" in e), errors[-1] if errors else "")

@@ -2679,10 +2679,14 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
     let width=Math.max(128,Math.min(2048,Math.round(state.width*dpr*1.20)));
     let height=Math.round(width/aspect);
     if(height>2048){height=2048;width=Math.round(height*aspect);}
-    // Server allows at most three million pixels; preserve aspect ratio.
-    if(width*height>2950000){
-      const ratio=Math.sqrt(2950000/(width*height));
-      width=Math.floor(width*ratio);height=Math.floor(height*ratio);
+    // Serwer przyjmuje do 3 mln pikseli, ale ortofoto w tej wielkości
+    // renderuje się dłużej niż nasz limit czasu — dlatego dla podkładów
+    // ograniczamy się do ~1 mln pikseli (ok. 1000x1000).
+    const maxPixels=1200000;
+    if(width*height>maxPixels){
+      const ratio=Math.sqrt(maxPixels/(width*height));
+      width=Math.max(128,Math.floor(width*ratio));
+      height=Math.max(128,Math.floor(height*ratio));
     }
     return {width:Math.max(128,Math.min(2048,width)),
             height:Math.max(128,Math.min(2048,height))};
