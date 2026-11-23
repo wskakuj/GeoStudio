@@ -277,10 +277,12 @@ def auto_layout_5310_labels(objects, *, scale: int = 5000,
                 continue
             box_ = best[1]
             occupied.append(box_.rect)
-            east = box_.cx - anchor_world[1]
+            # Osie GEO-MAP: shapely x = PÓŁNOC, y = WSCHÓD.
+            # dx w rekordzie L to przesunięcie na północ, dy na wschód.
+            east = box_.cy - anchor_world[1]
             labels[field] = {
-                "dx": round(box_.cx - base[1], 3),
-                "dy": round(box_.cy - base[0], 3),
+                "dx": round(box_.cx - base[0], 3),
+                "dy": round(box_.cy - base[1], 3),
                 "flags": FLAG_RIGHT if east >= 0 else FLAG_LEFT,
                 "anchor": (round(anchor_world[0] - base[0], 3),
                            round(anchor_world[1] - base[1], 3)),

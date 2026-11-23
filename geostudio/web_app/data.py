@@ -703,6 +703,11 @@ class PreviewWorkspace:
                             self._doc.set_label_leader(change["uid"], slot, False,
                                                        reparse=False)
                 self._doc._parse()
+                # Ręcznie przeciągnięte etykiety (plik towarzyszący) mają
+                # pierwszeństwo nad rekordem L — po auto-układaniu je czyścimy,
+                # inaczej wynik silnika byłby niewidoczny.
+                for change in result["changes"]:
+                    self._label_positions.pop(change["uid"], None)
             self._reindex(self._doc, self._doc.filename)
             self._revision += 1
             return {**self._editing_status(), "changed": True,
@@ -3197,9 +3202,9 @@ class PreviewWorkspace:
                 if native and (native.get("dx") or native.get("dy")):
                     candidate = [center[0] + native["dx"],
                                  center[1] + native["dy"]]
-                    # Offset z pliku bierzemy tylko wtedy, gdy napis wypada
-                    # w obrębie poligonu — inaczej zostajemy przy środku.
-                    if self._label_inside(obj, candidate):
+                    # Przy wysięgniku napis CELOWO leży poza poligonem, więc
+                    # test „wewnątrz" dotyczy tylko etykiet bez wysięgnika.
+                    if native.get("leader") or self._label_inside(obj, candidate):
                         location = candidate
             if (isinstance(location, (list, tuple)) and len(location) == 2
                 and all(_valid_number(c) for c in location)):

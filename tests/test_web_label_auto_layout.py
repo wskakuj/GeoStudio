@@ -91,3 +91,38 @@ def test_auto_layout_is_atomic_and_reversible():
     workspace.step_history("undo", document_token=status["documentToken"],
                            revision=status["revision"])
     assert workspace._doc.to_bytes() == before
+
+
+def test_offsets_use_geo_map_axis_order():
+    """dx to przesunięcie na PÓŁNOC, dy na WSCHÓD (osie rekordu L)."""
+    from shapely.geometry import box as _box
+    strip = _box(0, 0, 400, 10)          # x = północ, y = wschód
+    result = _layout([("u9", strip, (7.0, 200.0), "", "OL55|0.02")])
+    label = result["changes"][0]["labels"]["A2"]
+    # Etykieta odsuwa się na zewnątrz wąskiego pasa: albo na północ, albo
+    # na wschód, ale NIGDY o setki kilometrów.
+    assert abs(label["dx"]) < 500
+    assert abs(label["dy"]) < 500
+
+
+def test_leader_label_stays_near_its_polygon():
+    from geostudio.web_app.data import PreviewWorkspace
+    source = Path("/scratch/input/02_BYSŁAWEK.MAP")
+    if not source.exists():
+        import pytest
+        pytest.skip("brak mapy testowej")
+    workspace = PreviewWorkspace()
+    workspace.load_map(source.read_bytes(), "02.MAP")
+    status = workspace.editing_status()
+    workspace.auto_layout_5310_labels(
+        "all", 5000, document_token=status["documentToken"],
+        revision=status["revision"])
+    features = workspace.viewport((0, -1e6, 1e6, 1e6), limit=3000)["features"]
+    for feature in features:
+        if feature["code"] != "5310":
+            continue
+        west, south, east, north = feature["bbox"]
+        diagonal = ((east - west) ** 2 + (north - south) ** 2) ** 0.5
+        for label in feature["labels"]:
+            assert abs(label["x"] - (west + east) / 2) < diagonal * 10 + 500
+            assert abs(-label["y"] - (-south - north) / 2) < diagonal * 10 + 500
