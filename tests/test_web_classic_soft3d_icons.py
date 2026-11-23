@@ -45,7 +45,8 @@ def test_soft3d_tool_coverage_and_unique_gradient_ids():
     assert len(parser.ids) == len(set(parser.ids))
     ribbon = {key: value for key, value in parser.buttons.items()
               if key.startswith("tool-") and "tool-button" in value["class"].split()}
-    assert len(ribbon) == 39
+    # Zakładka „Eksport” usunięta (4 przyciski mniej: 39 -> 35).
+    assert len(ribbon) == 35
     assert all(value["icons"] == 1 for value in ribbon.values())
     floating = {key: value for key, value in parser.buttons.items()
                 if key.startswith("float-")}
@@ -54,9 +55,9 @@ def test_soft3d_tool_coverage_and_unique_gradient_ids():
     assert parser.buttons["btn-theme"]["icons"] == 2
     assert parser.buttons["btn-export"]["icons"] == 1
     assert "btn-export-label" in parser.ids
-    # Przycisk „Zapisz na oryginale mapy” usunięty — jego ikona trafiła do
-    # „Zapisz kopię mapy”, więc gradientów jest 60.
-    assert len(parser.gradients) == 60
+    # „Zapisz na oryginale mapy” usunięty (jego ikona trafiła do „Zapisz kopię
+    # mapy”), a razem z zakładką Eksport zniknęły 4 ikony narzędzi.
+    assert len(parser.gradients) == 56
     assert sorted(parser.gradients) == sorted(parser.fills)
 
 

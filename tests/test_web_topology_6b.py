@@ -194,7 +194,8 @@ def test_stage_6b_browser_and_native_picker_hooks_present():
     html=(root/"static/index.html").read_text(encoding="utf8")
     js=(root/"static/map.js").read_text(encoding="utf8")
     native=(root/"native_picker.py").read_text(encoding="utf8")
-    assert 'id="tool-export-baked"' in html
+    # Przycisk „Zapisz wycięcie” usunięty z zakładki Eksport (na życzenie),
+    # ale natywny zapis wycięć i tak musi istnieć w kodzie.
     assert "save_baked_map" in js and "def save_baked_map(" in native
 
 

@@ -34,8 +34,8 @@ def test_ribbon_contains_all_existing_tools_without_duplicate_ids():
     duplicates=[name for name,count in Counter(ids).items() if count>1]
     assert duplicates==[]
     previous_tools={
-        "tool-open","tool-sidecar","tool-cartography","tool-topology",
-        "tool-undo","tool-redo","tool-export-baked","tool-select","tool-pan",
+        "tool-open","tool-sidecar","tool-cartography",
+        "tool-undo","tool-redo","tool-select","tool-pan",
         "tool-move","tool-move-offset","tool-nodes","tool-clear-selection",
         "tool-advanced-select","tool-find","tool-replace-phrase",
         "tool-bulk-edit","tool-delete-node","tool-copy",
@@ -45,11 +45,14 @@ def test_ribbon_contains_all_existing_tools_without_duplicate_ids():
         "tool-underlay"
     }
     assert previous_tools<=set(ids)
-    assert {"tool-raster","tool-crs","tool-layout-ribbon","tool-map-copy-ribbon"}<=set(ids)
+    # Zakładka „Eksport” usunięta — jej narzędzia są w nagłówku.
+    assert {"tool-raster","tool-crs"}<=set(ids)
+    assert "tool-layout-ribbon" not in ids
+    assert "tool-map-copy-ribbon" not in ids
     assert {"opt-snap","opt-shared","cartography-status"}<=set(ids)
 
     expected={"start","select","edit","draw","insert","cartography","underlay",
-              "export","topology"}
+              "topology"}
     tabs={attrs.get("data-ribbon-tab"):attrs for tag,attrs in records
           if tag=="button" and "data-ribbon-tab" in attrs}
     panels={attrs.get("data-ribbon-panel"):attrs for tag,attrs in records
@@ -102,8 +105,9 @@ def test_toolbar_no_horizontal_scroll_and_tab_event_binding():
     assert 'item.setAttribute("aria-selected",String(active));' in js
     assert 'link("tool-raster",openRasterDialog);' in js
     assert 'link("tool-crs",openCrsDialog);' in js
-    assert 'link("tool-layout-ribbon",openLayoutDialog);' in js
-    assert 'link("tool-map-copy-ribbon",downloadMapCopy);' in js
+    # Te akcje są teraz tylko w nagłówku (Eksportuj, Zapisz kopię mapy).
+    assert 'link("btn-layout",openLayoutDialog);' in js
+    assert 'link("btn-export",downloadMapCopy);' in js
     assert 'setMapEPSG(String(result.epsg));' in js
     assert 'for(const id of ["underlay-epsg","raster-epsg","crs-epsg"])' in js
 
