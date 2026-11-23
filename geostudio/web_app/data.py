@@ -3485,6 +3485,8 @@ class PreviewWorkspace:
                            for p in obj.points[:500]],
                 "areaM2": obj.area_m2,
                 "closed": obj.is_closed,
+                "style": {"dash": self._style(entry).get("dash") or [],
+                          "stroke": self._style(entry).get("stroke")},
                 "geometryTruncated": len(obj.points) > 500,
                 "editableFields": [key for key in LABEL_FIELDS if key in fields]
                                   if obj.uid else [],
