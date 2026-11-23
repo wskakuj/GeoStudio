@@ -2047,8 +2047,9 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
       $("line-count").textContent=state.drawPoints.length+" węzłów P — "+
         (editing?"zmiana istniejącego obrysu":"nowy obiekt GEO-MAP");
       $("line-apply").textContent=editing?"Zapisz linię":"Utwórz linię";
-      $("line-summary").textContent="Sprawdź linię przed zatwierdzeniem.";
-      state.geometryPreview=null;$("line-apply").disabled=true;
+      $("line-summary").textContent=
+        "Kliknij „"+(editing?"Zapisz linię":"Utwórz linię")+"” — sprawdzenie wykona się automatycznie.";
+      state.geometryPreview=null;$("line-apply").disabled=false;
       $("line-dialog").showModal();
     }
   }
@@ -2119,6 +2120,17 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
       $(which+"-summary").textContent="Nie można zastosować: "+err.message;
       inform(err.message,true);
     }finally{$(which+"-preview").disabled=false;}
+  }
+  // „Utwórz linię" ma działać od razu: jeśli nie ma świeżego podglądu,
+  // robimy go po cichu i od razu zatwierdzamy — bez dodatkowego kliknięcia.
+  async function applyOrPreviewGeometry(which, ev) {
+    ev?.preventDefault();
+    if(state.editBusy)return;
+    if(!state.geometryPreview||state.geometryPreview.which!==which){
+      await previewGeometryForm(which);
+      if(!state.geometryPreview||state.geometryPreview.which!==which)return;
+    }
+    return applyGeometryForm(which);
   }
   async function applyGeometryForm(which,ev) {
     ev?.preventDefault();
@@ -7119,10 +7131,10 @@ inform("Klikaj mapę, aby wstawiać kolejne oznaczenia. Naciśnij Esc lub wybier
   link("line-close",()=>$("line-dialog").close());
   link("line-back",()=>$("line-dialog").close());
   link("line-preview",()=>previewGeometryForm("line"));
-  $("line-form").addEventListener("submit",ev=>applyGeometryForm("line",ev));
+  $("line-form").addEventListener("submit",ev=>applyOrPreviewGeometry("line",ev));
   for(const key of ["line-code","line-a1","line-a2"])
     $(key).addEventListener("input",()=>{state.geometryPreview=null;
-      $("line-apply").disabled=true;});
+      $("line-apply").disabled=false;});
   link("split-close",()=>$("split-dialog").close());
   link("split-back",()=>$("split-dialog").close());
   link("split-preview",()=>previewGeometryForm("split"));
