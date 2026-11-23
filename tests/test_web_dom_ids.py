@@ -29,7 +29,8 @@ def test_guarded_element_lookups_exist_or_are_guarded():
     for name in missing:
         assert f'if({name}=' not in JS  # sanity
         assert 'if(overSource)' in JS or True
-    assert missing == [] or missing == ["btn-save-source"]
+    # Dozwolone braki: przyciski usunięte z nagłówka, sprawdzane przez if().
+    assert set(missing) <= {"btn-save-source", "tool-export-baked"}
 
 
 def test_link_helper_is_null_safe():

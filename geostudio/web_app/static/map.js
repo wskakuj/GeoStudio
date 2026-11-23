@@ -206,7 +206,8 @@
       $(id).disabled=state.editBusy||!state.meta;
     $("btn-export").disabled=state.editBusy||!state.meta;
     $("btn-layout").disabled=state.editBusy||!state.meta;
-    $("tool-export-baked").disabled=state.editBusy||!state.meta;
+    const baked=$("tool-export-baked");
+    if(baked)baked.disabled=state.editBusy||!state.meta;
     $("btn-export-label").textContent="Zapisz kopię mapy";
     const overSource=$("btn-save-source");
     if(overSource)
@@ -7329,8 +7330,6 @@ inform("Klikaj mapę, aby wstawiać kolejne oznaczenia. Naciśnij Esc lub wybier
   link("tool-underlay",openUnderlayDialog);
   link("tool-raster",openRasterDialog);
   link("tool-crs",openCrsDialog);
-  link("tool-layout-ribbon",openLayoutDialog);
-  link("tool-map-copy-ribbon",downloadMapCopy);
   link("underlay-close",()=>$("underlay-dialog").close());
   link("underlay-close-bottom",()=>$("underlay-dialog").close());
   link("raster-close",()=>$("raster-dialog").close());
@@ -7425,7 +7424,6 @@ inform("Klikaj mapę, aby wstawiać kolejne oznaczenia. Naciśnij Esc lub wybier
   link("carto-catalog-close",()=>$("cartography-catalog-dialog").close());
   link("carto-catalog-close-bottom",()=>$("cartography-catalog-dialog").close());
   $("carto-catalog-filter").addEventListener("input",renderCartographyCatalog);
-  link("tool-topology",()=> $("file-topology").click());
   link("tool-undo",()=>historyStep("undo"));
   link("tool-redo",()=>historyStep("redo"));
   link("btn-export",downloadMapCopy);
@@ -7505,7 +7503,6 @@ inform("Klikaj mapę, aby wstawiać kolejne oznaczenia. Naciśnij Esc lub wybier
     inform("Wyczyszczono zaznaczenie.");});
   link("leader-a1",()=>toggleLeader("A1"));
   link("leader-a2",()=>toggleLeader("A2"));
-  link("tool-export-baked",downloadNativeCutouts);
   link("inspector-edit-toggle",()=>{
     toggleInspectorEdit($("inspector-edit").hidden);
   });
