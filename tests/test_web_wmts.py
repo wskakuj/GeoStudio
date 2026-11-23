@@ -16,7 +16,13 @@ HTML = Path("geostudio/web_app/static/index.html").read_text(encoding="utf-8")
 CAPABILITIES = b"""<?xml version="1.0"?>
 <Capabilities version="1.0.0" xmlns="http://www.opengis.net/wmts/1.0">
  <Contents>
-  <Layer><ows:Identifier xmlns:ows="http://www.opengis.net/ows/1.1">Raster</ows:Identifier></Layer>
+  <Layer>
+   <ows:Identifier xmlns:ows="http://www.opengis.net/ows/1.1">Raster</ows:Identifier>
+   <ows:Title xmlns:ows="http://www.opengis.net/ows/1.1">Ortofotomapa</ows:Title>
+   <Style><ows:Identifier xmlns:ows="http://www.opengis.net/ows/1.1">default</ows:Identifier></Style>
+   <Format>image/jpeg</Format>
+   <TileMatrixSetLink><TileMatrixSet>EPSG:2180</TileMatrixSet></TileMatrixSetLink>
+  </Layer>
   <TileMatrixSet>
    <ows:Identifier xmlns:ows="http://www.opengis.net/ows/1.1">EPSG:2180</ows:Identifier>
    <ows:SupportedCRS xmlns:ows="http://www.opengis.net/ows/1.1">urn:ogc:def:crs:EPSG::2180</ows:SupportedCRS>
@@ -111,3 +117,49 @@ def test_ui_lists_new_sources_and_date_field():
         assert f'<option value="{preset}">' in HTML
     assert 'id="underlay-time"' in HTML
     assert "const timePresets=new Set(" in JS
+
+
+def test_layers_are_read_from_capabilities():
+    layers = wmts_service.parse_layers(CAPABILITIES)
+    assert layers[0].identifier == "Raster"
+    assert layers[0].styles == ("default",)
+    assert layers[0].formats == ("image/jpeg",)
+
+
+def test_tile_uses_advertised_style_and_format(monkeypatch):
+    seen = []
+
+    def download(url, size):
+        seen.append(url)
+        if "GetCapabilities" in url:
+            return CAPABILITIES
+        return _jpeg()
+
+    monkeypatch.setattr(underlay_wms, "_download", download)
+    underlay_wms._wmts_capabilities.cache_clear()
+    underlay_wms._wmts_layer_info.cache_clear()
+    underlay_wms._wmts_layers.cache_clear()
+    underlay_wms.clear_cache()
+    underlay_wms.map_image("standard_wmts", "Raster", 2180,
+                           900000, -1200, 1000000, 0, 256, 256)
+    tiles = [url for url in seen if "GetTile" in url]
+    assert tiles
+    assert "STYLE=default" in tiles[0]
+    assert "FORMAT=image/jpeg" in tiles[0]
+
+
+def test_non_image_tile_reports_server_message(monkeypatch):
+    def download(url, size):
+        if "GetCapabilities" in url:
+            return CAPABILITIES
+        return (b"<ExceptionReport><Exception><ExceptionText>TileOutOfRange"
+                b"</ExceptionText></Exception></ExceptionReport>")
+
+    monkeypatch.setattr(underlay_wms, "_download", download)
+    underlay_wms._wmts_capabilities.cache_clear()
+    underlay_wms._wmts_layer_info.cache_clear()
+    underlay_wms._wmts_layers.cache_clear()
+    underlay_wms.clear_cache()
+    with pytest.raises(ValueError, match="TileOutOfRange"):
+        underlay_wms.map_image("standard_wmts", "Raster", 2180,
+                               900000, -1200, 1000000, 0, 256, 256)

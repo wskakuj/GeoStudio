@@ -238,7 +238,7 @@ def main(argv=None):
         from .documents import DocumentNativeBridge
         native_picker = DocumentNativeBridge(app.state.documents)
         webview.create_window(
-            "GeoStudio 2.0 — Podgląd",
+            "GeoStudio 2.0",
             address, width=1480, height=940, min_size=(960, 640),
             background_color="#101A2B", js_api=native_picker,
         )

@@ -36,10 +36,58 @@ class TileMatrix:
 
 
 @dataclass(frozen=True)
+class WmtsLayer:
+    identifier: str
+    title: str
+    styles: tuple[str, ...]
+    formats: tuple[str, ...]
+    matrix_sets: tuple[str, ...]
+
+
+@dataclass(frozen=True)
 class TileMatrixSet:
     identifier: str
     crs: str
     matrices: tuple[TileMatrix, ...]
+
+
+def parse_layers(xml: bytes) -> tuple[WmtsLayer, ...]:
+    """Warstwy WMTS: nazwa, style, formaty i zestawy matryc z Capabilities."""
+    if len(xml) > 8_000_000:
+        raise ValueError("Odpowiedź WMTS GetCapabilities jest zbyt duża.")
+    try:
+        root = ET.fromstring(xml)
+    except ET.ParseError as exc:
+        raise ValueError("Serwer nie zwrócił poprawnego dokumentu WMTS.") from exc
+    layers: list[WmtsLayer] = []
+    for node in root.iter():
+        if _tag(node) != "Layer":
+            continue
+        identifier = title = ""
+        styles: list[str] = []
+        formats: list[str] = []
+        sets: list[str] = []
+        for child in node:
+            name = _tag(child)
+            if name == "Identifier" and child.text and not identifier:
+                identifier = child.text.strip()
+            elif name == "Title" and child.text and not title:
+                title = child.text.strip()
+            elif name == "Style":
+                for item in child:
+                    if _tag(item) == "Identifier" and item.text:
+                        styles.append(item.text.strip())
+                        break
+            elif name == "Format" and child.text:
+                formats.append(child.text.strip())
+            elif name == "TileMatrixSetLink":
+                for item in child:
+                    if _tag(item) == "TileMatrixSet" and item.text:
+                        sets.append(item.text.strip())
+        if identifier:
+            layers.append(WmtsLayer(identifier, title or identifier,
+                                    tuple(styles), tuple(formats), tuple(sets)))
+    return tuple(layers)
 
 
 def normalise_crs(value: str) -> str:
