@@ -171,20 +171,78 @@ def pick_matrix(matrix_set: TileMatrixSet, pixel_size: float) -> TileMatrix:
     return best
 
 
-def tile_range(matrix: TileMatrix, min_x: float, min_y: float,
-               max_x: float, max_y: float) -> tuple[int, int, int, int]:
-    """Zakres kolumn i wierszy kafelków pokrywających obszar."""
+def _range_for(matrix: TileMatrix, x0: float, y0: float, x1: float, y1: float,
+               *, swapped: bool) -> tuple[int, int, int, int]:
+    """Zakres kafelków dla jednej konwencji osi TopLeftCorner."""
     res = matrix.resolution()
-    left, top = matrix.top_left
-    col0 = math.floor((min_x - left) / (res * matrix.tile_width))
-    col1 = math.floor((max_x - left) / (res * matrix.tile_width))
-    row0 = math.floor((top - max_y) / (res * matrix.tile_height))
-    row1 = math.floor((top - min_y) / (res * matrix.tile_height))
+    first, second = matrix.top_left
+    if swapped:
+        # Serwer podał TopLeftCorner jako (wschód, północ).
+        origin_col, origin_row = second, first
+    else:
+        # (północ, wschód) — kolejność osi EPSG:2180.
+        origin_col, origin_row = first, second
+    span_x = res * matrix.tile_width
+    span_y = res * matrix.tile_height
+    col0 = math.floor((x0 - origin_col) / span_x)
+    col1 = math.floor((x1 - origin_col) / span_x)
+    row0 = math.floor((origin_row - y1) / span_y)
+    row1 = math.floor((origin_row - y0) / span_y)
+    return col0, row0, col1, row1
+
+
+def _range_valid(matrix: TileMatrix, box: tuple[int, int, int, int]) -> bool:
+    col0, row0, col1, row1 = box
+    return (0 <= col0 <= col1 < matrix.matrix_width and
+            0 <= row0 <= row1 < matrix.matrix_height)
+
+
+def tile_selection(matrix: TileMatrix, min_x: float, min_y: float,
+                   max_x: float, max_y: float):
+    """(col0, row0, col1, row1, swapped) — zakres i wykryta konwencja osi."""
+    candidates = []
+    for swapped in (False, True):
+        box = _range_for(matrix, min_x, min_y, max_x, max_y, swapped=swapped)
+        if _range_valid(matrix, box):
+            candidates.append((*box, swapped))
+    if candidates:
+        return candidates[0]
+    box = _range_for(matrix, min_x, min_y, max_x, max_y, swapped=False)
+    col0, row0, col1, row1 = box
     col0 = max(0, min(col0, matrix.matrix_width - 1))
     row0 = max(0, min(row0, matrix.matrix_height - 1))
     col1 = max(col0, min(col1, matrix.matrix_width - 1))
     row1 = max(row0, min(row1, matrix.matrix_height - 1))
+    return col0, row0, col1, row1, False
+
+
+def tile_range(matrix: TileMatrix, min_x: float, min_y: float,
+               max_x: float, max_y: float) -> tuple[int, int, int, int]:
+    """Zakres kolumn i wierszy kafelków pokrywających obszar.
+
+    Kolejność osi w TopLeftCorner bywa różna (północ-wschód albo
+    wschód-północ), więc sprawdzamy obie konwencje i wybieramy tę, która
+    mieści się w macierzy. Inaczej serwer odpowiada „Row is out of range”.
+    """
+    col0, row0, col1, row1, _ = tile_selection(matrix, min_x, min_y,
+                                               max_x, max_y)
     return col0, row0, col1, row1
+
+
+def mosaic_origin(matrix: TileMatrix, col0: int, row0: int,
+                  swapped: bool) -> tuple[float, float]:
+    """Lewy górny narożnik mozaiki jako (oś kolumn, oś wierszy).
+
+    Oś kolumn to północ, oś wierszy to wschód — niezależnie od tego, w jakiej
+    kolejności serwer podał TopLeftCorner.
+    """
+    res = matrix.resolution()
+    first, second = matrix.top_left
+    span_x = res * matrix.tile_width
+    span_y = res * matrix.tile_height
+    if swapped:
+        return (second + col0 * span_x, first - row0 * span_y)
+    return (first + col0 * span_x, second - row0 * span_y)
 
 
 def gettile_url(base_url: str, layer: str, matrix_set: str, matrix: str,

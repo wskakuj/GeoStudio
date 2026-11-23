@@ -65,7 +65,7 @@ def test_tile_range_covers_the_area():
     matrix = sets[0].matrices[0]
     # Kafelek ma 512 x 2,8 m = 1433,6 m, więc 3000 m to co najmniej 2 kolumny.
     col0, row0, col1, row1 = wmts_service.tile_range(
-        matrix, 0.0, 900000.0, 3000.0, 1000000.0)
+        matrix, 0.0, 990000.0, 3000.0, 1000000.0)
     assert col0 == 0 and col1 >= 1
     assert row0 == 0 and row1 >= 1
 
@@ -163,3 +163,27 @@ def test_non_image_tile_reports_server_message(monkeypatch):
     with pytest.raises(ValueError, match="TileOutOfRange"):
         underlay_wms.map_image("standard_wmts", "Raster", 2180,
                                900000, -1200, 1000000, 0, 256, 256)
+
+
+def test_axis_order_is_detected_from_capabilities():
+    """Geoportal podaje TopLeftCorner w innej kolejności — wykrywamy to."""
+    # TopLeftCorner = "1000000 0" (wschód, północ) — konwencja odwrócona.
+    swapped_xml = CAPABILITIES.replace(b"<TopLeftCorner>0 1000000</TopLeftCorner>",
+                                       b"<TopLeftCorner>1000000 0</TopLeftCorner>")
+    sets = wmts_service.parse_capabilities(swapped_xml)
+    matrix = sets[0].matrices[0]
+    # Matryca testowa ma 10x10 kafli po 1433 m, więc kadr musi się w niej zmieścić.
+    col0, row0, col1, row1, swapped = wmts_service.tile_selection(
+        matrix, 0.0, 990000.0, 3000.0, 1000000.0)
+    assert swapped is True
+    assert 0 <= col0 <= col1 < matrix.matrix_width
+    assert 0 <= row0 <= row1 < matrix.matrix_height
+
+
+def test_row_never_exceeds_matrix_height():
+    sets = wmts_service.parse_capabilities(CAPABILITIES)
+    matrix = sets[0].matrices[0]
+    col0, row0, col1, row1 = wmts_service.tile_range(
+        matrix, 0.0, 990000.0, 3000.0, 1000000.0)
+    assert row1 < matrix.matrix_height
+    assert col1 < matrix.matrix_width
