@@ -169,7 +169,8 @@ def test_code_wide_preset_editor_and_enter_shortcut_are_visible():
                    'state.drawPoints=[];state.drawHover=null;',
                    'setTool("draw");','await refreshEditedDocument(null);']:
         assert phrase in create
-    assert "const pad=12/Math.max(.000001,state.scale);" in js
+    # Zapas bbox pokrywa wzmocniony magnes węzłów (16 px).
+    assert "const pad=20/Math.max(.000001,state.scale);" in js
     assert 'if(state.tool==="draw")return;' in js
     assert 'if(["cut","line","line-edit"].includes(state.tool)&&state.meta)' in js
 

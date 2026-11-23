@@ -23,8 +23,10 @@
       return noMatch;
     // Distances are *screen pixels*, not metres. A narrow capture radius
     // lets users digitize parallel lines just outside the target boundary.
-    const vRadius=Math.max(1,Math.min(8,options.vertexPixels??7));
-    const eRadius=Math.max(1,Math.min(7,options.edgePixels??5));
+    // Węzły łapią z większego promienia niż krawędzie: przy wkreślaniu
+    // poligonu mysz łatwo uciekała z punktu zaczepienia.
+    const vRadius=Math.max(1,Math.min(20,options.vertexPixels??14));
+    const eRadius=Math.max(1,Math.min(12,options.edgePixels??7));
     const search=Math.max(vRadius,eRadius)/scale;
     let vertex=null,edge=null,featureCount=0,segments=0;
     for(const feature of features||[]) {
