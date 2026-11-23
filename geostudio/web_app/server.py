@@ -20,7 +20,8 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
 from .data import (
     PreviewWorkspace, MAX_MAP_BYTES, MAX_STYLES_BYTES, MAX_RENDER_FEATURES,
 )
-from .underlay_wms import list_layers as wms_layers, map_png as wms_map_png
+from .underlay_wms import (list_layers as wms_layers,
+                           map_image as wms_map_image)
 from .underlay_raster import prepare_raster, fit_gcp_payload, MAX_RASTER_BYTES
 from .underlay_crs import verified_prj_epsg, convert_point, MAX_PRJ
 from . import raster_memory
@@ -251,13 +252,13 @@ def create_app(workspace: PreviewWorkspace | None = None, *,
         if not state.metadata().get("loaded"):
             raise HTTPException(409, "Najpierw otwórz mapę MAP.")
         try:
-            image = wms_map_png(preset, layer, epsg, xmin, ymin,
-                                xmax, ymax, width, height)
+            image, media = wms_map_image(preset, layer, epsg, xmin, ymin,
+                                         xmax, ymax, width, height)
         except RuntimeError as exc:
             raise HTTPException(502, str(exc)) from exc
         except ValueError as exc:
             raise HTTPException(400, str(exc)) from exc
-        return Response(image, media_type="image/png",
+        return Response(image, media_type=media,
                         headers={"Cache-Control": "no-store"})
 
 

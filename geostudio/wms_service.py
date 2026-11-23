@@ -149,7 +149,9 @@ def capabilities_url(base_url: str) -> str:
 
 
 def getmap_url(base_url: str, layer: str, crs: str, bounds: WMSBounds,
-               width: int, height: int, *, version="1.3.0") -> str:
+               width: int, height: int, *, version="1.3.0",
+               image_format: str = "image/png",
+               transparent: bool = True) -> str:
     if version not in {"1.3.0", "1.1.1"}:
         raise ValueError("Obsługiwane wersje WMS: 1.3.0 i 1.1.1.")
     if not layer.strip():
@@ -162,8 +164,9 @@ def getmap_url(base_url: str, layer: str, crs: str, bounds: WMSBounds,
     bbox_str = ",".join(f"{value:.10f}".rstrip("0").rstrip(".") for value in bbox)
     params = {
         "SERVICE": "WMS", "REQUEST": "GetMap", "VERSION": version,
-        "LAYERS": layer, "STYLES": "," * layer.count(","), "FORMAT": "image/png",
-        "TRANSPARENT": "TRUE",
+        "LAYERS": layer, "STYLES": "," * layer.count(","),
+        "FORMAT": image_format,
+        "TRANSPARENT": "TRUE" if transparent else "FALSE",
         "WIDTH": str(width), "HEIGHT": str(height),
         "BBOX": bbox_str,
         ("CRS" if version == "1.3.0" else "SRS"): crs.upper(),

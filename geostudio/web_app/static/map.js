@@ -2657,7 +2657,9 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
     if(!targets.length)return;
     // Odświeżamy WSZYSTKIE widoczne podkłady — wcześniej tylko ostatnio
     // włączony, więc starsze warstwy zostawały z obrazem z poprzedniego kadru.
-    const bounds=boundsFromViewport(.09);
+    // Większy zapas (22%) niż wcześniej: drobne przesunięcia mapy mieszczą się
+    // w pobranym obrazie, więc nie trzeba nic dociągać.
+    const bounds=boundsFromViewport(.22);
     const size=underlayRequestDimensions(bounds);
     const documentToken=state.edit?.documentToken;
     await Promise.all(targets.map(item=>refreshUnderlayItem(
