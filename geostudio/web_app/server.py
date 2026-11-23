@@ -784,6 +784,21 @@ def create_app(workspace: PreviewWorkspace | None = None, *,
         except (ValueError,TypeError) as exc:
             raise HTTPException(400,str(exc)) from exc
 
+    @app.post("/api/labels/auto-layout-5310")
+    async def auto_layout_5310(request: Request):
+        data=await edit_payload(request)
+        try:
+            return state.auto_layout_5310_labels(
+                data.get("scope", "all"),
+                data.get("scale", 5000),
+                data.get("ids"),
+                document_token=data.get("documentToken"),
+                revision=data.get("revision"))
+        except RuntimeError as exc:
+            raise HTTPException(409,str(exc)) from exc
+        except (ValueError,TypeError) as exc:
+            raise HTTPException(400,str(exc)) from exc
+
     @app.post("/api/labels/reset-leaders")
     async def reset_label_leaders(request: Request):
         data=await edit_payload(request)
