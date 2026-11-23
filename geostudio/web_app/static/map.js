@@ -2853,14 +2853,9 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
       const bottom=worldToScreen(bounds[2],bounds[3]);
       ctx.save();
       ctx.imageSmoothingEnabled=true;ctx.imageSmoothingQuality="high";
-      // Gdy trwa pobieranie nowego kadru, pod spodem rysujemy ten sam obraz
-      // rozciągnięty na CAŁY ekran z małą przezroczystością. Widać „coś”
-      // natychmiast, ale georeferencja pozostaje poprawna, bo wierzchnia
-      // warstwa to zawsze obraz na swoim własnym zasięgu.
-      if(item.loading&&item.image&&item.bounds){
-        ctx.globalAlpha=item.opacity*0.45;
-        ctx.drawImage(item.image,0,0,state.width,state.height);
-      }
+      // Żadnego „widma”: wcześniej rysowałem stary obraz rozciągnięty na cały
+      // ekran i wyglądało to jak duch poprzedniego kadru. Teraz widać tylko
+      // obraz na jego własnym zasięgu, a reszta czeka na nowy.
       ctx.globalAlpha=item.opacity;
       ctx.drawImage(item.image,top.x,top.y,
                     bottom.x-top.x,bottom.y-top.y);
