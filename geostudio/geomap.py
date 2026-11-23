@@ -556,6 +556,39 @@ class GeoMap:
             del self.lines[line_no]
         self._parse()
 
+    def assign_fresh_uid(self, uid: str) -> str:
+        """Nadaje obiektowi nowy, unikalny :ID (gdy w mapie są duplikaty).
+
+        Potrzebne, gdy dwa obiekty mają to samo :ID (typowe w mapach po wielu
+        zapisach): operacje scalania i podziału muszą wskazać obiekt
+        jednoznacznie, inaczej mogłyby zmodyfikować nie ten, o który chodzi.
+        """
+        if not uid:
+            raise ValueError("Obiekt nie ma :ID.")
+        existing = {obj.uid for obj in self.objects if obj.uid}
+        target = self.by_id.get(uid)
+        if target is None:
+            raise ValueError("Nie znaleziono obiektu o tym :ID.")
+        new_uid = str(uuid.uuid4()).upper()
+        while new_uid in existing:
+            new_uid = str(uuid.uuid4()).upper()
+        found = False
+        for index in range(target.start, target.end):
+            raw = self.lines[index]
+            eol = b'\r\n' if raw.endswith(b'\r\n') else (
+                b'\n' if raw.endswith(b'\n') else b'')
+            text = raw.rstrip(b'\r\n')
+            if text.startswith(b':ID['):
+                if found:
+                    raise ValueError("Obiekt ma kilka rekordów :ID.")
+                self.lines[index] = b':ID[' + new_uid.encode('ascii') + b']' + eol
+                found = True
+                break
+        if not found:
+            raise ValueError("Obiekt nie ma rekordu :ID.")
+        self._parse()
+        return new_uid
+
     def duplicate_polygons(self, uids: list[str], dx: float, dy: float) -> list[str]:
         """Copy full native records, changing ONLY :ID and P coordinates.
 

@@ -2070,9 +2070,20 @@ class PreviewWorkspace:
                 if not isinstance(fid,str) or fid not in self._lookup:
                     raise LookupError("Nieznany identyfikator obiektu.")
                 obj=self._lookup[fid].obj
-                if (not obj.uid or self._uid_counts.get(obj.uid)!=1 or
+                if not obj.uid:
+                    raise ValueError("Obiekt nie ma :ID — nie można go wskazać.")
+                # Mapy po wielu zapisach mają powtórzone :ID. Zamiast blokować
+                # scalanie/podział, nadajemy wybranemu obiektowi świeże :ID —
+                # operacja jest wtedy jednoznaczna i odwracalna (Ctrl+Z).
+                if (self._uid_counts.get(obj.uid)!=1 or
                         self._doc.by_id.get(obj.uid) is not obj):
-                    raise ValueError("Obiekt ma niejednoznaczne :ID.")
+                    try:
+                        self._doc.assign_fresh_uid(obj.uid)
+                    except ValueError as exc:
+                        raise ValueError(
+                            "Obiekt ma niejednoznaczne :ID.") from exc
+                    self._reindex(self._doc, self._doc.filename)
+                    obj=self._lookup[fid].obj
                 selected.append(obj)
         geometry=None
         coordinates=[]
