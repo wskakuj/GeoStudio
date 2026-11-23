@@ -247,13 +247,14 @@ def create_app(workspace: PreviewWorkspace | None = None, *,
     @app.get("/api/underlay/wms/map")
     def underlay_wms_map(preset: str, layer: str, epsg: int,
                          xmin: float, ymin: float, xmax: float, ymax: float,
-                         width: int, height: int, url: str | None = None):
+                         width: int, height: int, url: str | None = None,
+                         time: str | None = None):
         """Read-only PNG image. Values are Canvas world coordinates."""
         if not state.metadata().get("loaded"):
             raise HTTPException(409, "Najpierw otwórz mapę MAP.")
         try:
             image, media = wms_map_image(preset, layer, epsg, xmin, ymin,
-                                         xmax, ymax, width, height, url)
+                                         xmax, ymax, width, height, url, time)
         except RuntimeError as exc:
             raise HTTPException(502, str(exc)) from exc
         except ValueError as exc:

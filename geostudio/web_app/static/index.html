@@ -807,8 +807,14 @@
         <option value="standard">Geoportal — ortofotomapa standardowa</option>
         <option value="high">Geoportal — ortofotomapa wysokiej rozdzielczości</option>
         <option value="kieg">GUGiK — działki ewidencyjne i numery</option>
+        <option value="standard_wmts">Geoportal — ortofotomapa standardowa (WMTS)</option>
+        <option value="high_wmts">Geoportal — ortofotomapa wysoka (WMTS)</option>
+        <option value="standard_time">Geoportal — ortofotomapa archiwalna standardowa</option>
+        <option value="high_time">Geoportal — ortofotomapa archiwalna wysoka</option>
         <option value="custom">Własny serwer WMS…</option>
       </select>
+      <label for="underlay-time" id="underlay-time-label" hidden>Data archiwalna (RRRR-MM-DD, opcjonalnie)</label>
+      <input id="underlay-time" type="text" placeholder="2020-06-15" spellcheck="false" hidden>
       <label for="underlay-url">Adres WMS</label>
       <input id="underlay-url" type="text" spellcheck="false"
              value="https://mapy.geoportal.gov.pl/wss/service/PZGIK/ORTO/WMS/StandardResolution"
