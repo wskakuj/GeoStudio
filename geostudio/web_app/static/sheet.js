@@ -57,8 +57,11 @@ window.GeoStudioSheet = (() => {
     }else if(item.kind==="compass"){
       for(let i=0;i<4;i++){
         const rotate=(x,y)=>[[53+x,53+y],[53-y,53+x],[53-x,53-y],[53+y,53-x]][i];
+        // Róża dwubarwna: czarna połowa i biała połowa Z WYPEŁNIENIEM,
+        // obie o wspólnym wierzchołku. Wcześniej biała była tylko obrysem,
+        // więc przy ostrym końcu linie się dublowały i grot się „rozwarstwiał".
         path([[0,0],[0,-34],[6,-6],[0,0]].map(p=>rotate(...p)),ink);
-        path([[0,0],[0,-34],[-6,-6],[0,0]].map(p=>rotate(...p)));
+        path([[0,0],[0,-34],[-6,-6],[0,0]].map(p=>rotate(...p)),"#ffffff",ink);
         const [x,y]=rotate(0,-44);
         label(x,y+4,["N","E","S","W"][i],13,true);
       }
