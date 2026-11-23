@@ -24,12 +24,14 @@ def test_large_polygon_gets_both_labels_inside():
     assert change["mode"] == "inside"
     assert change["labels"]["A1"]["flags"] == FLAG_PLAIN
     assert change["labels"]["A2"]["flags"] == FLAG_PLAIN
-    assert change["labels"]["A1"]["dx"] == 0
+    # Napisy stoją w środku poligonu, więc offsety są niezerowe,
+    # ale nie ma żadnego wysięgnika.
     assert result["stats"]["leaders"] == 0
+    assert change["labels"]["A1"].get("anchor") is None
 
 
 def test_narrow_polygon_keeps_a1_inside_and_puts_a2_on_leader():
-    strip = box(0, 0, 400, 14)          # wąski, długi pas
+    strip = box(0, 0, 14, 400)          # wąski w osi północy, długi pas
     result = _layout([("u2", strip, (7.0, 200.0), "02c", "OL55|0.02")])
     change = result["changes"][0]
     assert change["labels"]["A1"]["flags"] == FLAG_PLAIN
@@ -39,8 +41,8 @@ def test_narrow_polygon_keeps_a1_inside_and_puts_a2_on_leader():
 
 
 def test_flag_matches_the_side_of_the_anchor():
-    # Pas 10 m: etykieta A2 (12,4 m wysokości) nie mieści się w środku.
-    strip = box(0, 0, 400, 10)
+    # Pas 10 m w osi północy: etykieta A2 (12,4 m wysokości) się nie mieści.
+    strip = box(0, 0, 10, 400)
     result = _layout([("u3", strip, (7.0, 200.0), "", "OL55|0.02")])
     label = result["changes"][0]["labels"]["A2"]
     # Napis na wschód od zaczepu => flaga 69, na zachód => 133.
@@ -96,7 +98,7 @@ def test_auto_layout_is_atomic_and_reversible():
 def test_offsets_use_geo_map_axis_order():
     """dx to przesunięcie na PÓŁNOC, dy na WSCHÓD (osie rekordu L)."""
     from shapely.geometry import box as _box
-    strip = _box(0, 0, 400, 10)          # x = północ, y = wschód
+    strip = _box(0, 0, 10, 400)          # x = północ, y = wschód
     result = _layout([("u9", strip, (7.0, 200.0), "", "OL55|0.02")])
     label = result["changes"][0]["labels"]["A2"]
     # Etykieta odsuwa się na zewnątrz wąskiego pasa: albo na północ, albo
@@ -126,3 +128,56 @@ def test_leader_label_stays_near_its_polygon():
         for label in feature["labels"]:
             assert abs(label["x"] - (west + east) / 2) < diagonal * 10 + 500
             assert abs(-label["y"] - (-south - north) / 2) < diagonal * 10 + 500
+
+
+def test_inside_label_sits_at_the_polygon_centre_not_at_the_base_point():
+    from shapely.geometry import box as _box
+    shape = _box(0, 0, 200, 200)
+    result = _layout([("u20", shape, (10.0, 10.0), "02r", "6OL55|0.26")])
+    labels = result["changes"][0]["labels"]
+    # Punkt bazowy to (10,10); napisy mają stać w środku poligonu (100,100).
+    for field in ("A1", "A2"):
+        x = 10.0 + labels[field]["dy"]      # wschód
+        y = 10.0 + labels[field]["dx"]      # północ
+        assert abs(x - 100) < 1.0
+        assert abs(y - 100) < 12            # blok pionowy, więc lekko nad/pod
+
+
+def test_leader_attaches_to_the_inside_label():
+    from shapely.geometry import box as _box
+    shape = _box(0, 0, 14, 120)             # wąski w osi północy: A1 się mieści, A2 nie
+    result = _layout([("u21", shape, (7.0, 60.0), "02c", "OL55|0.02")])
+    labels = result["changes"][0]["labels"]
+    assert labels["A1"]["flags"] == FLAG_PLAIN
+    assert labels["A2"]["flags"] in (FLAG_RIGHT, FLAG_LEFT)
+    # Zaczep wysięgnika = pozycja napisu, który został w środku.
+    assert labels["A2"]["anchor"] == (labels["A1"]["dx"], labels["A1"]["dy"])
+
+
+def test_both_outside_share_one_anchor_in_the_polygon():
+    from shapely.geometry import box as _box
+    shape = _box(0, 0, 12, 12)              # za mały na cokolwiek
+    result = _layout([("u22", shape, (6.0, 6.0), "02c", "OL55|0.02")])
+    labels = result["changes"][0]["labels"]
+    assert labels["A1"]["flags"] != FLAG_PLAIN
+    assert labels["A2"]["flags"] != FLAG_PLAIN
+    assert labels["A1"]["anchor"] == labels["A2"]["anchor"]
+
+
+def test_inside_labels_never_touch_the_boundary():
+    from shapely.geometry import box as _box
+    shape = _box(0, 0, 60, 30)
+    result = _layout([("u23", shape, (15.0, 30.0), "02r", "OL55|0.02")])
+    labels = result["changes"][0]["labels"]
+    for field in ("A1", "A2"):
+        if labels[field]["flags"] != FLAG_PLAIN:
+            continue
+        from geostudio.web_app.label_layout import text_size
+        text = "02r" if field == "A1" else "OL55|0.02"
+        width, height = text_size(text, 5000, fraction=(field == "A2"))
+        east = 30.0 + labels[field]["dy"]
+        north = 15.0 + labels[field]["dx"]
+        rect = _box(north - height / 2, east - width / 2,
+                    north + height / 2, east + width / 2)
+        assert shape.contains(rect), f"{field} wychodzi poza poligon"
+        assert rect.distance(shape.boundary) > 0, f"{field} dotyka granicy"
