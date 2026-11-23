@@ -48,7 +48,12 @@ window.GeoStudioSheet = (() => {
     // Znaki wstawione na mapę są już prawdziwą geometrią w MAP — rysujemy je
     // tylko w podglądzie, żeby nie dublować ich na ekranie.
     if(signs.includes(item.kind))return item.id==="__preview__"?signShapes(item):[];
-    if(item.kind==="compartment"){label(w/2,h*.74,item.text,12,true);}
+    // Numer 6900: cyfra zajmuje niemal całe pudełko, więc zaznaczenie
+    // („softbox") nie ma wokół siebie pustego kwadratu.
+    if(item.kind==="compartment"){
+      const size=Math.max(4,Math.min(w*1.4,h*.82));
+      label(w/2,h*.5+size*.35,item.text,size,true);
+    }
     else if(["title","credits"].includes(item.kind)){
       const lines=item.text.split("\n"),title=item.kind==="title";
       if(title){path([[1,1],[w-1,1]]);path([[1,h-1],[w-1,h-1]]);}
