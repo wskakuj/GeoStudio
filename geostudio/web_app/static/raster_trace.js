@@ -782,6 +782,9 @@ function openRasterTracing(item, view) {
       for(const id of selected)trace.shapes.delete(id);
       selected.clear();outline=[];activeNode=null;drafts.clear();a1.value="";
       await view.refresh();
+      // Nowy poligon musi wejść do maski, inaczej następna propozycja
+      // wkreślenia wypadłaby dokładnie na nim.
+      await prepare();
     }catch(error){message=error.message;}
     finally{
       busy=false;close.disabled=a1.disabled=panel.querySelector("select").disabled=false;
@@ -802,7 +805,11 @@ function openRasterTracing(item, view) {
       const source=g.getImageData(0,0,w,h).data;
       g.clearRect(0,0,w,h);
       for(const feature of features){
-        if(feature.layer!=="Użytki Leśne"||!feature.closed)continue;
+        // Maska obejmuje WSZYSTKIE zamknięte poligony 5310 (niezależnie od
+        // nazwy warstwy), żeby auto-wkreślanie nie proponowało obrysu w
+        // miejscu, gdzie wydzielenie jest już wkreślone.
+        if(!feature.closed)continue;
+        if(feature.code!=="5310"&&feature.layer!=="Użytki Leśne")continue;
         g.beginPath();
         for(const ring of feature.geometry){
           ring.forEach(([x,y],i)=>{const p=pixelAt(x,y);i?g.lineTo(p.x,p.y):g.moveTo(p.x,p.y);});
