@@ -176,18 +176,22 @@ def _range_for(matrix: TileMatrix, x0: float, y0: float, x1: float, y1: float,
     """Zakres kafelków dla jednej konwencji osi TopLeftCorner."""
     res = matrix.resolution()
     first, second = matrix.top_left
-    if swapped:
-        # Serwer podał TopLeftCorner jako (wschód, północ).
-        origin_col, origin_row = second, first
-    else:
-        # (północ, wschód) — kolejność osi EPSG:2180.
-        origin_col, origin_row = first, second
     span_x = res * matrix.tile_width
     span_y = res * matrix.tile_height
-    col0 = math.floor((x0 - origin_col) / span_x)
-    col1 = math.floor((x1 - origin_col) / span_x)
-    row0 = math.floor((origin_row - y1) / span_y)
-    row1 = math.floor((origin_row - y0) / span_y)
+    if swapped:
+        # TopLeftCorner = (wschód, północ): kolumna biegnie po wschodzie (y),
+        # wiersz po północy (x).
+        col0 = math.floor((y0 - first) / span_x)
+        col1 = math.floor((y1 - first) / span_x)
+        row0 = math.floor((second - x1) / span_y)
+        row1 = math.floor((second - x0) / span_y)
+    else:
+        # TopLeftCorner = (północ, wschód): kolumna po północy (x),
+        # wiersz po wschodzie (y).
+        col0 = math.floor((x0 - first) / span_x)
+        col1 = math.floor((x1 - first) / span_x)
+        row0 = math.floor((second - y1) / span_y)
+        row1 = math.floor((second - y0) / span_y)
     return col0, row0, col1, row1
 
 

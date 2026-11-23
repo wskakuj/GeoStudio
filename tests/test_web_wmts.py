@@ -39,8 +39,14 @@ CAPABILITIES = b"""<?xml version="1.0"?>
 
 
 def _jpeg(width=512, height=512):
+    # Kafelek z teksturą — jednolity kolor byłby uznany za „pusty” (brak danych).
+    image = Image.new("RGB", (width, height), (30, 90, 160))
+    for x in range(0, width, 8):
+        for y in range(0, height, 8):
+            image.paste((200, 180, 60), (x, y, min(x + 4, width),
+                                         min(y + 4, height)))
     buffer = BytesIO()
-    Image.new("RGB", (width, height), (30, 90, 160)).save(buffer, format="JPEG")
+    image.save(buffer, format="JPEG")
     return buffer.getvalue()
 
 
@@ -160,9 +166,19 @@ def test_non_image_tile_reports_server_message(monkeypatch):
     underlay_wms._wmts_layer_info.cache_clear()
     underlay_wms._wmts_layers.cache_clear()
     underlay_wms.clear_cache()
+    # Ścieżka WMTS zgłasza treść wyjątku serwera...
     with pytest.raises(ValueError, match="TileOutOfRange"):
-        underlay_wms.map_image("standard_wmts", "Raster", 2180,
-                               900000, -1200, 1000000, 0, 256, 256)
+        underlay_wms._wmts_image("standard_wmts", "Raster", 2180,
+                                 underlay_wms.WMSBounds(0, 900000, 1200, 1000000),
+                                 256, 256)
+    # ...a cały podkład i tak się pobiera (odwrót do WMS) albo kończy czytelnym
+    # błędem, gdy i WMS zawiedzie.
+    try:
+        data, media = underlay_wms.map_image(
+            "standard_wmts", "Raster", 2180, 900000, -1200, 1000000, 0, 256, 256)
+        assert data
+    except RuntimeError as exc:
+        assert "TileOutOfRange" in str(exc)
 
 
 def test_axis_order_is_detected_from_capabilities():
@@ -174,7 +190,7 @@ def test_axis_order_is_detected_from_capabilities():
     matrix = sets[0].matrices[0]
     # Matryca testowa ma 10x10 kafli po 1433 m, więc kadr musi się w niej zmieścić.
     col0, row0, col1, row1, swapped = wmts_service.tile_selection(
-        matrix, 0.0, 990000.0, 3000.0, 1000000.0)
+        matrix, -3000.0, 1000000.0, 0.0, 1009000.0)
     assert swapped is True
     assert 0 <= col0 <= col1 < matrix.matrix_width
     assert 0 <= row0 <= row1 < matrix.matrix_height
@@ -200,9 +216,9 @@ def test_tiles_fill_the_requested_frame_without_stretching(monkeypatch):
     underlay_wms._wmts_layers.cache_clear()
     underlay_wms.clear_cache()
     # Kadr 4000 x 2000 m -> obraz 400 x 200 px (proporcje 2:1).
-    data, media = underlay_wms.map_image(
+    data = underlay_wms._wmts_image(
         "standard_wmts", "Raster", 2180,
-        996000, -1000, 1000000, 3000, 400, 200)
+        underlay_wms.WMSBounds(996000, 1000, 1000000, 3000), 400, 200)
     image = Image.open(BytesIO(data))
     assert image.size == (400, 200)
 
@@ -219,7 +235,7 @@ def test_axis_swap_does_not_stretch(monkeypatch):
     underlay_wms._wmts_layer_info.cache_clear()
     underlay_wms._wmts_layers.cache_clear()
     underlay_wms.clear_cache()
-    data, media = underlay_wms.map_image(
+    data = underlay_wms._wmts_image(
         "standard_wmts", "Raster", 2180,
-        990000, -3000, 1000000, 0, 300, 200)
+        underlay_wms.WMSBounds(-3000, 1000000, 0, 1009000), 300, 200)
     assert Image.open(BytesIO(data)).size == (300, 200)
