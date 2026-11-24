@@ -639,7 +639,10 @@ class PreviewWorkspace:
             existing=self._label_positions.get(obj.uid,{})
             if existing.get(field)==point:
                 return {**self._editing_status(),"changed":False}
-            before=self._doc.to_bytes()
+            # Szybka ścieżka: porównujemy TYLKO linie tego obiektu. Wcześniej
+            # każde przesunięcie serializowało całą mapę dwa razy (2 x 112 tys.
+            # linii) — stąd wyraźna pauza po upuszczeniu etykiety.
+            before_lines=list(self._doc.lines[obj.start:obj.end])
             with self._history.begin(
                 "Przesunięcie etykiety "+field+" ("+obj.code+")",
                 selection_before=(obj.uid,)
@@ -649,22 +652,20 @@ class PreviewWorkspace:
                 # przetrwała samo zapisanie MAP (bez pliku towarzyszącego).
                 if obj.code == "5310" and field in ("A1", "A2"):
                     base = _label_anchor(obj)
+                    # reparse=False: etykiety czytamy wprost z linii obiektu,
+                    # więc pełne parsowanie mapy nie jest potrzebne.
                     self._doc.set_label_offset(
                         obj.uid, 2 if field == "A1" else 3,
                         round(point[0] - base[0], 3),
-                        round(point[1] - base[1], 3))
-            after=self._doc.to_bytes()
-            if after!=before:
+                        round(point[1] - base[1], 3), reparse=False)
+            after_lines=list(self._doc.lines[obj.start:obj.end])
+            if after_lines!=before_lines:
                 # Wolno zmienić wyłącznie rekordy etykiet (L), nigdy geometrię.
-                old_lines=before.splitlines(keepends=True)
-                new_lines=after.splitlines(keepends=True)
-                if len(old_lines)!=len(new_lines):
+                if len(after_lines)!=len(before_lines):
                     raise ValueError("Naruszono geometrię MAP podczas przesuwania etykiety.")
-                for index,(a,b) in enumerate(zip(old_lines,new_lines)):
+                for a,b in zip(before_lines,after_lines):
                     if a==b:
                         continue
-                    # Wolno zmienić rekord etykiety oraz nagłówek pliku
-                    # (;# ...), który niesie licznik zmian. Geometria nie.
                     if a.startswith(b"L ") or a.startswith(b";#"):
                         continue
                     raise ValueError("Naruszono geometrię MAP podczas przesuwania etykiety.")
@@ -899,17 +900,19 @@ class PreviewWorkspace:
                 base = _label_anchor(obj)
                 point = (round(float(point[0]) - base[0], 3),
                          round(float(point[1]) - base[1], 3))
-            before = self._doc.to_bytes()
             with self._history.begin(
                 ("Włącz" if enabled else "Wyłącz") + " wysięgnik " +
                 ("A1" if slot == 2 else "A2"),
                 selection_before=(obj.uid,),
             ):
+                # reparse=False: rekordy L czytamy wprost z linii obiektu, więc
+                # pełne parsowanie 112 tys. linii nie jest potrzebne (było ~1 s).
                 changed = self._doc.set_label_leader(
-                    obj.uid, slot, enabled, point, prefer_left)
+                    obj.uid, slot, enabled, point, prefer_left, reparse=False)
             if not changed:
                 return {**self._editing_status(), "changed": False}
-            self._reindex(self._doc, self._doc.filename)
+            # Rekordy L czytamy wprost z linii obiektu, więc obiekt nie wymaga
+            # ponownego parsowania — wystarczy podbić rewizję.
             self._revision += 1
             return {**self._editing_status(), "changed": True,
                     "fid": fid, "slot": slot, "enabled": enabled,

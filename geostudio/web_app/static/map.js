@@ -6517,35 +6517,53 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
         Math.hypot(screen.x-cx(b),screen.y-cy(b));
     })[0]||null;
   }
-  async function commitLabelDrag(drag) {
-    if(!drag||state.editBusy)return;
-    const x=Math.round(-drag.label.y*1000)/1000;
-    const y=Math.round(drag.label.x*1000)/1000;
-    const body={...editRequestBody(),
-      fid:drag.fid,field:drag.field,x,y};
-    state.editBusy=true;state.editBusySince=Date.now();updateEditState(state.edit);
-    try{
-      const result=await api("/api/labels/move",{
-        method:"POST",headers:{"Content-Type":"application/json"},
-        body:JSON.stringify(body)
-      });
-      updateEditState(result);
-      // Tylko odświeżenie widoku — pełny reload dokumentu kasował listę
-      // etykiet i blokował chwycenie kolejnej (program „przestawał reagować”).
-      scheduleViewport(true);
-      inform("Przeniesiono osobną etykietę "+drag.field+
-        " na X: "+x.toFixed(3)+", Y: "+y.toFixed(3)+
-        ". Ctrl+Z cofa. Zapisz MAP i towarzyszący JSON.");
-    }catch(error){
-      drag.label.x=drag.origin.x;drag.label.y=drag.origin.y;
-      drag.label.offset=drag.origin.offset;
-      drag.label.manuallyPlaced=drag.origin.manuallyPlaced;
-      inform("Etykieta nie została przeniesiona: "+error.message,true);
-      scheduleViewport(true);
-    }finally{
-      state.editBusy=false;state.editBusySince=0;updateEditState(state.edit);
-      requestDraw();
+  // Zapis pozycji etykiety leci w tle: upuszczenie jest natychmiastowe,
+  // interfejs nie czeka na serwer. Kolejne ruchy tego samego napisu
+  // zastępują poprzednie (koalescencja), więc szybkie przeciąganie nie
+  // wysyła lawiny żądań.
+  const pendingLabelMoves=new Map();
+  let labelMoveTimer=null;
+  function queueLabelMove(drag) {
+    const key=drag.fid+"|"+drag.field;
+    pendingLabelMoves.set(key,{fid:drag.fid,field:drag.field,
+      x:Math.round(-drag.label.y*1000)/1000,
+      y:Math.round(drag.label.x*1000)/1000,
+      origin:drag.origin,label:drag.label});
+    clearTimeout(labelMoveTimer);
+    labelMoveTimer=setTimeout(flushLabelMoves,140);
+  }
+  async function flushLabelMoves() {
+    if(!pendingLabelMoves.size||!state.edit)return;
+    const batch=[...pendingLabelMoves.values()];
+    pendingLabelMoves.clear();
+    for(const item of batch){
+      try{
+        const result=await api("/api/labels/move",{
+          method:"POST",headers:{"Content-Type":"application/json"},
+          body:JSON.stringify({...editRequestBody(),fid:item.fid,
+            field:item.field,x:item.x,y:item.y})
+        });
+        updateEditState(result);
+      }catch(error){
+        // Cofamy tylko wtedy, gdy etykieta nie ruszyła się ponownie.
+        if(!pendingLabelMoves.has(item.fid+"|"+item.field)){
+          item.label.x=item.origin.x;item.label.y=item.origin.y;
+          item.label.offset=item.origin.offset;
+          item.label.manuallyPlaced=item.origin.manuallyPlaced;
+          requestDraw();
+        }
+        inform("Etykieta nie została przeniesiona: "+error.message,true);
+        break;
+      }
     }
+    // Odświeżenie widoku dopiero po zapisie — jedno na serię ruchów.
+    scheduleViewport(true);
+  }
+  function commitLabelDrag(drag) {
+    if(!drag)return;
+    // Bez blokady edycji: pozycja jest już ustawiona lokalnie przez przeciąganie.
+    queueLabelMove(drag);
+    requestDraw();
   }
 
   // Twardy reset stanów przeciągania: jeśli pointerup gdzieś zginie
@@ -6560,6 +6578,25 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
     requestDraw();
   }
   window.addEventListener("blur",()=>{if(state.drag||state.labelDrag||state.anchorDrag)resetTransientDrags();});
+  // Utrata wskaźnika (alt-tab, ramka, tablet) nie może zostawić mapy zablokowanej.
+  window.addEventListener("pointercancel",ev=>{
+    if(state.labelDrag||state.anchorDrag||state.drag)resetTransientDrags();
+  },true);
+  // Awaryjnie: pointerup po przeciąganiu etykiety/kotwicy zawsze kończy stan,
+  // nawet gdy identyfikator wskaźnika się nie zgadza.
+  window.addEventListener("pointerup",ev=>{
+    // Tylko wtedy, gdy zwykły handler nie dokończył (np. inny identyfikator
+    // wskaźnika): inaczej zapis poszedłby dwa razy.
+    const dragState=state.drag;
+    if(state.labelDrag&&dragState&&dragState.pointer!==ev.pointerId){
+      const moving=state.labelDrag;state.labelDrag=null;state.drag=null;
+      if(dragState.moved)commitLabelDrag(moving);
+      requestDraw();
+    }
+    if(state.anchorDrag&&state.anchorDrag.id!==ev.pointerId){
+      state.anchorDrag=null;requestDraw();
+    }
+  },true);
   document.addEventListener("visibilitychange",()=>{
     if(document.hidden&&(state.drag||state.labelDrag||state.anchorDrag))resetTransientDrags();
   });
@@ -6837,6 +6874,15 @@ inform("Klikaj mapę, aby wstawiać kolejne oznaczenia. Naciśnij Esc lub wybier
     flipLeaderSide(selected,key==="q");
   });
 
+  // Koniec pracy z wysięgnikami: wyłączamy tryb, żeby mapa wróciła do
+  // normalnego zachowania (klikanie, rysowanie, zaznaczanie).
+  function leaveLeaderMode(){
+    if(!state.leaderMode)return;
+    state.leaderMode=false;
+    $("labels-mode").setAttribute("aria-pressed","false");
+    canvas.style.cursor="";
+    requestDraw();
+  }
   async function setLeaderAnchor(selected,world){
     try{
       const result=await api("/api/labels/leader",{
@@ -6847,9 +6893,14 @@ inform("Klikaj mapę, aby wstawiać kolejne oznaczenia. Naciśnij Esc lub wybier
           documentToken:state.edit.documentToken,revision:state.edit.revision})});
       updateEditState(result);
       await refreshLabelsNow();
-      inform("Punkt zaczepienia wysięgnika ustawiony ("+selected.field+").");
+      inform("Punkt zaczepienia wysięgnika ustawiony ("+selected.field+
+        "). Tryb wysięgników wyłączony — włącz go ponownie przyciskiem „Wysięgniki”.");
     }catch(error){
       inform("Nie ustawiono kotwicy: "+error.message,true);
+    }finally{
+      // Zawsze wracamy do normalnej pracy, także po błędzie.
+      leaveLeaderMode();
+      requestDraw();
     }
   }
   async function flipLeaderSide(selected,left){
@@ -6907,6 +6958,9 @@ inform("Klikaj mapę, aby wstawiać kolejne oznaczenia. Naciśnij Esc lub wybier
       inform(drag.snap?"Kotwica przyciągnięta do drugiej etykiety.":"Przesunięto punkt zaczepienia wysięgnika.");
     }catch(error){
       inform("Nie przesunięto kotwicy: "+error.message,true);
+    }finally{
+      leaveLeaderMode();
+      requestDraw();
     }
   },true);
   window.addEventListener("pointermove",ev=>{
