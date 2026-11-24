@@ -31,7 +31,7 @@ def test_wms_request_is_hidpi_cancelable_and_reloads_after_zoom():
     assert "state.width*dpr*1.20" in js
     assert "underlay.ticket++;" in js
     assert "if(underlay.abort){underlay.abort.abort();underlay.abort=null;}" in js
-    assert "setTimeout(refreshUnderlay,immediate?0:115)" in js
+    assert "setTimeout(refreshUnderlay,immediate?0:380)" in js   # debounce 380 ms
     # Rysowanie idzie po stosie podkładów, więc warunek jest per warstwa.
     assert "if(!underlay.enabled)return;" in js
     assert "if(!item.visible||!item.image||!item.bounds)continue;" in js
@@ -123,8 +123,8 @@ const state={width:700,height:550,pixelRatio:2};
 const size=new Function('state',src.slice(a,b)+'return underlayRequestDimensions;')(state);
 const image=size([0,0,700,550]);
 // Limit ~800 tys. pikseli (szybszy render Geoportalu), wciąż ostro na ekranie.
-assert.ok(image.width>=800 && image.height>=600,JSON.stringify(image));
-assert.ok(image.width*image.height<=900000,JSON.stringify(image));
+assert.ok(image.width>=900 && image.height>=700,JSON.stringify(image));
+assert.ok(image.width*image.height<=1300000,JSON.stringify(image));
 for(const b of [[0,0,1,1000],[0,0,1000,1],[0,0,1500,1000]]){
  const dim=size(b);
  assert.ok(dim.width>=128 && dim.height>=128);

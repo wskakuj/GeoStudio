@@ -26,8 +26,8 @@ class Layer:
     crs = ["EPSG:2180"]
 
 
-def test_png_is_tried_first_and_jpeg_later(monkeypatch):
-    """Kolejność prób: PNG (zachowanie sprzed 2.0.30), potem JPEG."""
+def test_jpeg_is_requested_first(monkeypatch):
+    """Pierwsza próba to lekki JPEG bez przezroczystości."""
     seen = []
 
     def download(url, max_bytes):
@@ -38,11 +38,13 @@ def test_png_is_tried_first_and_jpeg_later(monkeypatch):
     monkeypatch.setattr(underlay_wms, "layers_for", lambda preset, url=None: [Layer()])
     underlay_wms.clear_cache()
     data, media = underlay_wms.map_image("standard", "ortho", 2180, 0, 0, 100, 100, 256, 256)
-    assert media == "image/png"
-    assert "FORMAT=image%2Fpng" in seen[0] or "FORMAT=image/png" in seen[0]
+    assert media == "image/jpeg"
+    assert "FORMAT=image%2Fjpeg" in seen[0] or "FORMAT=image/jpeg" in seen[0]
+    assert "TRANSPARENT=FALSE" in seen[0]
 
 
-def test_tiling_failure_falls_back_to_single_request(monkeypatch):
+def test_medium_frame_is_a_single_request(monkeypatch):
+    """Kadr 1600x1600 (2,5 mln px) idzie JEDNYM żądaniem, nie czterema kafelkami."""
     calls = []
 
     def download(url, max_bytes):
@@ -52,11 +54,9 @@ def test_tiling_failure_falls_back_to_single_request(monkeypatch):
     monkeypatch.setattr(underlay_wms, "_download", download)
     monkeypatch.setattr(underlay_wms, "layers_for", lambda preset, url=None: [Layer()])
     underlay_wms.clear_cache()
-    # Kafelki wyłączamy, żeby sprawdzić właśnie odwrót do jednego żądania.
-    monkeypatch.setattr(underlay_wms, "ORTO_TILE_LIMIT", 10 ** 9)
     data, media = underlay_wms.map_image("standard", "ortho", 2180, 0, 0,
                                          2000, 2000, 1600, 1600)
-    assert media == "image/png"
+    assert media == "image/jpeg"
     assert Image.open(BytesIO(data)).size == (1600, 1600)
     assert len(calls) == 1        # jedno żądanie, bez kafelków
 
@@ -71,8 +71,9 @@ def test_orto_tries_versions_and_formats_in_order(monkeypatch):
     """PNG 1.1.1 -> PNG 1.3.0 -> JPEG 1.1.1 -> JPEG 1.3.0, potem kafelki."""
     assert [a[0] for a in underlay_wms.ORTO_ATTEMPTS] == ["1.1.1", "1.3.0",
                                                           "1.1.1", "1.3.0"]
+    # JPEG bez przezroczystości najpierw: kilkanaście razy mniejszy transfer.
     assert [a[1] for a in underlay_wms.ORTO_ATTEMPTS] == [
-        "image/png", "image/png", "image/jpeg", "image/jpeg"]
+        "image/jpeg", "image/jpeg", "image/png", "image/png"]
 
 
 def test_last_error_message_is_the_service_exception(monkeypatch):

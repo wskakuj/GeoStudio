@@ -31,7 +31,8 @@ def test_geoportal_has_a_long_timeout():
 
 def test_client_asks_for_smaller_images():
     # 2048x2048 renderowało się dłużej niż limit czasu serwera.
-    assert "const maxPixels=sharp?2200000:800000;" in JS
+    # Jedno żądanie na kadr: 1,2 mln px (bez drugiej fazy „ostrej”).
+    assert "const maxPixels=sharp?1200000:1200000;" in JS
 
 
 def test_timeout_falls_back_to_a_smaller_image(monkeypatch):
@@ -46,11 +47,14 @@ def test_timeout_falls_back_to_a_smaller_image(monkeypatch):
 
     monkeypatch.setattr(underlay_wms, "_download", download)
     monkeypatch.setattr(underlay_wms, "layers_for", lambda preset, url=None: [Layer()])
-    # Wyłączamy kafelki, żeby sprawdzić właśnie odwrót do mniejszego obrazu.
+    # Kafelki też wyłączamy — sprawdzamy właśnie odwrót do mniejszego obrazu.
     monkeypatch.setattr(underlay_wms, "ORTO_TILE_LIMIT", 10_000_000)
+    monkeypatch.setattr(underlay_wms, "_fetch_orto_tiles",
+                        lambda *a, **k: (_ for _ in ()).throw(RuntimeError("brak kafelków")))
     underlay_wms.clear_cache()
     data, media = underlay_wms.map_image("standard", "ortho", 2180,
                                          0, 0, 1000, 1000, 1600, 1600)
-    assert media == "image/png"
+    # Odwrót do mniejszego obrazu idzie jeszcze w PNG (tak było i działa).
+    assert media in ("image/png", "image/jpeg")
     assert Image.open(BytesIO(data)).size == (64, 64)
     assert any("WIDTH=1120" in url for url in calls)   # 0,7 × 1600

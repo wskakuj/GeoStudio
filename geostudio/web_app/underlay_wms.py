@@ -194,8 +194,23 @@ _CACHE_LOCK = threading.Lock()
 
 
 def _cache_key(preset, layer, epsg, xmin, ymin, xmax, ymax, width, height):
+    """Klucz cache z zapasem: przesunięcie o kilka pikseli trafia w ten sam wpis.
+
+    Wcześniej klucz zawierał dokładny BBOX (co do centymetra), więc każde
+    drgnięcie mapy dawało pudło. Teraz BBOX jest przycinany do siatki
+    odpowiadającej ~2 pikselom obrazu, a rozmiar pozostaje w kluczu.
+    """
+    span_x = max(abs(xmax - xmin), 1e-9)
+    span_y = max(abs(ymax - ymin), 1e-9)
+    step_x = span_x / max(1, width) * 2.0
+    step_y = span_y / max(1, height) * 2.0
+
+    def snap(value, step):
+        return round(round(value / step) * step, 6)
+
     return (preset, layer, epsg,
-            round(xmin, 2), round(ymin, 2), round(xmax, 2), round(ymax, 2),
+            snap(xmin, step_x), snap(ymin, step_y),
+            snap(xmax, step_x), snap(ymax, step_y),
             width, height)
 
 
@@ -234,6 +249,7 @@ def clear_cache() -> None:
     # Capabilities to też cache — bez tego testy i zmiana serwera widziałyby
     # stary dokument XML.
     _wmts_capabilities_xml.cache_clear()
+    _tile_cache_clear()
 
 
 def _preset(name: str, url: str | None = None) -> str:
@@ -340,6 +356,35 @@ def _wmts_layers(preset: str) -> tuple:
                  for layer in published)
 
 
+# Cache pojedynczych kafelków WMTS. Kafelki są niezmienne (ta sama matryca,
+# wiersz i kolumna), więc trzymamy je w pamięci i ograniczamy rozmiar.
+_TILE_CACHE: dict = {}
+_TILE_CACHE_ORDER: list = []
+_TILE_CACHE_LIMIT = 512          # ok. 512 kafelków ~ kilkadziesiąt MB
+_TILE_CACHE_LOCK = threading.Lock()
+
+
+def _tile_cache_get(key):
+    with _TILE_CACHE_LOCK:
+        return _TILE_CACHE.get(key)
+
+
+def _tile_cache_put(key, raw: bytes) -> None:
+    with _TILE_CACHE_LOCK:
+        if key not in _TILE_CACHE:
+            _TILE_CACHE_ORDER.append(key)
+        _TILE_CACHE[key] = raw
+        while len(_TILE_CACHE_ORDER) > _TILE_CACHE_LIMIT:
+            oldest = _TILE_CACHE_ORDER.pop(0)
+            _TILE_CACHE.pop(oldest, None)
+
+
+def _tile_cache_clear() -> None:
+    with _TILE_CACHE_LOCK:
+        _TILE_CACHE.clear()
+        _TILE_CACHE_ORDER.clear()
+
+
 def _wmts_image(preset: str, layer: str, epsg: int, bounds,
                 width: int, height: int) -> bytes:
     """Składa obraz z kafelków WMTS i przycina do żądanego rozmiaru."""
@@ -379,9 +424,18 @@ def _wmts_image(preset: str, layer: str, epsg: int, bounds,
             for col in range(col0, col1 + 1)]
 
     def fetch(row, col):
+        # Cache kafelków: klucz (preset, layer, matryca, wiersz, kolumna).
+        # Po pierwszym pobraniu przesuwanie mapy nie dotyka Geoportalu.
+        key = (preset, layer, matrix_set.identifier, matrix.identifier,
+               row, col)
+        cached = _tile_cache_get(key)
+        if cached is not None:
+            return cached
         url = gettile_url(base, layer, matrix_set.identifier, matrix.identifier,
                           row, col, style=style, image_format=image_format)
-        return _download(url, MAX_WMS_BYTES)
+        raw = _download(url, MAX_WMS_BYTES)
+        _tile_cache_put(key, raw)
+        return raw
 
     with ThreadPoolExecutor(max_workers=2) as pool:
         tiles = list(pool.map(lambda item: fetch(*item), urls))
@@ -464,7 +518,7 @@ def list_layers(preset: str, url: str | None = None) -> dict:
 
 
 ORTO_FORMAT = "image/jpeg"
-ORTO_TILE_LIMIT = 450_000        # powyżej tylu pikseli dzielimy na kafelki
+ORTO_TILE_LIMIT = 2_400_000      # kafelki dopiero powyżej 2,4 mln px
 
 
 def _fetch_once(base, layer, crs, bounds, width, height, *, version,
@@ -541,11 +595,15 @@ def _stitch(tiles: list[bytes], width: int, height: int,
 # Kolejność prób dla ortofoto. NAJPIERW dokładnie to, co działało przed 2.0.30
 # (jedno żądanie, PNG, z przezroczystością) — szybkość jest warta zachodu tylko
 # wtedy, gdy obraz w ogóle się pobiera.
+# Ortofoto to zdjęcie lotnicze — przezroczystość jest zbędna, a PNG z kanałem
+# alfa waży kilkanaście razy więcej niż JPEG i Geoportal renderuje go dłużej.
+# Dlatego JPEG bez przezroczystości jest PIERWSZĄ próbą, a PNG dopiero odwrotem
+# (przydaje się np. dla usług zwracających paletę lub braki danych).
 ORTO_ATTEMPTS = (
-    ("1.1.1", "image/png", True),
-    ("1.3.0", "image/png", True),
     ("1.1.1", "image/jpeg", False),
     ("1.3.0", "image/jpeg", False),
+    ("1.1.1", "image/png", True),
+    ("1.3.0", "image/png", True),
 )
 
 
@@ -568,23 +626,17 @@ def _fetch_orto_smaller(base, layer, crs, bounds, width, height,
 
 def _fetch_orto(base, layer, crs, bounds, width, height,
                 time: str | None = None) -> bytes:
-    """Ortofoto z pełnym łańcuchem odwrotów.
+    """Ortofoto: jedno lekkie żądanie, kafelki tylko awaryjnie.
 
-    1. jedno żądanie PNG (zachowanie sprzed 2.0.30 — zawsze działało),
-    2. to samo w WMS 1.3.0 (niektóre usługi przyjmują tylko tę wersję),
-    3. JPEG (mniejszy transfer),
-    4. na końcu kafelki — tylko gdy wszystko inne zawiodło.
+    1. JPEG bez przezroczystości (1.1.1, potem 1.3.0) — kilkanaście razy
+       mniejszy transfer niż PNG z kanałem alfa,
+    2. PNG z przezroczystością (usługi bez JPEG),
+    3. kafelki — tylko dla bardzo dużego kadru albo po nieudanych próbach,
+    4. mniejszy obraz, gdy serwer Geoportalu nie wyrabia.
     """
     errors = []
-    # Duży kadr: najpierw kafelki w 2 wątkach (serwer renderuje je szybciej),
-    # a dopiero potem jedno wielkie żądanie jako odwrót.
-    if width * height > ORTO_TILE_LIMIT:
-        try:
-            return _fetch_orto_tiles(base, layer, crs, bounds, width, height,
-                                     time=time)
-        except Exception as exc:                      # noqa: BLE001
-            errors.append(str(exc))
-
+    # Jedno żądanie jest szybsze od czterech: kafelki dopiero wtedy, gdy kadr
+    # jest naprawdę duży albo pojedyncze próby zawiodły.
     for version, image_format, transparent in ORTO_ATTEMPTS:
         try:
             raw = _fetch_once(base, layer, crs, bounds, width, height,
@@ -594,6 +646,14 @@ def _fetch_orto(base, layer, crs, bounds, width, height,
             errors.append(str(exc))
             continue
         return _to_jpeg(raw) if image_format == "image/jpeg" else raw
+
+    # Kafelki: dla bardzo dużego kadru albo gdy pojedyncze żądania zawiodły.
+    if width * height > ORTO_TILE_LIMIT or errors:
+        try:
+            return _fetch_orto_tiles(base, layer, crs, bounds, width, height,
+                                     time=time)
+        except Exception as exc:                      # noqa: BLE001
+            errors.append(str(exc))
 
     # Ostatnia próba: mniejszy obraz (serwer Geoportalu bywa wolny).
     smaller = _fetch_orto_smaller(base, layer, crs, bounds, width, height,
