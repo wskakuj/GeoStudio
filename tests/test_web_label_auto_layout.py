@@ -31,8 +31,8 @@ def test_large_polygon_gets_both_labels_inside():
 
 
 def test_narrow_polygon_keeps_a1_inside_and_puts_a2_on_leader():
-    strip = box(0, 0, 14, 400)          # wąski w osi północy, długi pas
-    result = _layout([("u2", strip, (7.0, 200.0), "02c", "OL55|0.02")])
+    strip = box(0, 0, 22, 400)          # wąski w osi północy, długi pas
+    result = _layout([("u2", strip, (11.0, 200.0), "02c", "OL55|0.02")])
     change = result["changes"][0]
     assert change["labels"]["A1"]["flags"] == FLAG_PLAIN
     leader = change["labels"]["A2"]
@@ -67,10 +67,13 @@ def test_polylabel_stays_inside_concave_polygon():
     assert shape.contains(Point(x, y))
 
 
-def test_text_size_grows_with_scale():
+def test_text_size_matches_the_renderer_metrics():
+    """Rozmiar napisu nie zależy od skali — tak liczy klient (labelFontSize)."""
     small = text_size("02r", 5000)
     large = text_size("02r", 10000)
-    assert large[0] > small[0] and large[1] > small[1]
+    assert small == large
+    # 4 znaki + padding, wysokość jednej linii ~10,6 m
+    assert 10.0 < small[1] < 13.0
 
 
 def test_auto_layout_is_atomic_and_reversible():
@@ -143,15 +146,18 @@ def test_inside_label_sits_at_the_polygon_centre_not_at_the_base_point():
         assert abs(y - 100) < 12            # blok pionowy, więc lekko nad/pod
 
 
-def test_leader_attaches_to_the_inside_label():
+def test_leader_attaches_to_the_polygon_centre():
+    """A1 w środku, A2 na wysięgniku — zaczep w środku poligonu."""
     from shapely.geometry import box as _box
-    shape = _box(0, 0, 14, 120)             # wąski w osi północy: A1 się mieści, A2 nie
-    result = _layout([("u21", shape, (7.0, 60.0), "02c", "OL55|0.02")])
+    # 22 m w osi północy: A1 (12,6 m + margines) się mieści, kolumna A1+A2 nie.
+    shape = _box(0, 0, 22, 120)
+    result = _layout([("u21", shape, (11.0, 60.0), "02c", "OL55|0.02")])
     labels = result["changes"][0]["labels"]
     assert labels["A1"]["flags"] == FLAG_PLAIN
     assert labels["A2"]["flags"] in (FLAG_RIGHT, FLAG_LEFT)
-    # Zaczep wysięgnika = pozycja napisu, który został w środku.
-    assert labels["A2"]["anchor"] == (labels["A1"]["dx"], labels["A1"]["dy"])
+    # Zaczep wysięgnika leży wewnątrz poligonu.
+    ax, ay = labels["A2"]["anchor"]
+    assert 0 <= 11.0 + ax <= 22 and 0 <= 60.0 + ay <= 120
 
 
 def test_both_outside_share_one_anchor_in_the_polygon():
