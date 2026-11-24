@@ -74,7 +74,7 @@ def _thread_pool() -> dict:
 # komunikatem o przekroczeniu czasu. GUGiK odpowiada szybko, więc ma krótszy
 # limit (szybciej widać prawdziwy błąd).
 HOST_TIMEOUTS = {
-    "mapy.geoportal.gov.pl": 60,
+    "mapy.geoportal.gov.pl": 30,
     "integracja.gugik.gov.pl": 20,
     "integracja02.gugik.gov.pl": 20,
 }
@@ -159,7 +159,7 @@ def _download(url: str, max_bytes: int) -> bytes:
     last: Exception | None = None
     # Trzy próby z krótkim odstępem: Geoportal potrafi zerwać połączenie
     # przy serii żądań (kafelki), a natychmiastowa powtórka zwykle wystarcza.
-    for attempt in range(3):
+    for attempt in range(2):
         if attempt:
             time.sleep(0.15 * attempt)
         try:

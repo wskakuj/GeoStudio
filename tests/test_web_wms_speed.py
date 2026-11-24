@@ -22,7 +22,7 @@ def _png(width=64, height=64):
 
 def test_frame_size_is_capped_for_speed():
     # Jedno żądanie na kadr: 1,2 mln px (bez drugiej fazy „ostrej”).
-    assert "const maxPixels=sharp?1200000:1200000;" in JS
+    assert "const maxPixels=sharp?1000000:1000000;" in JS
     assert "scheduleUnderlaySharp" not in JS
 
 
