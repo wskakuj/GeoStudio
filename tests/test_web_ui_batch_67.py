@@ -148,3 +148,16 @@ def test_second_click_creates_the_connector():
     assert 'if(state.tool==="link"&&state.drawPoints.length>=2){' in JS
     start = JS.index('if(state.tool==="link"&&state.drawPoints.length>=2){')
     assert "finishGeometryDrawing();" in JS[start:start + 120]
+
+
+def test_escape_cancels_the_connector():
+    """Esc w trybie Łącznik musi anulować akcję, a nie tylko ostatni punkt."""
+    # Właściwy handler Escape (nie dispatch w finishGeometryDrawing).
+    start = JS.index('Wkreślanie łącznika anulowane.') - 300
+    block = JS[start:start + 520]
+    assert "Wkreślanie łącznika anulowane." in block
+    assert 'setTool("select");' in block
+    assert "state.drawPoints=[];" in block
+    # Musi być przed gałęzią rysowania poligonu, żeby nie „cofać punktu”.
+    polygon_branch = JS.index('if(["draw","cut","line","line-edit"].includes(state.tool)){\n        ev.preventDefault();\n        if(state.drawPoints.length){')
+    assert start < polygon_branch
