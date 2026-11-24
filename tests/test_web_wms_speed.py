@@ -21,7 +21,9 @@ def _png(width=64, height=64):
 
 
 def test_frame_size_is_capped_for_speed():
-    assert "const maxPixels=800000;" in JS
+    # Szybki podgląd 800 tys. px, a po zatrzymaniu widoku ostra faza 2,2 mln.
+    assert "const maxPixels=sharp?2200000:800000;" in JS
+    assert "scheduleUnderlaySharp" in JS
 
 
 def test_large_frames_split_into_tiles():

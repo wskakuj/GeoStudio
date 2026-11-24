@@ -2768,7 +2768,10 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
       });
     }
   }
-  function underlayRequestDimensions(bounds){
+  // `sharp` = druga, dokładniejsza faza po zatrzymaniu widoku (patrz
+  // scheduleUnderlaySharp). Szybki podgląd zostaje na 800 tys. pikseli,
+  // a detaliczny obraz idzie do 2,2 mln — czyli wyraźnie ostrzej.
+  function underlayRequestDimensions(bounds, sharp=false){
     // WMS must be requested at screen/HiDPI resolution rather than
     // stretching a single low-resolution bitmap through successive zooms.
     const aspect=(bounds[2]-bounds[0])/(bounds[3]-bounds[1]);
@@ -2779,7 +2782,7 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
     // Serwer przyjmuje do 3 mln pikseli, ale ortofoto w tej wielkości
     // renderuje się dłużej niż nasz limit czasu — dlatego dla podkładów
     // ograniczamy się do ~1 mln pikseli (ok. 1000x1000).
-    const maxPixels=800000;
+    const maxPixels=sharp?2200000:800000;
     if(width*height>maxPixels){
       const ratio=Math.sqrt(maxPixels/(width*height));
       width=Math.max(128,Math.floor(width*ratio));
@@ -2814,6 +2817,23 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
     const documentToken=state.edit?.documentToken;
     await Promise.all(targets.map(item=>refreshUnderlayItem(
       item,bounds,size,documentToken)));
+    // Po zatrzymaniu widoku dociągamy ostrzejszy obraz tego samego kadru.
+    scheduleUnderlaySharp(targets,bounds,documentToken);
+  }
+  let underlaySharpTimer=null;
+  function scheduleUnderlaySharp(targets,bounds,documentToken){
+    clearTimeout(underlaySharpTimer);
+    if(!targets.length)return;
+    underlaySharpTimer=setTimeout(async()=>{
+      if(state.editBusy||!underlays.some(item=>item.visible))return;
+      // Kadr mógł się zmienić — wtedy zwykłe odświeżenie już go obsłuży.
+      const current=boundsFromViewport(.45);
+      if(Math.abs(current[0]-bounds[0])>1e-6||Math.abs(current[1]-bounds[1])>1e-6||
+         Math.abs(current[2]-bounds[2])>1e-6||Math.abs(current[3]-bounds[3])>1e-6)return;
+      const size=underlayRequestDimensions(bounds,true);
+      await Promise.all(targets.map(item=>refreshUnderlayItem(
+        item,bounds,size,documentToken)));
+    },900);
   }
   async function refreshUnderlayItem(item,bounds,size,documentToken){
     const id=++item.ticket;

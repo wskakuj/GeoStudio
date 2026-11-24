@@ -2087,12 +2087,15 @@ body[data-theme="dark"] #raster-summary[data-result="ready"] strong { color:#93e
 .focus-control kbd { font-size:9px; }
 .focus-control[aria-pressed="true"] { border-color:#2aa88e; background:#123f37; color:#8ff2d6; }
 .panel-collapse { display:inline-grid; place-items:center; gap:1px; min-width:24px; height:24px;
-  padding:0 6px; border:1px solid #2d4054; background:#182a3d; color:#a8c0d4; border-radius:7px;
-  font-size:13px; line-height:1; cursor:pointer; transition:.15s; }
-.panel-collapse:hover { background:#22394c; color:#ebf9ff; }
+  padding:0 6px; border:1px solid var(--ui-edge,#2d4054); background:var(--ui-panel,#182a3d);
+  color:var(--ui-muted,#a8c0d4); border-radius:7px; font-size:13px; line-height:1; cursor:pointer;
+  transition:.15s; }
+.panel-collapse:hover { background:var(--ui-accent-soft,#22394c); color:var(--ui-ink,#ebf9ff); }
 .panel-collapse svg { width:14px; height:14px; }
-.ribbon-collapse { display:inline-flex; align-items:center; gap:5px; margin-left:auto;
-  height:26px; font-size:10px; letter-spacing:.06em; text-transform:uppercase; font-weight:700; }
+/* Na początku rzędu zakładek, w jednej linii z nimi — bez pustej przerwy nad ikonami. */
+.ribbon-collapse { display:inline-flex; align-items:center; gap:5px; align-self:center;
+  height:24px; margin:0 10px 0 0; font-size:10px; letter-spacing:.06em; text-transform:uppercase;
+  font-weight:700; }
 
 /* Zwiń panel Warstwy mapy / Inspektor do wąskiej szyny */
 body.left-collapsed .workspace { grid-template-columns:36px minmax(0,1fr) 307px; }
