@@ -2752,6 +2752,13 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
       item.classList.toggle("active",item===panel);
     });
     pendingSheet=null;sheetDrag=null;requestDraw();
+    // Klik w zakładkę rozwija wstążkę tak samo jak przycisk „Zwiń/Rozwiń”.
+    if(document.body.classList.contains("ribbon-collapsed")||
+       document.body.classList.contains("focus-mode")){
+      document.body.classList.remove("ribbon-collapsed");
+      document.body.classList.remove("focus-mode");
+      applyPanelState();
+    }
     if(focus)tab.focus({preventScroll:true});
   }
   function setupRibbon(){
