@@ -46,6 +46,8 @@ MAX_BULK_EDIT_OBJECTS = 5000
 HEX = re.compile(r"^#[0-9A-Fa-f]{6}$")
 STYLE_FORMAT = "geostudio-visual-v1"
 TOPOLOGY_STACK_KEY = "__geostudio_topology_stack_v1__"
+FILL_RULES_KEY = "fills:rules"
+FILL_OPERATORS = ("zawiera", "rowna", "zaczyna", "konczy", "nie_zawiera")
 CODES = {
     "5214": "Linia obrębu",
     "5216": "Działki",
@@ -68,6 +70,76 @@ CODES = {
     "7900": "Oprawa / tekst",
 }
 LABEL_FIELDS = ("A1", "A2", "A3", "A4", "A5", "A6", "TX", "MP", "KR")
+
+
+
+def validate_fill_rules(rules) -> list[dict]:
+    """Sprawdza i normalizuje reguły wypełnienia (kolor + nasycenie + warunek)."""
+    if rules is None:
+        return []
+    if not isinstance(rules, list) or len(rules) > 200:
+        raise ValueError("Reguły wypełnienia muszą być listą (do 200 pozycji).")
+    cleaned = []
+    for raw in rules:
+        if not isinstance(raw, dict):
+            raise ValueError("Nieprawidłowa reguła wypełnienia.")
+        unknown = set(raw) - {"code", "field", "operator", "value",
+                              "color", "opacity", "enabled", "name"}
+        if unknown:
+            raise ValueError("Nieznane pole reguły wypełnienia.")
+        code = str(raw.get("code", "") or "").strip()
+        if code and not re.fullmatch(r"\d{3,6}", code):
+            raise ValueError("Kod reguły wypełnienia musi mieć 3–6 cyfr.")
+        field_name = str(raw.get("field", "") or "").strip().upper()
+        if field_name and field_name not in LABEL_FIELDS + ("TX",):
+            raise ValueError("Warunek może dotyczyć pola A1–A6, MP, KR lub TX.")
+        operator = str(raw.get("operator", "zawiera") or "zawiera").strip().lower()
+        if operator not in FILL_OPERATORS:
+            raise ValueError("Nieznany operator warunku wypełnienia.")
+        value = str(raw.get("value", "") or "").strip()
+        if field_name and not value:
+            raise ValueError("Warunek wymaga wartości (np. Ls).")
+        if len(value) > 64:
+            raise ValueError("Wartość warunku jest zbyt długa.")
+        color = str(raw.get("color", "#4FA3D1") or "#4FA3D1").strip()
+        if not HEX.match(color):
+            raise ValueError("Kolor wypełnienia musi być w formacie #RRGGBB.")
+        try:
+            opacity = int(raw.get("opacity", 40))
+        except (TypeError, ValueError) as exc:
+            raise ValueError("Nasycenie wypełnienia musi być liczbą 0–100.") from exc
+        if not 0 <= opacity <= 100:
+            raise ValueError("Nasycenie wypełnienia musi być w zakresie 0–100.")
+        cleaned.append({"code": code, "field": field_name,
+                        "operator": operator, "value": value,
+                        "color": color.upper(), "opacity": opacity,
+                        "enabled": raw.get("enabled", True) is not False,
+                        "name": str(raw.get("name", "") or "")[:64]})
+    return cleaned
+
+
+def fill_rule_matches(rule: dict, code: str, fields: dict) -> bool:
+    """Czy reguła pasuje do obiektu (kod + opcjonalny warunek na polu)."""
+    if not rule.get("enabled", True):
+        return False
+    wanted = rule.get("code") or ""
+    if wanted and wanted != code:
+        return False
+    field_name = rule.get("field") or ""
+    if not field_name:
+        return True                      # sama reguła kodu
+    text = str(fields.get(field_name, "") or "").casefold()
+    needle = str(rule.get("value", "") or "").casefold()
+    operator = rule.get("operator", "zawiera")
+    if operator == "rowna":
+        return text == needle
+    if operator == "zaczyna":
+        return text.startswith(needle)
+    if operator == "konczy":
+        return text.endswith(needle)
+    if operator == "nie_zawiera":
+        return needle not in text
+    return needle in text
 
 
 def _inspector_fields(obj):
@@ -3051,6 +3123,37 @@ class PreviewWorkspace:
         return {"loaded": True, "styleCount": len(styles), "labelPositions": len(labels),
                 "compilationScale":self._current_compilation_scale()}
 
+    def fill_rules(self) -> list[dict]:
+        """Reguły wypełnienia ustawione przez użytkownika (kolejność = priorytet)."""
+        raw = self._styles.get(FILL_RULES_KEY, [])
+        return raw if isinstance(raw, list) else []
+
+    def set_fill_rules(self, rules) -> list[dict]:
+        cleaned = validate_fill_rules(rules)
+        self._styles[FILL_RULES_KEY] = cleaned
+        self._fill_rules_cache = None
+        return cleaned
+
+    def _fill_rule_for(self, obj):
+        """(kolor, nasycenie) pierwszej pasującej reguły albo None."""
+        rules = self.fill_rules()
+        if not rules:
+            return None
+        key = (obj.code, obj.fields.get("A1", ""), obj.fields.get("A2", ""),
+               obj.fields.get("TX", ""))
+        cache = getattr(self, "_fill_rules_cache", None)
+        if cache is None:
+            cache = self._fill_rules_cache = {}
+        if key in cache:
+            return cache[key]
+        found = None
+        for rule in rules:
+            if fill_rule_matches(rule, obj.code, obj.fields):
+                found = (rule["color"], rule["opacity"])
+                break
+        cache[key] = found
+        return found
+
     def _style(self, entry: _Entry) -> dict:
         """Approximate the classic scene_builder styling WITHOUT inventing fills.
 
@@ -3091,6 +3194,11 @@ class PreviewWorkspace:
             # Road class is never a filled land-use area, even with a code
             # styling override (same rule as the original PySide6 window).
             pass
+        elif (rule_fill := self._fill_rule_for(obj)) is not None:
+            # Reguła użytkownika (kod + warunek) ma pierwszeństwo nad
+            # biblioteką CDF/LAY i nad kolorem natywnym.
+            fill_color, rule_opacity = rule_fill
+            opacity = _opacity(rule_opacity, 40)
         elif force:
             fill_color = _color(code_style["fill"], border)
             opacity = _opacity(code_style.get("opacity", 100), 100)
@@ -3229,6 +3337,26 @@ class PreviewWorkspace:
             self._revision+=1
             return {**self._editing_status(),"changed":True,
                     "code":code}
+
+    def set_fill_rules_editable(self, rules, *, document_token: str,
+                                revision: int) -> dict:
+        """Reguły wypełnienia: kolor + nasycenie, z opcjonalnym warunkiem."""
+        with self._lock:
+            self._require_edit(document_token, revision)
+            cleaned = validate_fill_rules(rules)
+            if cleaned == self.fill_rules():
+                return {**self._editing_status(), "changed": False,
+                        "rules": cleaned}
+            with self._history.begin("Styl wypełnienia (" +
+                                     str(len(cleaned)) + " reguł)"):
+                if cleaned:
+                    self._styles[FILL_RULES_KEY] = cleaned
+                else:
+                    self._styles.pop(FILL_RULES_KEY, None)
+            self._fill_rules_cache = None
+            self._revision += 1
+            return {**self._editing_status(), "changed": True,
+                    "rules": cleaned}
 
     def label_settings(self,code: str) -> dict:
         if not re.fullmatch(r"[0-9]{4}",str(code)):

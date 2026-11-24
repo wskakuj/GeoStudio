@@ -7733,6 +7733,103 @@ inform("Klikaj mapę, aby wstawiać kolejne oznaczenia. Naciśnij Esc lub wybier
     $("underlay-opacity-value").textContent=ev.target.value+"%";
     requestDraw();renderRasterLayers();
   });
+
+  // ── Styl wypełnienia (kolor + nasycenie, według kodu i warunku) ──────
+  let fillRules=[];
+  function describeFillRule(rule){
+    const cond=rule.field
+      ?" · "+rule.field+" "+({zawiera:"zawiera",rowna:"równa się",
+          zaczyna:"zaczyna się od",konczy:"kończy się na",
+          nie_zawiera:"nie zawiera"}[rule.operator]||rule.operator)+" „"+
+        rule.value+"”"
+      :"";
+    return (rule.code||"dowolny kod")+cond;
+  }
+  function renderFillRules(){
+    const list=$("fill-rules-list");
+    if(!list)return;
+    list.replaceChildren();
+    if(!fillRules.length){
+      list.innerHTML='<p class="select-preview">Brak reguł.</p>';
+    }
+    fillRules.forEach((rule,index)=>{
+      const row=document.createElement("div");
+      row.className="fill-rule-row";
+      const swatch=document.createElement("span");
+      swatch.className="fill-rule-swatch";
+      swatch.style.background=rule.color;
+      swatch.style.opacity=String(Math.max(.15,rule.opacity/100));
+      const text=document.createElement("span");
+      text.className="fill-rule-text";
+      text.textContent=describeFillRule(rule)+" · "+rule.color+" · "+
+        rule.opacity+"%";
+      const up=document.createElement("button");
+      up.type="button";up.className="panel-collapse";up.textContent="↑";
+      up.title="Wyżej (ważniejsze)";
+      up.onclick=()=>{if(index>0){const [m]=fillRules.splice(index,1);
+        fillRules.splice(index-1,0,m);renderFillRules();}};
+      const down=document.createElement("button");
+      down.type="button";down.className="panel-collapse";down.textContent="↓";
+      down.title="Niżej";
+      down.onclick=()=>{if(index<fillRules.length-1){
+        const [m]=fillRules.splice(index,1);fillRules.splice(index+1,0,m);
+        renderFillRules();}};
+      const del=document.createElement("button");
+      del.type="button";del.className="panel-collapse";del.textContent="×";
+      del.title="Usuń regułę";
+      del.onclick=()=>{fillRules.splice(index,1);renderFillRules();};
+      row.append(swatch,text,up,down,del);
+      list.append(row);
+    });
+    const summary=$("fill-style-summary");
+    if(summary)
+      summary.textContent=fillRules.length
+        ?fillRules.length+" reguł — pierwsza pasująca wygrywa."
+        :"Brak reguł — wypełnienia z bibliotek MAP pozostają bez zmian.";
+  }
+  async function openFillStyle(){
+    if(!state.meta){inform("Najpierw otwórz mapę.");return;}
+    try{
+      const data=await api("/api/cartography/fills");
+      fillRules=Array.isArray(data.rules)?data.rules:[];
+    }catch(_){fillRules=[];}
+    renderFillRules();
+    $("fill-style-dialog").showModal();
+  }
+  function addFillRule(){
+    const code=String($("fill-rule-code").value||"").trim();
+    if(code&&!/^\d{3,6}$/.test(code)){
+      inform("Kod musi mieć 3–6 cyfr.",true);return;
+    }
+    const field=$("fill-rule-field").value;
+    const value=String($("fill-rule-value").value||"").trim();
+    if(field&&!value){inform("Warunek wymaga wartości, np. Ls.",true);return;}
+    fillRules.push({code,field,operator:$("fill-rule-operator").value,
+      value,color:$("fill-rule-color").value.toUpperCase(),
+      opacity:Number($("fill-rule-opacity").value),enabled:true});
+    renderFillRules();
+  }
+  async function saveFillRules(ev){
+    if(ev)ev.preventDefault();
+    if(!state.edit||state.editBusy)return;
+    try{
+      const result=await api("/api/cartography/fills",{method:"POST",
+        headers:{"Content-Type":"application/json"},
+        body:JSON.stringify({rules:fillRules,
+          documentToken:state.edit.documentToken,revision:state.edit.revision})});
+      updateEditState(result);
+      await refreshLabelsNow();
+      inform("Zapisano reguły wypełnienia. Ctrl+Z cofa.");
+      $("fill-style-dialog").close();
+    }catch(error){
+      inform("Nie zapisano reguł: "+error.message,true);
+    }
+  }
+  link("tool-fill-style",openFillStyle);
+  link("fill-style-close",()=>$("fill-style-dialog").close());
+  link("fill-rule-add",addFillRule);
+  link("fill-style-clear",()=>{fillRules=[];renderFillRules();});
+  $("fill-style-form").addEventListener("submit",saveFillRules);
   link("tool-sidecar",()=> $("file-sidecar").click());
   link("tool-cartography",chooseCartographicLibraries);
   link("tool-carto-catalog",openCartographyCatalog);

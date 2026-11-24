@@ -773,6 +773,22 @@ def create_app(workspace: PreviewWorkspace | None = None, *,
         except (ValueError,TypeError) as exc:
             raise HTTPException(400,str(exc)) from exc
 
+    @app.get("/api/cartography/fills")
+    async def get_fill_rules():
+        return {"rules": state.fill_rules()}
+
+    @app.post("/api/cartography/fills")
+    async def set_fill_rules(request: Request):
+        data = await edit_payload(request)
+        try:
+            return state.set_fill_rules_editable(
+                data.get("rules"), document_token=data.get("documentToken"),
+                revision=data.get("revision"))
+        except RuntimeError as exc:
+            raise HTTPException(409, str(exc)) from exc
+        except (ValueError, TypeError) as exc:
+            raise HTTPException(400, str(exc)) from exc
+
     @app.get("/api/labels/settings")
     async def get_label_settings(code: str):
         try:

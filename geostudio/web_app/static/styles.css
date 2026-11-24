@@ -2590,3 +2590,11 @@ body[data-theme] .inspector-summary-ha {
   padding: 3px 9px;
   white-space: nowrap;
 }
+/* Reguły stylu wypełnienia (Kartografia → Wypełnienie) */
+.fill-rules-list { display:flex; flex-direction:column; gap:6px; margin:10px 0 4px; }
+.fill-rule-row { display:flex; align-items:center; gap:8px; padding:6px 9px;
+  border:1px solid var(--ui-edge,#2d4054); border-radius:8px;
+  background:var(--ui-panel,#16263a); }
+.fill-rule-swatch { width:22px; height:16px; border-radius:4px; flex:0 0 auto;
+  border:1px solid var(--ui-edge,#2d4054); }
+.fill-rule-text { flex:1 1 auto; font-size:11.5px; color:var(--ui-ink,#dfeaf5); }
