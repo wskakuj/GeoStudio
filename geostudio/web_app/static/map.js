@@ -3891,6 +3891,9 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
       inform("Tryb P: wybierz zamknięty poligon i przeciągnij jego węzeł.");
     else if(tool==="nodes")
       inform("Tryb P: przeciągnij jeden z węzłów. Ctrl+Z cofa zmianę.");
+    else if(tool==="link")
+      inform("Łącznik 4100: kliknij punkt początkowy i końcowy — znak "+
+        "powstanie w środku odcinka. Enter lub dwuklik kończy rysowanie.");
     else if(["draw","cut","line","line-edit"].includes(tool))
       inform("Klikaj punkty; Enter/dwuklik kończy. Magnes G: "+
         (state.drawMagnet?"włączony":"wyłączony")+
