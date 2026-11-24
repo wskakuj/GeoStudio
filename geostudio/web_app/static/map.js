@@ -2899,13 +2899,17 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
     const title=option.textContent||layer;
     // Ten sam preset+warstwa+układ odświeża istniejący wpis, inny dokłada
     // NOWĄ warstwę na stos (poprzednie zostają).
+    // Data archiwalna jest częścią tożsamości podkładu: ta sama warstwa z inną
+    // datą to NOWY obraz, a nie ten sam wpis.
+    const wantedTime=timePresets.has(preset)
+      ?String($("underlay-time").value||"").trim():"";
     let item=underlays.find(entry=>entry.preset===preset&&entry.layer===layer&&
-                                   entry.epsg===epsg);
+                                   entry.epsg===epsg&&
+                                   (entry.time||"")===wantedTime);
     if(!item){
       item={id:"wms"+(++underlaySerial),preset,layer,epsg,title,
             url:preset==="custom"?currentWmsUrl():"",
-            time:timePresets.has(preset)?
-              String($("underlay-time").value||"").trim():"",
+            time:wantedTime,
             image:null,bounds:null,
             opacity:Number($("underlay-opacity").value)/100||.75,
             visible:true,loading:false,ticket:0,timer:null,abort:null};
@@ -2919,6 +2923,11 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
     updateUnderlayStatus("Pobieranie obrazu dla EPSG:"+epsg+"…");
     renderRasterLayers();
     scheduleUnderlayRefresh(true);
+    // Okno WMS zamykamy po dodaniu warstwy — krycie i widoczność kolejnych
+    // podkładów reguluje się w panelu „Rastry”.
+    const dialog=$("underlay-dialog");
+    if(dialog?.open)dialog.close();
+    inform("Podkład dodany. Krycie i widoczność ustawisz w panelu Rastry.");
   }
   function paintUnderlay(){
     if(!underlay.enabled)return;
@@ -7626,7 +7635,11 @@ inform("Klikaj mapę, aby wstawiać kolejne oznaczenia. Naciśnij Esc lub wybier
     requestDraw();renderRasterLayers();
   });
   $("underlay-opacity").addEventListener("input",ev=>{
-    underlay.opacity=Number(ev.target.value)/100;
+    const value=Number(ev.target.value)/100;
+    underlay.opacity=value;
+    // Krycie z okna WMS musi działać na JUŻ wyświetlone podkłady — rysowanie
+    // korzysta z item.opacity, a nie z globalnego underlay.opacity.
+    for(const item of underlays)if(item.kind==="wms")item.opacity=value;
     $("underlay-opacity-value").textContent=ev.target.value+"%";
     requestDraw();renderRasterLayers();
   });

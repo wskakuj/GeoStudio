@@ -231,6 +231,9 @@ def clear_cache() -> None:
     with _CACHE_LOCK:
         _CACHE.clear()
         _CACHE_BYTES = 0
+    # Capabilities to też cache — bez tego testy i zmiana serwera widziałyby
+    # stary dokument XML.
+    _wmts_capabilities_xml.cache_clear()
 
 
 def _preset(name: str, url: str | None = None) -> str:
@@ -284,10 +287,20 @@ layers_for.cache_clear = _layers_for_preset.cache_clear
 KIEG_KEEP = frozenset({KIEG_PARCELS})
 
 
+@lru_cache(maxsize=8)
+def _wmts_capabilities_xml(preset: str) -> bytes:
+    """Jeden dokument GetCapabilities dla WMTS, wspólny dla obu parserów.
+
+    Wcześniej `_wmts_capabilities()` i `_wmts_layer_info()` pobierały ten sam
+    plik XML (do 8 MB) osobno — czyli podwójny transfer i podwójne czekanie.
+    """
+    return _download(_wmts_capabilities_url(preset), 8_000_000)
+
+
 @lru_cache(maxsize=4)
 def _wmts_capabilities(preset: str):
     from ..wmts_service import parse_capabilities as parse_wmts
-    xml = _download(_wmts_capabilities_url(preset), 8_000_000)
+    xml = _wmts_capabilities_xml(preset)
     sets = parse_wmts(xml)
     if not sets:
         raise ValueError("Serwer WMTS nie udostępnił zestawów matryc kafelków.")
@@ -303,7 +316,7 @@ def _wmts_capabilities_url(preset: str) -> str:
 def _wmts_layer_info(preset: str) -> tuple:
     """Warstwy WMTS z Capabilities: nazwa, style, formaty, zestawy matryc."""
     from ..wmts_service import parse_layers
-    xml = _download(_wmts_capabilities_url(preset), 8_000_000)
+    xml = _wmts_capabilities_xml(preset)
     layers = parse_layers(xml)
     if not layers:
         raise ValueError("Serwer WMTS nie opublikował żadnej warstwy.")
@@ -536,7 +549,8 @@ ORTO_ATTEMPTS = (
 )
 
 
-def _fetch_orto_smaller(base, layer, crs, bounds, width, height) -> bytes | None:
+def _fetch_orto_smaller(base, layer, crs, bounds, width, height,
+                        time: str | None = None) -> bytes | None:
     """Ostatnia deska ratunku: mniejszy obraz, żeby serwer zdążył odpowiedzieć."""
     for factor in (0.7, 0.5):
         small_w = max(128, int(width * factor))
@@ -546,7 +560,7 @@ def _fetch_orto_smaller(base, layer, crs, bounds, width, height) -> bytes | None
         try:
             return _fetch_once(base, layer, crs, bounds, small_w, small_h,
                                version="1.1.1", image_format="image/png",
-                               transparent=True)
+                               transparent=True, time=time)
         except Exception:                             # noqa: BLE001
             continue
     return None
@@ -566,7 +580,8 @@ def _fetch_orto(base, layer, crs, bounds, width, height,
     # a dopiero potem jedno wielkie żądanie jako odwrót.
     if width * height > ORTO_TILE_LIMIT:
         try:
-            return _fetch_orto_tiles(base, layer, crs, bounds, width, height)
+            return _fetch_orto_tiles(base, layer, crs, bounds, width, height,
+                                     time=time)
         except Exception as exc:                      # noqa: BLE001
             errors.append(str(exc))
 
@@ -581,7 +596,8 @@ def _fetch_orto(base, layer, crs, bounds, width, height,
         return _to_jpeg(raw) if image_format == "image/jpeg" else raw
 
     # Ostatnia próba: mniejszy obraz (serwer Geoportalu bywa wolny).
-    smaller = _fetch_orto_smaller(base, layer, crs, bounds, width, height)
+    smaller = _fetch_orto_smaller(base, layer, crs, bounds, width, height,
+                                  time=time)
     if smaller is not None:
         return smaller
 
@@ -590,7 +606,8 @@ def _fetch_orto(base, layer, crs, bounds, width, height,
     raise RuntimeError(detail or "Nie można pobrać obrazu ortofoto.")
 
 
-def _fetch_orto_tiles(base, layer, crs, bounds, width, height) -> bytes:
+def _fetch_orto_tiles(base, layer, crs, bounds, width, height,
+                      time: str | None = None) -> bytes:
     mid_x = (bounds.min_x + bounds.max_x) / 2
     mid_y = (bounds.min_y + bounds.max_y) / 2
     left_w = width // 2
@@ -607,7 +624,8 @@ def _fetch_orto_tiles(base, layer, crs, bounds, width, height) -> bytes:
     with ThreadPoolExecutor(max_workers=2) as pool:
         futures = [pool.submit(_fetch_once, base, layer, crs, part, part_w,
                                part_h, version="1.1.1",
-                               image_format="image/png", transparent=True)
+                               image_format="image/png", transparent=True,
+                               time=time)
                    for part, part_w, part_h in parts]
         images = [future.result() for future in futures]
     return _stitch(images, width, height, left_w, top_h)
