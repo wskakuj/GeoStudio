@@ -28,8 +28,8 @@ def test_single_request_per_frame():
 
 
 def test_frames_inside_the_cached_image_are_skipped():
-    assert "function underlayCovers(item,bounds){" in JS
-    assert 'if(item.kind!=="raster"&&underlayCovers(item,bounds)){' in JS
+    assert "function underlayCovers(item,bounds,size){" in JS
+    assert 'if(item.kind!=="raster"&&underlayCovers(item,bounds,size)){' in JS
 
 
 def test_cache_key_snaps_the_bbox():

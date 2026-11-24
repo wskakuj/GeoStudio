@@ -2870,18 +2870,32 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
     },1400);
   }
   // Czy aktualny kadr mieści się w tym, co już pobraliśmy (z małym zapasem)?
-  function underlayCovers(item,bounds){
+  // Gęstość obrazu w pikselach na jednostkę mapy (im więcej, tym ostrzej).
+  function underlayDensity(bounds,size){
+    const span=Math.max(1e-9,bounds[2]-bounds[0]);
+    return size.width/span;
+  }
+  function underlayCovers(item,bounds,size){
     if(!item.image||!item.bounds)return false;
     const marginX=(item.bounds[2]-item.bounds[0])*0.02;
     const marginY=(item.bounds[3]-item.bounds[1])*0.02;
-    return bounds[0]>=item.bounds[0]+marginX&&
-           bounds[1]>=item.bounds[1]+marginY&&
-           bounds[2]<=item.bounds[2]-marginX&&
-           bounds[3]<=item.bounds[3]-marginY;
+    const inside=bounds[0]>=item.bounds[0]+marginX&&
+                 bounds[1]>=item.bounds[1]+marginY&&
+                 bounds[2]<=item.bounds[2]-marginX&&
+                 bounds[3]<=item.bounds[3]-marginY;
+    if(!inside)return false;
+    // Przybliżenie mieści się w starym kadrze, ale wymaga OSTRZEJSZEGO obrazu
+    // (więcej pikseli na metr) — wtedy trzeba pobrać nowy, jak w GEO-MAP.
+    if(size){
+      const wanted=underlayDensity(bounds,size);
+      const have=item.density||0;
+      if(wanted>have*1.02)return false;
+    }
+    return true;
   }
   async function refreshUnderlayItem(item,bounds,size,documentToken,prefetch=false){
     // Przesunięcie o kilka pikseli nie wymaga nowego pobrania.
-    if(item.kind!=="raster"&&underlayCovers(item,bounds)){
+    if(item.kind!=="raster"&&underlayCovers(item,bounds,size)){
       item.loading=false;
       return;
     }
@@ -2928,6 +2942,8 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
       if(prefetch){item.loading=false;item.error="";item.retryAfter=0;return;}
       item.image=image;item.bounds=bounds;item.loading=false;item.error="";
       item.retryAfter=0;
+      // Zapamiętujemy gęstość, żeby przy przybliżeniu pobrać ostrzejszy obraz.
+      item.density=underlayDensity(bounds,size);
       requestDraw();renderRasterLayers();
     }catch(error){
       if(error.name==="AbortError"||id!==item.ticket){
