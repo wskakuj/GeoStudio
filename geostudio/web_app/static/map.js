@@ -2823,8 +2823,21 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
     const documentToken=state.edit?.documentToken;
     // Bez drugiej fazy „ostrej”: jeden kadr 1,2 mln px wystarcza, a drugie
     // 4 żądania na ten sam obraz tylko obciążały Geoportal.
-    await Promise.all(targets.map(item=>refreshUnderlayItem(
-      item,bounds,size,documentToken)));
+    try{
+      await Promise.all(targets.map(item=>refreshUnderlayItem(
+        item,bounds,size,documentToken)));
+    }finally{
+      // Bez tego napis „Pobieranie obrazu…” zostawał na zawsze, gdy żądanie
+      // zostało pominięte (kadr mieścił się w pobranym obrazie).
+      underlay.loading=false;
+      const ready=targets.filter(item=>item.image).length;
+      const failed=targets.filter(item=>item.error).length;
+      updateUnderlayStatus(failed
+        ?"Podkład: "+failed+" błąd(y) pobierania — szczegóły w panelu Rastry."
+        :ready===targets.length
+          ?"Podkład gotowy · EPSG:"+underlay.epsg
+          :"Pobieranie obrazu dla EPSG:"+underlay.epsg+"…");
+    }
   }
   // Czy aktualny kadr mieści się w tym, co już pobraliśmy (z małym zapasem)?
   function underlayCovers(item,bounds){
@@ -2838,7 +2851,15 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
   }
   async function refreshUnderlayItem(item,bounds,size,documentToken){
     // Przesunięcie o kilka pikseli nie wymaga nowego pobrania.
-    if(item.kind!=="raster"&&underlayCovers(item,bounds))return;
+    if(item.kind!=="raster"&&underlayCovers(item,bounds)){
+      item.loading=false;
+      return;
+    }
+    // Po błędzie czekamy 5 s — inaczej każde drgnięcie mapy to nowa próba.
+    if(item.retryAfter&&Date.now()<item.retryAfter){
+      item.loading=false;
+      return;
+    }
     const id=++item.ticket;
     if(item.abort)item.abort.abort();
     const controller=new AbortController();item.abort=controller;
@@ -2873,10 +2894,12 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
       if(!item.visible||id!==item.ticket||
          documentToken!==state.edit?.documentToken)return;
       item.image=image;item.bounds=bounds;item.loading=false;item.error="";
+      item.retryAfter=0;
       requestDraw();renderRasterLayers();
     }catch(error){
       if(error.name==="AbortError"||id!==item.ticket)return;
       item.loading=false;item.error=error.message||"Błąd pobierania";
+      item.retryAfter=Date.now()+5000;   // karencja: nie ponawiaj co ruch mapy
       renderRasterLayers();
       inform("Podkład "+item.title+": "+error.message,true);
     }

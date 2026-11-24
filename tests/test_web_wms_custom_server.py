@@ -69,7 +69,7 @@ def test_image_is_fetched_from_the_custom_server(monkeypatch):
     data, media = underlay_wms.map_image(
         "custom", "ortofoto", 2180, 0, 0, 100, 100, 256, 256,
         "https://wms.example.org/wms")
-    assert media == "image/jpeg"
+    assert media == "image/png"   # własne serwery: PNG z alfą
     assert any("wms.example.org" in url for url in seen)
 
 
