@@ -28,7 +28,7 @@ def test_live_zoom_never_stretches_previous_map_bitmap():
 
 def test_wms_request_is_hidpi_cancelable_and_reloads_after_zoom():
     js=(STATIC/"map.js").read_text("utf-8")
-    assert "state.width*dpr*1.20" in js
+    assert "state.width*dpr)" in js      # piksele dokładnie na ekran
     assert "underlay.ticket++;" in js
     assert "if(underlay.abort){underlay.abort.abort();underlay.abort=null;}" in js
     assert "setTimeout(refreshUnderlay,immediate?0:380)" in js   # debounce 380 ms

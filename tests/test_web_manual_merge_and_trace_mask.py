@@ -54,5 +54,6 @@ def test_dirty_marker_is_cleared_immediately_after_save():
     assert "state.edit.dirty=false;updateEditState(state.edit);" in block
 
 
-def test_wms_prefetch_margin_is_larger():
-    assert "boundsFromViewport(.6)" in JS
+def test_wms_request_margin_matches_geo_map():
+    # GEO-MAP prosi o widoczny prostokąt z małym zapasem.
+    assert "boundsFromViewport(.15)" in JS
