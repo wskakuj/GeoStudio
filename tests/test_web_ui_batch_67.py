@@ -115,3 +115,13 @@ def test_link_tool_has_its_own_status_hint():
 
 def test_icon_file_exists():
     assert Path("geostudio/web_app/static/geostudio-icon.png").is_file()
+
+
+def test_brand_uses_the_program_icon_and_display_type():
+    # W nagłówku jest ikona programu, nie trzy kreski.
+    assert '<img class="mark" src="/geostudio-icon.png"' in HTML
+    assert '<div class="mark" aria-hidden="true"><span></span>' not in HTML
+    # Profesjonalna typografia marki i podpisu na ekranie startowym.
+    assert "Bahnschrift" in CSS
+    assert ".identity strong .brand-number" in CSS
+    assert "letter-spacing:.34em" in CSS
