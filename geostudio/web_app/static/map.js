@@ -6314,12 +6314,31 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
     $("inspector-empty").hidden=!!detail;
     $("inspector-data").hidden=!detail;
     document.body.classList.toggle("has-inspector",!!detail);
+    const summaryMainClear=$("inspector-summary-main");
+    if(summaryMainClear&&!detail){
+      summaryMainClear.hidden=true;
+      const a1=$("inspector-summary-a1"), ha=$("inspector-summary-ha");
+      if(a1)a1.textContent=""; if(ha)ha.textContent="";
+    }
     $("inspector-edit").hidden=true;
     $("inspector-fields").hidden=false;
     $("inspector-edit-toggle").textContent="✎ Edytuj";
     if(!detail)return;
     $("inspector-edit-toggle").disabled=!(detail.editableFields||[]).length;
     $("inspector-code").textContent=detail.code;
+    // Pod kodem: A1 i powierzchnia w hektarach (jak w GEO-MAP / PySide6).
+    const summaryMain=$("inspector-summary-main");
+    const summaryA1=$("inspector-summary-a1");
+    const summaryHa=$("inspector-summary-ha");
+    if(summaryMain&&summaryA1&&summaryHa){
+      const a1=String((detail.fields&&detail.fields.A1)||"").trim();
+      const area=Number(detail.areaM2);
+      const showHa=detail.closed&&Number.isFinite(area)&&area>0;
+      summaryA1.textContent=a1;
+      summaryHa.textContent=showHa?(area/10000).toFixed(4)+" ha":"";
+      summaryMain.hidden=!a1&&!showHa;
+      summaryMain.classList.toggle("only-a1",!!a1&&!showHa);
+    }
     updateGeometryHelp();
     $("inspector-layer").textContent=detail.layer;
     $("inspector-uid").textContent=detail.sourceUid||detail.id;
