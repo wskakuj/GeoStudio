@@ -8,19 +8,46 @@ JS = Path("geostudio/web_app/static/map.js").read_text(encoding="utf-8")
 CSS = Path("geostudio/web_app/static/styles.css").read_text(encoding="utf-8")
 
 
-def test_history_is_left_of_the_other_header_actions():
-    actions = HTML.index('<div class="header-actions">')
+def test_history_is_on_the_left_of_the_window():
+    """Cofnij/Ponów stoją zaraz za logo, PRZED tytułem dokumentu."""
+    identity = HTML.index('class="identity"')
     history = HTML.index('class="header-action-group header-history"')
-    preferences = HTML.index('class="header-action-group header-preferences"')
-    assert actions < history < preferences
+    center = HTML.index('<div class="header-center">')
+    actions = HTML.index('<div class="header-actions">')
+    assert identity < history < center < actions
 
 
-def test_focus_button_sits_where_history_was():
+def test_focus_button_sits_before_export():
     assert 'id="btn-focus"' in HTML
     focus = HTML.index('id="btn-focus"')
-    # Po prawej stronie paska akcji, za ustawieniami i tytułem dokumentu.
-    assert focus > HTML.index('class="header-action-group header-preferences"')
+    export = HTML.index('id="btn-export"')
+    open_map = HTML.index('id="btn-open"')
+    assert focus < export < open_map
     assert 'aria-pressed="false"' in HTML[focus:focus + 400]
+
+
+def test_ribbon_collapse_is_first_in_the_tab_row():
+    tabs = HTML.index('<div class="ribbon-tabs"')
+    collapse = HTML.index('id="ribbon-collapse"')
+    assert collapse < tabs
+    assert ".ribbon-collapse" in CSS
+
+
+def test_collapse_buttons_use_theme_variables():
+    """Bez tego przyciski mają kolory ciemnego motywu także w jasnym."""
+    start = CSS.index(".panel-collapse {")
+    block = CSS[start:start + 420]
+    assert "var(--ui-panel" in block and "var(--ui-edge" in block
+    # Brak twardych kolorów ciemnego motywu (dopuszczalny tylko fallback w var()).
+    assert "background:#182a3d" not in block
+    assert "border:1px solid #2d4054" not in block
+
+
+def test_focus_icon_is_symmetric():
+    focus = HTML.index('id="btn-focus"')
+    block = HTML[focus:focus + 1200]
+    # Cztery symetryczne narożniki (9/27), a nie krzywy łuk.
+    assert 'd="M9 13V9h4M27 9h4v4M31 27v4h-4M13 31H9v-4"' in block
 
 
 def test_every_panel_has_a_collapse_button():

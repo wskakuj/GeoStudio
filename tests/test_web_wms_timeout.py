@@ -31,7 +31,7 @@ def test_geoportal_has_a_long_timeout():
 
 def test_client_asks_for_smaller_images():
     # 2048x2048 renderowało się dłużej niż limit czasu serwera.
-    assert "const maxPixels=800000;" in JS
+    assert "const maxPixels=sharp?2200000:800000;" in JS
 
 
 def test_timeout_falls_back_to_a_smaller_image(monkeypatch):
