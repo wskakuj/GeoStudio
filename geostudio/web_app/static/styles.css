@@ -2132,7 +2132,6 @@ body.focus-mode .toolbar { min-height:0; padding:5px 14px; }
 @media(max-width:1080px){
   .header-center #dirty-marker { display:none; }
 }
-
 /* ==========================================================================
    Układ jednorzędowy nagłówka, kompaktowa wstążka i uporządkowane nakładki mapy
    (100% CSS — bez zmian DOM i ID w index.html)
@@ -2149,21 +2148,25 @@ body[data-document-editor="true"][data-theme] .topbar {
   min-height: 46px;
   padding: 5px 14px;
 }
+
 body[data-theme] .topbar .identity {
   flex: 0 0 auto;
 }
+
 body[data-theme] .topbar .header-history {
   flex: 0 0 auto;
   display: flex;
   align-items: center;
   gap: 4px;
 }
+
 /* Etykiety „Cofnij” i „Ponów” widoczne na szerokich ekranach */
 body[data-theme] .topbar .header-history .history-label {
   display: inline;
   font-size: 12px;
   font-weight: 600;
 }
+
 /* Kompaktowa pigułka „Nowy projekt • Oryginał chroniony” zaraz obok Cofnij/Ponów */
 body[data-theme] .topbar .header-center,
 body[data-document-editor="true"][data-theme] .topbar .header-center {
@@ -2177,23 +2180,28 @@ body[data-document-editor="true"][data-theme] .topbar .header-center {
   gap: 7px;
   border-radius: 8px;
 }
+
 body[data-theme] .topbar #document-title {
   font-size: 12px;
   line-height: 1.2;
 }
+
 body[data-theme] .topbar .document-meta {
   font-size: 10px;
   line-height: 1.15;
 }
+
 /* Prawa grupa przycisków w tej samej linii */
 body[data-theme] .topbar .header-actions {
   flex: 0 0 auto;
   margin-left: auto;
   gap: 8px;
 }
+
 body[data-theme] .topbar .header-preferences {
   padding-right: 8px;
 }
+
 body[data-theme] .topbar .header-control {
   min-width: 32px;
   min-height: 32px;
@@ -2203,9 +2211,11 @@ body[data-theme] .topbar .header-control {
   font-size: 12px;
   border-radius: 7px;
 }
+
 body[data-theme] .topbar #btn-open {
   padding: 0 12px;
 }
+
 body[data-theme] .topbar .header-icon.soft3d-icon,
 body[data-theme] .topbar .header-history .soft3d-icon,
 body[data-theme] .topbar .header-history .tool-glyph {
@@ -2213,12 +2223,14 @@ body[data-theme] .topbar .header-history .tool-glyph {
   height: 19px;
   flex: 0 0 19px;
 }
+
 /* Stopniowe zagęszczanie na węższych ekranach zamiast łamania do 2 wierszy */
 @media (max-width: 1360px) {
   body:not([data-document-editor="true"])[data-theme] .topbar .header-optional {
     display: none;
   }
 }
+
 @media (max-width: 1240px) {
   body[data-theme] .topbar .header-optional {
     display: none;
@@ -2227,6 +2239,7 @@ body[data-theme] .topbar .header-history .tool-glyph {
     display: none;
   }
 }
+
 @media (max-width: 1060px) {
   body[data-theme] .topbar .header-control kbd {
     display: none;
@@ -2236,6 +2249,7 @@ body[data-theme] .topbar .header-history .tool-glyph {
     font-size: 11.5px;
   }
 }
+
 @media (max-width: 900px) {
   body[data-theme] .topbar,
   body[data-document-editor="true"][data-theme] .topbar {
@@ -2261,6 +2275,7 @@ body[data-theme] #main-ribbon.toolbar {
   align-items: center;
   padding: 0 14px;
 }
+
 body[data-theme] #main-ribbon .ribbon-tabs {
   grid-column: 1;
   grid-row: 1;
@@ -2268,16 +2283,19 @@ body[data-theme] #main-ribbon .ribbon-tabs {
   padding-top: 4px;
   border-bottom: 0;
 }
+
 body[data-theme] #main-ribbon .ribbon-tab {
   min-height: 32px;
   padding: 6px 12px;
 }
+
 body[data-theme] #main-ribbon .ribbon-tab.active,
 body[data-theme] #main-ribbon .ribbon-tab[aria-selected="true"] {
   position: relative;
   z-index: 1;
   margin-bottom: -1px;
 }
+
 body[data-theme] #main-ribbon #ribbon-collapse {
   grid-column: 2;
   grid-row: 1;
@@ -2287,16 +2305,19 @@ body[data-theme] #main-ribbon #ribbon-collapse {
   height: 26px;
   padding: 0 8px;
 }
+
 body[data-theme] #main-ribbon .ribbon-panels {
   grid-column: 1 / -1;
   grid-row: 2;
   border-top: 1px solid var(--ui-edge);
 }
+
 body[data-theme] #main-ribbon .ribbon-panel {
   min-height: 54px;
   padding: 7px 0;
   gap: 10px 18px;
 }
+
 body.ribbon-collapsed[data-theme] #main-ribbon.toolbar,
 body.focus-mode[data-theme] #main-ribbon.toolbar {
   padding: 2px 14px;
@@ -2307,6 +2328,7 @@ body[data-theme] .panel-head {
   min-height: 54px;
   padding: 10px 14px;
 }
+
 body[data-theme] .panel-head h2 {
   margin-top: 2px;
   font-size: 16px;
@@ -2317,10 +2339,12 @@ body[data-theme] .map-top-left {
   top: 14px;
   left: 14px;
 }
+
 body[data-theme] .underlay-chip {
   top: 14px;
   right: 14px;
 }
+
 body[data-theme] .floating-tools {
   top: 56px;
   left: 14px;
@@ -2330,15 +2354,18 @@ body[data-theme] .floating-tools {
   gap: 3px;
   border-radius: 11px;
 }
+
 body[data-theme] .floating {
   width: 32px;
   height: 32px;
 }
+
 body[data-theme] .floating .soft3d-icon {
   width: 22px;
   height: 22px;
   flex-basis: 22px;
 }
+
 /* Odsunięcie skali i współrzędnych w prawo od pionowego paska narzędzi (14px + 44px + 10px) */
 body[data-theme] .map-scale-box {
   left: 68px;
@@ -2347,6 +2374,7 @@ body[data-theme] .map-scale-box {
   min-height: 38px;
   padding: 4px 10px;
 }
+
 body[data-theme] .map-bottom-left {
   left: 68px;
   bottom: 14px;
@@ -2361,11 +2389,11 @@ body[data-theme] .empty-state {
   background: rgba(255, 255, 255, 0.58);
   backdrop-filter: blur(4px);
 }
+
 body.dark-map .empty-state {
   background: rgba(16, 26, 40, 0.58);
   border-color: #3a556a;
 }
-
 /* Pasek przyborów dopasowany do motywu jasnego i ciemnego */
 body[data-theme="light"] .floating-tools {
   background: rgba(255, 255, 255, 0.96);
@@ -2431,4 +2459,64 @@ body[data-theme="dark"] .underlay-chip {
   color: var(--ui-muted);
   border-color: var(--ui-edge);
   box-shadow: 0 3px 12px var(--ui-shadow);
+}
+
+/* Siatka kartograficzna na ekranie startowym (znika automatycznie po wczytaniu mapy) */
+.canvas-shell:has(#empty-state:not([hidden]))::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  pointer-events: none;
+  background-image:
+    linear-gradient(to right, rgba(96, 122, 146, 0.14) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(96, 122, 146, 0.14) 1px, transparent 1px),
+    linear-gradient(to right, rgba(96, 122, 146, 0.065) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(96, 122, 146, 0.065) 1px, transparent 1px);
+  background-size: 120px 120px, 120px 120px, 24px 24px, 24px 24px;
+}
+
+body.dark-map .canvas-shell:has(#empty-state:not([hidden]))::before {
+  background-image:
+    linear-gradient(to right, rgba(168, 200, 228, 0.13) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(168, 200, 228, 0.13) 1px, transparent 1px),
+    linear-gradient(to right, rgba(168, 200, 228, 0.06) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(168, 200, 228, 0.06) 1px, transparent 1px);
+}
+
+/* Kolejność warstw: siatka nad pustym płótnem, ale pod kartą powitalną i narzędziami */
+body[data-theme] .empty-state {
+  z-index: 2;
+}
+
+body[data-theme] .map-top-left,
+body[data-theme] .underlay-chip,
+body[data-theme] .floating-tools,
+body[data-theme] .map-scale-box,
+body[data-theme] .map-bottom-left,
+body[data-theme] .map-bottom-right {
+  z-index: 3;
+}
+
+/* Sylwetka kontynentów w pustym panelu „Warstwy mapy” */
+.panel-placeholder {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 14px;
+}
+
+.placeholder-world-map {
+  width: 100%;
+  max-width: 224px;
+  height: auto;
+  color: #93a7be;
+  opacity: 0.42;
+  pointer-events: none;
+  user-select: none;
+}
+
+body[data-theme="dark"] .placeholder-world-map {
+  color: #7b93ad;
+  opacity: 0.28;
 }
