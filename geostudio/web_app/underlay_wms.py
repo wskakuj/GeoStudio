@@ -624,8 +624,17 @@ def _fetch_orto_smaller(base, layer, crs, bounds, width, height,
     return None
 
 
+def _attempts_for(preset: str):
+    """Kolejność formatów: ortofoto lubi JPEG, warstwy wektorowe potrzebują PNG."""
+    if preset in {"kieg", "custom"}:
+        return tuple((version, "image/png", True)
+                     for version, _fmt, _transparent in ORTO_ATTEMPTS[:2]) + \
+               ORTO_ATTEMPTS[2:]
+    return ORTO_ATTEMPTS
+
+
 def _fetch_orto(base, layer, crs, bounds, width, height,
-                time: str | None = None) -> bytes:
+                time: str | None = None, preset: str = "standard") -> bytes:
     """Ortofoto: jedno lekkie żądanie, kafelki tylko awaryjnie.
 
     1. JPEG bez przezroczystości (1.1.1, potem 1.3.0) — kilkanaście razy
@@ -637,7 +646,7 @@ def _fetch_orto(base, layer, crs, bounds, width, height,
     errors = []
     # Jedno żądanie jest szybsze od czterech: kafelki dopiero wtedy, gdy kadr
     # jest naprawdę duży albo pojedyncze próby zawiodły.
-    for version, image_format, transparent in ORTO_ATTEMPTS:
+    for version, image_format, transparent in _attempts_for(preset):
         try:
             raw = _fetch_once(base, layer, crs, bounds, width, height,
                               version=version, image_format=image_format,
@@ -750,10 +759,11 @@ def map_png(preset: str, layer: str, epsg: int,
             # names”). Dlatego nazwę bierzemy z capabilities WMS.
             content = _fetch_orto(_preset(fallback),
                                   _wms_layer_for(fallback, epsg, layer),
-                                  f"EPSG:{epsg}", bounds, width, height)
+                                  f"EPSG:{epsg}", bounds, width, height,
+                                  preset=fallback)
     else:
         content = _fetch_orto(base, layer, f"EPSG:{epsg}", bounds, width, height,
-                              time=time)
+                              time=time, preset=preset)
     _cache_put(key, content)
     return content
 
