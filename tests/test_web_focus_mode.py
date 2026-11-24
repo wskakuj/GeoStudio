@@ -78,3 +78,12 @@ def test_focus_logic_toggles_all_three_panels():
 def test_focus_restores_the_saved_layout():
     assert 'localStorage.setItem("geostudio.panels"' in JS
     assert 'localStorage.getItem("geostudio.panels"' in JS
+
+
+def test_tab_click_expands_the_collapsed_ribbon():
+    """Klik w dowolną zakładkę ma rozwijać wstążkę, jak przycisk Zwiń/Rozwiń."""
+    start = JS.index("function activateRibbonTab(id,focus=false){")
+    block = JS[start:start + 1600]
+    assert 'document.body.classList.contains("ribbon-collapsed")' in block
+    assert 'document.body.classList.remove("ribbon-collapsed");' in block
+    assert "applyPanelState();" in block
