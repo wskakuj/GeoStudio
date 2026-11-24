@@ -11,15 +11,16 @@ from geostudio.web_app import underlay_wms
 JS = Path("geostudio/web_app/static/map.js").read_text(encoding="utf-8")
 
 
-def test_overscan_is_larger():
-    assert "const bounds=boundsFromViewport(.6);" in JS
+def test_overscan_matches_geo_map():
+    """Mały zapas = szybsza odpowiedź; okolicę dociąga prefetch."""
+    assert "const bounds=boundsFromViewport(.15);" in JS
 
 
 def test_prefetch_follows_the_pan_direction():
     assert "function scheduleUnderlayPrefetch(){" in JS
     assert "function rememberPanVector(dx,dy){" in JS
     assert "rememberPanVector(stepX,stepY);" in JS
-    assert "lastPanVector.x*spanX*.5" in JS
+    assert "lastPanVector.x*spanX*.85" in JS
 
 
 def test_prefetch_does_not_replace_the_visible_image():

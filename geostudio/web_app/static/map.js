@@ -2782,7 +2782,7 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
     // stretching a single low-resolution bitmap through successive zooms.
     const aspect=(bounds[2]-bounds[0])/(bounds[3]-bounds[1]);
     const dpr=Math.max(1,Math.min(2,state.pixelRatio||1));
-    let width=Math.max(128,Math.min(2048,Math.round(state.width*dpr*1.20)));
+    let width=Math.max(128,Math.min(2048,Math.round(state.width*dpr)));
     let height=Math.round(width/aspect);
     if(height>2048){height=2048;width=Math.round(height*aspect);}
     // Serwer przyjmuje do 3 mln pikseli, ale ortofoto w tej wielkości
@@ -2818,9 +2818,12 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
     // w pobranym obrazie, więc nie trzeba nic dociągać.
     // Zapas 45%: przy przesuwaniu mapy obraz zwykle jeszcze pokrywa kadr,
     // więc zamiast czekać na serwer dostajesz go z pamięci.
-    const bounds=boundsFromViewport(.6);
+    // Zapas 15% — tak jak GEO-MAP: serwer renderuje prawie tylko to, co widać,
+    // więc odpowiedź jest znacznie szybsza. Resztę okolicy dociąga prefetch.
+    const bounds=boundsFromViewport(.15);
     const size=underlayRequestDimensions(bounds);
     const documentToken=state.edit?.documentToken;
+    const started=performance.now();
     // Bez drugiej fazy „ostrej”: jeden kadr 1,2 mln px wystarcza, a drugie
     // 4 żądania na ten sam obraz tylko obciążały Geoportal.
     try{
@@ -2832,10 +2835,11 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
       underlay.loading=false;
       const ready=targets.filter(item=>item.image).length;
       const failed=targets.filter(item=>item.error).length;
+      const elapsed=Math.round(performance.now()-started);
       updateUnderlayStatus(failed
         ?"Podkład: "+failed+" błąd(y) pobierania — szczegóły w panelu Rastry."
         :ready===targets.length
-          ?"Podkład gotowy · EPSG:"+underlay.epsg
+          ?"Podkład gotowy · EPSG:"+underlay.epsg+" · "+elapsed+" ms"
           :"Pobieranie obrazu dla EPSG:"+underlay.epsg+"…");
       if(!failed)scheduleUnderlayPrefetch();
     }
@@ -2856,13 +2860,14 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
       if(state.editBusy||underlay.loading)return;
       const targets=underlays.filter(item=>item.visible&&!item.error);
       if(!targets.length)return;
-      const bounds=boundsFromViewport(.6);
+      const bounds=boundsFromViewport(.15);
       const spanX=bounds[2]-bounds[0], spanY=bounds[3]-bounds[1];
       // Ekran: x = wschód, y = -północ; przesuwamy w stronę ruchu.
-      const shifted=[bounds[0]+lastPanVector.x*spanX*.5,
-                     bounds[1]-lastPanVector.y*spanY*.5,
-                     bounds[2]+lastPanVector.x*spanX*.5,
-                     bounds[3]-lastPanVector.y*spanY*.5];
+      // Przesuwamy o ~0,85 szerokości: nowy kadr zachodzi na obecny, więc
+      // przesunięcie o ekran trafia w gotowy obraz.
+      const stepX=lastPanVector.x*spanX*.85, stepY=-lastPanVector.y*spanY*.85;
+      const shifted=[bounds[0]+stepX,bounds[1]+stepY,
+                     bounds[2]+stepX,bounds[3]+stepY];
       const size=underlayRequestDimensions(shifted);
       const documentToken=state.edit?.documentToken;
       await Promise.all(targets.map(item=>refreshUnderlayItem(
