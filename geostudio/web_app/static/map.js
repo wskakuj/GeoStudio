@@ -2818,7 +2818,7 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
     // w pobranym obrazie, więc nie trzeba nic dociągać.
     // Zapas 45%: przy przesuwaniu mapy obraz zwykle jeszcze pokrywa kadr,
     // więc zamiast czekać na serwer dostajesz go z pamięci.
-    const bounds=boundsFromViewport(.45);
+    const bounds=boundsFromViewport(.6);
     const size=underlayRequestDimensions(bounds);
     const documentToken=state.edit?.documentToken;
     // Bez drugiej fazy „ostrej”: jeden kadr 1,2 mln px wystarcza, a drugie
@@ -2837,7 +2837,37 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
         :ready===targets.length
           ?"Podkład gotowy · EPSG:"+underlay.epsg
           :"Pobieranie obrazu dla EPSG:"+underlay.epsg+"…");
+      if(!failed)scheduleUnderlayPrefetch();
     }
+  }
+  // Po bezczynności dociągamy kadr przesunięty o pół szerokości w stronę
+  // ostatniego ruchu mapy. Dzięki temu kolejne przesunięcie trafia w gotowy
+  // obraz (i w cache), zamiast czekać na Geoportal.
+  let underlayPrefetchTimer=null;
+  let lastPanVector={x:0,y:0};
+  function rememberPanVector(dx,dy){
+    if(Math.abs(dx)>Math.abs(dy))lastPanVector={x:Math.sign(dx),y:0};
+    else if(dy)lastPanVector={x:0,y:Math.sign(dy)};
+  }
+  function scheduleUnderlayPrefetch(){
+    clearTimeout(underlayPrefetchTimer);
+    if(!lastPanVector.x&&!lastPanVector.y)return;
+    underlayPrefetchTimer=setTimeout(async()=>{
+      if(state.editBusy||underlay.loading)return;
+      const targets=underlays.filter(item=>item.visible&&!item.error);
+      if(!targets.length)return;
+      const bounds=boundsFromViewport(.6);
+      const spanX=bounds[2]-bounds[0], spanY=bounds[3]-bounds[1];
+      // Ekran: x = wschód, y = -północ; przesuwamy w stronę ruchu.
+      const shifted=[bounds[0]+lastPanVector.x*spanX*.5,
+                     bounds[1]-lastPanVector.y*spanY*.5,
+                     bounds[2]+lastPanVector.x*spanX*.5,
+                     bounds[3]-lastPanVector.y*spanY*.5];
+      const size=underlayRequestDimensions(shifted);
+      const documentToken=state.edit?.documentToken;
+      await Promise.all(targets.map(item=>refreshUnderlayItem(
+        item,shifted,size,documentToken,true)));
+    },1400);
   }
   // Czy aktualny kadr mieści się w tym, co już pobraliśmy (z małym zapasem)?
   function underlayCovers(item,bounds){
@@ -2849,7 +2879,7 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
            bounds[2]<=item.bounds[2]-marginX&&
            bounds[3]<=item.bounds[3]-marginY;
   }
-  async function refreshUnderlayItem(item,bounds,size,documentToken){
+  async function refreshUnderlayItem(item,bounds,size,documentToken,prefetch=false){
     // Przesunięcie o kilka pikseli nie wymaga nowego pobrania.
     if(item.kind!=="raster"&&underlayCovers(item,bounds)){
       item.loading=false;
@@ -2894,6 +2924,8 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
       }finally{URL.revokeObjectURL(url);}
       if(!item.visible||id!==item.ticket||
          documentToken!==state.edit?.documentToken)return;
+      // Pobranie w tle grzeje cache — nie podmieniamy obrazu na ekranie.
+      if(prefetch){item.loading=false;item.error="";item.retryAfter=0;return;}
       item.image=image;item.bounds=bounds;item.loading=false;item.error="";
       item.retryAfter=0;
       requestDraw();renderRasterLayers();
@@ -7132,8 +7164,11 @@ inform("Klikaj mapę, aby wstawiać kolejne oznaczenia. Naciśnij Esc lub wybier
       }
     }else if(d.moved){
       if(d.pan||state.tool==="select"){
-        state.center.x-=(p.x-d.last.x)/state.scale;
-        state.center.y-=(p.y-d.last.y)/state.scale;
+        const stepX=p.x-d.last.x, stepY=p.y-d.last.y;
+        state.center.x-=stepX/state.scale;
+        state.center.y-=stepY/state.scale;
+        // Kierunek ruchu zapamiętujemy dla wstępnego pobierania kadru.
+        rememberPanVector(stepX,stepY);
         shell.classList.add("dragging");requestDraw();
       }
     }

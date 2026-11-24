@@ -55,4 +55,4 @@ def test_dirty_marker_is_cleared_immediately_after_save():
 
 
 def test_wms_prefetch_margin_is_larger():
-    assert "boundsFromViewport(.45)" in JS
+    assert "boundsFromViewport(.6)" in JS

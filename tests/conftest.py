@@ -7,6 +7,12 @@ inline fixtures in each module.
 """
 from __future__ import annotations
 
+import os
+
+# Cache obrazów na dysku jest świetny dla użytkownika, ale psułby testy
+# (te same kadry wracają z dysku zamiast z fałszywego serwera).
+os.environ.setdefault("GEOSTUDIO_WMS_DISK_CACHE", "0")
+
 import hashlib
 from pathlib import Path
 
