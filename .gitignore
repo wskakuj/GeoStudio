@@ -15,6 +15,7 @@
 *.jpeg
 *.png
 !geostudio/web_app/static/geostudio-icon.png
+!geostudio/web_app/static/geostudio-icon@2x.png
 *.tfw
 *.jgw
 *.pgw

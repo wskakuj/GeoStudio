@@ -200,6 +200,10 @@ def create_app(workspace: PreviewWorkspace | None = None, *,
     async def app_icon():
         return FileResponse(ROOT / "geostudio-icon.png", media_type="image/png")
 
+    @app.get("/geostudio-icon@2x.png")
+    async def app_icon_2x():
+        return FileResponse(ROOT / "geostudio-icon@2x.png", media_type="image/png")
+
     @app.get("/raster_trace.js")
     async def raster_trace_js():
         return FileResponse(ROOT / "raster_trace.js", media_type="text/javascript")

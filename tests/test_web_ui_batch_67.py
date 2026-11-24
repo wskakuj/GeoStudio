@@ -123,5 +123,15 @@ def test_brand_uses_the_program_icon_and_display_type():
     assert '<div class="mark" aria-hidden="true"><span></span>' not in HTML
     # Profesjonalna typografia marki i podpisu na ekranie startowym.
     assert "Bahnschrift" in CSS
-    assert ".identity strong .brand-number" in CSS
+    assert ".wordmark .brand-number" in CSS
     assert "letter-spacing:.34em" in CSS
+
+
+def test_brand_lockup_is_crisp_and_typographic():
+    # Ikona w dwóch gęstościach — ostra także na ekranach HiDPI.
+    assert 'srcset="/geostudio-icon.png 1x, /geostudio-icon@2x.png 2x"' in HTML
+    assert Path("geostudio/web_app/static/geostudio-icon@2x.png").is_file()
+    # Nazwa i wersja to jeden lockup, nie dwa sklejone napisy.
+    assert '<strong class="wordmark">GeoStudio<span class="brand-number">2.0</span></strong>' in HTML
+    assert ".wordmark .brand-number" in CSS
+    assert '"/geostudio-icon@2x.png"' in Path("geostudio/web_app/server.py").read_text(encoding="utf-8")
