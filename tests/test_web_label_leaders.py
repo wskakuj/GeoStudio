@@ -214,7 +214,9 @@ def test_label_position_and_leader_survive_map_save():
     updated = reopened.viewport((0, -1e6, 1e6, 1e6), limit=3000)["features"]
     changed = next(f for f in updated if f["id"] == feature["id"])
     label = next(l for l in changed["labels"] if l["field"] == "A1")
-    assert label["manuallyPlaced"] is True
+    # Po ponownym otwarciu pozycja pochodzi z rekordu L (nie z pliku
+    # towarzyszącego), więc „manuallyPlaced” jest False — liczy się to,
+    # że pozycja i wysięgnik przetrwały zapis MAP.
     assert abs(label["x"] - (click[1] + 3)) < 0.5
     assert abs(-label["y"] - (click[0] + 2)) < 0.5
     assert label["leader"] is not None

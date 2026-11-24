@@ -258,21 +258,25 @@ def layout_object(shape, a1: str, a2: str, *, scale: int,
     boundaries = boundaries or []
     foreign = foreign or []
 
-    # (1) w środku poligonu — najczytelniej.
-    for cand_n, cand_e in _column_spots(shape, north, east):
-        box_ = LabelBox(cand_n, cand_e, width, height)
-        if (_fits(shape, box_, margin) and
-                _clear_of(box_, occupied, boundaries, foreign, shape)):
-            occupied.append(box_.rect)
-            return {"mode": "inside", "anchor": (cand_n, cand_e),
-                    "box": box_, "inside": True}
+    # (1) w środku poligonu — najczytelniej. Próbujemy trzech progów marginesu:
+    # najpierw z zapasem, potem ciaśniej, żeby nie wysyłać na wysięgnik
+    # poligonów, w których napis jednak się mieści.
+    for margin_scale in (1.0, 0.55, 0.25):
+        for cand_n, cand_e in _column_spots(shape, north, east):
+            box_ = LabelBox(cand_n, cand_e, width, height)
+            if (_fits(shape, box_, margin * margin_scale) and
+                    _clear_of(box_, occupied, boundaries, foreign, shape)):
+                occupied.append(box_.rect)
+                return {"mode": "inside", "anchor": (cand_n, cand_e),
+                        "box": box_, "inside": True}
 
     # (1b) nie mieści się cała kolumna — spróbuj sam A1 w środku,
     #      a A2 z wysięgnikiem. Tak robi GEO-MAP dla ciasnych poligonów.
     if a1 and a2 and width1 and height1:
-        for cand_n, cand_e in _column_spots(shape, north, east):
+        for margin_scale in (1.0, 0.55, 0.25):
+          for cand_n, cand_e in _column_spots(shape, north, east):
             single = LabelBox(cand_n, cand_e, width1, height1)
-            if (_fits(shape, single, margin) and
+            if (_fits(shape, single, margin * margin_scale) and
                     _clear_of(single, occupied, boundaries, foreign, shape)):
                 occupied.append(single.rect)
                 return {"mode": "mixed", "anchor": (north, east),

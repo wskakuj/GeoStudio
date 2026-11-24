@@ -3431,6 +3431,7 @@ class PreviewWorkspace:
                 continue
             style = overrides.get(field, {}) if isinstance(overrides, dict) else {}
             location = pos.get(field) if isinstance(pos, dict) else None
+            native_placed = False
             if obj.code == "5310" and field in ("A1", "A2"):
                 native = natives.get(2 if field == "A1" else 3)
                 if native and (native.get("dx") or native.get("dy")):
@@ -3440,6 +3441,7 @@ class PreviewWorkspace:
                     # test „wewnątrz" dotyczy tylko etykiet bez wysięgnika.
                     if native.get("leader") or self._label_inside(obj, candidate):
                         location = candidate
+                        native_placed = True
             if (isinstance(location, (list, tuple)) and len(location) == 2
                 and all(_valid_number(c) for c in location)):
                 northing, easting = float(location[0]), float(location[1])
@@ -3465,7 +3467,12 @@ class PreviewWorkspace:
                 "x": east, "y": south,
                 "offset": (0 if location else
                     (i - (len(fields) - 1)/2)*base_size*.80),
-                "manuallyPlaced":bool(location),
+                # Ręczne przeciągnięcie = pozycja z pliku towarzyszącego.
+                # Pozycja z rekordu L to wynik auto-układania — wtedy klient
+                # może złożyć A1 i A2 w kolumnę (inaczej rysuje je w jednym
+                # punkcie, czyli jeden napis na drugim).
+                "manuallyPlaced":(isinstance(pos, dict) and
+                                  bool(pos.get(field))),
                 "color": _color(style.get("color"), palette),
                 "size": max(8, min(36, _int(style.get("size"), base_size))),
                 "fontFamily": str(style.get(

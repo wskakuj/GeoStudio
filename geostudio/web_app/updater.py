@@ -44,7 +44,7 @@ def is_newer(latest: str, current: str) -> bool:
 
 # Musi być zgodna z pyproject.toml; używana, gdy metadane pakietu nie są
 # spakowane (PyInstaller kopiuje je przez --copy-metadata geostudio-pl).
-FALLBACK_VERSION = "2.0.90"
+FALLBACK_VERSION = "2.0.91"
 
 
 def current_version() -> str:
