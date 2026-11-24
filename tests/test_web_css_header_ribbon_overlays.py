@@ -42,5 +42,33 @@ def test_map_overlays_are_offset_from_the_tool_rail():
 
 
 def test_floating_tool_rail_styles():
-    assert "body[data-theme] .floating-tools {\n  background: #1e2c3d;" in CSS
-    assert "body[data-theme] .floating.active {" in CSS
+    """Pasek przyborów ma osobne kolory dla jasnego i ciemnego motywu."""
+    assert 'body[data-theme="light"] .floating-tools {' in CSS
+    assert 'body[data-theme="dark"] .floating-tools {' in CSS
+    assert 'body[data-theme="light"] .floating.active {' in CSS
+    assert 'body[data-theme="dark"] .floating.active {' in CSS
+    # Ramki skali i współrzędnych nie mogą wchodzić pod pasek narzędzi.
+    assert "body[data-theme] .map-scale-box,\nbody[data-theme] .map-bottom-left {\n  z-index: 2;" in CSS
+
+
+def test_splash_grid_and_layers_placeholder():
+    """Siatka kartograficzna na starcie i sylwetka kontynentów w panelu warstw."""
+    assert ".canvas-shell:has(#empty-state:not([hidden]))::before" in CSS
+    assert "body.dark-map .canvas-shell:has(#empty-state:not([hidden]))::before" in CSS
+    assert ".placeholder-world-map" in CSS
+    html = Path("geostudio/web_app/static/index.html").read_text(encoding="utf-8")
+    assert 'class="placeholder-world-map"' in html
+    # Narzędzia mapy muszą być NAD siatką, karta powitalna też.
+    assert "body[data-theme] .empty-state {\n  z-index: 2;" in CSS
+    assert "body[data-theme] .floating-tools," in CSS
+
+
+def test_html_markup_is_balanced():
+    """Panel Wektory musi być zamknięty przed panelami Rastry i Podkłady."""
+    html = Path("geostudio/web_app/static/index.html").read_text(encoding="utf-8")
+    assert html.count("<div") == html.count("</div>")
+    vectors = html.index('id="vectors-layer-panel"')
+    rasters = html.index('id="rasters-layer-panel"')
+    between = html[vectors:rasters]
+    # Panel Wektory zamyka się PRZED panelem Rastry.
+    assert between.count("</div>") >= between.count("<div")
