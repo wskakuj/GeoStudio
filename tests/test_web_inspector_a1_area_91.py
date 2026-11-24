@@ -34,12 +34,10 @@ def test_client_clears_the_summary_without_selection():
     assert 'if(summaryMainClear&&!detail){' in JS
 
 
-def test_native_layout_is_not_manual_so_labels_stack():
-    """Pozycja z rekordu L nie może być oznaczona jako ręczna — inaczej
-    klient rysuje A1 i A2 w jednym punkcie (jeden na drugim)."""
+def test_native_position_is_drawn_exactly_where_it_is():
+    """Etykieta z rekordu L ma własną pozycję — klient nie dokłada przesunięć."""
     src = Path("geostudio/web_app/data.py").read_text(encoding="utf-8")
-    assert '"manuallyPlaced":(isinstance(pos, dict) and' in src
-    assert "native_placed = True" in src
+    assert '"manuallyPlaced":bool(location),' in src
 
 
 def test_inspector_returns_area_and_a1():

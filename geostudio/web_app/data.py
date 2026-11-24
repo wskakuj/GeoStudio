@@ -3470,12 +3470,10 @@ class PreviewWorkspace:
                 "x": east, "y": south,
                 "offset": (0 if location else
                     (i - (len(fields) - 1)/2)*base_size*.80),
-                # Ręczne przeciągnięcie = pozycja z pliku towarzyszącego.
-                # Pozycja z rekordu L to wynik auto-układania — wtedy klient
-                # może złożyć A1 i A2 w kolumnę (inaczej rysuje je w jednym
-                # punkcie, czyli jeden napis na drugim).
-                "manuallyPlaced":(isinstance(pos, dict) and
-                                  bool(pos.get(field))),
+                # Etykieta ma własną pozycję (z pliku towarzyszącego albo
+                # z rekordu L) → rysujemy ją DOKŁADNIE tam. Klient nie składa
+                # wtedy A1 i A2 w kolumnę, bo silnik ustawia je osobno.
+                "manuallyPlaced":bool(location),
                 "color": _color(style.get("color"), palette),
                 "size": max(8, min(36, _int(style.get("size"), base_size))),
                 "fontFamily": str(style.get(

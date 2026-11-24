@@ -26,12 +26,13 @@ def test_label_moves_are_coalesced():
     assert "labelMoveTimer=setTimeout(flushLabelMoves,140);" in JS
 
 
-def test_leader_mode_is_left_after_anchoring():
+def test_leader_mode_stays_on_after_anchoring():
+    """Kotwiczenie kilku etykiet pod rząd — tryb zostaje włączony."""
     assert "function leaveLeaderMode(){" in JS
     start = JS.index("async function setLeaderAnchor(selected,world){")
     block = JS[start:start + 1400]
     assert "finally{" in block
-    assert "leaveLeaderMode();" in block
+    assert "state.anchorDrag=null;" in block
 
 
 def test_pointer_safety_nets():
