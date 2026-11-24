@@ -24,7 +24,7 @@ def test_single_request_per_frame():
     # Bez drugiej fazy „ostrej” i z debounce 380 ms.
     assert "scheduleUnderlaySharp" not in JS
     assert "setTimeout(refreshUnderlay,immediate?0:380)" in JS
-    assert "const maxPixels=sharp?1200000:1200000;" in JS
+    assert "const maxPixels=sharp?1000000:1000000;" in JS
 
 
 def test_frames_inside_the_cached_image_are_skipped():

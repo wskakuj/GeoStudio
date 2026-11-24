@@ -23,16 +23,17 @@ class Layer:
     crs = ["EPSG:2180"]
 
 
-def test_geoportal_has_a_long_timeout():
+def test_geoportal_has_a_bounded_timeout():
+    """30 s: przy zadyszce serwera lepiej szybko przejść do odwrotu."""
     assert 'HOST_TIMEOUTS = {' in SRC
-    assert '"mapy.geoportal.gov.pl": 60,' in SRC
+    assert '"mapy.geoportal.gov.pl": 30,' in SRC
     assert "def _timeout_for(host: str) -> int:" in SRC
 
 
 def test_client_asks_for_smaller_images():
     # 2048x2048 renderowało się dłużej niż limit czasu serwera.
     # Jedno żądanie na kadr: 1,2 mln px (bez drugiej fazy „ostrej”).
-    assert "const maxPixels=sharp?1200000:1200000;" in JS
+    assert "const maxPixels=sharp?1000000:1000000;" in JS
 
 
 def test_timeout_falls_back_to_a_smaller_image(monkeypatch):

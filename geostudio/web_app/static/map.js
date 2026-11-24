@@ -2788,7 +2788,7 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
     // Serwer przyjmuje do 3 mln pikseli, ale ortofoto w tej wielkości
     // renderuje się dłużej niż nasz limit czasu — dlatego dla podkładów
     // ograniczamy się do ~1 mln pikseli (ok. 1000x1000).
-    const maxPixels=sharp?1200000:1200000;
+    const maxPixels=sharp?1000000:1000000;
     if(width*height>maxPixels){
       const ratio=Math.sqrt(maxPixels/(width*height));
       width=Math.max(128,Math.floor(width*ratio));
@@ -2872,6 +2872,7 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
     if(item.url)params.set("url",item.url);
     if(item.time)params.set("time",item.time);
     item.loading=true;
+    renderRasterLayers();
     try{
       const response=await documentFetch("/api/underlay/wms/map?"+params,{
         headers:{"X-GeoStudio-Token":token},cache:"no-store",signal:controller.signal
@@ -2897,7 +2898,12 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
       item.retryAfter=0;
       requestDraw();renderRasterLayers();
     }catch(error){
-      if(error.name==="AbortError"||id!==item.ticket)return;
+      if(error.name==="AbortError"||id!==item.ticket){
+        // Przerwane żądanie (przesunięcie/zoom) nie może zostawić wpisu
+        // w stanie „Odświeżanie obrazu…” na zawsze.
+        if(id===item.ticket)item.loading=false;
+        return;
+      }
       item.loading=false;item.error=error.message||"Błąd pobierania";
       item.retryAfter=Date.now()+5000;   // karencja: nie ponawiaj co ruch mapy
       renderRasterLayers();
