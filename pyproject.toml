@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "geostudio-pl"
-version = "2.0.67"
+version = "2.0.68"
 description = "Experimental desktop editor / viewer for GEO-MAP v8 textual files"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -23,4 +23,4 @@ geostudio = "geostudio.app:main"
 include = ["geostudio*"]
 
 [tool.setuptools.package-data]
-"geostudio.web_app" = ["static/*.html", "static/*.css", "static/*.js"]
+"geostudio.web_app" = ["static/*.html", "static/*.css", "static/*.js", "static/*.png", "static/*.svg", "static/*.ico"]

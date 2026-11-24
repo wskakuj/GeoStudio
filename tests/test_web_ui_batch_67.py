@@ -96,3 +96,22 @@ def test_details_expose_line_style():
     detail = workspace.details(workspace._object_id[id(obj)])
     assert detail["closed"] is False
     assert "dash" in detail["style"]
+
+
+def test_icon_is_packaged_for_the_installer():
+    """Bez tego PyInstaller nie zabiera PNG i ikona nie wczytuje się w exe."""
+    pyproject = Path("pyproject.toml").read_text(encoding="utf-8")
+    assert '"static/*.png"' in pyproject
+
+
+def test_link_tool_has_its_own_status_hint():
+    assert 'else if(tool==="link")' in JS
+    assert "Łącznik 4100: kliknij punkt początkowy" in JS
+    # Nie może wpadać w podpowiedź trybu przesuwania mapy.
+    start = JS.index('else if(tool==="link")')
+    block = JS[start:start + 400]
+    assert "Tryb przesuwania mapy" not in block
+
+
+def test_icon_file_exists():
+    assert Path("geostudio/web_app/static/geostudio-icon.png").is_file()
