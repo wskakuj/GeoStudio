@@ -47,9 +47,16 @@ class LabelBox:
 
     @property
     def rect(self):
+        """Prostokąt w osiach mapy: x = PÓŁNOC, y = WSCHÓD.
+
+        Napis biegnie poziomo na wydruku, czyli wschód–zachód (oś y), a jego
+        wysokość odkłada się wzdłuż północy (oś x). Wcześniej szerokość szła
+        po północy, więc model kolizji był obrócony o 90° — etykiety
+        „wchodziły” na linie i na siebie mimo poprawnych współrzędnych.
+        """
         half_w, half_h = self.width / 2, self.height / 2
-        return box(self.cx - half_w, self.cy - half_h,
-                   self.cx + half_w, self.cy + half_h)
+        return box(self.cx - half_h, self.cy - half_w,
+                   self.cx + half_h, self.cy + half_w)
 
 
 def text_size(text: str, scale: int = 5000, *, fraction: bool = False) -> tuple[float, float]:
@@ -157,8 +164,56 @@ def _fits(shape, box_: LabelBox, margin: float) -> bool:
     return rect.distance(shape.boundary) >= margin
 
 
+def _clear_of(box_: LabelBox, occupied: list, boundaries: list,
+              foreign: list, own) -> bool:
+    """Twarde warunki: brak kolizji z etykietami, obcymi granicami i obcymi poligonami."""
+    rect = box_.rect
+    for other in occupied:
+        if rect.intersects(other):
+            return False
+    for boundary in boundaries:
+        if boundary is own:
+            continue
+        try:
+            if rect.intersection(boundary).length > 0.01:
+                return False
+        except Exception:                            # noqa: BLE001
+            if rect.intersects(boundary):
+                return False
+    for region in foreign:
+        if region is own:
+            continue
+        if region.contains(rect.centroid):
+            return False
+    return True
+
+
+def _single_spots(shape, width: float, height: float,
+                  north: float, east: float, margin: float):
+    """Kolejne pozycje wewnątrz poligonu: środek, potem siatka wokół niego."""
+    yield LabelBox(north, east, width, height)
+    minx, miny, maxx, maxy = shape.bounds
+    span_n = maxx - minx
+    span_e = maxy - miny
+    for step_n in (-0.25, 0.25, -0.15, 0.15, 0.0):
+        for step_e in (0.0, -0.25, 0.25, -0.15, 0.15):
+            if not step_n and not step_e:
+                continue
+            yield LabelBox(north + step_n * span_n, east + step_e * span_e,
+                           width, height)
+
+
+def _inside_spots(shape, width1, height1, width2, height2,
+                  north: float, east: float, margin: float):
+    """Pary (A1, A2) do wypróbowania wewnątrz poligonu."""
+    for a1_box in _single_spots(shape, width1, height1, north, east, margin):
+        yield (a1_box, None)
+    for a2_box in _single_spots(shape, width2, height2, north, east, margin):
+        yield (None, a2_box)
+
+
 def layout_object(shape, a1: str, a2: str, *, scale: int,
-                  occupied: list) -> dict | None:
+                  occupied: list, boundaries=None, foreign=None) -> dict | None:
     """Planuje etykiety jednego poligonu.
 
     Zasady (zgodnie z wymaganiami użytkownika):
@@ -188,18 +243,38 @@ def layout_object(shape, a1: str, a2: str, *, scale: int,
         top = north + total / 2
         box1 = LabelBox(top - height1 / 2, east, width1, height1)
         box2 = LabelBox(top - height1 - gap - height2 / 2, east, width2, height2)
-        if _fits(shape, box1, margin) and _fits(shape, box2, margin):
+        if (_fits(shape, box1, margin) and _fits(shape, box2, margin) and
+                _clear_of(box1, occupied, boundaries, foreign, shape) and
+                _clear_of(box2, occupied, boundaries, foreign, shape)):
             inside = {"A1": box1, "A2": box2}
-        elif _fits(shape, LabelBox(north, east, width1, height1), margin):
-            inside = {"A1": LabelBox(north, east, width1, height1)}
-        elif _fits(shape, LabelBox(north, east, width2, height2), margin):
-            inside = {"A2": LabelBox(north, east, width2, height2)}
+        else:
+            # Blok nie wchodzi w całości — próbujemy pojedynczo, w kilku
+            # punktach wewnątrz poligonu (środek, potem siatka).
+            for spot in _inside_spots(shape, width1, height1, width2, height2,
+                                      north, east, margin):
+                first, second = spot
+                if (first is not None and
+                        _fits(shape, first, margin) and
+                        _clear_of(first, occupied, boundaries, foreign, shape)):
+                    inside = {"A1": first}
+                    break
+                if (second is not None and
+                        _fits(shape, second, margin) and
+                        _clear_of(second, occupied, boundaries, foreign, shape)):
+                    inside = {"A2": second}
+                    break
     elif a1:
-        if _fits(shape, LabelBox(north, east, width1, height1), margin):
-            inside = {"A1": LabelBox(north, east, width1, height1)}
+        for box_ in _single_spots(shape, width1, height1, north, east, margin):
+            if (_fits(shape, box_, margin) and
+                    _clear_of(box_, occupied, boundaries, foreign, shape)):
+                inside = {"A1": box_}
+                break
     elif a2:
-        if _fits(shape, LabelBox(north, east, width2, height2), margin):
-            inside = {"A2": LabelBox(north, east, width2, height2)}
+        for box_ in _single_spots(shape, width2, height2, north, east, margin):
+            if (_fits(shape, box_, margin) and
+                    _clear_of(box_, occupied, boundaries, foreign, shape)):
+                inside = {"A2": box_}
+                break
 
     for box_ in inside.values():
         occupied.append(box_.rect)
@@ -286,7 +361,9 @@ def auto_layout_5310_labels(objects, *, scale: int = 5000,
     # Najpierw duże poligony (łatwe), potem trudne.
     entries.sort(key=lambda item: -item[1].area)
     for uid, shape, base, a1, a2 in entries:
-        plan = layout_object(shape, a1, a2, scale=scale, occupied=occupied)
+        plan = layout_object(shape, a1, a2, scale=scale,
+                             occupied=occupied, boundaries=boundaries,
+                             foreign=foreign)
         if not plan:
             continue
         labels: dict = {}
@@ -302,10 +379,16 @@ def auto_layout_5310_labels(objects, *, scale: int = 5000,
             text = a1 if field == "A1" else a2
             width, height = text_size(text, scale, fraction=(field == "A2"))
             best = None
+            fallback = None
             for dx, dy, distance in candidate_positions(
                     shape, width, height, scale=scale):
                 candidate = LabelBox(anchor_world[0] + dx, anchor_world[1] + dy,
                                      width, height)
+                if fallback is None:
+                    fallback = candidate
+                # Twardo: żadnych kolizji z etykietami ani z obcymi granicami.
+                if not _clear_of(candidate, occupied, boundaries, foreign, shape):
+                    continue
                 cost = score_candidate(candidate, anchor_world, distance,
                                        occupied, boundaries, foreign)
                 if best is None or cost < best[0]:
@@ -313,8 +396,13 @@ def auto_layout_5310_labels(objects, *, scale: int = 5000,
                 if cost < W_INSIDE_FOREIGN:
                     break
             if best is None:
-                continue
-            box_ = best[1]
+                # Nie gubimy napisu: ostatnia deska ratunku to pierwszy
+                # kandydat (z wysięgnikiem), nawet jeśli wypada słabo.
+                if fallback is None:
+                    continue
+                box_ = fallback
+            else:
+                box_ = best[1]
             occupied.append(box_.rect)
             # Osie GEO-MAP: shapely x = PÓŁNOC, y = WSCHÓD.
             east = box_.cy - anchor_world[1]
