@@ -432,7 +432,10 @@ button:disabled { opacity:.38; cursor:not-allowed; filter:none !important; }
   position:absolute;top:67px;right:18px;z-index:1;
   color:#2b6170;font-size:10px;font-weight:650;
   background:#ffffffd9;border:1px solid #cfdee6;
-  padding:5px 9px;border-radius:7px;pointer-events:none;
+  padding:5px 9px;border-radius:7px;cursor:pointer;
+}
+.underlay-chip:hover {
+  filter:brightness(0.97);
 }
 #underlay-dialog .select-grid {grid-template-columns:repeat(2,minmax(0,1fr));}
 #underlay-dialog select {width:100%;min-width:0;}
@@ -1833,12 +1836,21 @@ body[data-theme] .topbar .header-control {
   transform:none;text-align:center;cursor:pointer;
 }
 body[data-theme] .topbar .top-icon.header-control {
-  color:var(--ui-muted);background:transparent;border-color:transparent;
+  color: var(--ui-ink);
+  background: var(--ui-panel);
+  border: 1px solid var(--ui-edge);
 }
 body[data-theme] .topbar .top-icon.header-control:hover,
-body[data-theme] .topbar .map-background-menu[open]>.header-control {
-  color:var(--ui-accent);background:var(--ui-hover);border-color:var(--ui-edge);
-  box-shadow:none;
+body[data-theme] .topbar .map-background-menu[open] > .header-control {
+  color: var(--ui-accent);
+  background: var(--ui-hover);
+  border-color: var(--ui-accent);
+  box-shadow: none;
+}
+body[data-theme] .topbar .focus-control[aria-pressed="true"] {
+  color: var(--ui-accent);
+  background: var(--ui-accent-soft);
+  border-color: var(--classic-focus);
 }
 .topbar .header-icon {width:17px;height:17px;flex:none;display:block;}
 .topbar .header-control kbd {
@@ -2142,6 +2154,7 @@ body.focus-mode .toolbar { min-height:0; padding:5px 14px; }
 body[data-theme] .topbar,
 body[data-document-editor="true"][data-theme] .topbar {
   display: flex;
+  flex-wrap: nowrap;
   flex-wrap: nowrap;
   align-items: center;
   gap: 8px;
@@ -2519,4 +2532,61 @@ body[data-theme] .map-bottom-right {
 body[data-theme="dark"] .placeholder-world-map {
   color: #7b93ad;
   opacity: 0.28;
+}
+/* Kompaktowa karta podsumowania u góry Inspektora: kod nad A1 + powierzchnią w ha */
+body[data-theme] .inspector-summary {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px 16px 12px;
+  background: var(--ui-accent-soft);
+  border-bottom: 1px solid var(--ui-edge);
+}
+
+body[data-theme] .inspector-summary-top {
+  display: flex;
+  align-items: center;
+}
+
+body[data-theme] .inspector-summary .code-pill {
+  padding: 2px 7px;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1.3;
+  border-radius: 6px;
+  background: var(--ui-panel);
+  border: 1px solid var(--ui-edge);
+  color: var(--ui-accent);
+}
+
+body[data-theme] .inspector-summary-main {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+body[data-theme] .inspector-summary-a1 {
+  font-size: 19px;
+  font-weight: 760;
+  letter-spacing: -0.02em;
+  line-height: 1.15;
+  color: var(--ui-ink);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+body[data-theme] .inspector-summary-ha {
+  flex: 0 0 auto;
+  font-size: 14px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  color: var(--ui-accent);
+  background: var(--ui-panel);
+  border: 1px solid var(--ui-edge);
+  border-radius: 7px;
+  padding: 3px 9px;
+  white-space: nowrap;
 }

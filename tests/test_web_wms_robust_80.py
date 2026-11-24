@@ -31,10 +31,11 @@ def test_entries_get_a_kind():
 def test_changing_only_the_date_updates_the_entry():
     start = JS.index("function applyUnderlayUnsafe(){")
     block = JS[start:start + 2600]
-    assert "if(item)item.time=wantedTime;" in block
+    assert "item.time=chosenTime;" in block
 
 
 def test_last_error_is_visible_in_the_panel():
-    assert "item.lastError=String(error.message||error);" in JS
-    assert 'status:item.lastError?("Błąd: "+item.lastError):' in JS
-    assert 'item.lastError="";' in JS
+    # Plik użytkownika trzyma błąd w item.error — pole jest pokazywane w panelu.
+    assert 'item.error=error.message||"Błąd pobierania";' in JS
+    assert 'status:item.error?("Błąd: "+item.error):' in JS
+    assert 'item.error="";' in JS

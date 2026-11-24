@@ -72,3 +72,19 @@ def test_html_markup_is_balanced():
     between = html[vectors:rasters]
     # Panel Wektory zamyka się PRZED panelem Rastry.
     assert between.count("</div>") >= between.count("<div")
+
+
+def test_codes_are_named_after_the_users_request():
+    """5310 = Wydzielenie, 5332 = Budynki (data.py + kolor warstwy)."""
+    from geostudio.web_app.data import CODES
+    assert CODES["5310"] == "Wydzielenie"
+    assert CODES["5332"] == "Budynki"
+    js = Path("geostudio/web_app/static/map.js").read_text(encoding="utf-8")
+    assert 'layer === "Budynki" || layer === "Wydzielenie"' in js
+
+
+def test_focus_button_is_labelled_focus():
+    html = Path("geostudio/web_app/static/index.html").read_text(encoding="utf-8")
+    assert "<kbd>Focus</kbd>" in html
+    assert "<kbd>F11</kbd>" not in html
+    assert "skrót F11" in html      # skrót nadal działa, tylko nie jest etykietą
