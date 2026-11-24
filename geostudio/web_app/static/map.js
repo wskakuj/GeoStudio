@@ -2876,15 +2876,21 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
       }finally{URL.revokeObjectURL(url);}
       if(!item.visible||id!==item.ticket||
          documentToken!==state.edit?.documentToken)return;
-      item.image=image;item.bounds=bounds;item.loading=false;
+      item.image=image;item.bounds=bounds;item.loading=false;item.lastError="";
       requestDraw();renderRasterLayers();
     }catch(error){
       if(error.name==="AbortError"||id!==item.ticket)return;
-      item.loading=false;renderRasterLayers();
-      inform("Podkład "+item.title+": "+error.message,true);
+      item.loading=false;
+      item.lastError=String(error.message||error);
+      renderRasterLayers();
+      inform("Podkład "+item.title+": "+item.lastError,true);
     }
   }
   function applyUnderlay(){
+    try{applyUnderlayUnsafe();}
+    catch(error){inform("Nie udało się dodać podkładu: "+(error?.message||error),true);}
+  }
+  function applyUnderlayUnsafe(){
     if(!state.meta){inform("Najpierw otwórz mapę.");return;}
     const epsg=Number($("underlay-epsg").value);
     const option=$("underlay-layer").selectedOptions[0];
@@ -2901,20 +2907,32 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
     // NOWĄ warstwę na stos (poprzednie zostają).
     // Data archiwalna jest częścią tożsamości podkładu: ta sama warstwa z inną
     // datą to NOWY obraz, a nie ten sam wpis.
-    const wantedTime=timePresets.has(preset)
-      ?String($("underlay-time").value||"").trim():"";
+    let wantedTime="";
+    try{
+      wantedTime=timePresets.has(preset)
+        ?String($("underlay-time")?.value||"").trim():"";
+    }catch(_){wantedTime="";}
     let item=underlays.find(entry=>entry.preset===preset&&entry.layer===layer&&
                                    entry.epsg===epsg&&
                                    (entry.time||"")===wantedTime);
     if(!item){
-      item={id:"wms"+(++underlaySerial),preset,layer,epsg,title,
+      // Ten sam preset+warstwa+układ, ale inna data: aktualizujemy wpis,
+      // żeby nie robić duplikatów na stosie.
+      item=underlays.find(entry=>entry.preset===preset&&entry.layer===layer&&
+                                 entry.epsg===epsg);
+      if(item)item.time=wantedTime;
+    }
+    if(!item){
+      item={kind:"wms",id:"wms"+(++underlaySerial),preset,layer,epsg,title,
             url:preset==="custom"?currentWmsUrl():"",
             time:wantedTime,
             image:null,bounds:null,
             opacity:Number($("underlay-opacity").value)/100||.75,
-            visible:true,loading:false,ticket:0,timer:null,abort:null};
+            visible:true,loading:false,ticket:0,timer:null,abort:null,
+            lastError:""};
       underlays.push(item);
     }else{
+      item.kind="wms";
       item.visible=true;item.image=null;item.bounds=null;
     }
     underlay.activeId=item.id;
@@ -2923,10 +2941,8 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
     updateUnderlayStatus("Pobieranie obrazu dla EPSG:"+epsg+"…");
     renderRasterLayers();
     scheduleUnderlayRefresh(true);
-    // Okno WMS zamykamy po dodaniu warstwy — krycie i widoczność kolejnych
-    // podkładów reguluje się w panelu „Rastry”.
-    const dialog=$("underlay-dialog");
-    if(dialog?.open)dialog.close();
+    // Okna NIE zamykamy: widać w nim status i ewentualny błąd Geoportalu.
+    // Informujemy tylko, gdzie reguluje się krycie i widoczność warstw.
     inform("Podkład dodany. Krycie i widoczność ustawisz w panelu Rastry.");
   }
   function paintUnderlay(){
@@ -3133,7 +3149,8 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
     for(const item of underlays)
       items.push({kind:"wms",id:item.id,title:underlayTitle(item),
         visible:item.visible,opacity:item.opacity,
-        status:item.loading?"Odświeżanie obrazu…":
+        status:item.lastError?("Błąd: "+item.lastError):
+          item.loading?"Odświeżanie obrazu…":
           item.image?"Połączono":"Ładowanie…"});
     for(const item of [...raster.layers,...(raster.image?[rasterEntry()]:[])])
       items.push({kind:"raster",id:item.id,title:item.name,
@@ -7639,7 +7656,7 @@ inform("Klikaj mapę, aby wstawiać kolejne oznaczenia. Naciśnij Esc lub wybier
     underlay.opacity=value;
     // Krycie z okna WMS musi działać na JUŻ wyświetlone podkłady — rysowanie
     // korzysta z item.opacity, a nie z globalnego underlay.opacity.
-    for(const item of underlays)if(item.kind==="wms")item.opacity=value;
+    for(const item of underlays)if(item.kind!=="raster")item.opacity=value;
     $("underlay-opacity-value").textContent=ev.target.value+"%";
     requestDraw();renderRasterLayers();
   });

@@ -21,21 +21,21 @@ def test_opacity_slider_updates_visible_underlays():
     """Suwak z okna WMS musi zmieniać item.opacity, a nie tylko underlay.opacity."""
     start = JS.index('$("underlay-opacity").addEventListener("input"')
     block = JS[start:start + 500]
-    assert "for(const item of underlays)if(item.kind===\"wms\")item.opacity=value;" in block
+    assert 'for(const item of underlays)if(item.kind!=="raster")item.opacity=value;' in block
 
 
 def test_archive_date_is_part_of_the_underlay_identity():
-    start = JS.index("function applyUnderlay(){")
-    block = JS[start:start + 2200]
-    assert 'const wantedTime=timePresets.has(preset)' in block
+    start = JS.index("function applyUnderlayUnsafe(){")
+    block = JS[start:start + 2600]
+    assert "wantedTime=timePresets.has(preset)" in block
     assert '(entry.time||"")===wantedTime' in block
     assert "time:wantedTime," in block
 
 
-def test_dialog_closes_after_adding_a_layer():
-    start = JS.index("function applyUnderlay(){")
+def test_dialog_informs_where_to_change_opacity():
+    """Okno zostaje otwarte (widać status i błędy), ale mówi, gdzie zmienić krycie."""
+    start = JS.index("function applyUnderlayUnsafe(){")
     block = JS[start:start + 2600]
-    assert 'if(dialog?.open)dialog.close();' in block
     assert "Krycie i widoczność ustawisz w panelu Rastry." in block
 
 
