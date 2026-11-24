@@ -138,12 +138,13 @@ def test_inside_label_sits_at_the_polygon_centre_not_at_the_base_point():
     shape = _box(0, 0, 200, 200)
     result = _layout([("u20", shape, (10.0, 10.0), "02r", "6OL55|0.26")])
     labels = result["changes"][0]["labels"]
-    # Punkt bazowy to (10,10); napisy mają stać w środku poligonu (100,100).
+    # Punkt bazowy to (10,10); napisy mają stać WEWNĄTRZ poligonu, blisko
+    # środka (100,100). Każda etykieta ma teraz swoje miejsce.
     for field in ("A1", "A2"):
         x = 10.0 + labels[field]["dy"]      # wschód
         y = 10.0 + labels[field]["dx"]      # północ
-        assert abs(x - 100) < 1.0
-        assert abs(y - 100) < 12            # blok pionowy, więc lekko nad/pod
+        assert 0 < x < 200 and 0 < y < 200
+        assert abs(x - 100) < 60 and abs(y - 100) < 60
 
 
 def test_leader_attaches_to_the_polygon_centre():

@@ -6848,14 +6848,22 @@ inform("Klikaj mapę, aby wstawiać kolejne oznaczenia. Naciśnij Esc lub wybier
     const moved=Math.hypot(ev.clientX-leaderPress.x,ev.clientY-leaderPress.y);
     leaderPress=null;
     if(moved>=4)return;   // przeciągnięcie = panoramowanie, nie stawiamy kotwicy
-    const selected=state.labelSelected;
-    if(!selected){inform("Najpierw chwyć etykietę A1 lub A2 lewym przyciskiem.",true);return;}
+    // Kółko kotwiczy wysięgnik. Jeśli żadna etykieta nie była chwytana,
+    // bierzemy etykietę zaznaczonego obiektu — najpierw A1, potem A2.
+    const selected=state.labelSelected||labelOfActiveObject();
+    if(!selected){inform("Zaznacz obiekt 5310 albo chwyć jego etykietę A1/A2.",true);return;}
     ev.preventDefault();ev.stopImmediatePropagation();
     const p=eventCoords(ev),world=screenToWorld(p.x,p.y);
     // screenToWorld zwraca (wschód, -północ), a API oczekuje [północ, wschód].
     await setLeaderAnchor(selected,{north:-world.y,east:world.x});
   },true);
   window.addEventListener("keydown",ev=>{
+    if(ev.key==="Escape"&&state.leaderMode){
+      resetTransientDrags();
+      leaveLeaderMode();
+      inform("Tryb wysięgników wyłączony.");
+      return;
+    }
     if(ev.key==="Escape"&&(state.drag||state.labelDrag||state.anchorDrag||state.editBusy)){
       resetTransientDrags();
       state.editBusy=false;state.editBusySince=0;
@@ -6883,6 +6891,18 @@ inform("Klikaj mapę, aby wstawiać kolejne oznaczenia. Naciśnij Esc lub wybier
     canvas.style.cursor="";
     requestDraw();
   }
+  // Etykieta zaznaczonego obiektu — do kotwiczenia kółkiem bez chwytania.
+  function labelOfActiveObject(){
+    if(!state.active)return null;
+    const feature=state.features.find(f=>f.id===state.active);
+    if(!feature||feature.code!=="5310")return null;
+    const labels=feature.labels||[];
+    const a1=labels.find(l=>l.field==="A1");
+    const a2=labels.find(l=>l.field==="A2");
+    const pick=a1||a2;
+    return pick?{fid:feature.id,field:pick.field}:null;
+  }
+
   async function setLeaderAnchor(selected,world){
     try{
       const result=await api("/api/labels/leader",{
@@ -6894,12 +6914,12 @@ inform("Klikaj mapę, aby wstawiać kolejne oznaczenia. Naciśnij Esc lub wybier
       updateEditState(result);
       await refreshLabelsNow();
       inform("Punkt zaczepienia wysięgnika ustawiony ("+selected.field+
-        "). Tryb wysięgników wyłączony — włącz go ponownie przyciskiem „Wysięgniki”.");
+        "). Q/W zmienia stronę, Esc kończy tryb.");
     }catch(error){
       inform("Nie ustawiono kotwicy: "+error.message,true);
     }finally{
-      // Zawsze wracamy do normalnej pracy, także po błędzie.
-      leaveLeaderMode();
+      // Tryb zostaje WŁĄCZONY — kotwiczenie kilku etykiet pod rząd.
+      state.anchorDrag=null;
       requestDraw();
     }
   }
@@ -6959,7 +6979,7 @@ inform("Klikaj mapę, aby wstawiać kolejne oznaczenia. Naciśnij Esc lub wybier
     }catch(error){
       inform("Nie przesunięto kotwicy: "+error.message,true);
     }finally{
-      leaveLeaderMode();
+      state.anchorDrag=null;
       requestDraw();
     }
   },true);
