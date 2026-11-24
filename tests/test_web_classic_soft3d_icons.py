@@ -46,8 +46,9 @@ def test_soft3d_tool_coverage_and_unique_gradient_ids():
     ribbon = {key: value for key, value in parser.buttons.items()
               if key.startswith("tool-") and "tool-button" in value["class"].split()}
     # Zakładka „Eksport” usunięta (39 -> 35), „Cofnij/Ponów” przeniesione do
-    # nagłówka (35 -> 33), nowy przycisk „Łącznik” w Tworzeniu (33 -> 34).
-    assert len(ribbon) == 34
+    # nagłówka (35 -> 33), „Łącznik” w Tworzeniu (33 -> 34),
+    # „Wypełnienie” w Kartografii (34 -> 35).
+    assert len(ribbon) == 35
     assert all(value["icons"] == 1 for value in ribbon.values())
     floating = {key: value for key, value in parser.buttons.items()
                 if key.startswith("float-")}
@@ -60,7 +61,7 @@ def test_soft3d_tool_coverage_and_unique_gradient_ids():
     # „Zapisz na oryginale mapy” usunięty (jego ikona trafiła do „Zapisz kopię
     # mapy”), a razem z zakładką Eksport zniknęły 4 ikony narzędzi.
     # 56 + dwa gradienty „Łącznika” (wstążka + przybornik) + „Skupienie”.
-    assert len(parser.gradients) == 59
+    assert len(parser.gradients) == 60   # + ikona „Wypełnienie”
     assert sorted(parser.gradients) == sorted(parser.fills)
 
 
