@@ -87,3 +87,18 @@ def test_tab_click_expands_the_collapsed_ribbon():
     assert 'document.body.classList.contains("ribbon-collapsed")' in block
     assert 'document.body.classList.remove("ribbon-collapsed");' in block
     assert "applyPanelState();" in block
+
+
+def test_header_is_a_single_compact_row():
+    """Cofnij/Ponów i panel tytułu muszą być na wysokości przycisków akcji."""
+    start = CSS.index(".topbar {")
+    block = CSS[start:start + 320]
+    assert "display:flex" in block
+    assert "flex-wrap:nowrap" in block
+    assert "min-height:56px" in block
+    # Historia to kompaktowe ikony (bez podpisów), żeby nie rozpychała paska.
+    assert ".header-history .history-label { display:none; }" in CSS
+    assert '<span class="history-label">Cofnij</span>' in HTML
+    assert '<span class="history-label">Ponów</span>' in HTML
+    # Tytuł i status w jednej linii.
+    assert ".header-center { display:flex; flex-direction:row;" in CSS

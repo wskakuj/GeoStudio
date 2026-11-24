@@ -14,10 +14,14 @@ button { cursor:pointer; }
 button:focus-visible, input:focus-visible, canvas:focus-visible { outline:2px solid #65dace; outline-offset:2px; }
 .app-shell { height:100vh; height:100dvh; min-height:530px; display:flex; flex-direction:column; overflow:hidden; }
 .topbar {
-  min-height:66px; display:grid; grid-template-columns:1fr 1.2fr 1fr;
-  align-items:center; gap:12px; padding:0 20px 0 19px;
-  border-bottom:1px solid var(--divider); background:var(--shell);
+  min-height:56px; display:flex; flex-wrap:nowrap; align-items:center; gap:10px;
+  padding:0 16px; border-bottom:1px solid var(--divider); background:var(--shell);
 }
+.identity { flex:0 0 auto; }
+.header-history { flex:0 0 auto; display:flex; align-items:center; gap:4px; }
+.header-history .top-icon { min-height:34px; height:34px; padding:0 8px; }
+.header-history .history-label { display:none; }
+.header-history .tool-glyph { width:20px; height:20px; }
 .identity { display:flex; align-items:center; gap:12px; min-width:0; }
 .identity strong, .wordmark { font-family:"Segoe UI Variable Display","Segoe UI Semibold","Segoe UI",system-ui,sans-serif;
   font-size:19px; font-weight:650; letter-spacing:-.012em; display:block; line-height:1.1;
@@ -29,11 +33,12 @@ button:focus-visible, input:focus-visible, canvas:focus-visible { outline:2px so
 .brand-version em { font-style:normal; font-weight:750; padding:2px 5px; border-radius:4px; background:#133c45; color:#56d5c4; margin-left:6px; font-size:9px; }
 .mark { width:40px; height:40px; display:block; object-fit:contain; border-radius:11px;
   flex:0 0 auto; image-rendering:auto; filter:drop-shadow(0 4px 10px #0b25301f); }
-.header-center { display:flex; flex-direction:column; align-items:center; gap:2px; min-width:0; }
+.header-center { display:flex; flex-direction:row; align-items:center; gap:8px;
+  flex:1 1 auto; min-width:0; overflow:hidden; }
 .header-center #document-title { font-size:13px; font-weight:660; max-width:100%; text-overflow:ellipsis; white-space:nowrap; overflow:hidden; color:#d4e2ee; }
 .top-kicker { font-size:9px; letter-spacing:.16em; color:#778ea4; font-weight:760; }
 .document-meta { color:#69cbbd; font-size:10px; }
-.header-actions { justify-self:end; display:flex; align-items:center; gap:8px; }
+.header-actions { margin-left:auto; display:flex; align-items:center; gap:8px; flex:0 0 auto; }
 .top-icon { border:1px solid #314458; background:transparent; color:#a6c0d1; min-height:36px; border-radius:9px; padding:0 10px; font-size:19px; display:flex; gap:10px; align-items:center; }
 .top-icon kbd { font-size:10px; border:none; letter-spacing:.06em; color:#8299ac; }
 .button { border:1px solid #324a57; padding:10px 16px; border-radius:9px; font-weight:660; font-size:12px; background:#203147; color:#e5f1f9; transition:background .15s,transform .15s; }
@@ -629,7 +634,7 @@ body[data-theme] .topbar {
   background:var(--ui-panel);
   border-bottom:1px solid var(--ui-edge);
   box-shadow:0 3px 14px var(--ui-shadow);
-  min-height:70px;
+  min-height:56px;
 }
 body[data-theme] .identity strong, body[data-theme] .wordmark {color:var(--ui-ink);font-weight:650;font-size:19px;}
 body[data-theme] .wordmark .brand-number {color:var(--ui-muted);font-weight:450;font-size:16.5px;}
@@ -2118,3 +2123,12 @@ body.ribbon-collapsed .toolbar { align-items:center; }
 body.focus-mode .workspace { grid-template-columns:36px minmax(0,1fr) 36px; }
 body.focus-mode .ribbon-panels { display:none; }
 body.focus-mode .toolbar { min-height:0; padding:5px 14px; }
+
+/* Nagłówek w jednym rzędzie — przy węższym oknie skracamy, nie zawijamy. */
+@media(max-width:1280px){
+  .header-actions .button { padding:8px 10px; font-size:11px; }
+  .header-actions .top-icon kbd { display:none; }
+}
+@media(max-width:1080px){
+  .header-center #dirty-marker { display:none; }
+}
