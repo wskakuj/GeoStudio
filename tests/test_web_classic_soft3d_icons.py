@@ -59,8 +59,8 @@ def test_soft3d_tool_coverage_and_unique_gradient_ids():
     assert "btn-export-label" in parser.ids
     # „Zapisz na oryginale mapy” usunięty (jego ikona trafiła do „Zapisz kopię
     # mapy”), a razem z zakładką Eksport zniknęły 4 ikony narzędzi.
-    # 56 + dwa gradienty ikony „Łącznik” (wstążka + przybornik).
-    assert len(parser.gradients) == 58
+    # 56 + dwa gradienty „Łącznika” (wstążka + przybornik) + „Skupienie”.
+    assert len(parser.gradients) == 59
     assert sorted(parser.gradients) == sorted(parser.fills)
 
 
