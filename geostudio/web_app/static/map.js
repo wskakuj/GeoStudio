@@ -7327,6 +7327,17 @@ inform("Klikaj mapę, aby wstawiać kolejne oznaczenia. Naciśnij Esc lub wybier
     }
     if(ev.key==="Escape"){
       if(dialog.open){dialog.close();return;}
+      if(state.tool==="link"){
+        // Esc w trybie Łącznik anuluje CAŁĄ akcję i wychodzi z narzędzia,
+        // żeby nie zostawiać zaczętego odcinka.
+        ev.preventDefault();
+        state.drawPoints=[];state.drawSnap=null;state.drawHover=null;
+        state.drawCursorWorld=null;
+        setTool("select");
+        inform("Wkreślanie łącznika anulowane.");
+        requestDraw();
+        return;
+      }
       if(["draw","cut","line","line-edit"].includes(state.tool)){
         ev.preventDefault();
         if(state.drawPoints.length){
