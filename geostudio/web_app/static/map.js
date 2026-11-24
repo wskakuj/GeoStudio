@@ -2366,10 +2366,17 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
       else inform("Osiągnięto limit 500 węzłów.",true);
     }
     state.drawSnap=snapped.kind?snapped:null;
+    // Łącznik potrzebuje tylko dwóch punktów — drugi klik od razu tworzy znak.
+    if(state.tool==="link"&&state.drawPoints.length>=2){
+      finishGeometryDrawing();
+      return;
+    }
     // No blocking toast or deferred pointerup: a vertex appears on the
     // same mouse-down frame and rapid click sequences are not dropped.
-    $("status-message").textContent="Rysowanie: "+
-      state.drawPoints.length+" punktów · Enter albo pierwszy punkt kończy.";
+    $("status-message").textContent=state.tool==="link"
+      ?"Łącznik: wskaż punkt końcowy (drugi klik tworzy znak)."
+      :"Rysowanie: "+state.drawPoints.length+
+       " punktów · Enter albo pierwszy punkt kończy.";
     requestDraw();
   }
   function updateDrawingHover(world,altPressed=false) {
@@ -6975,7 +6982,7 @@ inform("Klikaj mapę, aby wstawiać kolejne oznaczenia. Naciśnij Esc lub wybier
       }
     }
     if(rightLabel)return;
-    if(["draw","cut","line","line-edit"].includes(state.tool)&&
+    if(["draw","cut","line","line-edit","link"].includes(state.tool)&&
        ev.button===0&&!state.editBusy&&state.meta){
       appendDrawingPoint(ev,p);
       return;

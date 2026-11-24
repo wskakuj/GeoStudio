@@ -135,3 +135,16 @@ def test_brand_lockup_is_crisp_and_typographic():
     assert '<strong class="wordmark">GeoStudio<span class="brand-number">2.0</span></strong>' in HTML
     assert ".wordmark .brand-number" in CSS
     assert '"/geostudio-icon@2x.png"' in Path("geostudio/web_app/server.py").read_text(encoding="utf-8")
+
+
+def test_clicking_the_map_draws_a_connector():
+    """Bez tego klik w trybie Łącznik zaznaczał obiekty zamiast rysować."""
+    assert ('if(["draw","cut","line","line-edit","link"].includes(state.tool)&&\n'
+            '       ev.button===0&&!state.editBusy&&state.meta){\n'
+            '      appendDrawingPoint(ev,p);') in JS
+
+
+def test_second_click_creates_the_connector():
+    assert 'if(state.tool==="link"&&state.drawPoints.length>=2){' in JS
+    start = JS.index('if(state.tool==="link"&&state.drawPoints.length>=2){')
+    assert "finishGeometryDrawing();" in JS[start:start + 120]
