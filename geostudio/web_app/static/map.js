@@ -7271,6 +7271,9 @@ inform("Klikaj mapę, aby wstawiać kolejne oznaczenia. Naciśnij Esc lub wybier
     if((ev.ctrlKey||ev.metaKey)&&ev.key.toLowerCase()==="d"){
       ev.preventDefault();quickDuplicate();return;
     }
+    if(ev.key==="F11"&&!ev.ctrlKey&&!ev.metaKey&&!ev.altKey){
+      ev.preventDefault();toggleFocus();return;
+    }
     if(["draw","cut","line","line-edit","link"].includes(state.tool)&&ev.key==="Enter"){
       ev.preventDefault();finishGeometryDrawing();return;
     }
@@ -7390,6 +7393,60 @@ inform("Klikaj mapę, aby wstawiać kolejne oznaczenia. Naciśnij Esc lub wybier
   link("tool-winding",repairWinding);
   link("tool-line",()=>setTool("line"));
   link("tool-link",()=>setTool("link"));
+  // ── Skupienie i zwijanie paneli ──────────────────────────────────────
+  function applyPanelState(){
+    const body=document.body;
+    $("panel-collapse-left").setAttribute("aria-pressed",
+      String(body.classList.contains("left-collapsed")));
+    $("panel-collapse-left").textContent=
+      body.classList.contains("left-collapsed")?"›":"‹";
+    $("panel-collapse-left").title=
+      body.classList.contains("left-collapsed")?"Pokaż panel Warstwy mapy":"Zwiń panel Warstwy mapy";
+    $("panel-collapse-right").setAttribute("aria-pressed",
+      String(body.classList.contains("right-collapsed")));
+    $("panel-collapse-right").textContent=
+      body.classList.contains("right-collapsed")?"‹":"›";
+    $("panel-collapse-right").title=
+      body.classList.contains("right-collapsed")?"Pokaż panel Inspektor":"Zwiń panel Inspektor";
+    $("ribbon-collapse").setAttribute("aria-pressed",
+      String(body.classList.contains("ribbon-collapsed")));
+    const focus=body.classList.contains("left-collapsed")&&
+                body.classList.contains("right-collapsed")&&
+                body.classList.contains("ribbon-collapsed");
+    $("btn-focus").setAttribute("aria-pressed",String(focus));
+    try{localStorage.setItem("geostudio.panels",JSON.stringify({
+      left:body.classList.contains("left-collapsed"),
+      right:body.classList.contains("right-collapsed"),
+      ribbon:body.classList.contains("ribbon-collapsed")}));}catch(_){/* brak zgody */}
+    resizeCanvas();requestDraw();
+    if(state.meta)scheduleViewport();
+  }
+  function togglePanel(which){
+    const name=which+"-collapsed";
+    document.body.classList.toggle(name);
+    document.body.classList.remove("focus-mode");
+    applyPanelState();
+  }
+  function toggleFocus(){
+    const body=document.body;
+    const on=body.classList.contains("focus-mode");
+    body.classList.toggle("focus-mode",!on);
+    body.classList.toggle("left-collapsed",!on);
+    body.classList.toggle("right-collapsed",!on);
+    body.classList.toggle("ribbon-collapsed",!on);
+    applyPanelState();
+  }
+  link("panel-collapse-left",()=>togglePanel("left"));
+  link("panel-collapse-right",()=>togglePanel("right"));
+  link("ribbon-collapse",()=>togglePanel("ribbon"));
+  link("btn-focus",toggleFocus);
+  try{
+    const saved=JSON.parse(localStorage.getItem("geostudio.panels")||"null");
+    if(saved&&saved.left)document.body.classList.add("left-collapsed");
+    if(saved&&saved.right)document.body.classList.add("right-collapsed");
+    if(saved&&saved.ribbon)document.body.classList.add("ribbon-collapsed");
+  }catch(_){/* brak zapisu */}
+  applyPanelState();
   $("inspector-line-style").addEventListener("change",setInspectorLineStyle);
   link("line-close",()=>$("line-dialog").close());
   link("line-back",()=>$("line-dialog").close());

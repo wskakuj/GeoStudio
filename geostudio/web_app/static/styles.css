@@ -2082,3 +2082,36 @@ body[data-theme="dark"] #raster-summary[data-result="ready"] strong { color:#93e
 /* Sekcja „Blok” w zakładce Edycja. */
 .block-code{width:96px;padding:6px 8px;border-radius:8px;border:1px solid #cfd8e3;
   background:#f6f8fb;color:#26313f;font:12px ui-monospace,monospace}
+
+/* ── Tryb skupienia i zwijanie paneli ─────────────────────────────────── */
+.focus-control kbd { font-size:9px; }
+.focus-control[aria-pressed="true"] { border-color:#2aa88e; background:#123f37; color:#8ff2d6; }
+.panel-collapse { display:inline-grid; place-items:center; gap:1px; min-width:24px; height:24px;
+  padding:0 6px; border:1px solid #2d4054; background:#182a3d; color:#a8c0d4; border-radius:7px;
+  font-size:13px; line-height:1; cursor:pointer; transition:.15s; }
+.panel-collapse:hover { background:#22394c; color:#ebf9ff; }
+.panel-collapse svg { width:14px; height:14px; }
+.ribbon-collapse { display:inline-flex; align-items:center; gap:5px; margin-left:auto;
+  height:26px; font-size:10px; letter-spacing:.06em; text-transform:uppercase; font-weight:700; }
+
+/* Zwiń panel Warstwy mapy / Inspektor do wąskiej szyny */
+body.left-collapsed .workspace { grid-template-columns:36px minmax(0,1fr) 307px; }
+body.right-collapsed .workspace { grid-template-columns:288px minmax(0,1fr) 36px; }
+body.left-collapsed.right-collapsed .workspace { grid-template-columns:36px minmax(0,1fr) 36px; }
+body.left-collapsed .left-panel > *:not(.panel-head),
+body.right-collapsed .right-panel > *:not(.panel-head) { display:none; }
+body.left-collapsed .left-panel .panel-head,
+body.right-collapsed .right-panel .panel-head { min-height:0; padding:6px 4px; flex-direction:column; gap:6px; }
+body.left-collapsed .left-panel .panel-head > *:not(.panel-collapse),
+body.right-collapsed .right-panel .panel-head > *:not(.panel-collapse) { display:none; }
+
+/* Zwiń wstążkę: zostają same zakładki i przycisk powrotu */
+body.ribbon-collapsed .toolbar { min-height:0; padding:5px 14px; }
+body.ribbon-collapsed .ribbon-panels { display:none; }
+body.ribbon-collapsed #ribbon-collapse svg { transform:rotate(180deg); }
+body.ribbon-collapsed .toolbar { align-items:center; }
+
+/* Skupienie: panele schowane, mapa na całą szerokość, przybornik zostaje */
+body.focus-mode .workspace { grid-template-columns:36px minmax(0,1fr) 36px; }
+body.focus-mode .ribbon-panels { display:none; }
+body.focus-mode .toolbar { min-height:0; padding:5px 14px; }
