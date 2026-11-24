@@ -15,11 +15,18 @@ from dataclasses import dataclass
 
 from shapely.geometry import box
 
-# Wymiary znaku i linii w metrach na gruncie dla skali 1:5000.
-CHAR_W_M = 1.9
-LINE_H_M = 3.2
+# ── Metryka napisu zgodna z RYSOWANIEM (map.js → labelFontSize) ──────────
+# Klient liczy wysokość glifu w metrach na gruncie jako:
+#     worldTextHeight = px * 2500 * 0.0254 / 96
+# czyli 16 px daje ~10,58 m. Wcześniejszy model (3,2 m na linię) był ponad
+# trzykrotnie za mały, przez co silnik "nie widział" nakładań i wychodzenia
+# napisów na linie — etykiety wyglądały źle mimo poprawnych współrzędnych.
+LABEL_PX = 16.0             # bazowa wielkość napisu 5310 w stylu
+LABEL_REF_SCALE = 2500.0    # kalibracja klienta (stała, nie zależna od skali)
+GLYPH_H_M = LABEL_PX * LABEL_REF_SCALE * 0.0254 / 96.0     # ≈ 10,58 m
+ADVANCE = 0.58              # średnia szerokość znaku / wysokość glifu
 GAP_M = 0.8
-PAD_M = 3.0
+PAD_M = 1.0
 
 FLAG_PLAIN = 5
 FLAG_RIGHT = 69      # 64 + 5 — napis na wschód od zaczepu
@@ -60,15 +67,18 @@ class LabelBox:
 
 
 def text_size(text: str, scale: int = 5000, *, fraction: bool = False) -> tuple[float, float]:
-    """Szerokość i wysokość napisu w metrach na gruncie."""
-    factor = max(0.2, scale / 5000)
+    """Szerokość i wysokość napisu w metrach na gruncie.
+
+    Liczona TĄ SAMĄ metryką, którą rysuje klient (16 px × 2500 × 0,0254 / 96),
+    żeby prostokąt kolizji odpowiadał temu, co naprawdę widać na mapie.
+    """
     lines = str(text or "").replace("||", "\n").split("\n")
     if fraction:
         lines = [line.replace("|", "\n") for line in lines]
         lines = [part for line in lines for part in line.split("\n")]
     longest = max((len(line) for line in lines), default=1)
-    width = longest * CHAR_W_M * factor + 2 * PAD_M * factor
-    height = len(lines) * LINE_H_M * factor + 2 * PAD_M * factor
+    width = longest * GLYPH_H_M * ADVANCE + 2 * PAD_M
+    height = len(lines) * GLYPH_H_M + 2 * PAD_M
     return width, height
 
 
@@ -212,91 +222,82 @@ def _inside_spots(shape, width1, height1, width2, height2,
         yield (None, a2_box)
 
 
+def _column_spots(shape, north: float, east: float):
+    """Kolejne środki kolumny A1+A2 wewnątrz poligonu: polylabel, potem siatka."""
+    yield north, east
+    minx, miny, maxx, maxy = shape.bounds
+    span_n, span_e = maxx - minx, maxy - miny
+    for step_n in (0.0, -0.2, 0.2, -0.12, 0.12, -0.3, 0.3):
+        for step_e in (0.0, -0.2, 0.2, -0.12, 0.12, -0.3, 0.3):
+            if not step_n and not step_e:
+                continue
+            yield north + step_n * span_n, east + step_e * span_e
+
+
 def layout_object(shape, a1: str, a2: str, *, scale: int,
                   occupied: list, boundaries=None, foreign=None) -> dict | None:
-    """Planuje etykiety jednego poligonu.
+    """Planuje JEDNĄ kolumnę A1+A2 dla poligonu.
 
-    Zasady (zgodnie z wymaganiami użytkownika):
-    - napis, który się mieści, stoi w ŚRODKU poligonu (punkt Polylabel),
-      a nie w punkcie bazowym obiektu,
-    - napis, który się nie mieści, dostaje wysięgnik,
-    - jeśli jeden napis jest w środku, wysięgnik drugiego jest podpięty
-      DO NIEGO (wspólny punkt zaczepienia),
-    - jeśli oba są na zewnątrz, oba wysięgniki schodzą się w jednym punkcie
-      w środku poligonu.
+    Klient rysuje A1 i A2 jako kolumnę wyśrodkowaną na (x, y), więc silnik
+    liczy kolizje dla całej kolumny — nie dla dwóch osobnych prostokątów.
+    Kolejność: (1) kolumna w środku poligonu, (2) kolumna na zewnątrz
+    z wysięgnikiem do środka.
     """
     if shape is None or shape.is_empty:
         return None
-    factor = max(0.2, scale / 5000)
-    margin = 0.5 * factor
-    gap = 1.0 * factor
+    margin = 0.35 * GLYPH_H_M
     width1, height1 = text_size(a1, scale) if a1 else (0.0, 0.0)
     width2, height2 = text_size(a2, scale, fraction=True) if a2 else (0.0, 0.0)
-    # Osie GEO-MAP: shapely x = PÓŁNOC, y = WSCHÓD. Szerokość napisu biegnie
-    # wschód–zachód, więc blok A1/A2 układamy w pionie, czyli po osi północy.
+    parts = [(w, h) for w, h in ((width1, height1), (width2, height2)) if w]
+    if not parts:
+        return None
+    width = max(w for w, _h in parts)
+    height = sum(h for _w, h in parts) + GAP_M * (len(parts) - 1)
+
     north, east = polylabel(shape, precision=max(0.25, scale / 20000))
-    centre = (north, east)
+    boundaries = boundaries or []
+    foreign = foreign or []
 
-    inside: dict = {}
-    if a1 and a2:
-        total = height1 + gap + height2
-        top = north + total / 2
-        box1 = LabelBox(top - height1 / 2, east, width1, height1)
-        box2 = LabelBox(top - height1 - gap - height2 / 2, east, width2, height2)
-        if (_fits(shape, box1, margin) and _fits(shape, box2, margin) and
-                _clear_of(box1, occupied, boundaries, foreign, shape) and
-                _clear_of(box2, occupied, boundaries, foreign, shape)):
-            inside = {"A1": box1, "A2": box2}
-        else:
-            # Blok nie wchodzi w całości — próbujemy pojedynczo, w kilku
-            # punktach wewnątrz poligonu (środek, potem siatka).
-            for spot in _inside_spots(shape, width1, height1, width2, height2,
-                                      north, east, margin):
-                first, second = spot
-                if (first is not None and
-                        _fits(shape, first, margin) and
-                        _clear_of(first, occupied, boundaries, foreign, shape)):
-                    inside = {"A1": first}
-                    break
-                if (second is not None and
-                        _fits(shape, second, margin) and
-                        _clear_of(second, occupied, boundaries, foreign, shape)):
-                    inside = {"A2": second}
-                    break
-    elif a1:
-        for box_ in _single_spots(shape, width1, height1, north, east, margin):
-            if (_fits(shape, box_, margin) and
-                    _clear_of(box_, occupied, boundaries, foreign, shape)):
-                inside = {"A1": box_}
-                break
-    elif a2:
-        for box_ in _single_spots(shape, width2, height2, north, east, margin):
-            if (_fits(shape, box_, margin) and
-                    _clear_of(box_, occupied, boundaries, foreign, shape)):
-                inside = {"A2": box_}
-                break
+    # (1) w środku poligonu — najczytelniej.
+    for cand_n, cand_e in _column_spots(shape, north, east):
+        box_ = LabelBox(cand_n, cand_e, width, height)
+        if (_fits(shape, box_, margin) and
+                _clear_of(box_, occupied, boundaries, foreign, shape)):
+            occupied.append(box_.rect)
+            return {"mode": "inside", "anchor": (cand_n, cand_e),
+                    "box": box_, "inside": True}
 
-    for box_ in inside.values():
-        occupied.append(box_.rect)
+    # (1b) nie mieści się cała kolumna — spróbuj sam A1 w środku,
+    #      a A2 z wysięgnikiem. Tak robi GEO-MAP dla ciasnych poligonów.
+    if a1 and a2 and width1 and height1:
+        for cand_n, cand_e in _column_spots(shape, north, east):
+            single = LabelBox(cand_n, cand_e, width1, height1)
+            if (_fits(shape, single, margin) and
+                    _clear_of(single, occupied, boundaries, foreign, shape)):
+                occupied.append(single.rect)
+                return {"mode": "mixed", "anchor": (north, east),
+                        "box": single, "inside": True, "partial": True}
 
-    external = [field for field in ("A1", "A2")
-                if (a1 if field == "A1" else a2) and field not in inside]
-    # Punkt zaczepienia: napis w środku, a jeśli go nie ma — środek poligonu.
-    if "A1" in inside:
-        anchor = (inside["A1"].cx, inside["A1"].cy)
-    elif "A2" in inside:
-        anchor = (inside["A2"].cx, inside["A2"].cy)
-    else:
-        anchor = centre
-
-    if not external:
-        mode = "inside"
-    elif inside:
-        mode = "mixed"
-    else:
-        mode = "external"
-    return {"mode": mode, "anchor": anchor, "inside": inside,
-            "external": external}
+    # (2) na zewnątrz, z wysięgnikiem do punktu w środku poligonu.
+    anchor = (north, east)
+    best = None
+    fallback = None
+    for dx, dy, distance in candidate_positions(shape, width, height,
+                                               scale=scale):
+        candidate = LabelBox(anchor[0] + dx, anchor[1] + dy, width, height)
+        if fallback is None:
+            fallback = candidate
+        if not _clear_of(candidate, occupied, boundaries, foreign, shape):
+            continue
+        cost = score_candidate(candidate, anchor, distance, occupied,
+                               boundaries, foreign)
+        if best is None or cost < best[0]:
+            best = (cost, candidate)
+    box_ = best[1] if best is not None else fallback
+    if box_ is None:
+        return None
+    occupied.append(box_.rect)
+    return {"mode": "external", "anchor": anchor, "box": box_, "inside": False}
 
 
 def candidate_positions(shape, width: float, height: float, *, steps=12,
@@ -334,13 +335,33 @@ def score_candidate(box_: LabelBox, anchor: tuple[float, float], distance: float
     return cost
 
 
+def _external_spot(shape, anchor, width: float, height: float,
+                   occupied: list, boundaries: list, foreign: list,
+                   scale: int):
+    """Najlepsze miejsce na zewnątrz dla pojedynczego napisu."""
+    best = None
+    fallback = None
+    for dx, dy, distance in candidate_positions(shape, width, height,
+                                               scale=scale):
+        candidate = LabelBox(anchor[0] + dx, anchor[1] + dy, width, height)
+        if fallback is None:
+            fallback = candidate
+        if not _clear_of(candidate, occupied, boundaries, foreign, shape):
+            continue
+        cost = score_candidate(candidate, anchor, distance, occupied,
+                               boundaries, foreign)
+        if best is None or cost < best[0]:
+            best = (cost, candidate)
+    return best[1] if best is not None else fallback
+
+
 def auto_layout_5310_labels(objects, *, scale: int = 5000,
                             selected_ids=None) -> dict:
     """Układa etykiety A1/A2 dla listy poligonów 5310.
 
     ``objects`` to sekwencja ``(uid, shape, base, a1, a2)``. Zwraca słownik
-    ``{"changes": [...], "stats": {...}}``, gdzie każda zmiana opisuje oba
-    sloty w jednostkach względnych wobec punktu bazowego poligonu.
+    ``{"changes": [...], "stats": {...}}``; każda zmiana opisuje oba sloty
+    w jednostkach względnych wobec punktu bazowego poligonu.
     """
     occupied: list = []
     boundaries: list = []
@@ -350,6 +371,8 @@ def auto_layout_5310_labels(objects, *, scale: int = 5000,
         if selected_ids is not None and uid not in selected_ids:
             continue
         if shape is None or shape.is_empty:
+            continue
+        if not (a1 or a2):
             continue
         entries.append((uid, shape, base, a1, a2))
         boundaries.append(shape.boundary)
@@ -361,62 +384,51 @@ def auto_layout_5310_labels(objects, *, scale: int = 5000,
     # Najpierw duże poligony (łatwe), potem trudne.
     entries.sort(key=lambda item: -item[1].area)
     for uid, shape, base, a1, a2 in entries:
-        plan = layout_object(shape, a1, a2, scale=scale,
-                             occupied=occupied, boundaries=boundaries,
-                             foreign=foreign)
-        if not plan:
+        plan = layout_object(shape, a1, a2, scale=scale, occupied=occupied,
+                             boundaries=boundaries, foreign=foreign)
+        if not plan or plan.get("box") is None:
             continue
+        box_ = plan["box"]
+        dx = round(box_.cx - base[0], 3)
+        dy = round(box_.cy - base[1], 3)
         labels: dict = {}
-        # Napisy w środku: pozycja liczona względem punktu bazowego poligonu.
-        for field, box_ in plan["inside"].items():
-            labels[field] = {
-                "dx": round(box_.cx - base[0], 3),
-                "dy": round(box_.cy - base[1], 3),
-                "flags": FLAG_PLAIN,
-            }
-        anchor_world = plan["anchor"]
-        for field in plan["external"]:
-            text = a1 if field == "A1" else a2
-            width, height = text_size(text, scale, fraction=(field == "A2"))
-            best = None
-            fallback = None
-            for dx, dy, distance in candidate_positions(
-                    shape, width, height, scale=scale):
-                candidate = LabelBox(anchor_world[0] + dx, anchor_world[1] + dy,
-                                     width, height)
-                if fallback is None:
-                    fallback = candidate
-                # Twardo: żadnych kolizji z etykietami ani z obcymi granicami.
-                if not _clear_of(candidate, occupied, boundaries, foreign, shape):
-                    continue
-                cost = score_candidate(candidate, anchor_world, distance,
-                                       occupied, boundaries, foreign)
-                if best is None or cost < best[0]:
-                    best = (cost, candidate)
-                if cost < W_INSIDE_FOREIGN:
-                    break
-            if best is None:
-                # Nie gubimy napisu: ostatnia deska ratunku to pierwszy
-                # kandydat (z wysięgnikiem), nawet jeśli wypada słabo.
-                if fallback is None:
-                    continue
-                box_ = fallback
-            else:
-                box_ = best[1]
-            occupied.append(box_.rect)
-            # Osie GEO-MAP: shapely x = PÓŁNOC, y = WSCHÓD.
-            east = box_.cy - anchor_world[1]
-            labels[field] = {
-                "dx": round(box_.cx - base[0], 3),
-                "dy": round(box_.cy - base[1], 3),
-                "flags": FLAG_RIGHT if east >= 0 else FLAG_LEFT,
-                # Wspólny punkt zaczepienia dla obu wysięgników.
-                "anchor": (round(anchor_world[0] - base[0], 3),
-                           round(anchor_world[1] - base[1], 3)),
-            }
-            leader_count += 1
-        if plan["mode"] == "inside":
+        if plan["inside"] and not plan.get("partial"):
+            for field, text in (("A1", a1), ("A2", a2)):
+                if text:
+                    labels[field] = {"dx": dx, "dy": dy, "flags": FLAG_PLAIN}
             inside_count += 1
+        elif plan.get("partial"):
+            # A1 w środku, A2 z wysięgnikiem do tego samego punktu.
+            labels["A1"] = {"dx": dx, "dy": dy, "flags": FLAG_PLAIN}
+            inside_count += 1
+            anchor = plan["anchor"]
+            width2, height2 = text_size(a2, scale, fraction=True)
+            spot = _external_spot(shape, anchor, width2, height2, occupied,
+                                  boundaries, foreign, scale)
+            if spot is not None:
+                labels["A2"] = {
+                    "dx": round(spot.cx - base[0], 3),
+                    "dy": round(spot.cy - base[1], 3),
+                    "flags": FLAG_RIGHT if spot.cy >= anchor[1] else FLAG_LEFT,
+                    "anchor": (round(anchor[0] - base[0], 3),
+                               round(anchor[1] - base[1], 3)),
+                }
+                occupied.append(spot.rect)
+                leader_count += 1
+        else:
+            # Oba napisy stoją w jednej kolumnie z wysięgnikiem do środka.
+            anchor = plan["anchor"]
+            east = box_.cy - anchor[1]
+            flags = FLAG_RIGHT if east >= 0 else FLAG_LEFT
+            for field, text in (("A1", a1), ("A2", a2)):
+                if not text:
+                    continue
+                labels[field] = {
+                    "dx": dx, "dy": dy, "flags": flags,
+                    "anchor": (round(anchor[0] - base[0], 3),
+                               round(anchor[1] - base[1], 3)),
+                }
+                leader_count += 1
         changes.append({"uid": uid, "mode": plan["mode"], "labels": labels})
     return {"changes": changes,
             "stats": {"objects": len(entries), "inside": inside_count,
