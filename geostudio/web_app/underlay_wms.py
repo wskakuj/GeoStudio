@@ -9,7 +9,11 @@ from __future__ import annotations
 
 from collections import OrderedDict
 from functools import lru_cache
+from pathlib import Path
+import hashlib
 import http.client
+import os
+import tempfile
 import threading
 import time
 from io import BytesIO
@@ -191,6 +195,7 @@ _CACHE_BYTES = 0
 _CACHE_LIMIT = 128 * 1024 * 1024
 _CACHE_MAX_ENTRIES = 160
 _CACHE_LOCK = threading.Lock()
+_disk_puts_since_trim = [0]
 
 
 def _cache_key(preset, layer, epsg, xmin, ymin, xmax, ymax, width, height):
@@ -214,12 +219,65 @@ def _cache_key(preset, layer, epsg, xmin, ymin, xmax, ymax, width, height):
             width, height)
 
 
+def _disk_cache_dir() -> Path | None:
+    """Katalog cache obrazów (poza repozytorium), albo None gdy brak dostępu."""
+    if os.environ.get("GEOSTUDIO_WMS_DISK_CACHE") == "0":
+        return None                     # testy: bez cache na dysku
+    root = os.environ.get("LOCALAPPDATA") or os.environ.get("XDG_CACHE_HOME")
+    base = Path(root) if root else Path.home() / ".cache"
+    directory = base / "GeoStudio2" / "wms-cache"
+    try:
+        directory.mkdir(parents=True, exist_ok=True)
+    except OSError:
+        return None
+    return directory
+
+
+def _disk_path(key) -> Path | None:
+    directory = _disk_cache_dir()
+    if directory is None:
+        return None
+    digest = hashlib.sha256(repr(key).encode("utf-8")).hexdigest()
+    return directory / (digest + ".img")
+
+
+def _disk_get(key):
+    path = _disk_path(key)
+    if path is None:
+        return None
+    try:
+        return path.read_bytes()
+    except OSError:
+        return None
+
+
+def _disk_put(key, value: bytes) -> None:
+    path = _disk_path(key)
+    if path is None:
+        return
+    try:
+        fd, temp = tempfile.mkstemp(prefix=".wms-", suffix=".tmp",
+                                    dir=str(path.parent))
+        with os.fdopen(fd, "wb") as stream:
+            stream.write(value)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temp, path)
+    except OSError:
+        pass
+
+
 def _cache_get(key):
     with _CACHE_LOCK:
         value = _CACHE.get(key)
         if value is not None:
             _CACHE.move_to_end(key)
-        return value
+            return value
+    # Pamięć podręczna na dysku: te same kadry po restarcie programu.
+    disk = _disk_get(key)
+    if disk is not None:
+        _cache_put(key, disk)
+    return disk
 
 
 def _cache_put(key, value: bytes) -> None:
@@ -234,6 +292,34 @@ def _cache_put(key, value: bytes) -> None:
                            len(_CACHE) > _CACHE_MAX_ENTRIES)):
             _, dropped = _CACHE.popitem(last=False)
             _CACHE_BYTES -= len(dropped)
+    _disk_put(key, value)
+    _disk_puts_since_trim[0] += 1
+    if _disk_puts_since_trim[0] >= 50:
+        _disk_puts_since_trim[0] = 0
+        _disk_cache_trim()
+
+
+def _disk_cache_trim(limit_bytes: int = 400 * 1024 * 1024) -> None:
+    """Utrzymuje cache dyskowy w ryzach: najstarsze pliki lecą pierwsze."""
+    directory = _disk_cache_dir()
+    if directory is None:
+        return
+    try:
+        files = sorted(((entry.stat().st_mtime, entry)
+                        for entry in directory.glob("*.img")),
+                       key=lambda item: item[0])
+    except OSError:
+        return
+    total = sum(entry.stat().st_size for _mtime, entry in files
+                if entry.exists())
+    for _mtime, entry in files:
+        if total <= limit_bytes:
+            break
+        try:
+            total -= entry.stat().st_size
+            entry.unlink()
+        except OSError:
+            continue
 
 
 def cache_stats() -> dict:
@@ -362,6 +448,7 @@ _TILE_CACHE: dict = {}
 _TILE_CACHE_ORDER: list = []
 _TILE_CACHE_LIMIT = 512          # ok. 512 kafelków ~ kilkadziesiąt MB
 _TILE_CACHE_LOCK = threading.Lock()
+_disk_puts_since_trim = [0]
 
 
 def _tile_cache_get(key):
