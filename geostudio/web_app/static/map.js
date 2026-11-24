@@ -2775,9 +2775,8 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
       });
     }
   }
-  // `sharp` = druga, dokładniejsza faza po zatrzymaniu widoku (patrz
-  // scheduleUnderlaySharp). Szybki podgląd zostaje na 800 tys. pikseli,
-  // a detaliczny obraz idzie do 2,2 mln — czyli wyraźnie ostrzej.
+  // Jedno żądanie na kadr: 1,2 mln pikseli to kompromis między ostrością
+  // a czasem odpowiedzi Geoportalu (JPEG waży kilkanaście razy mniej niż PNG).
   function underlayRequestDimensions(bounds, sharp=false){
     // WMS must be requested at screen/HiDPI resolution rather than
     // stretching a single low-resolution bitmap through successive zooms.
@@ -2789,7 +2788,7 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
     // Serwer przyjmuje do 3 mln pikseli, ale ortofoto w tej wielkości
     // renderuje się dłużej niż nasz limit czasu — dlatego dla podkładów
     // ograniczamy się do ~1 mln pikseli (ok. 1000x1000).
-    const maxPixels=sharp?2200000:800000;
+    const maxPixels=sharp?1200000:1200000;
     if(width*height>maxPixels){
       const ratio=Math.sqrt(maxPixels/(width*height));
       width=Math.max(128,Math.floor(width*ratio));
@@ -2807,7 +2806,7 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
     if(underlay.abort){underlay.abort.abort();underlay.abort=null;}
     clearTimeout(underlay.timer);
     underlay.loading=true;
-    underlay.timer=setTimeout(refreshUnderlay,immediate?0:115);
+    underlay.timer=setTimeout(refreshUnderlay,immediate?0:380);
   }
   async function refreshUnderlay(){
     if(!state.meta)return;
@@ -2822,27 +2821,24 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
     const bounds=boundsFromViewport(.45);
     const size=underlayRequestDimensions(bounds);
     const documentToken=state.edit?.documentToken;
+    // Bez drugiej fazy „ostrej”: jeden kadr 1,2 mln px wystarcza, a drugie
+    // 4 żądania na ten sam obraz tylko obciążały Geoportal.
     await Promise.all(targets.map(item=>refreshUnderlayItem(
       item,bounds,size,documentToken)));
-    // Po zatrzymaniu widoku dociągamy ostrzejszy obraz tego samego kadru.
-    scheduleUnderlaySharp(targets,bounds,documentToken);
   }
-  let underlaySharpTimer=null;
-  function scheduleUnderlaySharp(targets,bounds,documentToken){
-    clearTimeout(underlaySharpTimer);
-    if(!targets.length)return;
-    underlaySharpTimer=setTimeout(async()=>{
-      if(state.editBusy||!underlays.some(item=>item.visible))return;
-      // Kadr mógł się zmienić — wtedy zwykłe odświeżenie już go obsłuży.
-      const current=boundsFromViewport(.45);
-      if(Math.abs(current[0]-bounds[0])>1e-6||Math.abs(current[1]-bounds[1])>1e-6||
-         Math.abs(current[2]-bounds[2])>1e-6||Math.abs(current[3]-bounds[3])>1e-6)return;
-      const size=underlayRequestDimensions(bounds,true);
-      await Promise.all(targets.map(item=>refreshUnderlayItem(
-        item,bounds,size,documentToken)));
-    },900);
+  // Czy aktualny kadr mieści się w tym, co już pobraliśmy (z małym zapasem)?
+  function underlayCovers(item,bounds){
+    if(!item.image||!item.bounds)return false;
+    const marginX=(item.bounds[2]-item.bounds[0])*0.02;
+    const marginY=(item.bounds[3]-item.bounds[1])*0.02;
+    return bounds[0]>=item.bounds[0]+marginX&&
+           bounds[1]>=item.bounds[1]+marginY&&
+           bounds[2]<=item.bounds[2]-marginX&&
+           bounds[3]<=item.bounds[3]-marginY;
   }
   async function refreshUnderlayItem(item,bounds,size,documentToken){
+    // Przesunięcie o kilka pikseli nie wymaga nowego pobrania.
+    if(item.kind!=="raster"&&underlayCovers(item,bounds))return;
     const id=++item.ticket;
     if(item.abort)item.abort.abort();
     const controller=new AbortController();item.abort=controller;

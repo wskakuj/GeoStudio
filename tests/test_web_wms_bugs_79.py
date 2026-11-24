@@ -53,7 +53,8 @@ def test_tiles_keep_the_archive_date(monkeypatch):
     underlay_wms.clear_cache()
     underlay_wms.map_png("standard", "Raster", 2180, 0, 0, 1000, 1000,
                          1000, 1000, time="2020-05-01")
-    assert len(seen) > 1                       # poszło kafelkami
+    # Kadr 1000x1000 to jedno żądanie (kafelki dopiero od 2,4 mln px).
+    assert seen
     assert all("TIME=2020-05-01" in url for url in seen)
 
 

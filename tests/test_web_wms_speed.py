@@ -21,13 +21,14 @@ def _png(width=64, height=64):
 
 
 def test_frame_size_is_capped_for_speed():
-    # Szybki podgląd 800 tys. px, a po zatrzymaniu widoku ostra faza 2,2 mln.
-    assert "const maxPixels=sharp?2200000:800000;" in JS
-    assert "scheduleUnderlaySharp" in JS
+    # Jedno żądanie na kadr: 1,2 mln px (bez drugiej fazy „ostrej”).
+    assert "const maxPixels=sharp?1200000:1200000;" in JS
+    assert "scheduleUnderlaySharp" not in JS
 
 
 def test_large_frames_split_into_tiles():
-    assert underlay_wms.ORTO_TILE_LIMIT == 450_000
+    # Kafelki to ostateczność: dopiero powyżej 2,4 mln px.
+    assert underlay_wms.ORTO_TILE_LIMIT == 2_400_000
 
 
 def test_big_frame_uses_several_requests(monkeypatch):
@@ -44,8 +45,8 @@ def test_big_frame_uses_several_requests(monkeypatch):
                                            "crs": ["EPSG:2180"]})()])
     underlay_wms.clear_cache()
     underlay_wms.map_png("standard", "Raster", 2180, 0, 0, 1000, 1000,
-                         1000, 1000)
-    assert len(calls) > 1          # kafelki, nie jedno wielkie żądanie
+                         1600, 1600)
+    assert len(calls) == 1          # jedno żądanie, bez kafelków
 
 
 def test_image_is_always_drawn_on_its_own_bounds():

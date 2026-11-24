@@ -173,25 +173,55 @@ def pick_matrix(matrix_set: TileMatrixSet, pixel_size: float) -> TileMatrix:
 
 def _range_for(matrix: TileMatrix, x0: float, y0: float, x1: float, y1: float,
                *, swapped: bool) -> tuple[int, int, int, int]:
-    """Zakres kafelków dla jednej konwencji osi TopLeftCorner."""
+    """Zakres kafelków dla jednej konwencji osi TopLeftCorner.
+
+    x = północ, y = wschód (układ GEO-MAP). `swapped` mówi, jak zapisano
+    TopLeftCorner w Capabilities:
+      * False: (północ, wschód) — kolumna biegnie po północy,
+      * True:  (wschód, północ) — kolumna biegnie po wschodzie.
+    W obu przypadkach wiersz rośnie w stronę MALEJĄCEJ drugiej osi.
+    """
     res = matrix.resolution()
     first, second = matrix.top_left
     span_x = res * matrix.tile_width
     span_y = res * matrix.tile_height
     if swapped:
-        # TopLeftCorner = (wschód, północ): kolumna biegnie po wschodzie (y),
-        # wiersz po północy (x).
+        # Kolumna po wschodzie (y), wiersz po malejącej północy (x).
         col0 = math.floor((y0 - first) / span_x)
         col1 = math.floor((y1 - first) / span_x)
         row0 = math.floor((second - x1) / span_y)
         row1 = math.floor((second - x0) / span_y)
     else:
-        # TopLeftCorner = (północ, wschód): kolumna po północy (x),
-        # wiersz po wschodzie (y).
+        # Kolumna po północy (x), wiersz po malejącym wschodzie (y).
         col0 = math.floor((x0 - first) / span_x)
         col1 = math.floor((x1 - first) / span_x)
         row0 = math.floor((second - y1) / span_y)
         row1 = math.floor((second - y0) / span_y)
+    return col0, row0, col1, row1
+
+
+def _range_for_mirror(matrix: TileMatrix, x0: float, y0: float,
+                      x1: float, y1: float, *, swapped: bool):
+    """Wariant „odbity”: TopLeftCorner podaje MINIMUM osi, a nie maksimum.
+
+    Niektóre usługi WMTS zapisują w TopLeftCorner (północ_min, wschód_min)
+    albo (wschód_min, północ_min). Wtedy oba podstawowe warianty dają ujemne
+    indeksy, kod przycinał je do kafelka (0, 0) i wracał czarny obraz.
+    """
+    res = matrix.resolution()
+    first, second = matrix.top_left
+    span_x = res * matrix.tile_width
+    span_y = res * matrix.tile_height
+    if swapped:
+        col0 = math.floor((y0 - first) / span_x)
+        col1 = math.floor((y1 - first) / span_x)
+        row0 = math.floor((x0 - second) / span_y)
+        row1 = math.floor((x1 - second) / span_y)
+    else:
+        col0 = math.floor((x0 - first) / span_x)
+        col1 = math.floor((x1 - first) / span_x)
+        row0 = math.floor((y0 - second) / span_y)
+        row1 = math.floor((y1 - second) / span_y)
     return col0, row0, col1, row1
 
 
@@ -205,12 +235,20 @@ def tile_selection(matrix: TileMatrix, min_x: float, min_y: float,
                    max_x: float, max_y: float):
     """(col0, row0, col1, row1, swapped) — zakres i wykryta konwencja osi."""
     candidates = []
+    # Cztery konwencje: (północ, wschód) i (wschód, północ), każda w wariancie
+    # „TopLeftCorner = maksimum” oraz „= minimum”. Wybieramy pierwszą, która
+    # mieści się w macierzy — zamiast przycinać ujemne indeksy do (0, 0).
     for swapped in (False, True):
         box = _range_for(matrix, min_x, min_y, max_x, max_y, swapped=swapped)
         if _range_valid(matrix, box):
             candidates.append((*box, swapped))
     if candidates:
         return candidates[0]
+    for swapped in (False, True):
+        box = _range_for_mirror(matrix, min_x, min_y, max_x, max_y,
+                                swapped=swapped)
+        if _range_valid(matrix, box):
+            return (*box, swapped)
     box = _range_for(matrix, min_x, min_y, max_x, max_y, swapped=False)
     col0, row0, col1, row1 = box
     col0 = max(0, min(col0, matrix.matrix_width - 1))

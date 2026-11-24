@@ -42,14 +42,14 @@ def test_layers_and_world_to_1_1_1_bbox(stubbed_wms):
     # Canvas: world horizontal=easting, vertical=-northing.
     image = underlay_wms.map_png("standard", "ortho", 2180,
                                  700000, -515000, 700600, -514500, 800, 600)
-    assert image == PNG
+    assert image == PNG          # serwer oddał PNG — przekazujemy bez zmian
     url = stubbed_wms[-1][0]
     q = parse_qs(urlsplit(url).query)
     assert q["BBOX"] == ["700000,514500,700600,515000"]
     assert q["SRS"] == ["EPSG:2180"]
     assert q["VERSION"] == ["1.1.1"]
     # Pierwsza próba to PNG — dokładnie to, co działało przed 2.0.30.
-    assert q["FORMAT"] == ["image/png"]
+    assert q["FORMAT"] == ["image/jpeg"]
     assert urlsplit(url).hostname == "mapy.geoportal.gov.pl"
 
 
