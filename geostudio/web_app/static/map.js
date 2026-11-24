@@ -623,7 +623,7 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
   }
   function display(n) { return n === undefined || n === null ? "—" : formatter.format(n); }
   function colorForLayer(layer) {
-    if (layer === "Budynki") return "#cf947b";
+    if (layer === "Budynki" || layer === "Wydzielenie") return "#cf947b";
     if (layer === "Działki") return "#83a5ca";
     if (layer === "Użytki Leśne") return "#57b69d";
     if (layer === "Użytki") return "#78ab89";
@@ -2876,14 +2876,13 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
       }finally{URL.revokeObjectURL(url);}
       if(!item.visible||id!==item.ticket||
          documentToken!==state.edit?.documentToken)return;
-      item.image=image;item.bounds=bounds;item.loading=false;item.lastError="";
+      item.image=image;item.bounds=bounds;item.loading=false;item.error="";
       requestDraw();renderRasterLayers();
     }catch(error){
       if(error.name==="AbortError"||id!==item.ticket)return;
-      item.loading=false;
-      item.lastError=String(error.message||error);
+      item.loading=false;item.error=error.message||"Błąd pobierania";
       renderRasterLayers();
-      inform("Podkład "+item.title+": "+item.lastError,true);
+      inform("Podkład "+item.title+": "+error.message,true);
     }
   }
   function applyUnderlay(){
@@ -2903,36 +2902,26 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
     }
     const preset=$("underlay-preset").value;
     const title=option.textContent||layer;
+    const chosenTime=timePresets.has(preset)?
+      String($("underlay-time").value||"").trim():"";
+    const chosenUrl=preset==="custom"?currentWmsUrl():"";
     // Ten sam preset+warstwa+układ odświeża istniejący wpis, inny dokłada
     // NOWĄ warstwę na stos (poprzednie zostają).
-    // Data archiwalna jest częścią tożsamości podkładu: ta sama warstwa z inną
-    // datą to NOWY obraz, a nie ten sam wpis.
-    let wantedTime="";
-    try{
-      wantedTime=timePresets.has(preset)
-        ?String($("underlay-time")?.value||"").trim():"";
-    }catch(_){wantedTime="";}
     let item=underlays.find(entry=>entry.preset===preset&&entry.layer===layer&&
-                                   entry.epsg===epsg&&
-                                   (entry.time||"")===wantedTime);
-    if(!item){
-      // Ten sam preset+warstwa+układ, ale inna data: aktualizujemy wpis,
-      // żeby nie robić duplikatów na stosie.
-      item=underlays.find(entry=>entry.preset===preset&&entry.layer===layer&&
-                                 entry.epsg===epsg);
-      if(item)item.time=wantedTime;
-    }
+                                   entry.epsg===epsg);
     if(!item){
       item={kind:"wms",id:"wms"+(++underlaySerial),preset,layer,epsg,title,
-            url:preset==="custom"?currentWmsUrl():"",
-            time:wantedTime,
+            url:chosenUrl,time:chosenTime,
             image:null,bounds:null,
             opacity:Number($("underlay-opacity").value)/100||.75,
             visible:true,loading:false,ticket:0,timer:null,abort:null,
-            lastError:""};
+            error:""};
       underlays.push(item);
     }else{
       item.kind="wms";
+      item.url=chosenUrl;
+      item.time=chosenTime;
+      item.title=title;
       item.visible=true;item.image=null;item.bounds=null;
     }
     underlay.activeId=item.id;
@@ -2941,8 +2930,7 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
     updateUnderlayStatus("Pobieranie obrazu dla EPSG:"+epsg+"…");
     renderRasterLayers();
     scheduleUnderlayRefresh(true);
-    // Okna NIE zamykamy: widać w nim status i ewentualny błąd Geoportalu.
-    // Informujemy tylko, gdzie reguluje się krycie i widoczność warstw.
+    // Okna NIE zamykamy — widać w nim status i ewentualny błąd Geoportalu.
     inform("Podkład dodany. Krycie i widoczność ustawisz w panelu Rastry.");
   }
   function paintUnderlay(){
@@ -3149,7 +3137,7 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
     for(const item of underlays)
       items.push({kind:"wms",id:item.id,title:underlayTitle(item),
         visible:item.visible,opacity:item.opacity,
-        status:item.lastError?("Błąd: "+item.lastError):
+        status:item.error?("Błąd: "+item.error):
           item.loading?"Odświeżanie obrazu…":
           item.image?"Połączono":"Ładowanie…"});
     for(const item of [...raster.layers,...(raster.image?[rasterEntry()]:[])])
@@ -6786,13 +6774,14 @@ inform("Klikaj mapę, aby wstawiać kolejne oznaczenia. Naciśnij Esc lub wybier
     }
   }
   window.addEventListener("pointerdown",ev=>{
-    if(state.tool!=="labels"||!state.edit||!state.labelAnchors?.length)return;
+    if((state.tool!=="labels"&&!state.leaderMode)||!state.edit||!state.labelAnchors?.length)return;
     const p=eventCoords(ev);
     const hit=state.labelAnchors.find(a=>Math.hypot(p.x-a.x,p.y-a.y)<=10);
     if(!hit)return;
     ev.stopPropagation();ev.preventDefault();
+    const world=screenToWorld(p.x,p.y);
     state.anchorDrag={id:ev.pointerId,fid:hit.fid,field:hit.field,slot:hit.slot,
-                      point:screenToWorld(p.x,p.y)};
+                      point:{north:-world.y,east:world.x}};
   },true);
   window.addEventListener("pointermove",ev=>{
     if(state.anchorDrag?.id!==ev.pointerId)return;
@@ -7587,7 +7576,11 @@ inform("Klikaj mapę, aby wstawiać kolejne oznaczenia. Naciśnij Esc lub wybier
   $("underlay-prj-file").addEventListener("change",ev=>{
     readUnderlayPrj(ev.target.files?.[0]);ev.target.value="";
   });
-  link("underlay-show",applyUnderlay);
+  link("underlay-show",()=>{
+    applyUnderlay();
+    if($("underlay-dialog")?.open)$("underlay-dialog").close();
+    inform("Włączono podkład WMS. Krycie i widoczność warstw zmienisz w zakładce Rastry.");
+  });
   link("underlay-remove",()=>removeUnderlay());
   $("underlay-preset").addEventListener("change",()=>{
     // Zmiana źródła tylko odświeża listę warstw — wczytane podkłady zostają,
@@ -7654,8 +7647,7 @@ inform("Klikaj mapę, aby wstawiać kolejne oznaczenia. Naciśnij Esc lub wybier
   $("underlay-opacity").addEventListener("input",ev=>{
     const value=Number(ev.target.value)/100;
     underlay.opacity=value;
-    // Krycie z okna WMS musi działać na JUŻ wyświetlone podkłady — rysowanie
-    // korzysta z item.opacity, a nie z globalnego underlay.opacity.
+    // Suwak w oknie WMS działa na wszystkie wyświetlone podkłady.
     for(const item of underlays)if(item.kind!=="raster")item.opacity=value;
     $("underlay-opacity-value").textContent=ev.target.value+"%";
     requestDraw();renderRasterLayers();
@@ -7823,6 +7815,10 @@ inform("Klikaj mapę, aby wstawiać kolejne oznaczenia. Naciśnij Esc lub wybier
   }
   link("layers-vectors-tab",()=>activateLayerTab("vector"));
   link("layers-rasters-tab",()=>activateLayerTab("raster"));
+  link("underlay-chip",()=>{
+    if(document.body.classList.contains("left-collapsed"))togglePanel("left");
+    activateLayerTab("raster");
+  });
   link("raster-layers-add",openRasterDialog);
   $("layer-search").addEventListener("input",renderLayers);
   $("file-map").addEventListener("change",async ev=>{

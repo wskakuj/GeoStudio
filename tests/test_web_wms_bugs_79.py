@@ -27,9 +27,9 @@ def test_opacity_slider_updates_visible_underlays():
 def test_archive_date_is_part_of_the_underlay_identity():
     start = JS.index("function applyUnderlayUnsafe(){")
     block = JS[start:start + 2600]
-    assert "wantedTime=timePresets.has(preset)" in block
-    assert '(entry.time||"")===wantedTime' in block
-    assert "time:wantedTime," in block
+    # Data jest częścią wpisu: przy zmianie daty wpis jest aktualizowany.
+    assert "chosenTime=timePresets.has(preset)" in block
+    assert "item.time=chosenTime;" in block
 
 
 def test_dialog_informs_where_to_change_opacity():
