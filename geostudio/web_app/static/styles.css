@@ -19,12 +19,16 @@ button:focus-visible, input:focus-visible, canvas:focus-visible { outline:2px so
   border-bottom:1px solid var(--divider); background:var(--shell);
 }
 .identity { display:flex; align-items:center; gap:12px; min-width:0; }
-.identity strong { font-family:"Bahnschrift","Segoe UI Variable Display","Segoe UI",system-ui,sans-serif;
-  font-size:18.5px; font-weight:600; letter-spacing:.012em; display:block; line-height:1.15; font-variant-ligatures:none; }
-.identity strong .brand-number { font-weight:400; letter-spacing:.06em; color:#5f7d90; margin-left:1px; }
+.identity strong, .wordmark { font-family:"Segoe UI Variable Display","Segoe UI Semibold","Segoe UI",system-ui,sans-serif;
+  font-size:19px; font-weight:650; letter-spacing:-.012em; display:block; line-height:1.1;
+  font-variant-ligatures:none; font-feature-settings:"kern" 1; }
+/* Numer wersji jako osobny, lżejszy element lockupu — nie skleja się z nazwą. */
+.wordmark .brand-number { font-weight:450; letter-spacing:.02em; color:#6a8496;
+  margin-left:7px; font-size:16.5px; }
 .brand-version { font-size:10px; color:#91a6bb; letter-spacing:.1em; display:block; margin-top:4px; font-weight:700; }
 .brand-version em { font-style:normal; font-weight:750; padding:2px 5px; border-radius:4px; background:#133c45; color:#56d5c4; margin-left:6px; font-size:9px; }
-.mark { width:37px; height:37px; display:block; object-fit:contain; border-radius:10px; box-shadow:0 6px 18px #0b253014; flex:0 0 auto; }
+.mark { width:40px; height:40px; display:block; object-fit:contain; border-radius:11px;
+  flex:0 0 auto; image-rendering:auto; filter:drop-shadow(0 4px 10px #0b25301f); }
 .header-center { display:flex; flex-direction:column; align-items:center; gap:2px; min-width:0; }
 .header-center #document-title { font-size:13px; font-weight:660; max-width:100%; text-overflow:ellipsis; white-space:nowrap; overflow:hidden; color:#d4e2ee; }
 .top-kicker { font-size:9px; letter-spacing:.16em; color:#778ea4; font-weight:760; }
@@ -627,7 +631,8 @@ body[data-theme] .topbar {
   box-shadow:0 3px 14px var(--ui-shadow);
   min-height:70px;
 }
-body[data-theme] .identity strong {color:var(--ui-ink);font-weight:780;font-size:19px;}
+body[data-theme] .identity strong, body[data-theme] .wordmark {color:var(--ui-ink);font-weight:650;font-size:19px;}
+body[data-theme] .wordmark .brand-number {color:var(--ui-muted);font-weight:450;font-size:16.5px;}
 body[data-theme] .brand-version,
 body[data-theme] .top-kicker {color:var(--ui-muted);}
 body[data-theme] .brand-version em {
@@ -1528,13 +1533,13 @@ body[data-theme] .topbar {
   box-shadow:none;
 }
 body[data-theme] .identity {gap:9px;}
-body[data-theme] .identity strong {
-  font-family:"Bahnschrift","Segoe UI Variable Display","Segoe UI",system-ui,sans-serif;
-  font-size:18.5px;font-weight:600;letter-spacing:.012em;
+body[data-theme] .identity strong, body[data-theme] .wordmark {
+  font-family:"Segoe UI Variable Display","Segoe UI Semibold","Segoe UI",system-ui,sans-serif;
+  font-size:19px;font-weight:650;letter-spacing:-.012em;
 }
 body[data-theme] .mark {
-  width:34px;height:34px;transform:none;
-  border-radius:9px;object-fit:contain;
+  width:36px;height:36px;transform:none;
+  border-radius:10px;object-fit:contain;
   box-shadow:0 3px 9px var(--ui-shadow);
 }
 body[data-theme] .brand-version {font-size:10px;margin-top:3px;letter-spacing:.07em;}
