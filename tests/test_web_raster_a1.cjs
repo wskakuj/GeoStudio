@@ -31,9 +31,66 @@ test('different numbers within the same field require a manual choice',()=>{
   assert.equal(result.get(1).status,'conflict');assert.equal(result.get(1).text,'');
   assert.equal(run([ann('17',[40,50]),ann('17',[40,60])]).get(1).status,'ok');
 });
+test('a weak conflicting guess cannot erase a confirmed field number in either order',()=>{
+  const sure=ann('175',[40,50]);
+  const weak=ann('1',[40,60],{status:'uncertain',textStatus:'uncertain',confidence:.7,reason:'weak_text'});
+  for(const items of [[sure,weak],[weak,sure]]){
+    const suggestion=run(items).get(1);
+    assert.equal(suggestion.text,'175');assert.equal(suggestion.status,'ok');
+    assert.equal(suggestion.assignmentStatus,'ok');
+    assert.deepEqual([...suggestion.alternatives].map(a=>a.text).sort(),['1','175']);
+  }
+});
+test('uncertain text keeps its reliable anchor and full-number alternatives for review',()=>{
+  const suggestion=run([ann('208',[40,50],{status:'uncertain',textStatus:'uncertain',
+    confidence:.73,reason:'truncated_text',alternatives:[{text:'28',confidence:.96,votes:2}]})]).get(1);
+  assert.equal(suggestion.text,'208');assert.equal(suggestion.status,'uncertain');
+  assert.equal(suggestion.assignmentStatus,'ok');assert.equal(suggestion.reason,'truncated_text');
+  assert.deepEqual([...suggestion.alternatives].map(a=>a.text).sort(),['208','28']);
+});
+test('separate credible numbers in one region flag a leaked boundary for review',()=>{
+  const confirmed=ann('36',[40,35]);
+  const second=ann('37',[40,65],{status:'uncertain',textStatus:'uncertain',confidence:.78,
+    box:[25,55,45,75],reason:'truncated_text'});
+  for(const input of [[confirmed,second],[second,confirmed]]){
+    const suggestion=run(input).get(1);
+    assert.equal(suggestion.text,'36');assert.equal(suggestion.assignmentStatus,'ok');
+    assert.equal(suggestion.status,'uncertain');assert.equal(suggestion.reason,'multiple_field_numbers');
+  }
+  const duplicate=run([confirmed,{...second,box:confirmed.box}]).get(1);
+  assert.equal(duplicate.status,'ok','An alternative reading of the same ink mark is not a second field');
+  const unknown=run([confirmed,{...second,associationStatus:'uncertain',reason:'boundary_anchor'}]).get(1);
+  assert.equal(unknown.status,'ok','Uncertain ownership cannot prove a second field');
+});
+test('a separate unread coloured callout flags a possible leaked field without guessing text',()=>{
+  const known=ann('170',[40,35]);
+  const unread=ann('',[40,65],{status:'uncertain',textStatus:'uncertain',confidence:0,
+    reason:'unread_callout',source:'callout',ink:'blue',circleConfidence:.96,box:[25,55,45,75]});
+  const result=run([known,unread]).get(1);
+  assert.equal(result.text,'170');assert.equal(result.status,'uncertain');
+  assert.equal(result.reason,'unread_field_number');assert.equal(result.assignmentStatus,'ok');
+  assert.equal(run([known,{...unread,associationStatus:'uncertain'}]).get(1).status,'ok',
+    'An unread mark with unknown ownership cannot disqualify the confirmed number');
+  assert.equal(run([known,{...unread,ink:'dark'}]).get(1).status,'ok',
+    'An unread printed loop is not evidence of another handwritten field number');
+});
+test('unknown and branched leaders never become a reliable tentative assignment',()=>{
+  const result=run([ann('133',null,{status:'uncertain',textStatus:'ok',source:'callout',hasLeader:true,
+    associationStatus:'uncertain',leaderEndpoints:[[40,50],[80,50]]})]);
+  assert.equal(result.size,2);
+  assert.ok([...result.values()].every(s=>s.assignmentStatus==='uncertain'&&s.status==='uncertain'));
+  assert.equal(run([ann('178',null,{status:'uncertain',textStatus:'ok',source:'inside',
+    associationStatus:'uncertain',hasLeader:true,reason:'possible_circle'})]).size,0);
+});
+test('a map-line network with many endpoints cannot seed false field conflicts',()=>{
+  const endpoints=[[40,30],[40,40],[40,50],[40,60],[80,50]];
+  const result=run([ann('175',[40,50]),ann('1',null,{hasLeader:true,status:'uncertain',leaderEndpoints:endpoints})]);
+  assert.equal(result.size,1);assert.equal(result.get(1).text,'175');assert.equal(result.get(1).status,'ok');
+});
 test('occupied, outside and ambiguous boundary anchors cannot acquire a guessed field',()=>{
   assert.equal(run([ann('17',[10,50]),ann('18',[60,10])]).size,0);
   const uncertain=run([ann('17',[59.5,50])]);assert.equal(uncertain.get(1).status,'uncertain');
+  assert.equal(uncertain.get(1).assignmentStatus,'uncertain');
   const occupied=new Int32Array(labels);occupied[50*w+40]=0;
   assert.equal(assign({width:w,height:h,annotations:[ann('17',[40,50])]},
     {labels:occupied,shapes},w,h).size,0,'An occupied pixel is not moved to its nearest free neighbour');

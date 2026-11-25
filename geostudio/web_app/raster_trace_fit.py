@@ -264,7 +264,7 @@ def _assemble(original, matches, radius, locked):
     return fitted
 
 
-def _split_supported_sides(original, references, radius):
+def _split_supported_sides(original, references, radius, protected=None):
     """Keep a reference T-junction even if raster simplification removed it.
 
     A neighbour may share only the middle or one end of a long straight side.
@@ -276,7 +276,7 @@ def _split_supported_sides(original, references, radius):
         dx, dy = b[0] - a[0], b[1] - a[1]
         size = hypot(dx, dy)
         positions = {0.: a}
-        if size > EPS:
+        if size > EPS and not (protected and protected(a, b)):
             for _, segments in references.nearby(a, b, radius):
                 for _, u, v in segments:
                     length = _distance(u, v)
@@ -347,13 +347,16 @@ def _resolve_joints(original, matches, radius, locked):
     return [match if keep else None for match, keep in zip(matches, best[1])]
 
 
-def fit_neighbour_boundaries(points, obstacles, radius, locked_points=None):
+def fit_neighbour_boundaries(points, obstacles, radius, locked_points=None,
+                             protected_edges=None):
     """Return a bounded, valid draft fitted to complete nearby 5310 sides.
 
     This never accepts a result just because its vertices are near something:
     an entire side must be supported by a co-directional boundary path. Its
     real intermediate vertices are retained. A failed local fit does not
     suppress another independent side which can safely join its neighbour.
+    A batch may protect common draft edges from independent local fitting;
+    its shared junctions must also be supplied in ``locked_points``.
     """
     original = [tuple(p) for p in points]
     locked = {tuple(p) for p in (locked_points or [])}
@@ -372,8 +375,17 @@ def fit_neighbour_boundaries(points, obstacles, radius, locked_points=None):
             if boundary:
                 boundaries.append(boundary)
     references = _References(boundaries)
-    original = _split_supported_sides(original, references, radius)
-    matches = [_match_side(a, b, references, radius)
+    protected_tree = STRtree([LineString(edge) for edge in protected_edges]) if protected_edges else None
+
+    def protected(a, b):
+        if protected_tree is None:
+            return False
+        line = LineString([a, b])
+        return any(line.intersection(protected_tree.geometries[int(hit)]).length > EPS
+                   for hit in protected_tree.query(line))
+
+    original = _split_supported_sides(original, references, radius, protected)
+    matches = [None if protected(a, b) else _match_side(a, b, references, radius)
                for a, b in zip(original, original[1:] + original[:1])]
     matches = _resolve_joints(original, matches, radius, locked)
     fitted = _assemble(original, matches, radius, locked)

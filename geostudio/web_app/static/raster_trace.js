@@ -656,9 +656,10 @@ function openRasterTracing(item, view) {
     <div class="trace-map-options"><label>Kontury <select><option value="5">Grubsze</option><option value="3">Także cienkie</option><option value="7">Tylko bardzo grube</option></select></label>
       <label><input type="checkbox" class="trace-magnet"> Magnes</label>
       <label title="Nowe wydzielenie z tym samym A1 scala się z istniejącym, nawet gdy leży daleko"><input type="checkbox" class="trace-merge-a1" checked> Scalaj po A1</label>
-      <button type="button" class="button ghost trace-fit">Cały raster</button></div>
+      <button type="button" class="button ghost trace-fit">Pokaż cały raster</button></div>
+    <button type="button" class="button primary trace-batch-start">Wkreśl całą mapę (test)</button>
     <div class="trace-map-options">
-      <label>Analiza <select class="trace-quality"><option value="12000000">Dokładna</option><option value="6000000">Szybsza</option></select></label>
+      <label>Analiza <select class="trace-quality"><option value="12000000">Dokładna</option><option value="14000000">Pełny obraz (test)</option><option value="6000000">Szybsza</option></select></label>
       <label title="Maksymalne odchylenie prostego boku od odczytanego konturu, w pikselach analizy">Prostowanie <select class="trace-tolerance"><option value="1">Delikatne</option><option value="2.5" selected>Proste boki</option><option value="4">Drżąca kreska</option></select></label>
     </div>
     <div class="trace-map-options">
@@ -670,6 +671,15 @@ function openRasterTracing(item, view) {
     <div class="trace-map-save"><label>A1 <input class="trace-a1" autocomplete="off"></label>
       <button type="button" class="button primary trace-save">Zatwierdź 5310</button></div>
     <span class="trace-a1-status" aria-live="polite"></span>
+    <button type="button" class="button ghost trace-a1-retry" hidden>Ponów odczyt A1</button>
+    <div class="trace-batch" hidden>
+      <label title="Pomija pola poza obszarem działek, np. kolorowe prostokąty legendy"><input type="checkbox" class="trace-batch-parcels" checked> Tylko obszar działek 5216</label>
+      <p class="trace-batch-summary" aria-live="polite"></p>
+      <p class="trace-batch-help">Zielony: odczytany A1. Pomarańczowy: sprawdź lub wpisz A1. Czerwony: problem obrysu. Zaznacz kratkę, aby przyjąć propozycję. Kliknięcie pola na mapie otwiera jego numer na liście.</p>
+      <div class="trace-batch-list" aria-label="Propozycje wydzieleń 5310"></div>
+      <div class="trace-map-options trace-batch-actions"><button type="button" class="button primary trace-batch-save">Zapisz zaznaczone</button>
+        <button type="button" class="button ghost trace-batch-cancel">Wróć do pojedynczego</button></div>
+    </div>
     <span role="status"></span>`;
   const stage=view.shell,canvas=document.createElement("canvas");
   canvas.className="trace-map-overlay";canvas.tabIndex=0;
@@ -684,10 +694,18 @@ function openRasterTracing(item, view) {
   const parcelDistance=panel.querySelector(".trace-parcel-distance");
   const parcelStatus=panel.querySelector(".trace-parcel-status");
   const a1Status=panel.querySelector(".trace-a1-status");
+  const a1Retry=panel.querySelector(".trace-a1-retry");
+  const batchStart=panel.querySelector(".trace-batch-start"),batchPanel=panel.querySelector(".trace-batch");
+  const batchList=panel.querySelector(".trace-batch-list"),batchSummary=panel.querySelector(".trace-batch-summary");
+  const batchSave=panel.querySelector(".trace-batch-save"),batchCancel=panel.querySelector(".trace-batch-cancel");
+  const batchParcels=panel.querySelector(".trace-batch-parcels");
+  batchParcels.checked=true;
+  let batchActive=false,batchPending=false,batchWaiting=false,batchVersion=0,batchController=null;
+  let batchItems=[],batchFocus=null,batchMessage="",batchSelectionStats=null;
   parcelSnap.checked=true;
   let w,h,sx,sy;
   function configureResolution(){
-    const budget=Number(quality.value)===6000000?6000000:12000000;
+    const budget=[6000000,14000000].includes(Number(quality.value))?Number(quality.value):12000000;
     const scale=Math.min(1,Math.sqrt(budget/(item.image.width*item.image.height)),
                          8192/Math.max(item.image.width,item.image.height));
     w=Math.max(1,Math.floor(item.image.width*scale));
@@ -716,6 +734,8 @@ function openRasterTracing(item, view) {
                 Math.max(...extent.map(p=>p.x)),Math.max(...extent.map(p=>p.y))];
   let features=[],occupiedFeatures=[],worker=null,analysisId=0,analysisPending=0,preparationId=0,failure="";
   let parcelIndex=null,parcelShapes=null,parcelMessage="",vertexOrigins=new Map();
+  const MAX_BATCH_PARCEL_SOURCE_VERTICES=50000;
+  let parcelTask=null;
   function stopAnalysisWorker(){
     const previous=worker;worker=null;analysisPending=0;
     if(previous){
@@ -753,11 +773,12 @@ function openRasterTracing(item, view) {
     if(selected.size)suggestA1();
   }
   function recognizeA1(){
-    if(a1Request||typeof view.recognizeA1!=="function")return;
+    if(a1Request||a1Result||a1Failure||typeof view.recognizeA1!=="function")return;
+    a1Failure="";
     a1Controller=new AbortController();
     a1Request=(async()=>{
       try{
-        const result=await view.recognizeA1(a1Controller.signal);
+        const result=await Promise.resolve().then(()=>view.recognizeA1(a1Controller.signal));
         if(disposed)return;
         if(!globalThis.GeoStudioRasterA1)throw Error("Nie wczytano modułu przypisania A1.");
         a1Result=result;
@@ -765,9 +786,17 @@ function openRasterTracing(item, view) {
         if(disposed)return;
         a1Failure=error.message||"Odczyt A1 jest niedostępny.";
       }
+      a1Request=null;
       attachA1();draw();
+      if(batchActive&&batchWaiting&&trace)buildBatch();
     })();
   }
+  a1Retry.onclick=()=>{
+    if(disposed||busy||a1Request)return;
+    a1Result=null;a1Failure="";recognizeA1();attachA1();
+    if(batchActive){batchWaiting=true;batchMessage="Ponownie odczytuję A1…";}
+    draw();
+  };
   const completed=[];
   let outline=[],fitVersion=0,fitPending=false,fitMessage="",fitError=false,nativeOutline=null,sourceOutline=null;
   let selectionMessage="";
@@ -859,19 +888,19 @@ function openRasterTracing(item, view) {
       a1Message="A1 wpisany ręcznie — zachowano Twoją wartość.";
     }else{
       const hints=Array.from(selected,id=>trace?.a1Suggestions?.get(id)).filter(Boolean);
-      const readable=hints.filter(s=>s.status==="ok"&&/^\d{1,8}$/.test(String(s.text||"")));
-      const values=new Set(readable.map(s=>String(s.text)));
-      const proposed=values.size===1?values.values().next().value:"";
-      const conflict=values.size>1||hints.some(s=>s.status==="conflict"||
-        (proposed&&s.status==="uncertain"&&s.text&&String(s.text)!==proposed));
-      a1.value=!conflict?proposed:"";
+      const hint=globalThis.GeoStudioRasterTraceBatch.label(hints);
+      a1.value=hint.text;
       a1Manual=false;
-      a1Message=a1.value
-        ?"A1 z rastra: "+a1.value+". Sprawdź numer przed zatwierdzeniem."
-        :conflict?"Wybrane fragmenty mają różne lub niejednoznaczne numery. Wpisz właściwy A1."
+      a1Message=hint.reason==="multiple_field_numbers"
+        ?"A1 do sprawdzenia"+(a1.value?": "+a1.value:"")+". W tym obrysie wykryto różne numery. Sprawdź brakującą granicę przed zatwierdzeniem."
+        :hint.reason==="unread_field_number"
+        ?"A1 do sprawdzenia"+(a1.value?": "+a1.value:"")+". W tym obrysie jest także nieczytelny numer w kółku. Sprawdź, czy nie brakuje granicy."
+        :a1.value
+        ?(hint.status==="ok"?"A1 z rastra: ":"A1 do sprawdzenia: ")+a1.value+". Sprawdź numer przed zatwierdzeniem."
+        :hint.status==="conflict"?"Wybrane fragmenty mają różne lub niejednoznaczne numery. Wpisz właściwy A1."
         :hints.length?"Odczyt numeru jest niepewny. Sprawdź kółko i wysięgnik, a następnie wpisz A1."
         :trace?.a1Status==="pending"?"Odczytuję numery A1 z rastra… Możesz też wpisać numer ręcznie."
-        :trace?.a1Status==="unavailable"?"Odczyt A1 jest niedostępny. Wpisz numer ręcznie."
+        :trace?.a1Status==="unavailable"?"Odczyt A1 jest niedostępny: "+a1Failure
         :"Nie rozpoznano jednoznacznego numeru dla tego pola. Wpisz A1 ręcznie.";
       a1Drafts.set(key,{value:a1.value,manual:false});
     }
@@ -939,14 +968,25 @@ function openRasterTracing(item, view) {
     for(const vertex of drag.vertices){vertex[0]=target.x;vertex[1]=target.y;}
     draw();
   }
-  function fittedParcelShapes(){
-    if(parcelShapes)return parcelShapes;
+  function parcelFitInput(){
     const entries=Array.from(trace.shapes);
     const rings=entries.map(([,shape])=>shape.points.map(([x,y])=>{const p=worldAt(x,y);return [p.x,p.y];}));
     // Decide shared boundaries together. A narrow neighbour that cannot safely
     // accept a fit must also veto that fit on the other side of the same edge.
-    const results=globalThis.GeoStudioRasterParcelSnap.snapRings(rings,parcelIndex,{distance:parcelRange});
-    parcelShapes=new Map();
+    const xx=(a*a+d*d)*sx*sx,yy=(b*b+e*e)*sy*sy,xy=(a*b+d*e)*sx*sy;
+    const groundPixel=Math.sqrt((xx+yy+Math.hypot(xx-yy,2*xy))/2);
+    const precisionDistance=trace.strokeMetrics?.radiusPixels>0?trace.strokeMetrics.radiusPixels*groundPixel:
+      3*Math.sqrt((previewXX+previewYY+Math.hypot(previewXX-previewYY,2*previewXY))/2);
+    return {entries,rings,options:{distance:parcelRange,precisionDistance}};
+  }
+  function parcelResultShapes({entries,rings},results){
+    if(!Array.isArray(results)||results.length!==entries.length||results.some((result,i)=>
+      !Array.isArray(result?.points)||result.points.length<3||result.points.length>500||
+      result.points.some(p=>!Array.isArray(p)||p.length!==2||!p.every(Number.isFinite))||
+      !Array.isArray(result.sourceIndices)||result.sourceIndices.length!==result.points.length||
+      result.sourceIndices.some(j=>j!==null&&(!Number.isInteger(j)||j<0||j>=rings[i].length))))
+      throw Error("Nie otrzymano poprawnych granic 5216. Ponów analizę całej mapy.");
+    const shapes=new Map();
     entries.forEach(([id,shape],index)=>{
       const points=shape.points,world=rings[index],result=results[index],origins=[];
       const snapped=result.points.map(([x,y])=>{const p=pixelAt(x,y);return [p.x,p.y];});
@@ -968,9 +1008,64 @@ function openRasterTracing(item, view) {
       }
       const changed=result.points.length!==world.length||result.points.some((p,i)=>
         Math.hypot(p[0]-world[i][0],p[1]-world[i][1])>1e-6);
-      parcelShapes.set(id,{points:snapped,origins,changed});
+      shapes.set(id,{points:snapped,origins,changed,diagnostics:result.diagnostics});
     });
-    return parcelShapes;
+    return shapes;
+  }
+  function fittedParcelShapes(){
+    if(parcelShapes)return parcelShapes;
+    const input=parcelFitInput();
+    const results=globalThis.GeoStudioRasterParcelSnap.snapRings(input.rings,parcelIndex,input.options);
+    return parcelShapes=parcelResultShapes(input,results);
+  }
+  function stopParcelWorker(){
+    const task=parcelTask;parcelTask=null;
+    if(!task)return;
+    task.worker.onmessage=task.worker.onerror=task.worker.onmessageerror=null;
+    task.worker.terminate();
+    task.reject(Error("Przerwano dopasowanie granic 5216."));
+  }
+  function fittedBatchParcelShapes(version,snapshot){
+    // All source neighbours participate in the shared-boundary decisions,
+    // including unmarked fields omitted from the final proposal list.
+    let sourceVertices=0;
+    for(const shape of trace.shapes.values()){
+      sourceVertices+=shape.points.length;
+      if(sourceVertices>MAX_BATCH_PARCEL_SOURCE_VERTICES)
+        throw Error("Siatka źródłowa całego rastra przekracza 50 000 węzłów. Wybierz grubsze kontury lub mocniejsze prostowanie i przeanalizuj ponownie.");
+    }
+    if(parcelShapes)return Promise.resolve(parcelShapes);
+    const input=parcelFitInput();
+    return new Promise((resolve,reject)=>{
+      let current;
+      try{current=new Worker("/raster_parcel_worker.js");}
+      catch(_error){reject(Error("Nie udało się uruchomić dopasowania 5216. Ponów analizę całej mapy."));return;}
+      const task={worker:current,reject};parcelTask=task;
+      const isCurrent=()=>parcelTask===task&&!disposed&&batchActive&&version===batchVersion&&trace===snapshot;
+      const finish=(error,shapes)=>{
+        if(parcelTask!==task)return;
+        parcelTask=null;current.onmessage=current.onerror=current.onmessageerror=null;current.terminate();
+        if(error)reject(error);else resolve(shapes);
+      };
+      current.onmessage=({data})=>{
+        if(!isCurrent()||data?.id!==version)return;
+        if(data.error){finish(Error(data.error));return;}
+        try{
+          const shapes=parcelResultShapes(input,data.results);
+          // A cancelled/replaced job must never populate the single-field
+          // cache or revive geometry from a previous analysis generation.
+          if(!isCurrent())return;
+          parcelShapes=shapes;finish(null,shapes);
+        }catch(error){finish(error);}
+      };
+      current.onerror=current.onmessageerror=()=>finish(Error(
+        "Nie udało się dopasować granic 5216. Ponów analizę całej mapy; przy złożonym rastrze wybierz grubsze kontury."));
+      try{
+        current.postMessage({id:version,rings:input.rings,options:input.options,
+          features:features.filter(feature=>String(feature.code)==="5216").map(feature=>({
+            code:"5216",closed:!!feature.closed,geometry:feature.nativeGeometry||feature.geometry}))});
+      }catch(_error){finish(Error("Nie udało się przesłać granic do dopasowania 5216. Ponów analizę całej mapy."));}
+    });
   }
   function freshOutline(){
     vertexOrigins=new Map();parcelMessage="";
@@ -978,10 +1073,17 @@ function openRasterTracing(item, view) {
       return selectedRasterOutline(trace,selected,w,h,edited);
     const shapes=fittedParcelShapes(),result=selectedParcelOutline(shapes,selected,edited);
     vertexOrigins=result.origins;
-    parcelMessage=Array.from(selected,id=>shapes.get(id).changed).some(Boolean)
-      ?"Dopasowano obrys do 5216 z uwzględnieniem sąsiednich pól. Sprawdź czerwony obrys."
-      :"Brak bezpiecznego dopasowania do 5216 w wybranym zasięgu.";
+    parcelMessage=parcelReport(Array.from(selected,id=>shapes.get(id)));
     return result.points;
+  }
+  function parcelReport(shapes){
+    const matched=shapes.reduce((sum,shape)=>sum+(shape?.diagnostics?.matchedSides||0),0);
+    const rejected=shapes.reduce((sum,shape)=>sum+(shape?.diagnostics?.rejectedSides||0),0);
+    const references=parcelIndex?.size||0;
+    return "5216: "+references+" odcinków odniesienia · dopasowane boki: "+matched+
+      " · zasięg "+parcelRange.toFixed(1)+" m."+
+      (rejected?" Pominięte niejednoznaczne lub zmieniające kształt: "+rejected+".":
+        matched?" Granica podglądu leży na dopasowanych odcinkach.":" Nie znaleziono współbieżnych boków w tym zasięgu. Sprawdź kalibrację rastra.");
   }
   function syncAttributes(){
     activeNode=null;
@@ -1008,6 +1110,156 @@ function openRasterTracing(item, view) {
     a1Manual=true;a1Key=selectionKey();a1Drafts.set(a1Key,{value:a1.value,manual:true});
     a1Message="A1 wpisany ręcznie — zachowano Twoją wartość.";draw();
   };
+  function invalidateBatch(){
+    batchVersion++;stopParcelWorker();batchController?.abort();batchController=null;batchPending=false;
+  }
+  function batchCounts(){return globalThis.GeoStudioRasterTraceBatch.counts(batchItems);}
+  function updateBatchSummary(){
+    const counts=batchCounts();
+    batchSummary.textContent=batchMessage||"Propozycje: "+counts.total+" · pewne A1: "+counts.confident+
+      " · do sprawdzenia / uzupełnienia: "+counts.review+" · odrzucone obrysy: "+counts.rejected+
+      " · zaznaczone do zapisu: "+counts.selected+"."+
+      (batchSelectionStats?.outside?" Poza obszarem działek pominięto: "+batchSelectionStats.outside+".":"");
+    batchSave.textContent="Zapisz zaznaczone ("+counts.selected+")";
+    batchSave.disabled=busy||batchPending||batchWaiting||!counts.selected;
+    batchCancel.disabled=busy;
+    batchParcels.disabled=busy||batchPending;
+    for(const entry of batchItems)if(entry.controls){
+      entry.controls.check.disabled=busy||batchPending||entry.status==="rejected"||!entry.a1.trim();
+      entry.controls.input.disabled=busy||batchPending;
+      entry.controls.check.checked=entry.chosen&&entry.status!=="rejected";
+      entry.controls.row.className="trace-batch-row"+(entry.id===batchFocus?" focused":"")+
+        (entry.status==="rejected"?" rejected":entry.a1Status==="ok"||entry.manual||entry.confirmed?" ready":" review");
+      entry.controls.state.textContent=entry.status==="rejected"?entry.reason:
+        entry.a1Reason==="multiple_field_numbers"?(entry.confirmed?"A1 potwierdzony. ":"")+"W tym obrysie wykryto różne numery. Sprawdź brakującą granicę.":
+        entry.a1Reason==="unread_field_number"?(entry.confirmed?"A1 potwierdzony. ":"")+"W tym obrysie jest także nieczytelny numer w kółku. Sprawdź, czy nie brakuje granicy.":
+        !entry.a1.trim()?"Wpisz A1; wtedy możesz zaznaczyć pole.":entry.manual?"A1 poprawiony ręcznie.":
+        entry.confirmed?"A1 potwierdzony.":
+        entry.a1Status==="ok"?"A1 odczytany z rastra.":"Sprawdź A1 i zaznacz kratkę, aby przyjąć.";
+    }
+  }
+  function locateBatch(entry,zoom=true){
+    batchFocus=entry.id;
+    if(zoom&&entry.pixelPoints.length){
+      const points=entry.pixelPoints.map(p=>worldAt(...p));
+      const box=[Math.min(...points.map(p=>p.x)),Math.min(...points.map(p=>p.y)),
+        Math.max(...points.map(p=>p.x)),Math.max(...points.map(p=>p.y))];
+      const margin=Math.max(2,(box[2]-box[0])*.4,(box[3]-box[1])*.4);
+      view.fit([box[0]-margin,box[1]-margin,box[2]+margin,box[3]+margin]);
+    }
+    entry.controls?.row.scrollIntoView?.({block:"nearest"});
+    entry.controls?.input.focus({preventScroll:true});
+    draw();
+  }
+  function renderBatchList(){
+    batchList.replaceChildren();
+    for(const entry of batchItems){
+      const row=document.createElement("div"),check=document.createElement("input"),input=document.createElement("input");
+      const locate=document.createElement("button"),state=document.createElement("small");
+      check.type="checkbox";check.setAttribute("aria-label","Zapisz pole "+entry.id);
+      check.checked=entry.chosen;check.onchange=()=>{
+        entry.chosen=check.checked&&entry.status!=="rejected"&&!!entry.a1.trim();entry.choiceManual=true;
+        if(entry.chosen)entry.confirmed=true;
+        draw();
+      };
+      locate.type="button";locate.className="button ghost";locate.textContent="#"+entry.id;
+      locate.title="Pokaż obrys pola na mapie";locate.onclick=()=>locateBatch(entry);
+      input.className="trace-batch-a1";input.value=entry.a1;input.autocomplete="off";
+      input.setAttribute("aria-label","A1 pola "+entry.id);
+      input.placeholder="A1";
+      input.oninput=()=>{
+        entry.a1=input.value.trim();entry.manual=true;entry.choiceManual=true;
+        entry.chosen=!!entry.a1&&entry.status!=="rejected";draw();
+      };
+      row.append(check,locate,input,state);
+      if(entry.alternatives?.length>1){
+        const alternatives=document.createElement("small");alternatives.className="trace-batch-alternatives";
+        alternatives.textContent="Odczytane warianty: "+entry.alternatives.join(", ");row.append(alternatives);
+      }
+      entry.controls={row,check,input,state};batchList.append(row);
+    }
+    updateBatchSummary();
+  }
+  async function buildBatch(){
+    if(disposed||busy||!batchActive||!trace)return;
+    if(a1Request){batchWaiting=true;batchMessage="Obrysy gotowe. Odczytuję i przypisuję numery A1…";draw();return;}
+    invalidateBatch();const version=batchVersion,snapshot=trace;
+    batchWaiting=false;batchPending=true;batchMessage="Dopasowuję wspólne granice całej mapy do 5216 i istniejących 5310…";draw();
+    batchController=new AbortController();
+    try{
+      const previous=new Map(batchItems.map(entry=>[entry.id,entry]));
+      const selection=globalThis.GeoStudioRasterTraceBatch.collect({trace,referenceFeatures:features,
+        worldAt,regionSeed,pointInRings:tracePointInRings,withinParcels:batchParcels.checked});
+      const fitted=selection.items.length&&parcelSnap.checked&&parcelIndex?.size
+        ?await fittedBatchParcelShapes(version,snapshot):null;
+      if(disposed||version!==batchVersion||trace!==snapshot||!batchActive)return;
+      const entries=selection.items.map(entry=>{
+        const old=previous.get(entry.id);
+        if(old?.manual||old?.confirmed){entry.a1=old.a1;entry.manual=!!old.manual;entry.confirmed=!!old.confirmed;}
+        if(old?.choiceManual){entry.chosen=old.chosen;entry.choiceManual=true;}
+        const points=(fitted?.get(entry.id)?.points||entry.shape.points).map(([x,y])=>{
+          const p=worldAt(x,y);return [-p.y,p.x];});
+        const seed=worldAt(...entry.seed);
+        return {...entry,points,seedPoints:[[-seed.y,seed.x]]};
+      });
+      if(fitted)parcelMessage=parcelReport(entries.map(entry=>fitted.get(entry.id)));
+      if(entries.reduce((sum,entry)=>sum+entry.points.length,0)>50000)
+        throw Error("Propozycje przekraczają 50 000 węzłów. Wybierz mocniejsze prostowanie lub grubsze kontury.");
+      const result=entries.length?await view.fitBatch(entries.map(({id,points,a1,seedPoints})=>
+        ({id,points,a1,seedPoints})),{snapDistance:parcelRange,signal:batchController.signal}):{items:[]};
+      if(disposed||version!==batchVersion||trace!==snapshot||!batchActive)return;
+      const reports=new Map(result.items.map(entry=>[entry.id,entry]));
+      batchItems=entries.map(entry=>{
+        const report=reports.get(entry.id);
+        if(!report)throw Error("Nie otrzymano wyniku dla wszystkich propozycji. Uruchom analizę ponownie.");
+        const points=report.points?.length?report.points:entry.points;
+        return {...entry,...report,a1:entry.a1,points,
+          chosen:entry.chosen&&report.status!=="rejected"&&!!entry.a1.trim(),
+          pixelPoints:points.map(([north,east])=>{const p=pixelAt(east,-north);return [p.x,p.y];})};
+      });
+      batchSelectionStats=selection;batchMessage=entries.length?"":
+        "Nie znaleziono pól do zaproponowania. Sprawdź kontury i kalibrację albo wyłącz ograniczenie do obszaru działek 5216.";
+      renderBatchList();
+    }catch(error){
+      if(disposed||version!==batchVersion)return;
+      batchItems=[];batchMessage=error.message||"Nie udało się przygotować propozycji.";renderBatchList();
+    }finally{
+      if(!disposed&&version===batchVersion){batchPending=false;draw();}
+    }
+  }
+  function cancelBatch(){
+    if(busy)return;
+    invalidateBatch();batchActive=false;batchWaiting=false;batchItems=[];batchFocus=null;batchMessage="";
+    batchList.replaceChildren();outline=[];selected.clear();selectionSeeds.clear();invalidateFit();resetA1();draw();
+  }
+  batchCancel.onclick=cancelBatch;
+  batchParcels.onchange=()=>{if(batchActive&&!busy)buildBatch();};
+  batchStart.onclick=()=>{
+    if(disposed||busy||batchPending)return;
+    batchActive=true;batchWaiting=true;batchItems=[];batchFocus=null;batchMessage="Analizuję cały przygotowany obraz…";
+    panel.querySelector("select").value="3";tolerance.value="2.5";
+    quality.value="14000000";quality.onchange();view.fit(bounds);draw();
+  };
+  batchSave.onclick=async()=>{
+    if(disposed||busy||!batchActive||batchPending||batchWaiting)return;
+    const chosen=batchItems.filter(entry=>entry.chosen&&entry.status!=="rejected"&&entry.a1.trim());
+    if(!chosen.length)return;
+    busy=true;let saved=false;batchMessage="Sprawdzam i zapisuję "+chosen.length+" wydzieleń…";draw();
+    try{
+      await view.addBatch(chosen.map(({id,points,a1})=>({id,points,a1:a1.trim()})));
+      saved=true;
+      for(const entry of chosen)completed.push(entry.pixelPoints);
+      busy=false;cancelBatch();busy=true;draw();
+      await view.refresh();
+      busy=false;
+      await prepare();
+      selectionMessage="Dodano "+chosen.length+" wydzieleń 5310 z A1. Całą partię możesz cofnąć jednym Ctrl+Z.";
+    }catch(error){
+      if(saved)selectionMessage="Zapisano "+chosen.length+" wydzieleń. Nie udało się odświeżyć podglądu: "+error.message;
+      else batchMessage=error.message||"Nie udało się zapisać partii.";
+    }
+    finally{busy=false;draw();}
+  };
   function draw(rect=rectEnd){
     if(disposed)return;
     ctx.resetTransform();ctx.clearRect(0,0,canvas.width,canvas.height);
@@ -1015,7 +1267,14 @@ function openRasterTracing(item, view) {
     ctx.scale(canvas.width/stage.clientWidth,canvas.height/stage.clientHeight);
     const origin=screenAt({x:0,y:0}),scale=view.scale();
     ctx.transform(d*sx*scale,-a*sx*scale,e*sy*scale,-b*sy*scale,origin.x,origin.y);
-    const hideDraft=fitPending||(fitError&&!manualDrafts.has(selectionKey()));
+    if(batchActive)for(const entry of batchItems){
+      ctx.beginPath();entry.pixelPoints.forEach(([x,y],i)=>i?ctx.lineTo(x,y):ctx.moveTo(x,y));ctx.closePath();
+      const color=entry.status==="rejected"?"#ee4052":entry.manual||entry.confirmed||entry.a1Status==="ok"?"#008d6a":"#d88b00";
+      ctx.fillStyle=entry.id===batchFocus?"rgba(255,208,74,.32)":entry.chosen?"rgba(0,165,140,.14)":"rgba(230,155,15,.08)";
+      ctx.fill();ctx.strokeStyle=entry.id===batchFocus?"#ff1493":color;
+      ctx.lineWidth=(entry.id===batchFocus?4:1.5)/cssScale();ctx.stroke();
+    }
+    const hideDraft=batchActive||fitPending||(fitError&&!manualDrafts.has(selectionKey()));
     const visibleRings=hideDraft?[]:outline?[outline]:[];
     for(const ring of visibleRings){
       ctx.beginPath();
@@ -1035,6 +1294,18 @@ function openRasterTracing(item, view) {
       const [x,y]=drag.vertices[0];
       ctx.beginPath();ctx.arc(x,y,2*radius,0,2*Math.PI);
       ctx.strokeStyle="#e47500";ctx.lineWidth=2/cssScale();ctx.stroke();
+    }
+    if(batchActive){
+      ctx.setTransform(canvas.width/stage.clientWidth,0,0,canvas.height/stage.clientHeight,0,0);
+      ctx.font="bold 12px sans-serif";ctx.textAlign="center";ctx.textBaseline="middle";
+      for(const entry of batchItems){
+        const bounds=entry.shape.bounds,left=screenAt({x:bounds[0],y:bounds[1]}),right=screenAt({x:bounds[2],y:bounds[3]});
+        if(Math.hypot(right.x-left.x,right.y-left.y)<32&&entry.id!==batchFocus)continue;
+        const p=screenAt({x:entry.seed[0],y:entry.seed[1]});
+        const text=entry.a1?(entry.a1+(entry.a1Status==="ok"||entry.manual||entry.confirmed?"":" ?")):"#"+entry.id;
+        ctx.strokeStyle="white";ctx.lineWidth=3;ctx.strokeText(text,p.x,p.y);
+        ctx.fillStyle=entry.status==="rejected"?"#b51629":"#152e39";ctx.fillText(text,p.x,p.y);
+      }
     }
     if(anchor&&rect){
       const p=screenAt(anchor),q=screenAt(rect);
@@ -1058,12 +1329,25 @@ function openRasterTracing(item, view) {
       !parcelIndex?"Wczytywanie granic 5216…":!parcelIndex.size?"Brak granic 5216 w pobliżu rastra.":
       "Bliskie, współbieżne boki zostaną dopasowane do 5216. Zasięg: "+parcelRange.toFixed(1)+" m"+
         (rangeMeasured&&automaticRange?" (z grubości kreski).":"."));
-    a1Status.textContent=a1Message;
+    a1Status.textContent=a1Failure?"Odczyt A1 jest niedostępny: "+a1Failure:
+      batchActive?(a1Request?"Odczytuję A1 z całego rastra…":
+        "Numery odczytane z rastra są wpisane na liście. Znak ? przy numerze oznacza odczyt do sprawdzenia."):a1Message;
+    a1Retry.hidden=!a1Failure;a1Retry.disabled=busy||!!a1Request;
+    batchPanel.hidden=!batchActive;
+    panel.querySelector(".trace-map-save").hidden=batchActive;
+    mergeA1.disabled=busy||batchActive;
+    batchStart.disabled=busy||batchPending||batchWaiting;
+    batchStart.textContent=batchActive?"Przelicz całą mapę (test)":"Wkreśl całą mapę (test)";
+    close.disabled=busy;
+    quality.disabled=tolerance.disabled=parcelSnap.disabled=panel.querySelector("select").disabled=busy;
     parcelDistance.disabled=busy;
-    save.disabled=busy||fitError||!trace||!outline?.length||!a1.value.trim();
+    save.disabled=busy||batchActive||fitError||!trace||!outline?.length||!a1.value.trim();
+    if(batchActive){updateBatchSummary();status.textContent=batchPending||batchWaiting?batchMessage:
+      "Przegląd całej mapy. Zapis obejmie tylko zaznaczone propozycje z A1.";}
   }
   function analyze(){
     if(disposed||!worker)return;
+    if(batchActive){invalidateBatch();batchItems=[];batchWaiting=true;batchMessage="Rozpoznaję pola na całej mapie…";batchList.replaceChildren();}
     trace=null;failure="";selected.clear();selectionSeeds.clear();selectionMessage="";edited.clear();clearDrafts();outline=[];invalidateFit();
     activeNode=null;anchor=drag=pan=rectEnd=snapHit=null;clearTimeout(holdTimer);resetA1();
     analysisPending=++analysisId;
@@ -1119,7 +1403,7 @@ function openRasterTracing(item, view) {
   }
   const hiddenAutomaticDraft=()=>fitPending||(fitError&&!manualDrafts.has(selectionKey()));
   function editAt(p,button){
-    if(!trace||busy||hiddenAutomaticDraft()||!outline?.length)return;
+    if(batchActive||!trace||busy||hiddenAutomaticDraft()||!outline?.length)return;
     if(button===1){removeVertex(nearestVertex(p,14));return;}
     if(button!==2||outline.length>=500)return;
     let best=10/cssScale(),at=-1,point;
@@ -1154,6 +1438,11 @@ function openRasterTracing(item, view) {
     if(busy||!trace||ev.button!==0)return;
     const p=position(ev);
     if(p.x<0||p.y<0||p.x>=w||p.y>=h)return;
+    if(batchActive){
+      const hit=batchItems.find(entry=>tracePointInRings([p.x,p.y],[entry.pixelPoints]));
+      if(hit)locateBatch(hit,false);
+      return;
+    }
     canvas.setPointerCapture(ev.pointerId);
     const nearest=hiddenAutomaticDraft()?null:nearestVertex(p,12);
     canvas.focus({preventScroll:true});
@@ -1241,7 +1530,7 @@ function openRasterTracing(item, view) {
     for(const key of drafts.keys())if(!manualDrafts.has(key)){
       drafts.delete(key);draftOrigins.delete(key);draftReports.delete(key);
     }
-    if(trace)syncAttributes();
+    if(trace){if(batchActive)buildBatch();else syncAttributes();}
     draw();
   }
   parcelSnap.onchange=()=>changeParcelSettings();
@@ -1260,6 +1549,7 @@ function openRasterTracing(item, view) {
     if(busy)return false;
     if(!disposed){
       disposed=true;preparationId++;analysisId++;stopAnalysisWorker();
+      invalidateBatch();
       a1Controller?.abort();
       clearTimeout(holdTimer);anchor=drag=pan=rectEnd=snapHit=null;
       observer.disconnect();canvas.remove();panel.remove();view.closed();
@@ -1268,7 +1558,7 @@ function openRasterTracing(item, view) {
   }
   close.onclick=finish;
   async function submit(){
-    if(disposed||busy||drag||fitError||!outline?.length||!a1.value.trim())return;
+    if(disposed||busy||batchActive||drag||fitError||!outline?.length||!a1.value.trim())return;
     if(fitPending){queuedSave=true;return;}
     if(!nativeOutline)return;
     busy=true;save.disabled=close.disabled=a1.disabled=panel.querySelector("select").disabled=true;
@@ -1300,6 +1590,7 @@ function openRasterTracing(item, view) {
   resize();observer.observe(stage);canvas.focus({preventScroll:true});
   async function prepare(){
     const generation=++preparationId;
+    if(batchActive){invalidateBatch();batchItems=[];batchWaiting=true;batchMessage="Wczytuję pełny obraz i granice mapy…";batchList.replaceChildren();}
     analysisId++;stopAnalysisWorker();trace=null;parcelShapes=null;invalidateFit();draw();
     recognizeA1();
     try{
@@ -1344,15 +1635,21 @@ function openRasterTracing(item, view) {
           }
         }
         draw();
+        if(batchActive){
+          if(trace)buildBatch();
+          else{batchWaiting=false;batchMessage=failure;draw();}
+        }
       };
       current.onerror=()=>{
         if(!isCurrent()||!analysisPending)return;
-        analysisPending=0;trace=null;failure="Nie udało się rozpoznać pól na rastrze.";draw();
+        analysisPending=0;trace=null;failure="Nie udało się rozpoznać pól na rastrze.";
+        if(batchActive){batchWaiting=false;batchMessage=failure;}draw();
       };
       current.postMessage({source,mask,w,h},[source.buffer,mask.buffer]);analyze();
     }catch(error){
       if(disposed||generation!==preparationId)return;
-      stopAnalysisWorker();failure="Błąd wczytywania mapy: "+error.message;draw();
+      stopAnalysisWorker();failure="Błąd wczytywania mapy: "+error.message;
+      if(batchActive){batchWaiting=false;batchMessage=failure;}draw();
     }
   }
   prepare();

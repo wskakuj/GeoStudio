@@ -4,6 +4,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
+const { executeParcelWorker } = require('./test_web_raster_parcel_worker.cjs');
 
 const source = fs.readFileSync(path.join(__dirname, '../geostudio/web_app/static/raster_trace.js'), 'utf8');
 const tick = () => new Promise(resolve => setImmediate(resolve));
@@ -14,18 +15,19 @@ function deferred() {
 }
 
 function createUI(featureLoads = [], options = {}) {
-  const workers = [], controls = new Map(), draws = { count: 0 };
-  const fitCalls = [], fitOptions = [], addCalls = [], snapCalls = [], snapOptions = [], imageCaptures = [];
+  const workers = [], parcelWorkers = [], controls = new Map(), draws = { count: 0 };
+  const fitCalls = [], fitOptions = [], addCalls = [], snapCalls = [], snapOptions = [], imageCaptures = [], parcelOptions = [];
   const timers = new Map(); let timerID = 0, fitIndex = 0;
   const scale = options.scale || 1;
   const screenOrigin = options.screenOrigin || [0, 0];
   let panel, canvas, featureCalls = 0, closed = 0, added = 0, currentPath = [];
   const context = new Proxy({
-    clearRect() { draws.count++; draws.rings = []; },
+    clearRect() { draws.count++; draws.rings = []; draws.labels = []; },
     beginPath() { currentPath = []; },
     moveTo(x,y) { currentPath.push([x,y]); },
     lineTo(x,y) { currentPath.push([x,y]); },
     stroke() { if(currentPath.length>=3)draws.rings.push(currentPath.slice()); },
+    fillText(text) { draws.labels.push(text); },
     getImageData(x, y, width, height) {
       imageCaptures.push((draws.rings||[]).map(ring=>ring.slice()));
       // Workers are the mocked boundary here; do not allocate 12M real pixels.
@@ -34,7 +36,9 @@ function createUI(featureLoads = [], options = {}) {
   }, { get(target, name) { return target[name] || (() => {}); } });
   function element() {
     return {
-      value: '', checked: false, disabled: false, textContent: '', removed: false,
+      value: '', checked: false, disabled: false, textContent: '', removed: false, children: [],
+      append(...children) { this.children.push(...children); },
+      replaceChildren(...children) { this.children = children; },
       setAttribute() {}, focus() {}, setPointerCapture() {},
       getBoundingClientRect() { return { left: 0, top: 0 }; },
       remove() { this.removed = true; },
@@ -54,22 +58,32 @@ function createUI(featureLoads = [], options = {}) {
   }
   class Worker {
     constructor(url) {
-      assert.equal(url, '/raster_trace.js');
+      assert.ok(['/raster_trace.js', '/raster_parcel_worker.js'].includes(url));
+      this.url = url;
       this.messages = [];
       this.terminated = false;
-      workers.push(this);
-      assert.equal(workers.filter(worker => !worker.terminated).length, 1,
-        'only one image-analysis worker may remain alive');
+      const group = url === '/raster_trace.js' ? workers : parcelWorkers;
+      group.push(this);
+      assert.equal(group.filter(worker => !worker.terminated).length, 1,
+        'only one worker of each analysis type may remain alive');
     }
     postMessage(data) {
       assert.equal(this.terminated, false);
-      this.messages.push(data);
+      this.messages.push(this.url === '/raster_parcel_worker.js' ? structuredClone(data) : data);
+      if (this.url === '/raster_parcel_worker.js' && !options.manualParcelWorkers)
+        setImmediate(() => { if (!this.terminated) this.complete(); });
     }
     terminate() { this.terminated = true; }
     analysisID() { return this.messages.filter(message => 'threshold' in message).at(-1).id; }
     result(trace, id = this.analysisID()) {
       const sheet = this.messages.find(message => message.source);
       this.onmessage({ data: { id, trace: trace || sampleTrace(sheet.w, sheet.h) } });
+    }
+    complete(override) {
+      assert.equal(this.url, '/raster_parcel_worker.js');
+      const output = override || executeParcelWorker(this.messages.at(-1), options.parcelWorkerFailure).messages[0];
+      this.onmessage?.({ data: output });
+      return output;
     }
   }
   const sandbox = {
@@ -91,10 +105,15 @@ function createUI(featureLoads = [], options = {}) {
   vm.createContext(sandbox);
   const parcelSource = fs.readFileSync(path.join(__dirname, '../geostudio/web_app/static/raster_parcel_snap.js'), 'utf8');
   vm.runInContext(parcelSource, sandbox, { filename: 'raster_parcel_snap.js' });
+  const actualParcelSnap=sandbox.GeoStudioRasterParcelSnap.snapRings;
+  sandbox.GeoStudioRasterParcelSnap.snapRings=(rings,index,settings)=>{
+    parcelOptions.push({...settings});return actualParcelSnap(rings,index,settings);
+  };
   // In a browser globalThis and window are the same global object. The narrow
   // DOM fixture keeps window separate, so expose the actual helper on both.
   sandbox.window.GeoStudioRasterParcelSnap = sandbox.GeoStudioRasterParcelSnap;
   vm.runInContext(fs.readFileSync(path.join(__dirname, '../geostudio/web_app/static/raster_a1.js'), 'utf8'),sandbox);
+  vm.runInContext(fs.readFileSync(path.join(__dirname, '../geostudio/web_app/static/raster_trace_batch.js'), 'utf8'),sandbox);
   vm.runInContext(source, sandbox, { filename: 'raster_trace.js' });
   const view = {
     shell: { clientWidth: 160, clientHeight: 120, append(overlay) { canvas = overlay; } },
@@ -109,10 +128,18 @@ function createUI(featureLoads = [], options = {}) {
       return options.fitLoads?.[fitIndex++] || { points, clipped: false };
     },
     async add(points, a1, fitted) { added++; addCalls.push({ points, a1, fitted }); }, async refresh() {},
+    fit: options.fitView || (()=>{}),
     closed() { closed++; },
   };
   const a1Requests=[];
-  if(options.a1Load)view.recognizeA1=signal=>{a1Requests.push(signal);return options.a1Load;};
+  if(options.a1Load)view.recognizeA1=signal=>{a1Requests.push(signal);return options.a1Loads?.[a1Requests.length-1]||options.a1Load;};
+  const batchFitCalls=[],batchAddCalls=[],batchFitOptions=[];
+  view.fitBatch=async(items,settings)=>{
+    batchFitCalls.push(items);batchFitOptions.push(settings);
+    return options.batchFits?.[batchFitCalls.length-1]||{items:items.map(item=>({...item,
+      status:item.a1?'ready':'needsA1',clipped:false,snapped:false,reason:''}))};
+  };
+  view.addBatch=async(items)=>{batchAddCalls.push(items);return options.batchAddResult;};
   const api = sandbox.openRasterTracing({
     id: 1, image: { width: options.width || 160, height: options.height || 120 },
     sourceWidth: options.sourceWidth, sourceHeight: options.sourceHeight,
@@ -127,7 +154,8 @@ function createUI(featureLoads = [], options = {}) {
     controls.get('.trace-a1').oninput();
   };
   return {
-    api, workers, controls, draws, click, fitCalls, fitOptions, addCalls, snapCalls, snapOptions, imageCaptures, a1Requests, timers,
+    api, workers, parcelWorkers, controls, draws, click, fitCalls, fitOptions, addCalls, snapCalls, snapOptions, imageCaptures, a1Requests, timers, parcelOptions,
+    batchFitCalls,batchAddCalls,batchFitOptions,
     canvas: () => canvas,
     status: () => controls.get('[role=status]').textContent,
     panel: () => panel,
@@ -213,7 +241,7 @@ function mapTracingView(batches, ocrResponses=[]) {
   const start = text.indexOf('function startRasterTracing(){');
   const stop = text.indexOf('function renderRasterLayers(){', start);
   assert.ok(start >= 0 && stop > start, 'The map integration entry point must be present');
-  const requests = [],fetchRequests=[];
+  const requests = [],fetchRequests=[],apiCalls=[];
   const entry={id:1,digest:'a'.repeat(64),file:{name:'synthetic.png'}};
   const state = { editBusy: false, edit: { documentToken: 'fixture-map', revision: 7 },
     width: 1000, height: 800, center: { x: 0, y: 0 }, scale: 1 };
@@ -224,14 +252,15 @@ function mapTracingView(batches, ocrResponses=[]) {
     $: () => control, rasterEntry: () => entry, rasterCanShow: () => true,
     setTool() {}, worldToScreen() {}, screenToWorld() {}, zoomAt() {},
     requestDraw() {}, scheduleViewport() {}, toggleDrawMagnet() {}, isVisible: () => false,
-    api: async url => { requests.push(new URL(url, 'http://fixture.local')); return batches[requests.length - 1]; },
+    api: async (url,options) => { requests.push(new URL(url, 'http://fixture.local')); apiCalls.push({url,options});return batches[requests.length - 1]; },
+    updateEditState(result) { state.edit=result; }, refreshEditedDocument:async()=>{}, inform(){},
     documentFetch:async (url,options)=>{fetchRequests.push({url,options});return ocrResponses[fetchRequests.length-1];},
     openRasterTracing(_entry, callbacks) { view = callbacks; return {}; },
   };
   vm.createContext(sandbox);
   vm.runInContext(text.slice(start, stop), sandbox, { filename: 'map.js:startRasterTracing' });
   sandbox.startRasterTracing();
-  return { view, requests, state, fetchRequests,entry };
+  return { view, requests, state, fetchRequests,entry,apiCalls };
 }
 
 const cases = {
@@ -423,8 +452,8 @@ const cases = {
   async first_click_fills_a1_and_preserves_manual_corrections() {
     const ui=createUI([Promise.resolve([])]);await tick();
     const trace=adjacentTrace();
-    trace.a1Suggestions=new Map([[1,{text:'178',confidence:.99,source:'callout',status:'ok'}],
-      [2,{text:'178',confidence:.99,source:'inside',status:'ok'}]]);
+    trace.a1Suggestions=new Map([[1,{text:'178',confidence:.99,source:'callout',status:'ok',assignmentStatus:'ok'}],
+      [2,{text:'178',confidence:.99,source:'inside',status:'ok',assignmentStatus:'ok'}]]);
     ui.workers[0].result(trace);
     ui.canvas().onpointerdown(pointer(40,50));ui.canvas().onpointerup(pointer(40,50));await tick();
     assert.equal(ui.controls.get('.trace-a1').value,'178','The first proposal must already have the recognized A1');
@@ -450,7 +479,8 @@ const cases = {
       assert.equal(ui.controls.get('.trace-save').disabled,true);ui.api.close();
     }
     const ui=createUI([Promise.resolve([])]);await tick();
-    const trace=adjacentTrace();trace.a1Suggestions=new Map([[1,{text:'17',status:'ok'}],[2,{text:'18',status:'ok'}]]);
+    const trace=adjacentTrace();trace.a1Suggestions=new Map([[1,{text:'17',status:'ok',assignmentStatus:'ok'}],
+      [2,{text:'18',status:'ok',assignmentStatus:'ok'}]]);
     ui.workers[0].result(trace);
     ui.canvas().onpointerdown(pointer(40,50));ui.canvas().onpointerup(pointer(40,50));await tick();
     assert.equal(ui.controls.get('.trace-a1').value,'17');
@@ -777,6 +807,71 @@ const cases = {
     ui.api.close();
   },
 
+  async parcel_range_controls_keep_close_shared_borders() {
+    for(const measured of [false,true]){
+      const labels=new Int32Array(160*120),shapes=new Map();
+      const references=[];
+      for(let i=0;i<6;i++){
+        const left=20+i*10,right=left+10;
+        shapes.set(i+1,{points:[[left,20],[right,20],[right,100],[left,100]],
+          bounds:[left,20,right,100],suggested:true});
+        references.push(rectangle5216(left+1,21,right+1,101));
+        for(let y=20;y<100;y++)for(let x=left;x<right;x++)labels[y*160+x]=i+1;
+      }
+      const trace={labels,shapes,tolerance:2.5};
+      if(measured)trace.strokeMetrics={radiusPixels:2.6,samples:60,edges:12};
+      const ui=createUI([Promise.resolve(references)]);await tick();
+      const worker=ui.workers[0];worker.result(trace);await ui.click(25,50);
+      const fitted=[[21,21],[21,31],[101,31],[101,21]],original=[[20,20],[20,30],[100,30],[100,20]];
+      const messages=worker.messages.length,range=ui.controls.get('.trace-parcel-distance');
+      for(const distance of [3,20,3]){
+        range.value=String(distance);range.onchange();await tick();
+        sameRing(ui.fitCalls.at(-1),fitted);
+        assert.equal(ui.parcelOptions.at(-1).distance,distance);
+        assert.equal(ui.parcelOptions.at(-1).precisionDistance,measured?2.6:3,
+          'Changing the maximum search distance must preserve the measured or fallback raster precision');
+        assert.match(ui.controls.get('.trace-parcel-status').textContent,/19 odcinków odniesienia/);
+        assert.match(ui.controls.get('.trace-parcel-status').textContent,/dopasowane boki: 4/);
+      }
+      const enabled=ui.controls.get('.trace-parcel-snap');
+      enabled.checked=false;enabled.onchange();await tick();sameRing(ui.fitCalls.at(-1),original);
+      enabled.checked=true;enabled.onchange();await tick();sameRing(ui.fitCalls.at(-1),fitted);
+      assert.equal(worker.messages.length,messages,'Reference fitting must reuse the existing analysis');
+      assert.equal(ui.featureCalls(),1,'The checkbox and range must reuse the loaded native references');
+      assert.equal(ui.controls.get('.trace-a1').value,'17');
+      await ui.api.submit();sameRing(ui.addCalls[0].points,fitted);sameRing(ui.addCalls[0].fitted,fitted);
+      ui.api.close();
+    }
+  },
+
+  async parcel_precision_preserves_close_fits_at_a_raster_junction() {
+    // A thick raster junction has two tiny bevels next to the meeting point
+    // of three regions. Their shared-border veto must stay local and may not
+    // undo the independently supported outer edge when the range increases.
+    const rings=[[[20,20],[120,20],[120,70],[71,70],[69,69],[20,70]],
+      [[20,70],[69,69],[71,70],[70,71],[70,120],[20,120]],
+      [[71,70],[120,70],[120,120],[70,120],[70,71]]];
+    const features=[rectangle5216(21,21,121,71),rectangle5216(21,71,71,121),rectangle5216(71,71,121,121)];
+    for(const measured of [false,true]){
+      const labels=new Int32Array(160*140);
+      for(let y=20;y<120;y++)for(let x=20;x<120;x++)labels[y*160+x]=y<70?1:x<70?2:3;
+      const shapes=new Map(rings.map((points,i)=>[i+1,{points,bounds:[20,20,120,120],suggested:true}]));
+      const trace={labels,shapes,tolerance:2.5};
+      if(measured)trace.strokeMetrics={radiusPixels:2.6,samples:40,edges:8};
+      const ui=createUI([Promise.resolve(features)],{height:140});await tick();ui.workers[0].result(trace);
+      await ui.click(50,45);
+      const before=ui.fitCalls.at(-1).map(p=>Array.from(p));
+      assert.ok(before.some(([north,east])=>north===21&&east===21));
+      assert.ok(before.some(([north,east])=>north===21&&east===121));
+      for(const distance of [3,20,3]){
+        const range=ui.controls.get('.trace-parcel-distance');range.value=String(distance);range.onchange();await tick();
+        closePoints(ui.fitCalls.at(-1),before);
+        assert.equal(ui.parcelOptions.at(-1).precisionDistance,measured?2.6:3);
+      }
+      ui.api.close();
+    }
+  },
+
   async parcel_manual_correction_survives_settings_and_save() {
     const ui = createUI([Promise.resolve([rectangle5216()])]);
     await tick(); ui.workers[0].result(); await ui.click();
@@ -971,7 +1066,8 @@ const cases = {
   },
 };
 
-(async () => {
+module.exports={createUI,sampleTrace,adjacentTrace,rectangle5216,closePoints,sameRing,pointer,tick,deferred,mapTracingView};
+if(require.main===module)(async () => {
   const selected = process.argv[2];
   if (!cases[selected]) throw Error('Unknown tracing lifecycle scenario: ' + selected);
   await cases[selected]();

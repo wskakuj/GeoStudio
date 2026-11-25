@@ -3262,6 +3262,42 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
       fitOutline:(points,options={})=>api("/api/underlay/raster/fit",{method:"POST",
         headers:{"Content-Type":"application/json"},body:JSON.stringify({documentToken,revision,points,
           seedPoints:options.seedPoints||[],lockedPoints:options.lockedPoints||[],snapDistance:options.snapDistance||0})}),
+      async fitBatch(items,options={}){
+        if(state.editBusy||state.edit.documentToken!==documentToken||state.edit.revision!==revision)
+          throw Error("Mapa została zmieniona. Otwórz Auto Wkreślanie ponownie.");
+        const result=await api("/api/underlay/raster/batch/fit",{method:"POST",signal:options.signal,
+          headers:{"Content-Type":"application/json"},
+          body:JSON.stringify({documentToken,revision,items,snapDistance:options.snapDistance||0})});
+        if(state.editBusy||state.edit.documentToken!==documentToken||state.edit.revision!==revision)
+          throw Error("Mapa została zmieniona. Otwórz Auto Wkreślanie ponownie.");
+        return result;
+      },
+      async addBatch(items){
+        if(state.editBusy||state.edit.documentToken!==documentToken||state.edit.revision!==revision)
+          throw Error("Mapa została zmieniona. Otwórz Auto Wkreślanie ponownie.");
+        const post=(path,data)=>api(path,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(data)});
+        state.editBusy=true;state.editBusySince=Date.now();updateEditState(state.edit);
+        try{
+          const preview=await post("/api/underlay/raster/batch/preview",{documentToken,revision,items});
+          if(state.edit.documentToken!==documentToken||state.edit.revision!==revision)
+            throw Error("Mapa została zmieniona. Otwórz Auto Wkreślanie ponownie.");
+          if(!preview.canApply){
+            const problems=(preview.items||[]).filter(item=>item.status!=="ready");
+            throw Error("Nie zapisano partii. "+problems.slice(0,3).map(item=>"Pole #"+item.id+": "+item.reason).join(" "));
+          }
+          const expected=new Map(items.map(item=>[item.id,item]));
+          if(preview.items.length!==items.length||preview.items.some(item=>
+            !expected.has(item.id)||item.a1!==expected.get(item.id).a1.trim()||
+              JSON.stringify(item.points)!==JSON.stringify(expected.get(item.id).points)))
+            throw Error("Granice lub A1 wymagają ponownego sprawdzenia. Przelicz całą mapę przed zapisem.");
+          const result=await post("/api/underlay/raster/batch/apply",{documentToken,revision,previewKey:preview.previewKey});
+          if(state.edit.documentToken!==documentToken||state.edit.revision!==revision)
+            throw Error("Mapa została zmieniona. Otwórz Auto Wkreślanie ponownie.");
+          revision=result.revision;updateEditState(result);return result;
+        }finally{
+          if(state.edit.documentToken===documentToken){state.editBusy=false;state.editBusySince=0;updateEditState(state.edit);}
+        }
+      },
       async add(points,a1,fitted,options){
         if(state.editBusy||state.edit.documentToken!==documentToken||state.edit.revision!==revision)
           throw Error("Mapa została zmieniona. Otwórz wykrywanie ponownie.");

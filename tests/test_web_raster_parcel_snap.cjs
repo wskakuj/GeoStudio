@@ -66,6 +66,104 @@ const cases={
     assert.equal(JSON.stringify(original),source);assert.equal(JSON.stringify(features),before);
     result.points[0][0]=999;assert.equal(original[0][0],0);assert.equal(reference[0][0],2);
   },
+  increasing_search_distance_keeps_clear_nearby_partition_fits(){
+    // A greater maximum search distance must not disable the already clear
+    // 1 m correction on short sides, or propagate that rejection to every
+    // adjoining field through the shared-border safety check.
+    const rings=Array.from({length:6},(_,i)=>[[i*10,0],[(i+1)*10,0],[(i+1)*10,80],[i*10,80]]);
+    const reference=rings.map(ring=>shift(ring,1,1)),index=buildIndex(reference.map(parcel));
+    for(const precisionDistance of [0,3])for(const distance of [1.5,3,5,10,20]){
+      const results=snapRings(rings,index,{distance,precisionDistance});
+      assert.equal(results.diagnostics.referenceEdges,19);
+      assert.equal(results.diagnostics.changedRings,6);
+      assert.equal(results.diagnostics.matchedSides,24);
+      results.forEach((result,i)=>{
+        close(result.points,reference[i]);assert.equal(result.snappedEdges,4);
+        assert.equal(result.diagnostics.referenceEdges,19);
+        assert.equal(result.diagnostics.matchedSides,4);
+        assert.equal(result.diagnostics.movedVertices,4);
+        assert.ok(Math.abs(result.diagnostics.maxDisplacement-Math.SQRT2)<1e-8);
+      });
+      for(let i=1;i<results.length;i++){
+        const shared=results[i].points.filter(p=>results[i-1].points.some(q=>p[0]===q[0]&&p[1]===q[1]));
+        assert.equal(shared.length,2,'Adjacent fields must use exactly identical reference endpoints');
+      }
+    }
+    snapRings(rings,index,{distance:.5}).forEach((result,i)=>close(result.points,rings[i]));
+    const aligned=snapRings(reference,index,{distance:20,precisionDistance:3});
+    assert.equal(aligned.diagnostics.matchedSides,24,'Already exact sides count as referenced, although no point moves');
+    assert.equal(aligned.diagnostics.changedRings,0);
+    assert.equal(aligned.diagnostics.maxDisplacement,0);
+  },
+  wide_search_keeps_nearest_track_without_hiding_real_ambiguity(){
+    const original=[[0,0],[100,0],[100,80],[0,80]];
+    const clear=buildIndex([line([[-10,.2],[110,.2]]),line([[-10,2.8],[110,2.8]])]);
+    for(const distance of [3,5,10,20]){
+      const result=snapRing(original,clear,{distance});
+      close(result.points,[[0,.2],[100,.2],[100,80],[0,80]]);
+      assert.equal(result.diagnostics.matchedSides,1);
+      assert.equal(result.diagnostics.maxDisplacement,.2);
+    }
+    const equal=buildIndex([line([[-10,-1],[110,-1]]),line([[-10,1],[110,1]])]);
+    const result=snapRing(original,equal,{distance:20});
+    close(result.points,original);
+    assert.equal(result.reason,'ambiguous');
+    assert.equal(result.diagnostics.ambiguousSides,1);
+    assert.equal(result.diagnostics.reasons.ambiguous,1);
+    const farther=buildIndex([line([[-10,8],[110,8]])]);
+    close(snapRing(original,farther,{distance:3,precisionDistance:2.6}).points,original);
+    const expanded=snapRing(original,farther,{distance:10,precisionDistance:2.6});
+    close(expanded.points,[[0,8],[100,8],[100,80],[0,80]]);
+    assert.equal(expanded.diagnostics.maxDisplacement,8,
+      'The wider search must still admit an unambiguous reference beyond the measured stroke width');
+  },
+  dense_reference_corridor_is_bounded_and_reports_complexity(){
+    const ring=[[0,0],[100,0],[100,80],[0,80]];
+    const features=Array.from({length:400},(_,i)=>line([[-10,.01+i*.0001],[110,.01+i*.0001]]));
+    const index=buildIndex(features);
+    for(const distance of [3,20]){
+      const result=snapRings([ring],index,{distance,precisionDistance:2.6});
+      close(result[0].points,ring);
+      assert.equal(result[0].diagnostics.reasons['too-many-candidates'],1);
+      assert.equal(result.diagnostics.reasons['too-many-candidates'],1);
+      assert.equal(result.diagnostics.referenceEdges,400);
+      assert.equal(result.diagnostics.maxDisplacement,0);
+    }
+  },
+  large_search_preserves_real_pixel_pipeline_for_adjacent_thick_strokes(){
+    const width=380,height=500,pixelMetres=.2,pixels=new Uint8ClampedArray(width*height*4);
+    pixels.fill(255);
+    const mask=new Uint8ClampedArray(pixels.length);
+    const pixelRings=Array.from({length:6},(_,i)=>[[35+i*50,35],[85+i*50,35],[85+i*50,435],[35+i*50,435]]);
+    const plot=(x,y)=>{
+      for(let v=Math.round(y)-2;v<=Math.round(y)+2;v++)for(let u=Math.round(x)-2;u<=Math.round(x)+2;u++)
+        if(u>=0&&v>=0&&u<width&&v<height)pixels.set([25,25,25,255],4*(v*width+u));
+    };
+    // Five-pixel ink, displaced by 1 m from its vector reference. Analyse
+    // actual pixels instead of handing the fitter already ideal rectangles.
+    for(const ring of pixelRings)ring.forEach((a,i)=>{
+      const b=ring[(i+1)%ring.length],steps=Math.ceil(Math.hypot(b[0]-a[0],b[1]-a[1])*2);
+      for(let j=0;j<=steps;j++)plot(a[0]+5+(b[0]-a[0])*j/steps,a[1]+5+(b[1]-a[1])*j/steps);
+    });
+    if(!context.traceLandUses)vm.runInContext(fs.readFileSync(path.join(__dirname,'../geostudio/web_app/static/raster_trace.js'),'utf8'),context);
+    const trace=context.traceLandUses(pixels,mask,width,height,5,2.5);
+    assert.equal(trace.shapes.size,6);
+    if(!context.GeoStudioRasterTraceMetrics)vm.runInContext(fs.readFileSync(path.join(__dirname,'../geostudio/web_app/static/raster_trace_metrics.js'),'utf8'),context);
+    const metric=context.GeoStudioRasterTraceMetrics.estimateStrokeRadius(pixels,width,height,trace.shapes,2.5,mask);
+    assert.ok(metric?.radiusPixels>0);
+    const reference=pixelRings.map(ring=>ring.map(p=>p.map(v=>v*pixelMetres)));
+    const rings=[...trace.shapes.values()].map(shape=>shape.points.map(p=>p.map(v=>v*pixelMetres)))
+      .sort((a,b)=>Math.min(...a.map(p=>p[0]))-Math.min(...b.map(p=>p[0])));
+    const index=buildIndex(reference.map(parcel));
+    for(const distance of [3,5,10,20]){
+      const results=snapRings(rings,index,{distance,precisionDistance:metric.radiusPixels*pixelMetres});
+      results.forEach((result,i)=>onReference(result.points,reference[i]));
+      for(let i=1;i<results.length;i++){
+        const shared=results[i].points.filter(p=>results[i-1].points.some(q=>p[0]===q[0]&&p[1]===q[1]));
+        assert.ok(shared.length>=2,'Both independently selected fields must have one identical shared boundary');
+      }
+    }
+  },
   native_5216_only_and_duplicate_edges(){
     const original=[[0,0],[100,0],[100,80],[0,80]],reference=shift(original,2,1);
     const correct=parcel(reference);correct.nativeGeometry=[reference];correct.geometry=[shift(reference,1000,1000)];
@@ -176,6 +274,8 @@ const cases={
     close(results[2].points,shift(distant,2,1));
     assert.equal(results[1].snappedEdges,1,'An unrelated exterior side remains snapped after a shared-side veto');
     assert.equal(results[2].snappedEdges,4,'A remote field remains independent of a local veto');
+    assert.ok(results[1].diagnostics.rejectedSides>=1,'A shared-side veto must be visible in rejection diagnostics');
+    assert.ok(results[1].diagnostics.reasons['shared-veto']>=1);
     for(let y=1.125;y<100;y+=6.5)for(let x=.125;x<110;x+=2.5)
       assert.equal(results.slice(0,2).filter(result=>inside([x,y],result.points)).length,1);
     const reordered=snapRings([distant.slice().reverse(),wide.slice().reverse(),thin.slice().reverse()],index,{distance:3});

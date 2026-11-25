@@ -3,7 +3,7 @@
  * The raster segmentation is deliberately not split by the parcel network. */
 (function(root){
   "use strict";
-  const EPS=1e-7,COS_ANGLE=Math.cos(Math.PI/12),MAX_POINTS=500;
+  const EPS=1e-7,COS_ANGLE=Math.cos(Math.PI/12),MAX_POINTS=500,MAX_GRAPH_WORK=250000;
   const point=p=>Array.isArray(p)&&p.length>=2&&Number.isFinite(p[0])&&Number.isFinite(p[1]);
   const compare=(a,b)=>a[0]-b[0]||a[1]-b[1];
   const key=p=>Math.round(p[0]/EPS)+","+Math.round(p[1]/EPS);
@@ -89,16 +89,28 @@
     if((q[0]-p[0])*ux+(q[1]-p[1])*uy<0)[p,q]=[q,p];
     return {a:p,b:q,edge};
   }
-  function matchSide(a,b,index,radius,shortSupported=false){
+  function matchSide(a,b,index,radius,supportsShort=()=>false,report={},precision=0){
+    if(precision>EPS&&radius>precision+EPS){
+      const nearbyReport={},nearby=matchSide(a,b,index,precision,supportsShort,nearbyReport,precision);
+      // Resolve a supported nearby track before considering distant parcels.
+      // A wider user range may add missing fits; it must not reshuffle clear
+      // close matches or make a genuinely ambiguous near track look certain.
+      if(nearby||nearbyReport.reason==="too-many-candidates"){
+        Object.assign(report,nearbyReport);return nearby;
+      }
+    }
     const length=distance(a,b);
-    // A side shorter than its search diameter has too little directional
-    // evidence; its corner can still follow an adjacent well-supported side.
-    if(length<=2*radius+EPS&&!shortSupported)return null;
+    const reject=reason=>{report.reason=reason;return null;};
     const ux=(b[0]-a[0])/length,uy=(b[1]-a[1])/length;
     const along=p=>(p[0]-a[0])*ux+(p[1]-a[1])*uy;
     const across=p=>cross(ux,uy,p[0]-a[0],p[1]-a[1]);
-    const candidates=query(index,bounds(a,b,radius)).map(edge=>crop(edge,a,ux,uy,length,radius)).filter(Boolean);
-    if(!candidates.length||candidates.length>2000)return null;
+    const nearby=query(index,bounds(a,b,radius));
+    report.nearbyEdges=nearby.length;
+    report.closestReferenceDistance=nearby.length?nearby.reduce((nearest,edge)=>
+      Math.min(nearest,segmentSeparation(a,b,edge.a,edge.b)),Infinity):null;
+    const candidates=nearby.map(edge=>crop(edge,a,ux,uy,length,radius)).filter(Boolean);
+    if(!candidates.length)return reject(nearby.length?"direction-or-range":"no-nearby-reference");
+    if(candidates.length>2000)return reject("too-many-candidates");
     const nodes=new Map(),starts=new Map(),ends=new Map();
     function node(p){
       const id=key(p);
@@ -115,14 +127,21 @@
         }
       }
     }
-    if(!starts.size||!ends.size)return null;
+    if(!starts.size||!ends.size)return reject("incomplete-coverage");
+    // Bound the actual graph size, not just its segment count. Hundreds of
+    // nearly coincident alternatives can create thousands of projection
+    // nodes and otherwise block the UI before a batch limit is checked.
+    const graphWork=()=>candidates.length*(candidates.length-1)/2+candidates.length*nodes.size;
+    if(graphWork()>MAX_GRAPH_WORK)return reject("too-many-candidates");
     // Node partial duplicate edges and genuine joins, including a T junction
     // represented by a long edge on one parcel and two short edges on another.
     for(let i=0;i<candidates.length;i++)for(let j=i+1;j<candidates.length;j++){
       const first=candidates[i],second=candidates[j];
       if(!overlaps(bounds(first.a,first.b),bounds(second.a,second.b)))continue;
       const p=intersection(first.a,first.b,second.a,second.b);
-      if(p&&segmentDistance(p,first.a,first.b)<=EPS&&segmentDistance(p,second.a,second.b)<=EPS)node(p);
+      if(p&&segmentDistance(p,first.a,first.b)<=EPS&&segmentDistance(p,second.a,second.b)<=EPS){
+        node(p);if(graphWork()>MAX_GRAPH_WORK)return reject("too-many-candidates");
+      }
     }
     const ordered=[...nodes.values()].sort((p,q)=>p.at-q.at||compare(p.p,q.p));
     for(const candidate of candidates){
@@ -152,7 +171,18 @@
       finished.push({...state,cost:state.cost+.25*d});
     }
     finished.sort((p,q)=>Math.abs(p.cost-q.cost)>1e-9?p.cost-q.cost:p.ids.localeCompare(q.ids));
-    const best=finished[0];if(!best)return null;
+    const best=finished[0];if(!best)return reject("incomplete-coverage");
+    // `radius` is a maximum search distance, not the uncertainty of every
+    // candidate. Increasing it used to reject a perfectly clear 1 m fit on
+    // all 10 m-wide adjoining fields: their short sides suddenly failed the
+    // length > 2*radius gate and the shared-boundary veto removed the rest.
+    // Judge directional evidence and competing tracks by the displacement
+    // actually needed for this path, so a wider search preserves close fits.
+    const displacement=Math.max(distance(a,best.points[0]),distance(b,best.points.at(-1)),
+      ...best.points.map(p=>segmentDistance(p,a,b)));
+    const evidenceDistance=Math.min(radius,Math.max(displacement,precision));
+    if(length<=2*evidenceDistance+EPS&&!supportsShort(evidenceDistance))return reject("short-side");
+    report.candidate=true;
     function ordinate(path,t){
       for(let i=1;i<path.length;i++){
         const lo=along(path[i-1]),hi=along(path[i]);
@@ -163,11 +193,11 @@
     // Different projections onto the same noded track are equivalent. Distinct
     // nearby tracks with similar evidence remain deliberately unresolved.
     for(const other of finished.slice(1)){
-      if(other.cost-best.cost>.2*radius+EPS)break;
+      if(other.cost-best.cost>.2*evidenceDistance+EPS)break;
       if([.2,.5,.8].some(t=>Math.abs(ordinate(best.points,t*length)-ordinate(other.points,t*length))>EPS))
-        return {ambiguous:true};
+        {report.reason="ambiguous";return {ambiguous:true};}
     }
-    return {points:best.points,along,cost:best.cost,source:[a,b]};
+    return {points:best.points,along,cost:best.cost,source:[a,b],displacement,searchDistance:radius};
   }
   // Segmentation junctions can split one straight border into many pieces
   // shorter than the snap diameter. Measure the surrounding co-directed run
@@ -196,6 +226,7 @@
   // follow the real connecting parcel edges when both neighbouring long sides
   // independently support the same nearby corner/track.
   function bridgeShortSide(a,b,before,after,index,radius){
+    radius=Math.min(radius,Math.max(before?.searchDistance||radius,after?.searchDistance||radius));
     if(!before||!after||before.ambiguous||after.ambiguous||distance(a,b)>2*radius+EPS)return null;
     const left=before.points.slice(-2),right=after.points.slice(0,2);
     const start=projection(a,...left),end=projection(b,...right);
@@ -271,6 +302,7 @@
   }
   function referenceCorner(p,before,after,index,radius){
     if(!before||!after||before.cornerBridge||after.cornerBridge)return null;
+    radius=Math.min(radius,Math.max(before.searchDistance||radius,after.searchDistance||radius));
     // At a shallow bend both side searches may continue across the same real
     // parcel vertex. Their end tangents then coincide, so intersecting those
     // tangents would attach the original corner to an arbitrary projection.
@@ -362,17 +394,57 @@
   }
   function snapRing(ring,index,options={}){
     const original=Array.isArray(ring)?ring.map(p=>Array.isArray(p)?p.slice(0,2):p):[];
+    const observations=[],diagnostics={referenceEdges:index?.size||0,sourceSides:original.length,
+      candidateSides:0,matchedSides:0,ambiguousSides:0,rejectedSides:0,movedVertices:0,
+      maxDisplacement:0,closestReferenceDistance:null,reasons:{}};
+    function summarize(count=0,paths=null){
+      // Include sides already lying on 5216. "No vertex moved" is different
+      // from "no reference fit", especially when the checkbox is toggled on
+      // an outline that is already geometrically exact.
+      let referenced=count,aligned=[];
+      if(index?.size&&original.length>=3&&original.every(point)){
+        const sides=paths||original.map((p,i)=>[p,original[(i+1)%original.length]]);
+        aligned=sides.map(path=>path?.length>1&&path.every((p,i)=>!i||
+          distance(path[i-1],p)>EPS&&supportedPiece(path[i-1],p,index)));
+        referenced=aligned.filter(Boolean).length;
+      }
+      const result={...diagnostics,matchedSides:referenced,reasons:{...diagnostics.reasons}};
+      for(const [i,observation] of observations.entries()){
+        if(observation.candidate)result.candidateSides++;
+        if(observation.candidate&&!aligned[i])result.rejectedSides++;
+        if(observation.reason&&!aligned[i]){
+          result.reasons[observation.reason]=(result.reasons[observation.reason]||0)+1;
+          if(observation.reason==="ambiguous")result.ambiguousSides++;
+        }
+        if(Number.isFinite(observation.closestReferenceDistance))
+          result.closestReferenceDistance=result.closestReferenceDistance===null?observation.closestReferenceDistance:
+            Math.min(result.closestReferenceDistance,observation.closestReferenceDistance);
+      }
+      return result;
+    }
     const unchanged=reason=>({points:original.map(p=>Array.isArray(p)?p.slice():p),snappedEdges:0,
-      sourceIndices:original.map((_,i)=>i),reason});
+      sourceIndices:original.map((_,i)=>i),reason,diagnostics:summarize()});
     const radius=Number(options.distance);
+    // The measured stroke/regularization uncertainty can remain fixed while
+    // the user increases the maximum search range. It prevents tiny raster
+    // bevels at junctions from becoming independent sides merely because
+    // they happen to be close to one branch of the reference network.
+    const precision=Number.isFinite(Number(options.precisionDistance))?
+      Math.max(0,Number(options.precisionDistance)):0;
     if(!Number.isFinite(radius)||radius<=0||!index?.size)return unchanged("disabled");
     if(!simple(original))return unchanged("invalid");
     const locks=new Set((Array.isArray(options.locked)?options.locked:[]).filter(point).map(key));
     const blocked=options.blockedEdges instanceof Set?options.blockedEdges:
       new Set((Array.isArray(options.blockedEdges)?options.blockedEdges:[])
         .filter(edge=>Array.isArray(edge)&&point(edge[0])&&point(edge[1])).map(edge=>edgeKey(...edge)));
-    const matches=original.map((a,i)=>blocked.has(edgeKey(a,original[(i+1)%original.length]))?null:
-      matchSide(a,original[(i+1)%original.length],index,radius,supportedShortSide(original,i,radius)));
+    const matches=original.map((a,i)=>{
+      const report={};observations.push(report);
+      if(blocked.has(edgeKey(a,original[(i+1)%original.length]))){
+        report.reason="shared-veto";report.candidate=true;return null;
+      }
+      return matchSide(a,original[(i+1)%original.length],index,radius,
+        displacement=>supportedShortSide(original,i,displacement),report,precision);
+    });
     let ambiguous=false;
     for(let i=0;i<matches.length;i++)if(matches[i]?.ambiguous){ambiguous=true;matches[i]=null;}
     const n=original.length;
@@ -380,6 +452,7 @@
     for(let i=0;i<n;i++)if(!matches[i]&&!blocked.has(edgeKey(original[i],original[(i+1)%n]))&&
       !locks.has(key(original[i]))&&!locks.has(key(original[(i+1)%n])))
       matches[i]=bridgeShortSide(original[i],original[(i+1)%n],direct[(i+n-1)%n],direct[(i+1)%n],index,radius);
+    matches.forEach((match,i)=>{if(match)observations[i].candidate=true;});
     const targets=new Map(options._targets||[]);
     original.forEach((p,i)=>{
       if(locks.has(key(p)))return;
@@ -411,13 +484,14 @@
             target=projection(p,...left,false);
         }
         if(!target||distance(p,target)>cornerRadius+EPS){
-          if(before){matches[previous]=null;changed=true;}
-          if(after){matches[i]=null;changed=true;}
+          const reason=locks.has(key(p))?"manual-lock":target?"corner-out-of-range":"corner-junction";
+          if(before){matches[previous]=null;observations[previous].reason=reason;changed=true;}
+          if(after){matches[i]=null;observations[i].reason=reason;changed=true;}
         }else corners[i]=target;
       }
       if(changed)continue;
       paths=corners.map((p,i)=>matches[i]?adjustedPath(matches[i],p,corners[(i+1)%n],index):[p,corners[(i+1)%n]]);
-      for(let i=0;i<n;i++)if(!paths[i]){matches[i]=null;changed=true;}
+      for(let i=0;i<n;i++)if(!paths[i]){matches[i]=null;observations[i].reason="unsupported-reference-path";changed=true;}
       if(!changed)break;
     }
     let count=matches.filter(Boolean).length;
@@ -435,8 +509,19 @@
     }
     const points=[],sourceIndices=[];
     paths.forEach((path,i)=>path.slice(0,-1).forEach((p,j)=>{points.push(p.slice());sourceIndices.push(j===0?i:null);}));
-    if(!safe(original,paths,points,radius,matches,targets))return unchanged("topology");
-    return {points,snappedEdges:count,sourceIndices,...(!count?{reason:"shared-corner"}:{})};
+    if(!safe(original,paths,points,radius,matches,targets)){
+      diagnostics.reasons.topology=1;return unchanged("topology");
+    }
+    let sourceEdge=0;
+    points.forEach((p,i)=>{
+      const sourceIndex=sourceIndices[i];
+      if(sourceIndex!==null)sourceEdge=sourceIndex;
+      const displacement=sourceIndex!==null?distance(p,original[sourceIndex]):
+        segmentDistance(p,original[sourceEdge],original[(sourceEdge+1)%original.length]);
+      diagnostics.maxDisplacement=Math.max(diagnostics.maxDisplacement,displacement);
+      if(displacement>EPS)diagnostics.movedVertices++;
+    });
+    return {points,snappedEdges:count,sourceIndices,diagnostics:summarize(count,paths),...(!count?{reason:"shared-corner"}:{})};
   }
   // A polygon-level area/crossing veto must also apply to its neighbours.
   // Compute candidates as one partition, then monotonically freeze only the
@@ -461,7 +546,7 @@
     // almost straight in the third. Share the independently supported native
     // anchor before comparing proposals; disagreement of corner ownership is
     // not a reason to freeze an otherwise correct parcel boundary.
-    for(const ring of source)snapRing(ring,index,{distance:options.distance,
+    for(const ring of source)snapRing(ring,index,{distance:options.distance,precisionDistance:options.precisionDistance,
       _collectAnchors(p,q){
         const id=key(p);if(!proposals.has(id))proposals.set(id,new Map());
         proposals.get(id).set(key(q),q);
@@ -473,7 +558,8 @@
         const localEdges=ring.map((p,j)=>edgeKey(p,ring[(j+1)%ring.length])).filter(id=>blocked.has(id));
         const signature=localLocks.map(key).join(";")+"/"+localEdges.join(";");
         if(cached[i]?.signature===signature)return cached[i].result;
-        const result=snapRing(ring,index,{distance:options.distance,locked:localLocks,blockedEdges:blocked,_targets:targets});
+        const result=snapRing(ring,index,{distance:options.distance,precisionDistance:options.precisionDistance,
+          locked:localLocks,blockedEdges:blocked,_targets:targets});
         cached[i]={signature,result};return result;
       });
     }
@@ -534,7 +620,24 @@
       const id=key(p),previous=canonical.get(id);
       if(!previous||compare(p,previous)<0)canonical.set(id,p);
     }
-    return results.map(result=>({...result,points:result.points.map(p=>canonical.get(key(p)).slice())}));
+    const output=results.map(result=>({...result,points:result.points.map(p=>canonical.get(key(p)).slice())}));
+    const diagnostics={referenceEdges:index?.size||0,rings:output.length,changedRings:0,
+      sourceSides:0,candidateSides:0,matchedSides:0,ambiguousSides:0,rejectedSides:0,
+      movedVertices:0,maxDisplacement:0,closestReferenceDistance:null,reasons:{}};
+    for(const result of output){
+      const report=result.diagnostics;
+      if(report.movedVertices)diagnostics.changedRings++;
+      for(const name of ["sourceSides","candidateSides","matchedSides","ambiguousSides","rejectedSides","movedVertices"])
+        diagnostics[name]+=report[name];
+      diagnostics.maxDisplacement=Math.max(diagnostics.maxDisplacement,report.maxDisplacement);
+      if(report.closestReferenceDistance!==null)
+        diagnostics.closestReferenceDistance=diagnostics.closestReferenceDistance===null?report.closestReferenceDistance:
+          Math.min(diagnostics.closestReferenceDistance,report.closestReferenceDistance);
+      for(const [reason,count] of Object.entries(report.reasons))
+        diagnostics.reasons[reason]=(diagnostics.reasons[reason]||0)+count;
+    }
+    output.diagnostics=diagnostics;
+    return output;
   }
   root.GeoStudioRasterParcelSnap={buildIndex,snapRing,snapRings};
 })(typeof globalThis!=="undefined"?globalThis:this);
