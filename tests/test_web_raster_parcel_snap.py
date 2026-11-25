@@ -8,6 +8,10 @@ import pytest
 
 CASES = [
     "translated_sides_use_exact_parcel_corners",
+    "increasing_search_distance_keeps_clear_nearby_partition_fits",
+    "wide_search_keeps_nearest_track_without_hiding_real_ambiguity",
+    "dense_reference_corridor_is_bounded_and_reports_complexity",
+    "large_search_preserves_real_pixel_pipeline_for_adjacent_thick_strokes",
     "native_5216_only_and_duplicate_edges",
     "contiguous_parcel_edges_keep_real_intermediate_nodes",
     "gently_bent_reference_is_followed_without_shortcuts",

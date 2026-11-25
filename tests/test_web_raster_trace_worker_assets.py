@@ -13,9 +13,11 @@ def test_worker_and_local_ocr_assignment_helpers_are_served():
     with TestClient(create_app()) as client:
         page = client.get("/").text
         assert page.index('src="/raster_a1.js"') < page.index('src="/raster_trace.js"')
+        assert page.index('src="/raster_trace_batch.js"') < page.index('src="/raster_trace.js"')
         for name, marker in (
             ("raster_trace_metrics.js", "GeoStudioRasterTraceMetrics"),
             ("raster_a1.js", "GeoStudioRasterA1"),
+            ("raster_trace_batch.js", "GeoStudioRasterTraceBatch"),
         ):
             response = client.get("/" + name)
             assert response.status_code == 200

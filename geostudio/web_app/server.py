@@ -221,9 +221,17 @@ def create_app(workspace: PreviewWorkspace | None = None, *,
     async def raster_parcel_snap_js():
         return FileResponse(ROOT / "raster_parcel_snap.js", media_type="text/javascript")
 
+    @app.get("/raster_parcel_worker.js")
+    async def raster_parcel_worker_js():
+        return FileResponse(ROOT / "raster_parcel_worker.js", media_type="text/javascript")
+
     @app.get("/raster_trace.js")
     async def raster_trace_js():
         return FileResponse(ROOT / "raster_trace.js", media_type="text/javascript")
+
+    @app.get("/raster_trace_batch.js")
+    async def raster_trace_batch_js():
+        return FileResponse(ROOT / "raster_trace_batch.js", media_type="text/javascript")
 
     @app.get("/raster_trace_metrics.js")
     async def raster_trace_metrics_js():
@@ -685,6 +693,43 @@ def create_app(workspace: PreviewWorkspace | None = None, *,
                 document_token=payload.get("documentToken"), revision=payload.get("revision"),
                 seed_points=payload.get("seedPoints", [payload["seedPoint"]] if "seedPoint" in payload else None),
                 snap_distance=payload.get("snapDistance", 0), locked_points=payload.get("lockedPoints"))
+        except RuntimeError as exc:
+            raise HTTPException(409, str(exc)) from exc
+        except (ValueError, KeyError, TypeError) as exc:
+            raise HTTPException(400, str(exc)) from exc
+
+    @app.post("/api/underlay/raster/batch/fit")
+    async def fit_trace_batch(request: Request):
+        from .raster_trace_batch import MAX_BATCH_BODY_BYTES
+        payload = await edit_payload(request, MAX_BATCH_BODY_BYTES)
+        try:
+            return await run_in_threadpool(state.fit_trace_batch, payload.get("items"),
+                document_token=payload.get("documentToken"), revision=payload.get("revision"),
+                snap_distance=payload.get("snapDistance", 0))
+        except RuntimeError as exc:
+            raise HTTPException(409, str(exc)) from exc
+        except (ValueError, KeyError, TypeError) as exc:
+            raise HTTPException(400, str(exc)) from exc
+
+    @app.post("/api/underlay/raster/batch/preview")
+    async def preview_trace_batch(request: Request):
+        from .raster_trace_batch import MAX_BATCH_BODY_BYTES
+        payload = await edit_payload(request, MAX_BATCH_BODY_BYTES)
+        try:
+            return await run_in_threadpool(state.preview_trace_batch, payload.get("items"),
+                document_token=payload.get("documentToken"), revision=payload.get("revision"))
+        except RuntimeError as exc:
+            raise HTTPException(409, str(exc)) from exc
+        except (ValueError, KeyError, TypeError) as exc:
+            raise HTTPException(400, str(exc)) from exc
+
+    @app.post("/api/underlay/raster/batch/apply")
+    async def apply_trace_batch(request: Request):
+        payload = await edit_payload(request)
+        try:
+            return await run_in_threadpool(state.apply_trace_batch,
+                preview_key=payload.get("previewKey"), document_token=payload.get("documentToken"),
+                revision=payload.get("revision"))
         except RuntimeError as exc:
             raise HTTPException(409, str(exc)) from exc
         except (ValueError, KeyError, TypeError) as exc:

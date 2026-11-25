@@ -248,6 +248,7 @@ class PreviewWorkspace:
         self._replace_preview_key = ""
         self._move_preview_key = ""
         self._objects_preview_key = ""
+        self._trace_batch_preview = None
         self._geometry_preview_key = ""
         self._generated_export = None
 
@@ -271,6 +272,7 @@ class PreviewWorkspace:
             self._bulk_preview_key = ""
             self._move_preview_key = ""
             self._objects_preview_key = ""
+            self._trace_batch_preview = None
             self._reindex(doc, name)
             self._source_compilation_scale=detect_source_compilation_scale(doc.objects)
             # Appended 5310 records and attribute changes preserve the map identity.
@@ -2000,7 +2002,8 @@ class PreviewWorkspace:
                           **self._editing_status()}}
 
     def fit_trace_outline(self, points, *, document_token: str, revision: int,
-                          seed_points=None, snap_distance=0, locked_points=None) -> dict:
+                          seed_points=None, snap_distance=0, locked_points=None,
+                          fit_boundaries=True, protected_edges=None) -> dict:
         """Read-only, non-overlapping draft fitted to nearby existing 5310.
 
         Seed points identify the user's selected free locations. In particular,
@@ -2088,9 +2091,10 @@ class PreviewWorkspace:
 
             clipped = "adjustedPoints" in plan["report"]
             snapped = False
-            if snap_distance and obstacles:
+            if fit_boundaries and snap_distance and obstacles:
                 fitted, matched_edges = fit_neighbour_boundaries(
-                    coordinates, obstacles, snap_distance, locked_points=locks)
+                    coordinates, obstacles, snap_distance, locked_points=locks,
+                    protected_edges=protected_edges)
                 if matched_edges and fitted != coordinates:
                     try:
                         # Reuse the same rounding and overlap checks as save.
@@ -2112,6 +2116,114 @@ class PreviewWorkspace:
                     except (ValueError, GEOSException):
                         pass
             return {"points": coordinates, "clipped": clipped, "snapped": snapped}
+
+    def _trace_batch_context(self, document_token, revision):
+        if self._doc is None or self._history is None:
+            raise ValueError("Najpierw otwórz mapę.")
+        if (document_token != self._document_token or
+                type(revision) is not int or revision != self._revision):
+            raise RuntimeError("Mapa zmieniła się. Przeanalizuj raster ponownie.")
+
+    def fit_trace_batch(self, items, *, document_token, revision, snap_distance=0):
+        """Read-only whole-map fitting; individual errors remain reviewable."""
+        from .raster_trace_batch import batch_items, fit_batch
+
+        with self._lock:
+            self._trace_batch_context(document_token, revision)
+
+            def fit(item, **options):
+                return self.fit_trace_outline(item["points"], document_token=document_token,
+                    revision=revision, snap_distance=snap_distance,
+                    seed_points=item.get("seedPoints"), locked_points=item.get("lockedPoints"),
+                    **options)
+
+            report = fit_batch(batch_items(items), fit, snap_distance)
+            return {**report, **self._editing_status()}
+
+    def _trace_batch_plan(self, items, *, document_token, revision):
+        """Validate the exact chosen rings; final preview never silently clips."""
+        from shapely.errors import GEOSException
+        from .raster_trace_batch import (batch_items, item_result, batch_report,
+                                         mark_conflicts, overlap_pairs)
+
+        self._trace_batch_context(document_token, revision)
+        results = []
+        for item in batch_items(items):
+            try:
+                if item.get("error"):
+                    raise ValueError(item["error"])
+                plan = self._object_operation_plan(
+                    {"action": "create", "code": "5310", "points": item["points"],
+                     "fields": {"A1": item["a1"]}},
+                    document_token=document_token, revision=revision)
+                results.append(item_result(item, points=plan["coords"]))
+            except (ValueError, GEOSException) as exc:
+                results.append(item_result(item, error=str(exc)))
+        mark_conflicts(results, overlap_pairs(results))
+        can_apply = all(item["status"] == "ready" for item in results)
+        canonical = [{"id": item["id"], "points": item["points"], "a1": item["a1"]}
+                     for item in results]
+        key = sha256(json.dumps({"items": canonical, "documentToken": document_token,
+                                "revision": revision}, sort_keys=True, ensure_ascii=False,
+                               separators=(",", ":")).encode("utf-8")).hexdigest() if can_apply else ""
+        return canonical, batch_report(results, previewKey=key, canApply=can_apply,
+                                       **self._editing_status())
+
+    def preview_trace_batch(self, items, *, document_token, revision):
+        with self._lock:
+            self._trace_batch_context(document_token, revision)
+            self._trace_batch_preview = None
+            canonical, report = self._trace_batch_plan(items, document_token=document_token,
+                                                     revision=revision)
+            if report["canApply"]:
+                self._trace_batch_preview = {"items": deepcopy(canonical),
+                    "previewKey": report["previewKey"], "documentToken": document_token,
+                    "revision": revision}
+            return report
+
+    def apply_trace_batch(self, *, preview_key, document_token, revision):
+        """Append the approved collection in one original history transaction."""
+        from .raster_trace_batch import encode_batch
+
+        with self._lock:
+            self._trace_batch_context(document_token, revision)
+            preview = self._trace_batch_preview
+            if (not isinstance(preview_key, str) or not preview or
+                    preview_key != preview["previewKey"] or
+                    document_token != preview["documentToken"] or revision != preview["revision"]):
+                raise RuntimeError("Przed zapisaniem partii wykonaj świeży podgląd wybranych propozycji.")
+            canonical, report = self._trace_batch_plan(preview["items"],
+                document_token=document_token, revision=revision)
+            if not report["canApply"] or report["previewKey"] != preview_key:
+                raise RuntimeError("Propozycje zmieniły się. Wykonaj świeży podgląd partii.")
+            # The existing encoder produces native 5310 labels and MAP P
+            # records. Stage them before touching the actual document, so a
+            # large original MAP is parsed only once for the complete append.
+            records, created = encode_batch(canonical)
+            if (len(set(created)) != len(created) or
+                    any(uid in self._doc.by_id for uid in created)):
+                raise ValueError("Nie można nadać unikatowych identyfikatorów nowym poligonom.")
+            before = b"".join(self._doc.lines)
+            with self._history.begin("Auto wkreślanie całego rastra") as transaction:
+                if self._doc.lines and not self._doc.lines[-1].endswith((b"\r", b"\n")):
+                    self._doc.lines[-1] += b"\r\n"
+                self._doc.lines.extend(records)
+                self._doc._parse()
+                if (not b"".join(self._doc.lines).startswith(before) or
+                        any(uid not in self._doc.by_id for uid in created)):
+                    raise ValueError("Wykryto zmianę oryginalnych rekordów. Cofnięto całą partię.")
+                self._raise_to_top(created)
+                self._reindex(self._doc, self._doc.filename)
+                transaction.set_selection_after(created)
+            self._revision += 1
+            self._trace_batch_preview = None
+            self._objects_preview_key = ""
+            self._move_preview_key = ""
+            self._bulk_preview_key = ""
+            return {**self._editing_status(), "changed": True, "action": "create",
+                    "createdCount": len(created), "createdUids": created,
+                    "createdIds": [self._object_id[id(self._doc.by_id[uid])] for uid in created],
+                    "proposalIds": [item["id"] for item in canonical], "mergedSameA1": 0}
 
     def preview_object_operation(self, payload: dict, *,
                                  document_token: str, revision: int) -> dict:

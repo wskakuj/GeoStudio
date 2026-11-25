@@ -52,11 +52,13 @@ Połącz podkład rastrowy z geometrią mapy. Narzędzie **Auto Wkreślanie** w 
 
 Proste boki są dopasowywane do całej kreski z ograniczoną tolerancją, a sąsiadujące pola zachowują wspólną granicę. Tryby **Dokładna / Szybsza** i **Delikatne / Proste boki / Drżąca kreska** pozwalają dobrać rozpoznawanie do skanu.
 
+**Wkreśl całą mapę (test)** przygotowuje za jednym kliknięciem obrysy całego rastra i listę A1. Używa pełnego przygotowanego obrazu do 14 mln pikseli, uwzględnia cienkie granice i dopasowuje wspólne boki razem. Numery wymagające kontroli są oznaczone, a wybrane poligony można zapisać jednym działaniem i wspólnie cofnąć. Filtr obszaru działek 5216 pomaga pominąć legendę arkusza. Przycisk **Pokaż cały raster** tylko ustawia widok.
+
 Domyślnie włączone **Dopasuj do 5216** dosuwa bliskie, współbieżne boki wybranego obrysu do granic działek, z regulowanym **Zasięgiem** w metrach niezależnym od przybliżenia. Wynik widać przed zapisem, a węzły można nadal poprawiać ręcznie. Dopasowanie nie zmienia działek ani nie wprowadza wszystkich ich granic do wydzieleń. Przy rzeczywistej linii podziału biegnącej tuż obok 5216 można zmniejszyć zasięg lub wyłączyć dopasowanie.
 
 Istniejące 5310 są wykluczone z propozycji. Bliskie wspólne boki dosuwają się do sąsiednich poligonów, a początkowy zasięg dopasowania uwzględnia zmierzoną grubość kreski rastra. Mocniejszy magnes daje pierwszeństwo dokładnym węzłom podczas ręcznej korekty.
 
-Lokalny odczyt cyfr może uzupełnić **A1 już po pierwszym kliknięciu**. Numery w kółkach są przypisywane z uwzględnieniem wysięgników. Niepewny odczyt pozostaje do sprawdzenia i wpisania ręcznie; własne poprawki A1 są zachowywane. [Opis ustawień i dokładności](docs/auto-wkreslanie.md).
+Lokalny odczyt cyfr może uzupełnić **A1 już po pierwszym kliknięciu**. Numery w kółkach są przypisywane z uwzględnieniem wysięgników. Słabszy odczyt z pewną kotwicą jest wpisywany jako propozycja do sprawdzenia; przy nieustalonym przypisaniu A1 pozostaje puste. Własne poprawki są zachowywane, a błędy odczytu mają opis przyczyny i przycisk ponowienia. [Opis ustawień i dokładności](docs/auto-wkreslanie.md).
 
 ### Od podkładu do wydruku
 

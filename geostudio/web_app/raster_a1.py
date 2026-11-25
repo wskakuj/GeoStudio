@@ -236,18 +236,24 @@ def _thin(mask):
     return image[1:-1, 1:-1]
 
 
-def _leader_data(small, circles, scale):
+def _leader_data(small, circles, scale, occluder=None):
     import cv2
     import numpy as np
 
     # Closing heals short scan gaps; thinning is performed before removing the
     # circles, so the outgoing leader remains attached up to its true rim.
     joined = cv2.morphologyEx(small, cv2.MORPH_CLOSE, np.ones((3, 3), np.uint8))
-    # A black printed boundary can interrupt a coloured pen leader. Close only
-    # short, aligned gaps; an isotropic large dilation would join nearby labels.
+    # A dark printed boundary can interrupt a coloured pen leader. Longer
+    # repairs are allowed only where that printed ink actually exists. Closing
+    # across white paper can join an arrowhead to a nearby unrelated pen mark.
+    allowed = np.zeros_like(small)
+    if occluder is not None:
+        printed = cv2.resize(occluder.astype(np.uint8) * 255, small.shape[::-1],
+                             interpolation=cv2.INTER_AREA) > 60
+        allowed = cv2.dilate(printed.astype(np.uint8), np.ones((3, 3), np.uint8))
     for kernel in (np.ones((7, 1), np.uint8), np.ones((1, 7), np.uint8),
                    np.eye(7, dtype=np.uint8), np.fliplr(np.eye(7, dtype=np.uint8))):
-        joined |= cv2.morphologyEx(small, cv2.MORPH_CLOSE, kernel)
+        joined |= cv2.morphologyEx(small, cv2.MORPH_CLOSE, kernel) & allowed
     skeleton = _thin(joined)
     blocked = np.zeros_like(skeleton)
     for c in circles:
@@ -259,11 +265,13 @@ def _leader_data(small, circles, scale):
     count, labels, stats, _ = cv2.connectedComponentsWithStats(skeleton, 8)
     degree = cv2.filter2D(skeleton, cv2.CV_16S, np.ones((3, 3), np.int16))
     yy, xx = np.where((skeleton != 0) & (degree <= 2))
-    terminals = {}
+    terminals, all_terminals = {}, {}
     for x, y in zip(xx.tolist(), yy.tolist()):
+        ident = int(labels[y, x])
+        all_terminals.setdefault(ident, []).append((x, y))
         if blocked[y, x]:
             continue
-        terminals.setdefault(int(labels[y, x]), []).append((x, y))
+        terminals.setdefault(ident, []).append((x, y))
     result = []
     for c in circles:
         cx, cy, rx, ry, angle = c[:5]
@@ -282,7 +290,19 @@ def _leader_data(small, circles, scale):
             if max(float(_radius(c, p)) for p in corners) < 1.65:
                 continue
             has_leader = True
-            endpoints.extend(terminals.get(int(ident), []))
+            tips = terminals.get(int(ident), [])
+            if len(tips) == 2 and len(all_terminals.get(int(ident), [])) == 2:
+                # A scan gap just outside the ring leaves a simple line with
+                # two visible ends. The end immediately beside the ring is
+                # its beginning, not a second target. A genuine branch has
+                # at least three raw terminals and does not enter this case.
+                near, far = sorted(tips, key=lambda p: float(_radius(c, p)))
+                near_radius, far_radius = float(_radius(c, near)), float(_radius(c, far))
+                u, v = np.asarray(near) - [cx, cy], np.asarray(far) - [cx, cy]
+                alignment = float(np.dot(u, v) / max(1e-9, np.linalg.norm(u) * np.linalg.norm(v)))
+                if 1.15 < near_radius < 2.25 and far_radius > 2.4 and alignment > .8:
+                    tips = [far]
+            endpoints.extend(tips)
         clusters = []
         for point in endpoints:
             if float(_radius(c, point)) < 1.35:
@@ -293,7 +313,12 @@ def _leader_data(small, circles, scale):
             else:
                 cluster.append(point)
         ends = [[round(float(v) / scale, 3) for v in np.mean(group, axis=0)] for group in clusters]
-        result.append({"hasLeader": has_leader, "leaderEndpoints": ends,
+        network = len(ends) > 4
+        result.append({"hasLeader": has_leader, "leaderEndpoints": [] if network else ends,
+                       "leaderEndpointCount": len(ends),
+                       "reason": "leader_network" if network else
+                       "branched_leader" if len(ends) > 1 else
+                       "missing_leader" if has_leader and not ends else "ready",
                        "anchor": ends[0] if len(ends) == 1 else (None if has_leader else [cx / scale, cy / scale])})
     return result
 
@@ -306,22 +331,31 @@ def _circle_box(circle, scale, width, height):
             min(width, ceil((cx + ex) / scale)), min(height, ceil((cy + ey) / scale))]
 
 
-def _consensus(readings):
+def _consensus(readings, *, prefer_complete=True):
     readings = [(text, float(score)) for text, score in readings if text and score >= .55]
     groups = {}
     for text, score in readings:
         groups.setdefault(text, []).append(score)
     if not groups:
-        return {"text": "", "confidence": 0., "status": "uncertain"}
+        return {"text": "", "confidence": 0., "status": "uncertain",
+                "reason": "weak_text", "alternatives": []}
     ranked = sorted(groups.items(), key=lambda row: (sum(v >= .82 for v in row[1]), max(row[1])), reverse=True)
     text, scores = ranked[0]
     votes = sum(v >= .82 for v in scores)
     other_votes = sum(v >= .82 for v in ranked[1][1]) if len(ranked) > 1 else 0
-    # A confident wider crop reading 189 disproves an inner crop's truncated
-    # 18, even when two inner variants agree with one another.
-    longer = any(len(other) > len(text) and max(values) >= .82 for other, values in ranked[1:])
+    # Inner crops can agree on a clipped 28/67 while a wider crop reads
+    # 208/167 with lower confidence. Keep that complete number for review;
+    # do not promote the shorter word just because its visible digits are easy.
+    longer = [(other, values) for other, values in ranked[1:] if len(other) > len(text)]
     ok = votes >= 2 and votes > other_votes and max(scores) >= .90 and not longer
-    return {"text": text, "confidence": round(max(scores), 5), "status": "ok" if ok else "uncertain"}
+    if longer and prefer_complete:
+        text, scores = max(longer, key=lambda row: (len(row[0]), max(row[1])))
+    return {"text": text, "confidence": round(max(scores), 5), "status": "ok" if ok else "uncertain",
+            "reason": "ready" if ok else "truncated_text" if longer else
+            "conflicting_text" if votes and other_votes >= votes else "weak_text",
+            "alternatives": [{"text": value, "confidence": round(max(evidence), 5),
+                              "votes": sum(v >= .82 for v in evidence)}
+                             for value, evidence in ranked[:4]]}
 
 
 def _has_outgoing_ink(mask, box):
@@ -372,14 +406,14 @@ def _has_outgoing_ink(mask, box):
     return False
 
 
-def _analyze_mask(engine, mask, color):
+def _analyze_mask(engine, mask, color, occluder=None):
     import numpy as np
 
     height, width = mask.shape
     if np.count_nonzero(mask) < 12:
         return []
     small, scale, circles, possible = _circles(mask, color)
-    leaders = _leader_data(small, circles, scale) if circles else []
+    leaders = _leader_data(small, circles, scale, occluder) if circles else []
     texts = _text_candidates(engine, mask) if color != "dark" else []
     used = set()
     annotations = []
@@ -398,22 +432,46 @@ def _analyze_mask(engine, mask, color):
         detected = readings[:]
         # Agreement across an inner and a wider crop rules out accepting a
         # clipped prefix merely because the recognizer is confident about it.
-        for threshold in (.62, .80, 1.05):
+        for threshold in (.55, .62, .70, .80, 1.05):
             reading = _read_line(engine, mask[t:b, l:r] & (radius < threshold))
             if reading:
                 readings.append(reading)
         suggestion = _consensus(readings)
         if not suggestion["text"]:
+            # A well supported coloured callout is still evidence that the
+            # field has another label even when none of its digits is legible.
+            # Keep the mark for boundary review without inventing a number.
+            if color != "dark" and circle[5] >= .9:
+                annotations.append({**leader, "text": "", "confidence": 0.,
+                    "status": "uncertain", "textStatus": "uncertain",
+                    "associationStatus": "ok" if not leader["hasLeader"] or
+                    len(leader["leaderEndpoints"]) == 1 else "uncertain",
+                    "reason": "unread_callout", "alternatives": [],
+                    "circleConfidence": round(float(circle[5]), 5),
+                    "source": "callout", "box": box, "ink": color})
             continue
+        suggestion["textStatus"] = suggestion["status"]
+        suggestion["associationStatus"] = "ok"
         if leader["hasLeader"] and len(leader["leaderEndpoints"]) != 1:
             suggestion["status"] = "uncertain"
+            suggestion["associationStatus"] = "uncertain"
+            suggestion["reason"] = leader.get("reason", "branched_leader")
         if len(suggestion["text"]) == 1 and not any(
                 text == suggestion["text"] and confidence >= .82 for text, confidence in detected):
             # A digit-only crop can be just the last digit of a larger number
             # touching its rim. Require independent whole-text detection.
             suggestion["status"] = "uncertain"
-        annotations.append({**suggestion, "source": "callout", "box": box,
-                            "ink": color, **leader})
+            suggestion["textStatus"] = "uncertain"
+            suggestion["reason"] = "partial_digit"
+            if color != "dark" and circle[5] >= .9:
+                # A lone recognized stroke may be only one digit of an unread
+                # multi-digit callout. Keep it among alternatives, never as
+                # the field's number, while retaining the visible circle.
+                suggestion["text"] = ""
+                suggestion["confidence"] = 0.
+                suggestion["reason"] = "unread_callout"
+        annotations.append({**leader, **suggestion, "source": "callout", "box": box,
+                            "ink": color, "circleConfidence": round(float(circle[5]), 5)})
     for index, candidate in enumerate(texts):
         if index in used or len(candidate["text"]) < 2:
             continue
@@ -421,22 +479,34 @@ def _analyze_mask(engine, mask, color):
         if (r - l) / max(1, b - t) > 4.5:
             continue
         reading = _read_line(engine, mask[t:b, l:r])
-        suggestion = _consensus([(candidate["text"], candidate["confidence"])] + ([reading] if reading else []))
+        # This is an independently detected full text box, not an inner circle
+        # crop. A weaker extra stroke can look like a trailing digit; preserve
+        # the strongest complete-word reading as the review text in that case.
+        suggestion = _consensus([(candidate["text"], candidate["confidence"])] + ([reading] if reading else []),
+                                prefer_complete=False)
         if candidate.get("disagreement"):
             suggestion["status"] = "uncertain"
+            suggestion["reason"] = "conflicting_text"
+        suggestion["textStatus"] = suggestion["status"]
+        suggestion["associationStatus"] = "ok"
         center = ((l + r) * scale / 2, (t + b) * scale / 2)
-        if any(c[2] * c[3] * pi > (r - l) * (b - t) * scale * scale * 1.1 and
+        possible_circle = any(c[2] * c[3] * pi > (r - l) * (b - t) * scale * scale * 1.1 and
                min(c[2], c[3]) > (b - t) * scale * .45 and
-               float(_radius(c, center)) < .72 for c in possible):
+               float(_radius(c, center)) < .72 for c in possible)
+        if possible_circle:
             # A broken/overwritten ring may have an unseen leader. Do not turn
             # an unassociated callout into an ordinary label under its centre.
             suggestion["status"] = "uncertain"
+            suggestion["associationStatus"] = "uncertain"
+            suggestion["reason"] = "possible_circle"
         outgoing = _has_outgoing_ink(mask, candidate["box"])
         if outgoing:
             suggestion["status"] = "uncertain"
+            suggestion["associationStatus"] = "uncertain"
+            suggestion["reason"] = "detached_leader"
         annotations.append({**suggestion, "source": "inside", "box": candidate["box"],
-                            "ink": color, "hasLeader": outgoing,
-                            "anchor": None if outgoing else [(l + r) / 2, (t + b) / 2]})
+                            "ink": color, "hasLeader": outgoing or possible_circle,
+                            "anchor": None if outgoing or possible_circle else [(l + r) / 2, (t + b) / 2]})
     return annotations
 
 
@@ -466,11 +536,13 @@ def recognize_raster_a1(content: bytes) -> dict:
         "dark": (np.maximum(np.maximum(red, green), blue) < 140) &
                 (cv2.subtract(np.maximum(np.maximum(red, green), blue), np.minimum(np.minimum(red, green), blue)) < 45),
     }
+    occluder = (np.maximum(np.maximum(red, green), blue) < 190) & (
+        cv2.subtract(np.maximum(np.maximum(red, green), blue), np.minimum(np.minimum(red, green), blue)) < 45)
     with _ENGINE_LOCK:
         engine = _engine()
         annotations = []
         for color, mask in masks.items():
-            annotations.extend(_analyze_mask(engine, mask, color))
+            annotations.extend(_analyze_mask(engine, mask, color, occluder))
     return {"width": width, "height": height, "annotations": annotations,
             "engine": MODEL_VERSION, "status": "ready"}
 

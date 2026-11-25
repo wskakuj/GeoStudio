@@ -32,6 +32,8 @@ import pytest
     "analysis_change_cancels_drag_and_fit",
     "parcel_snap_uses_hidden_native_geometry_and_saves_preview",
     "parcel_controls_refit_without_reanalysis_or_losing_a1",
+    "parcel_range_controls_keep_close_shared_borders",
+    "parcel_precision_preserves_close_fits_at_a_raster_junction",
     "parcel_manual_correction_survives_settings_and_save",
     "parcel_snap_handles_merged_fragments_and_retains_manual_corner",
     "parcel_shared_boundary_veto_is_consistent_for_neighbors_and_union",

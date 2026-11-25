@@ -25,10 +25,19 @@ wysięgnika z innym polem nie przypisuje numeru do tego pola. Rozgałęzienie,
 przerwa uniemożliwiająca prześledzenie linii lub kilka sprzecznych napisów
 pozostawiają propozycję do sprawdzenia.
 
+Krótka przerwa tuż przy kółku nie tworzy dwóch celów wysięgnika: dla pojedynczego
+odcinka program odróżnia jego początek przy kółku od zakończenia w polu.
+Naprawianie dłuższej przerwy wymaga ciemnego drukowanego śladu w tym miejscu;
+przez biały odstęp nie są łączone osobne niebieskie znaki.
+Sieć atramentu mająca więcej niż cztery końce nie jest rozsyłana jako wskazanie
+do wielu pól. Zapobiega to tworzeniu fałszywych konfliktów przez drukowane linie
+mapy połączone z przypadkowo rozpoznanym kółkiem.
+
 Dopiero zgodne wyniki rozpoznania całego napisu i/lub kilku wariantów obrazu
 mogą otrzymać status `ok`. Sam wysoki wynik pewności pojedynczego odczytu nie
-wystarcza: przycięty numer `189` może wyglądać jak poprawne `18`. Wiarygodny
-dłuższy odczyt blokuje taki skrócony wynik. Pojedyncza cyfra w kółku wymaga
+wystarcza: przycięty numer `189` może wyglądać jak poprawne `18`. Nawet słabszy
+wiarygodny dłuższy odczyt blokuje taki skrócony wynik. Program zachowuje
+warianty tekstu do sprawdzenia. Pojedyncza cyfra w kółku wymaga
 niezależnego wykrycia całego napisu, aby nie odczytać samej końcówki numeru.
 
 Niepełne lub zamazane kółko może uniemożliwić ustalenie wysięgnika. Wykryty
@@ -37,6 +46,27 @@ Podobnie traktowany jest długi, cienki odcinek wychodzący z napisu lub kończ�
 się tuż obok niego: także numer bez kółka może mieć wysięgnik. Krótkie przerwy
 w kolorowej linii są uwzględniane, ale niepewna kotwica nie jest zgadywana.
 Ręcznie wpisany A1 pozostaje nadrzędny wobec późniejszej odpowiedzi OCR.
+
+## Pewność numeru i przypisania
+
+Odczyt tekstu i przypisanie do pola są oceniane osobno. Wynik przypisania zawiera
+`textStatus`, `assignmentStatus`, `reason` i listę `alternatives`. Niepewny numer
+z jednoznacznym zakończeniem wysięgnika może zostać pokazany jako propozycja
+do jawnego sprawdzenia. Nieznany wysięgnik lub niejednoznaczna granica pola nie
+otrzymują takiego pewnego przypisania.
+
+Słaby odczyt nie usuwa niezależnie potwierdzonego numeru tego samego pola.
+Dwa różne potwierdzone numery nadal tworzą konflikt i wymagają decyzji
+użytkownika. Osobny, wiarygodny drugi napis z jednoznaczną kotwicą również
+kieruje obrys do sprawdzenia, nawet jeśli jego OCR jest słabszy. Może to
+oznaczać pominiętą granicę między dwoma polami. Najlepszy numer pozostaje
+propozycją. Niepewne propozycje nie są domyślnie zatwierdzane do zbiorczego zapisu
+mapy.
+
+Dobrze rozpoznane kolorowe kółko z nieczytelnym numerem pozostaje znacznikiem
+do sprawdzenia (`unread_callout`), bez zgadywania cyfr. Osobny taki znak z pewną
+kotwicą w tym samym obrysie także blokuje jego domyślne zatwierdzenie. Nieznana
+kotwica oraz nieczytelna drukowana pętla nie blokują poprawnego odczytu A1.
 
 ## Przetwarzanie i formaty
 
