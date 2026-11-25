@@ -20,6 +20,7 @@ $Args = @(
     "--name", "GeoStudio2",
     "--icon", "geostudio.ico",
     "--collect-data", "geostudio.web_app",
+    "--collect-data", "certifi",
     "--collect-submodules", "webview",
     "--hidden-import", "uvicorn.logging",
     "--hidden-import", "uvicorn.loops.auto",

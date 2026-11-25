@@ -54,7 +54,7 @@ def test_download_reuses_connection(monkeypatch):
             return PNG
 
     class FakeConnection:
-        def __init__(self, host, timeout=15):
+        def __init__(self, host, timeout=15, context=None):
             created.append(host)
 
         def request(self, method, path, headers=None):

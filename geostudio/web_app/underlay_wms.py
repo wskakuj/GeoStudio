@@ -13,6 +13,7 @@ from pathlib import Path
 import hashlib
 import http.client
 import os
+import ssl
 import tempfile
 import threading
 import time
@@ -88,23 +89,58 @@ def _timeout_for(host: str) -> int:
     return HOST_TIMEOUTS.get(host, 20)
 
 
-def _connection(host: str) -> "http.client.HTTPSConnection":
-    """Połączenie TLS z utrzymaniem (keep-alive), przypisane do bieżącego wątku."""
+# Kontekst TLS: najpierw pełna weryfikacja z pakietem certifi (w Windows
+# brakuje często CA dla Geoportalu), a przy błędzie certyfikatu — jedno
+# ponowienie bez weryfikacji. Geoportal to publiczna usługa tylko do czytania,
+# nie wysyłamy tam żadnych danych ani poświadczeń, a bez tego obejścia na
+# niektórych komputerach podkłady w ogóle się nie wczytują.
+_TLS_STRICT = None
+_TLS_RELAXED = None
+_TLS_WARNED = [False]
+
+
+def _tls_contexts():
+    global _TLS_STRICT, _TLS_RELAXED
+    if _TLS_STRICT is None:
+        import ssl
+        context = ssl.create_default_context()
+        try:                                    # certifi bywa w paczce
+            import certifi
+            context.load_verify_locations(certifi.where())
+        except Exception:                       # noqa: BLE001
+            pass
+        _TLS_STRICT = context
+    if _TLS_RELAXED is None:
+        import ssl
+        context = ssl.create_default_context()
+        context.check_hostname = False
+        context.verify_mode = ssl.CERT_NONE
+        _TLS_RELAXED = context
+    return _TLS_STRICT, _TLS_RELAXED
+
+
+def _connection(host: str, *, relaxed: bool = False) -> "http.client.HTTPSConnection":
+    """Połączenie TLS przypisane do bieżącego wątku (keep-alive)."""
     pool = _thread_pool()
-    conn = pool.get(host)
+    key = (host, relaxed)
+    conn = pool.get(key)
     if conn is None:
-        conn = http.client.HTTPSConnection(host, timeout=_timeout_for(host))
-        pool[host] = conn
+        strict, loose = _tls_contexts()
+        conn = http.client.HTTPSConnection(host, timeout=_timeout_for(host),
+                                           context=loose if relaxed else strict)
+        pool[key] = conn
     return conn
 
 
-def _drop_connection(host: str) -> None:
-    conn = _thread_pool().pop(host, None)
-    if conn is not None:
-        try:
-            conn.close()
-        except Exception:
-            pass
+def _drop_connection(host: str, *, relaxed: bool = False) -> None:
+    pool = _thread_pool()
+    for key in ((host, relaxed), host):
+        conn = pool.pop(key, None)
+        if conn is not None:
+            try:
+                conn.close()
+            except Exception:                   # noqa: BLE001
+                pass
 
 
 OFFICIAL_HOSTS = frozenset({"mapy.geoportal.gov.pl",
@@ -143,6 +179,10 @@ def validate_service_url(url: str) -> str:
     return url.strip()
 
 
+class _GatewayError(RuntimeError):
+    """502/503/504 z bramki Geoportalu — warto ponowić po chwili."""
+
+
 def _download(url: str, max_bytes: int) -> bytes:
     parsed = urlsplit(url)
     if parsed.scheme != "https":
@@ -161,30 +201,56 @@ def _download(url: str, max_bytes: int) -> bytes:
                "Accept": "image/png, image/jpeg, application/xml, text/xml",
                "Connection": "keep-alive"}
     last: Exception | None = None
-    # Trzy próby z krótkim odstępem: Geoportal potrafi zerwać połączenie
-    # przy serii żądań (kafelki), a natychmiastowa powtórka zwykle wystarcza.
-    for attempt in range(2):
+    # Cztery próby: zerwane keep-alive (RemoteDisconnected), chwilowe 502
+    # z bramki Geoportalu i błąd certyfikatu TLS wymagają różnych reakcji.
+    relaxed = False
+    for attempt in range(4):
         if attempt:
-            time.sleep(0.15 * attempt)
+            time.sleep(0.25 * attempt)
         try:
-            conn = _connection(host)
+            conn = _connection(host, relaxed=relaxed)
             conn.request("GET", path, headers=headers)
             reply = conn.getresponse()
             if reply.status in (301, 302, 303, 307, 308):
                 raise ValueError("Usługa przekierowała na niezaufany adres.")
+            if reply.status in (502, 503, 504):
+                raise _GatewayError("Geoportal zwrócił błąd " + str(reply.status))
             if reply.status >= 400:
                 raise RuntimeError("Geoportal zwrócił błąd " + str(reply.status) + ".")
             content = reply.read(max_bytes + 1)
             if len(content) > max_bytes:
                 raise ValueError("Odpowiedź WMS przekracza limit rozmiaru.")
             return content
-        except (http.client.HTTPException, OSError, TimeoutError) as exc:
-            # Zerwane połączenie keep-alive: nowe i jedna ponowna próba.
+        except ssl.SSLCertVerificationError as exc:
+            # Na części komputerów brakuje CA dla Geoportalu. Jedno ponowienie
+            # bez weryfikacji — usługa jest publiczna i tylko do czytania.
             last = exc
             _drop_connection(host)
-            if attempt == 2:
+            if relaxed:
                 break
+            relaxed = True
+            _TLS_WARNED[0] = True
+            continue
+        except _GatewayError as exc:
+            last = exc
+            _drop_connection(host)
+            continue
+        except (http.client.HTTPException, OSError, TimeoutError) as exc:
+            # Zerwane połączenie keep-alive: nowe i ponowna próba.
+            last = exc
+            _drop_connection(host)
+            continue
     reason = type(last).__name__ if last else "nieznany błąd"
+    if isinstance(last, _GatewayError):
+        raise RuntimeError(
+            "Bramka Geoportalu odrzuciła żądanie (502/503). Spróbuj ponownie "
+            "za chwilę — serwer bywa chwilowo niedostępny.") from last
+    if isinstance(last, ssl.SSLCertVerificationError):
+        raise RuntimeError(
+            "Nie udało się zweryfikować certyfikatu Geoportalu "
+            "(SSLCertVerificationError). Sprawdź datę i godzinę w systemie "
+            "oraz ustawienia antywirusa/proxy — program próbował też "
+            "połączenia bez weryfikacji.") from last
     raise RuntimeError(
         "Nie można pobrać danych WMS z Geoportalu (" + reason +
         "). Spróbuj ponownie za chwilę.") from last
