@@ -38,7 +38,8 @@ def _create(workspace, points, a1, merge=True):
 
 
 def test_trace_snapping_is_stronger():
-    assert "vertexPixels:18,edgePixels:8" in TRACE
+    assert "vertexPixels:26,edgePixels:10,preferVertices:true" in TRACE
+    assert "releasePixels:34" in TRACE
     assert "nearestVertex(p,14)" in TRACE
 
 

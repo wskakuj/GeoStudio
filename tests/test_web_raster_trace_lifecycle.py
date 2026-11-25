@@ -7,6 +7,22 @@ import pytest
 
 
 @pytest.mark.parametrize("scenario", [
+    "asynchronous_a1_fills_current_field_and_never_overwrites_manual_input",
+    "cached_a1_is_available_on_first_click_and_late_closed_result_is_ignored",
+    "unavailable_a1_keeps_manual_drawing_usable",
+    "a1_api_uses_document_tokens_and_only_restores_an_explicit_cache_miss",
+    "neighbour_fitted_manual_corner_and_node_survive_merging",
+    "neighbour_bridge_origins_do_not_replace_manual_corners_on_next_union",
+    "rejected_hidden_vertices_cannot_be_dragged_back_into_a_proposal",
+    "first_useful_stroke_measurement_initializes_the_range",
+    "forest_reference_classes_do_not_occupy_the_trace_mask",
+    "first_click_fills_a1_and_preserves_manual_corrections",
+    "uncertain_or_conflicting_a1_is_not_guessed",
+    "stroke_width_sets_initial_range_once_and_respects_manual_override",
+    "occupied_click_is_blocked_using_hidden_full_geometry",
+    "failed_automatic_fit_hides_proposal_and_prevents_save",
+    "neighbour_fit_saves_exact_preview_and_manual_edit_is_not_resnapped",
+    "magnet_uses_native_vertices_and_prioritizes_nodes",
     "close_during_prepare",
     "worker_replaced_after_save",
     "latest_analysis_only",

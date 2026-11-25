@@ -10,7 +10,7 @@ Pracuj na danych GEO-MAP, edytuj geometrię, wykorzystuj podkłady rastrowe i pr
 [![Windows](https://img.shields.io/badge/Windows-desktop-0078D4?style=flat-square&logo=windows)](https://github.com/wskakuj/GeoStudio/releases)
 [![Python](https://img.shields.io/badge/Python-3.11%2B-3776AB?style=flat-square&logo=python&logoColor=white)](https://www.python.org/)
 [![FastAPI](https://img.shields.io/badge/FastAPI-local-009688?style=flat-square&logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/)
-[![Wersja](https://img.shields.io/badge/GeoStudio-2.0%20%7C%20development-247A65?style=flat-square)](https://github.com/wskakuj/GeoStudio/tree/feat/raster-trace-5310)
+[![Wersja](https://img.shields.io/badge/GeoStudio-2.0-247A65?style=flat-square)](https://github.com/wskakuj/GeoStudio/releases/latest)
 
 [**Pobieranie / Releases**](https://github.com/wskakuj/GeoStudio/releases) · [**Funkcje**](#możliwości) · [**Uruchomienie**](#uruchomienie) · [**Zgłoś problem**](https://github.com/wskakuj/GeoStudio/issues)
 
@@ -25,7 +25,7 @@ Pracuj na danych GEO-MAP, edytuj geometrię, wykorzystuj podkłady rastrowe i pr
 Szczególny nacisk kładzie na opracowania leśne, wydzielenia (kod `5310`), działki ewidencyjne, klasoużytki i granice obrębów.
 
 > [!NOTE]
-> Poniższy opis dotyczy rozwijanej wersji **GeoStudio 2.0** z gałęzi [`feat/raster-trace-5310`](https://github.com/wskakuj/GeoStudio/tree/feat/raster-trace-5310). Domyślna gałąź `main` zawiera starszą bazę projektu. Ilustracje w README są schematami wykonanymi na fikcyjnych danych, a nie zrzutami ekranu aplikacji.
+> Poniższy opis dotyczy rozwijanej wersji **GeoStudio 2.0** z gałęzi [`main`](https://github.com/wskakuj/GeoStudio/tree/main). Gotowe instalatory Windows są dostępne w wydaniach. Ilustracje w README są schematami wykonanymi na fikcyjnych danych, a nie zrzutami ekranu aplikacji.
 
 ## Możliwości
 
@@ -54,7 +54,9 @@ Proste boki są dopasowywane do całej kreski z ograniczoną tolerancją, a sąs
 
 Domyślnie włączone **Dopasuj do 5216** dosuwa bliskie, współbieżne boki wybranego obrysu do granic działek, z regulowanym **Zasięgiem** w metrach niezależnym od przybliżenia. Wynik widać przed zapisem, a węzły można nadal poprawiać ręcznie. Dopasowanie nie zmienia działek ani nie wprowadza wszystkich ich granic do wydzieleń. Przy rzeczywistej linii podziału biegnącej tuż obok 5216 można zmniejszyć zasięg lub wyłączyć dopasowanie.
 
-Numer A1 nadal wpisuje użytkownik; odczyt odręcznych numerów i wysięgników nie jest jeszcze dostępny. [Opis ustawień i dokładności](docs/auto-wkreslanie.md).
+Istniejące 5310 są wykluczone z propozycji. Bliskie wspólne boki dosuwają się do sąsiednich poligonów, a początkowy zasięg dopasowania uwzględnia zmierzoną grubość kreski rastra. Mocniejszy magnes daje pierwszeństwo dokładnym węzłom podczas ręcznej korekty.
+
+Lokalny odczyt cyfr może uzupełnić **A1 już po pierwszym kliknięciu**. Numery w kółkach są przypisywane z uwzględnieniem wysięgników. Niepewny odczyt pozostaje do sprawdzenia i wpisania ręcznie; własne poprawki A1 są zachowywane. [Opis ustawień i dokładności](docs/auto-wkreslanie.md).
 
 ### Od podkładu do wydruku
 
@@ -67,14 +69,14 @@ Numer A1 nadal wpisuje użytkownik; odczyt odręcznych numerów i wysięgników 
 
 ### Wydania dla Windows
 
-Przejdź do sekcji [**GitHub Releases**](https://github.com/wskakuj/GeoStudio/releases), aby sprawdzić dostępność gotowego wydania. W chwili aktualizacji dokumentacji binarne wydanie publiczne nie było jeszcze dostępne.
+Pobierz instalator Windows x64 z [**najnowszego wydania**](https://github.com/wskakuj/GeoStudio/releases/latest). Instalator tworzy instalację dla bieżącego użytkownika.
 
 ### Uruchomienie wersji 2.0 ze źródeł
 
 **Wymagania:** Windows, Python 3.11+ oraz Microsoft Edge WebView2 (dla natywnego okna). Potrzebne jest połączenie z internetem podczas pierwszej instalacji zależności.
 
 ```powershell
-git clone --branch feat/raster-trace-5310 --single-branch https://github.com/wskakuj/GeoStudio.git
+git clone --branch main --single-branch https://github.com/wskakuj/GeoStudio.git
 cd GeoStudio
 .\start_web_ui.bat
 ```
@@ -118,7 +120,7 @@ GeoStudio 2.0 wykorzystuje Python i FastAPI jako lokalny backend, HTML Canvas 2D
 
 ## Dokumentacja i bezpieczeństwo danych
 
-- [Instrukcja GeoStudio 2.0](https://github.com/wskakuj/GeoStudio/blob/feat/raster-trace-5310/geostudio/web_app/README.md)
+- [Instrukcja GeoStudio 2.0](geostudio/web_app/README.md)
 - [Dokumentacja formatu MAP](docs/FORMAT.md)
 - [Historia starszych wersji i instrukcje](docs/LEGACY_README.md)
 - [Zgłaszanie błędów](https://github.com/wskakuj/GeoStudio/issues)

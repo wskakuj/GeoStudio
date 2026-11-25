@@ -25,10 +25,12 @@
     // lets users digitize parallel lines just outside the target boundary.
     // Węzły łapią z większego promienia niż krawędzie: przy wkreślaniu
     // poligonu mysz łatwo uciekała z punktu zaczepienia.
-    const vRadius=Math.max(1,Math.min(20,options.vertexPixels??14));
+    const vRadius=Math.max(1,Math.min(options.preferVertices?40:20,options.vertexPixels??14));
     const eRadius=Math.max(1,Math.min(12,options.edgePixels??7));
-    const search=Math.max(vRadius,eRadius)/scale;
-    let vertex=null,edge=null,featureCount=0,segments=0;
+    const previous=options.previous?.kind==="węzeł"?options.previous:null;
+    const releaseRadius=previous?Math.max(vRadius,Math.min(48,options.releasePixels??vRadius)):vRadius;
+    const search=Math.max(releaseRadius,eRadius)/scale;
+    let vertex=null,edge=null,sticky=null,featureCount=0,segments=0;
     for(const feature of features||[]) {
       if(feature.visible===false||!feature.geometry?.length)continue;
       const bbox=feature.bbox;
@@ -38,14 +40,19 @@
       if(++featureCount>120)break;
       for(const part of feature.geometry) {
         if(!Array.isArray(part)||!part.length)continue;
-        for(let i=0;i<part.length;i++) {
+        const closes=feature.closed&&part.length>2&&
+          (part[0][0]!==part.at(-1)[0]||part[0][1]!==part.at(-1)[1]);
+        for(let i=0;i<part.length+(closes?1:0);i++) {
           if(++segments>12000)break;
-          const p=part[i];
+          const p=part[i%part.length];
           if(!Array.isArray(p)||p.length<2||
              !Number.isFinite(p[0])||!Number.isFinite(p[1]))continue;
           const dist=Math.hypot(world.x-p[0],world.y-p[1])*scale;
           if(dist<=vRadius&&(!vertex||dist<vertex.distancePx))
             vertex={point:{x:p[0],y:p[1]},kind:"węzeł",code:feature.code,
+                    targetId:feature.id,distancePx:dist};
+          if(previous&&dist<=releaseRadius&&previous.point?.x===p[0]&&previous.point?.y===p[1])
+            sticky={point:{x:p[0],y:p[1]},kind:"węzeł",code:feature.code,
                     targetId:feature.id,distancePx:dist};
           if(i===0)continue;
           const a=part[i-1];
@@ -59,6 +66,13 @@
         if(segments>12000)break;
       }
       if(segments>12000)break;
+    }
+    // Auto tracing favours a nearby exact corner over an edge projection.
+    // Keep it captured through small hand movements, but allow a clearly
+    // closer node to take over. Free drawing retains the narrower old policy.
+    if(options.preferVertices){
+      if(sticky&&(!vertex||vertex.distancePx+6>=sticky.distancePx))return sticky;
+      if(vertex)return vertex;
     }
     // Prefer an exact node only when similarly close to an edge. Otherwise
     // the drawn point would jump several pixels along the neighbor line.

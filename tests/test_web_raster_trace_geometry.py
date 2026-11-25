@@ -7,6 +7,7 @@ import pytest
 
 
 CASES = [
+    "occupied_5310_mask_never_becomes_a_proposal",
     "waves_become_supported_straight_sides",
     "genuine_bend_and_concavity_are_retained",
     "fixed_junction_survives_quad_like_outline",

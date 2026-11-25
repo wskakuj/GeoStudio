@@ -1,0 +1,31 @@
+GeoStudio local A1 recognition: third-party component notices
+
+This notice applies ONLY to the named third-party components and model files.
+It does not license or relicense GeoStudio's application code or project data.
+
+RapidOCR 3.10.0
+Copyright (c) 2021 RapidOCR Authors. All rights reserved.
+License: Apache License, Version 2.0 (see LICENSE.txt in this directory).
+Source: https://github.com/RapidAI/RapidOCR
+
+PP-OCRv6 small detection and recognition ONNX models
+Upstream model copyright: Baidu and/or the applicable PaddleOCR rights holders.
+Converted/repackaged by RapidOCR. License: Apache License, Version 2.0.
+The unmodified model files are bundled in the pinned RapidOCR wheel:
+  PP-OCRv6_det_small.onnx
+  PP-OCRv6_rec_small.onnx
+Provenance and upstream attribution:
+https://github.com/RapidAI/RapidOCR/blob/main/python/MODEL_LICENSES.md
+https://github.com/PaddlePaddle/PaddleOCR
+https://huggingface.co/PaddlePaddle/PP-OCRv6_small_det_onnx
+https://huggingface.co/PaddlePaddle/PP-OCRv6_small_rec_onnx
+
+GeoStudio does not train, fine-tune or distribute these models using user maps.
+Raster images and recognized identifiers remain in the local application.
+ONNX Runtime telemetry is explicitly disabled before library initialization.
+
+Additional runtime components retain their respective upstream terms:
+ONNX Runtime: Copyright Microsoft Corporation. MIT License.
+OpenCV: Copyright OpenCV contributors. Apache License, Version 2.0.
+NumPy: Copyright NumPy Developers. BSD 3-Clause License.
+See the respective package metadata/license notices in the distribution.

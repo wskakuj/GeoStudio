@@ -69,6 +69,24 @@ function raster(){
   return {pixels,forest,width,height};
 }
 const cases={
+  occupied_5310_mask_never_becomes_a_proposal(){
+    const {pixels,forest,width,height}=raster();
+    // Existing left-hand field, including its black stroke. Interior alpha
+    // is the same white fill produced by the real canvas mask.
+    for(let y=18;y<=122;y++)for(let x=18;x<=93;x++)
+      forest.set([x===18||x===93||y===18||y===122?0:255,255,255,255],4*(y*width+x));
+    const result=traceLandUses(pixels,forest,width,height,5,2.5);
+    assert.equal(result.shapes.size,1,'Only the free neighbouring field may be proposed');
+    for(let y=18;y<=122;y++)for(let x=18;x<=93;x++)
+      assert.equal(result.labels[y*width+x],0,'Boundary extension must never flood back into occupied5310');
+    for(const shape of result.shapes.values())
+      assert.ok(shape.points.every(([x])=>x>=94),'A proposed ring must remain outside the occupied mask');
+    // A covering existing polygon leaves no selectable raster field at all.
+    for(let i=0;i<forest.length;i+=4)forest.set([255,255,255,255],i);
+    const covered=traceLandUses(pixels,forest,width,height,5,2.5);
+    assert.equal(covered.shapes.size,0);
+    assert.ok(covered.labels.every(id=>id===0));
+  },
   waves_become_supported_straight_sides(){
     const ring=waveRectangle(3),straight=simplify(ring,4),precise=simplify(ring,1);
     assert.equal(straight.length,4,'A supported wavy side should become one straight segment');

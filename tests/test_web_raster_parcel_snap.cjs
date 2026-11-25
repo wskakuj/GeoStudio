@@ -22,6 +22,40 @@ function inside(p,ring){
   }
   return result;
 }
+function strokeFixture(half,options={}){
+  const width=260,height=200,reference=options.reference||[[30,30],[210,30],[210,150],[30,150]];
+  const pixels=new Uint8ClampedArray(width*height*4);pixels.fill(255);
+  const mask=new Uint8ClampedArray(pixels.length),offset=options.offset??half;
+  const plot=(x,y,radius=half)=>{
+    for(let v=Math.round(y)-radius;v<=Math.round(y)+radius;v++)
+      for(let u=Math.round(x)-radius;u<=Math.round(x)+radius;u++)
+        if(u>=0&&v>=0&&u<width&&v<height)pixels.set([25,25,25,255],4*(v*width+u));
+  };
+  reference.forEach((a,i)=>{
+    const b=reference[(i+1)%reference.length],steps=Math.ceil(Math.hypot(b[0]-a[0],b[1]-a[1])*2);
+    for(let j=0;j<=steps;j++)plot(a[0]+offset+(b[0]-a[0])*j/steps,a[1]+(b[1]-a[1])*j/steps);
+  });
+  if(options.annotation)plot(120+offset,30,12);
+  if(!context.traceLandUses)vm.runInContext(fs.readFileSync(path.join(__dirname,'../geostudio/web_app/static/raster_trace.js'),'utf8'),context);
+  if(!context.GeoStudioRasterTraceMetrics)vm.runInContext(fs.readFileSync(path.join(__dirname,'../geostudio/web_app/static/raster_trace_metrics.js'),'utf8'),context);
+  const trace=context.traceLandUses(pixels,mask,width,height,5,2.5);
+  const metric=context.GeoStudioRasterTraceMetrics.estimateStrokeRadius(pixels,width,height,trace.shapes,2.5,mask);
+  return {pixels,mask,width,height,reference,trace,metric};
+}
+function onReference(result,reference){
+  function distanceTo(p,a,b){
+    const dx=b[0]-a[0],dy=b[1]-a[1],t=Math.max(0,Math.min(1,
+      ((p[0]-a[0])*dx+(p[1]-a[1])*dy)/(dx*dx+dy*dy)));
+    return Math.hypot(p[0]-a[0]-t*dx,p[1]-a[1]-t*dy);
+  }
+  for(let i=0;i<result.length;i++){
+    const a=result[i],b=result[(i+1)%result.length],middle=[(a[0]+b[0])/2,(a[1]+b[1])/2];
+    for(const p of [a,middle])assert.ok(Math.min(...reference.map((q,j)=>distanceTo(p,q,reference[(j+1)%reference.length])))<1e-7,
+      `Fitted side must follow actual reference edges: ${JSON.stringify(result)}`);
+  }
+  for(const corner of reference)assert.ok(result.some(p=>Math.hypot(p[0]-corner[0],p[1]-corner[1])<1e-7),
+    `Missing native corner ${corner}: ${JSON.stringify(result)}`);
+}
 const cases={
   translated_sides_use_exact_parcel_corners(){
     const original=[[0,0],[100,0],[100,80],[0,80]],reference=shift(original,2,1);
@@ -221,6 +255,133 @@ const cases={
     const locked=snapRings(rings,index,{distance:2.5,locked:[rings[0][0]]});
     assert.deepEqual(plain(locked[0].points[0]),rings[0][0]);
     assert.deepEqual(plain(locked[1].points[0]),rings[0][0]);
+  },
+  thick_stroke_bevels_follow_the_real_parcel_corners(){
+    const reference=[[0,0],[100,0],[100,80],[0,80]],index=buildIndex([parcel(reference)]);
+    const ring=[[4,2],[96,2],[98,4],[98,76],[96,78],[4,78],[2,76],[2,4]];
+    const expected=[[4,0],[96,0],[100,0],[100,4],[100,76],[100,80],
+      [96,80],[4,80],[0,80],[0,76],[0,4],[0,0]];
+    const result=snapRing(ring,index,{distance:3});
+    close(result.points,expected);assert.equal(result.snappedEdges,8);
+    assert.deepEqual(plain(result.sourceIndices),[0,1,null,2,3,null,4,5,null,6,7,null]);
+    // All source corners retain their identity, while the inserted real
+    // corners belong to the short bevel sides for UI/manual edit purposes.
+    for(let i=0;i<ring.length;i++)assert.equal(result.sourceIndices.filter(j=>j===i).length,1);
+    for(let i=0;i<result.points.length;i++){
+      const a=result.points[i],b=result.points[(i+1)%result.points.length];
+      assert.ok(a[0]===b[0]||a[1]===b[1],'No diagonal shortcut remains at a native corner');
+    }
+    for(const source of [ring.slice().reverse(),ring.slice(3).concat(ring.slice(0,3))])
+      assert.equal(set(snapRing(source,index,{distance:3}).points),set(expected));
+    const offset=[7500000,-5800000];
+    close(snapRing(shift(ring,...offset),buildIndex([parcel(shift(reference,...offset))]),{distance:3}).points,
+      shift(expected,...offset));
+  },
+  a_bevel_already_touching_both_sides_keeps_distinct_source_vertices(){
+    const ring=[[2,0],[98,0],[100,2],[100,78],[98,80],[2,80],[0,78],[0,2]];
+    const result=snapRing(ring,buildIndex([parcel([[0,0],[100,0],[100,80],[0,80]])]),{distance:3});
+    assert.equal(result.snappedEdges,8);assert.equal(result.points.length,12);
+    for(let i=0;i<ring.length;i++)close([result.points[result.sourceIndices.indexOf(i)]],[ring[i]]);
+    for(const corner of [[0,0],[100,0],[100,80],[0,80]])
+      assert.ok(result.points.some(p=>p[0]===corner[0]&&p[1]===corner[1]));
+    // Previously both ends of each bevel could claim the same native corner,
+    // produce a zero-length side, and veto the entire fit as invalid.
+    assert.equal(new Set(result.points.map(p=>p.join(','))).size,result.points.length);
+  },
+  short_collinear_junction_edges_use_whole_side_evidence(){
+    const ring=[[2,2],[7,2],[12,2],[17,2],[22,2],[22,50],[2,50]];
+    const index=buildIndex([line([[-10,0],[110,0]]),line([[0,-100],[0,110]])]);
+    close(snapRing(ring,index,{distance:3}).points,[[0,0],[7,0],[12,0],[17,0],[22,0],[22,50],[0,50]]);
+    const results=snapRings([ring,[[7,2],[2,2],[2,-40],[100,-40],[100,2]]],index,{distance:3});
+    assert.ok(results[0].points.some(p=>p[0]===7&&p[1]===0));
+    assert.ok(results[1].points.some(p=>p[0]===7&&p[1]===0));
+    const small=[[1,1],[5,1],[3,4]];
+    close(snapRing(small,index,{distance:3}).points,small);
+  },
+  short_slanted_connector_uses_one_supported_straight_track(){
+    const ring=[[0,1],[40,1],[42,2],[100,2],[100,60],[0,60]];
+    const index=buildIndex([line([[-10,0],[110,0]])]);
+    const result=snapRing(ring,index,{distance:3});
+    close(result.points,[[0,0],[40,0],[42,0],[100,0],[100,60],[0,60]]);
+    assert.equal(result.snappedEdges,3);
+    const locked=snapRing(ring,index,{distance:3,locked:[[40,1]]});
+    close([locked.points[locked.sourceIndices.indexOf(1)]],[[40,1]]);
+    // The missing bridge is not invented through a gap in native geometry.
+    const gap=buildIndex([line([[-10,0],[40,0]]),line([[42,0],[110,0]])]);
+    const unfitted=snapRing(ring,gap,{distance:3});
+    assert.ok(unfitted.snappedEdges<3);
+  },
+  bevel_recovery_requires_a_short_supported_native_join(){
+    const ring=[[4,2],[96,2],[98,4],[98,76],[96,78],[4,78],[2,76],[2,4]];
+    const reference=parcel([[0,0],[100,0],[100,80],[0,80]]),index=buildIndex([reference]);
+    const locked=snapRing(ring,index,{distance:3,locked:[[96,2]]});
+    close([locked.points[locked.sourceIndices.indexOf(1)]],[[96,2]]);
+    const blocked=snapRing(ring,index,{distance:3,blockedEdges:[[ring[1],ring[2]]]});
+    assert.ok(!blocked.points.some(p=>p[0]===100&&p[1]===0),'An explicitly blocked side cannot acquire a corner bridge');
+    const longCut=[[10,0],[90,0],[100,10],[100,70],[90,80],[10,80],[0,70],[0,10]];
+    close(snapRing(longCut,index,{distance:3}).points,longCut);
+    const crossing=buildIndex([line([[-10,0],[110,0]]),line([[100,-10],[100,90]])]);
+    const result=snapRing(ring,crossing,{distance:3});
+    assert.ok(!result.points.some(p=>p[0]===100&&p[1]===0),'Crossing lines without a native corner do not justify a bevel');
+  },
+  a_fully_supported_narrow_field_can_recover_its_stroke_width(){
+    const reference=[[0,0],[16,0],[16,100],[0,100]],ring=[[2,2],[14,2],[14,98],[2,98]];
+    const index=buildIndex([parcel(reference)]),result=snapRing(ring,index,{distance:3});
+    close(result.points,reference);assert.equal(result.snappedEdges,4);
+    const partial=buildIndex([line([[0,0],[0,100]]),line([[16,0],[16,100]])]);
+    const incomplete=snapRing(ring,partial,{distance:3});
+    close(incomplete.points,ring);assert.equal(incomplete.reason,'topology');
+    // Even a complete reference cannot expand a tiny raster region without a
+    // bound, or consume a narrow arm hidden by a compensating area change.
+    const excessive=[[2,2],[9,2],[9,98],[2,98]];
+    close(snapRing(excessive,buildIndex([parcel([[0,0],[11,0],[11,100],[0,100]])]),{distance:3}).points,excessive);
+  },
+  native_corners_use_the_diagonal_of_two_supported_distance_bands(){
+    const reference=[[30,30],[210,30],[210,150],[30,150]];
+    const ring=shift(reference,3,1),index=buildIndex([parcel(reference)]);
+    close(snapRing(ring,index,{distance:3}).points,reference);
+    // The wider corner allowance must not turn one isolated line into a wider
+    // lateral snap corridor or override the explicit three-metre side range.
+    const tooFar=shift(reference,3.1,0);
+    close(snapRing(tooFar,buildIndex([line([[30,10],[30,180]])]),{distance:3}).points,tooFar);
+  },
+  real_pixel_strokes_overlapping_5216_snap_to_its_complete_perimeter(){
+    let previous=0;
+    for(const half of [1,2,3,5,8]){
+      const fixture=strokeFixture(half),{trace,metric,reference}=fixture;
+      assert.equal(trace.shapes.size,1,`Stroke width ${half*2+1}: one field`);
+      assert.ok(metric,`Measure the actual ${half*2+1}px stroke`);
+      assert.ok(Math.abs(metric.halfWidthPixels-half)<=1);
+      assert.ok(metric.radiusPixels>previous);previous=metric.radiusPixels;
+      const rings=Array.from(trace.shapes.values(),shape=>shape.points);
+      const result=snapRings(rings,buildIndex([parcel(reference)]),{distance:metric.radiusPixels});
+      onReference(result[0].points,reference);
+      // The same pixel-derived fit must survive map-unit scaling and large
+      // coordinate offsets; its extent is not a screen-zoom-dependent radius.
+      const world=points=>points.map(([x,y])=>[7500000+x*.2,-5800000+y*.2]);
+      const mapped=snapRings(rings.map(world),buildIndex([parcel(world(reference))]),{distance:metric.radiusPixels*.2});
+      onReference(mapped[0].points,world(reference));
+    }
+    const diagonal=strokeFixture(5,{reference:[[40,25],[210,55],[190,150],[20,120]]});
+    assert.equal(diagonal.trace.shapes.size,1);
+    const result=snapRings(Array.from(diagonal.trace.shapes.values(),shape=>shape.points),
+      buildIndex([parcel(diagonal.reference)]),{distance:diagonal.metric.radiusPixels});
+    onReference(result[0].points,diagonal.reference);
+  },
+  stroke_measurement_rejects_solid_patches_masks_and_isolated_annotations(){
+    const regular=strokeFixture(2),annotated=strokeFixture(2,{annotation:true});
+    assert.ok(regular.metric&&annotated.metric);
+    assert.ok(Math.abs(regular.metric.radiusPixels-annotated.metric.radiusPixels)<=1,
+      'One thick letter crossing a side must not set the range for the sheet');
+    const {pixels,width,height,trace,mask}=regular,measure=context.GeoStudioRasterTraceMetrics.estimateStrokeRadius;
+    const filled=new Uint8ClampedArray(pixels.length);
+    for(let i=0;i<filled.length;i+=4)filled.set([20,20,20,255],i);
+    assert.equal(measure(filled,width,height,trace.shapes,2.5),null,'A solid dark patch is not a bounded stroke');
+    const covered=mask.slice();for(let i=3;i<covered.length;i+=4)covered[i]=255;
+    assert.equal(measure(pixels,width,height,trace.shapes,2.5,covered),null,'Occupied5310 do not supply ink evidence');
+    assert.equal(measure(new Uint8ClampedArray(4),width,height,trace.shapes,2.5),null);
+    assert.equal(measure(pixels,width,height,new Map(),2.5),null);
+    assert.ok(regular.metric.samples<=512*5&&regular.metric.edges<=512);
   },
   parcel_index_handles_3555_edges_without_global_quadratic_search(){
     const features=[];

@@ -24,6 +24,15 @@ CASES = [
     "shared_points_have_identical_numbers_after_epsilon_normalization",
     "shallow_native_corners_do_not_trigger_false_shared_veto",
     "supported_shared_anchors_can_move_a_short_interior_field",
+    "thick_stroke_bevels_follow_the_real_parcel_corners",
+    "a_bevel_already_touching_both_sides_keeps_distinct_source_vertices",
+    "short_collinear_junction_edges_use_whole_side_evidence",
+    "short_slanted_connector_uses_one_supported_straight_track",
+    "bevel_recovery_requires_a_short_supported_native_join",
+    "a_fully_supported_narrow_field_can_recover_its_stroke_width",
+    "native_corners_use_the_diagonal_of_two_supported_distance_bands",
+    "real_pixel_strokes_overlapping_5216_snap_to_its_complete_perimeter",
+    "stroke_measurement_rejects_solid_patches_masks_and_isolated_annotations",
     "parcel_index_handles_3555_edges_without_global_quadratic_search",
 ]
 
