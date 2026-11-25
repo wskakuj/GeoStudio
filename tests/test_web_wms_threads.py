@@ -26,7 +26,7 @@ class FakeConnection:
     busy: dict[int, int] = {}          # id(połączenia) -> id wątku w trakcie żądania
     shared_violation = False
 
-    def __init__(self, host, timeout=None):
+    def __init__(self, host, timeout=None, context=None):
         self.host = host
         self.closed = False
         with FakeConnection.lock:

@@ -1398,7 +1398,7 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
       return;
     }
     state.blockRectPicking=true;state.blockRectDrag=null;
-    canvas.style.cursor="crosshair";
+    canvas.style.cursor="none";   // rysujemy własny, widoczny krzyżyk
     inform("Przeciągnij prostokąt na mapie — zaznaczę obiekty o kodzie "+code+".");
   }
   function selectedObjectIds() {
@@ -3573,6 +3573,50 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
     const p=eventCoords(ev),world=screenToWorld(p.x,p.y);
     return {x:-world.y,y:world.x};
   }
+  // Mocny magnes dla kalibracji rastra: kliknięcie trafia w najbliższy WĘZEŁ
+  // mapy (nie w krawędź), z dużym promieniem. Alt wyłącza przyciąganie.
+  const GCP_SNAP_PX=26;
+  // Dwukolorowy krzyżyk rysowany na kanwie: ciemna obwódka + jasny rdzeń.
+  // Kursor systemowy bywa biały i zlewa się z jasną mapą.
+  function paintCrosshair(){
+    if(typeof state==="undefined"||!state.crosshairAt)return;
+    const {x,y}=state.crosshairAt;
+    const arm=14, gap=3;
+    ctx.save();
+    ctx.lineCap="butt";
+    for(const [color,width] of [["#0b1a26",3],["#ffffff",1.4]]){
+      ctx.strokeStyle=color;ctx.lineWidth=width;
+      ctx.beginPath();
+      ctx.moveTo(x-arm,y);ctx.lineTo(x-gap,y);
+      ctx.moveTo(x+gap,y);ctx.lineTo(x+arm,y);
+      ctx.moveTo(x,y-arm);ctx.lineTo(x,y-gap);
+      ctx.moveTo(x,y+gap);ctx.lineTo(x,y+arm);
+      ctx.stroke();
+      ctx.beginPath();ctx.arc(x,y,2.6,0,Math.PI*2);ctx.stroke();
+    }
+    ctx.restore();
+  }
+
+  function gcpSnapPoint(screen,world,altKey){
+    if(altKey)return {point:world,kind:null};
+    if(typeof state==="undefined"||!state.features)return {point:world,kind:null};
+    const radius=GCP_SNAP_PX/state.scale;
+    let best=null;
+    for(const feature of state.features){
+      const b=feature.bbox;
+      if(world.x<b[0]-radius||world.x>b[2]+radius||
+         world.y<b[1]-radius||world.y>b[3]+radius)continue;
+      for(const part of feature.geometry||[]){
+        for(const point of part){
+          const dist=Math.hypot(point[0]-world.x,point[1]-world.y);
+          if(dist<=radius&&(!best||dist<best.dist))
+            best={dist,point:{x:point[0],y:point[1]},kind:"węzeł"};
+        }
+      }
+    }
+    return best?{point:best.point,kind:best.kind}:{point:world,kind:null};
+  }
+
   function pickGcpMapPoint(ev){
     if(!gcpView.open||ev.button!==0||!raster.image)return;
     const p=eventCoords(ev),index=gcpNearestMapPoint(p.x,p.y);
@@ -3587,11 +3631,15 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
       updateGcpUi("Przeciągnij punkt "+(index+1)+" po mapie.");
       return;
     }
-    raster.gcps.push({...gcpView.pending,...gcpMapPoint(ev)});
+    const raw=gcpMapPoint(ev);
+    const snapped=gcpSnapPoint(p,raw,ev.altKey);
+    gcpView.lastSnap=snapped.kind;
+    raster.gcps.push({...gcpView.pending,...snapped.point});
     gcpView.activeIndex=raster.gcps.length-1;
     gcpView.waiting=false;gcpView.pending=null;gcpView.fitSerial++;
     updateGcpUi("Dodano parę "+raster.gcps.length+
-      ". Kliknij kolejny punkt na obrazie.");
+      (gcpView.lastSnap?" (przyciągnięto do węzła)":"")+
+      ". Kliknij kolejny punkt na obrazie. Alt wyłącza magnes.");
     renderRasterLayers();
   }
   function moveGcpMapPoint(ev){
@@ -3600,14 +3648,17 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
       if(gcpView.open&&raster.image){
         const p=eventCoords(ev);
         const close=gcpNearestMapPoint(p.x,p.y)>=0;
-        canvas.style.cursor=close?"grab":gcpView.waiting?"crosshair":"";
+        canvas.style.cursor=close?"grab":gcpView.waiting?"none":"";
       }
       return;
     }
     if(drag.pointer!==ev.pointerId)return;
     ev.preventDefault();ev.stopImmediatePropagation();
     if(!raster.gcps[drag.index])return;
-    Object.assign(raster.gcps[drag.index],gcpMapPoint(ev));
+    const raw2=gcpMapPoint(ev);
+    const snapped2=gcpSnapPoint(p,raw2,ev.altKey);
+    gcpView.lastSnap=snapped2.kind;
+    Object.assign(raster.gcps[drag.index],snapped2.point);
     drag.moved=true;gcpView.fitSerial++;
     updateGcpUi("Przesuwasz punkt "+(drag.index+1)+" na mapie.");
   }
@@ -3782,6 +3833,7 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
     ctx.restore();
   }
   function paintRaster(){
+    // (krzyżyk rysowany jest na końcu paintScene)
     for(const item of [...raster.layers,...(raster.image?[rasterEntry()]:[])]){
       if(!rasterCanShow(item))continue;
       const [a,b,c,d,e,f]=item.affine;
@@ -4911,6 +4963,7 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
     }
     drawExportAreaOverlay();
     drawDraftPolygon();drawMagnetMarker();drawVertexTool();
+    paintCrosshair();
     updateScaleReadout();
     $("count-visible").textContent=display(features.length);
     $("render-hint").textContent=state.limited
@@ -5047,7 +5100,7 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
     if($("layout-dialog").open)$("layout-dialog").close();
     state.exportAreaPicking=true;
     state.exportAreaDrag=null;
-    canvas.style.cursor="crosshair";
+    canvas.style.cursor="none";   // rysujemy własny, widoczny krzyżyk
     inform("Przytrzymaj mysz i narysuj prostokąt eksportu. Esc — anuluj.");
     requestDraw();
   }
@@ -7239,6 +7292,13 @@ inform("Klikaj mapę, aby wstawiać kolejne oznaczenia. Naciśnij Esc lub wybier
   });
   canvas.addEventListener("pointermove", ev=>{
     const p=eventCoords(ev),world=screenToWorld(p.x,p.y);
+    // Własny krzyżyk: w trybach precyzyjnych rysujemy go sami, bo kursor
+    // systemowy bywa biały i ginie na jasnej mapie.
+    const precisionMode=gcpView.open||
+      ["draw","cut","line","line-edit","link"].includes(state.tool)||
+      state.leaderMode;
+    state.crosshairAt=precisionMode?{x:p.x,y:p.y}:null;
+    if(precisionMode)requestDraw();
     $("cursor-coords").textContent="X: "+(-world.y).toFixed(3)+
                                    "   Y: "+world.x.toFixed(3);
     if(["draw","cut","line","line-edit"].includes(state.tool)&&!state.editBusy){
@@ -7974,7 +8034,7 @@ inform("Klikaj mapę, aby wstawiać kolejne oznaczenia. Naciśnij Esc lub wybier
     // Tryb wysięgników NIE przejmuje narzędzia: działa jako nakładka, więc
     // zaznaczanie i rysowanie poligonów działa dalej. Wcześniej ustawiał
     // state.tool="labels" i po edycji etykiet mapa przestawała reagować.
-    canvas.style.cursor=state.leaderMode?"crosshair":"";
+    canvas.style.cursor=state.leaderMode?"none":"";
     inform(state.leaderMode?
       "Tryb wysięgników: LPM przesuwa etykietę, kółko ustawia zaczepienie, Q/W zmienia stronę.":
       "Tryb wysięgników wyłączony.");
