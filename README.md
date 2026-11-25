@@ -50,10 +50,12 @@ Wybieraj obiekty na mapie, filtruj je według kodu i wartości A1/A2, zmieniaj g
 
 Połącz podkład rastrowy z geometrią mapy. Narzędzie **Auto Wkreślanie** w rozwijanej wersji 2.0 służy do tworzenia wydzieleń `5310` na podstawie skalibrowanego rastra. Wynik wymaga kontroli i ewentualnej ręcznej korekty.
 
+Proste boki są dopasowywane do całej kreski z ograniczoną tolerancją, a sąsiadujące pola zachowują wspólną granicę. Tryby **Dokładna / Szybsza** i **Delikatne / Proste boki / Drżąca kreska** pozwalają dobrać rozpoznawanie do skanu. Numer A1 nadal wpisuje użytkownik; odczyt odręcznych numerów i wysięgników nie jest jeszcze dostępny. [Opis ustawień i dokładności](docs/auto-wkreslanie.md).
+
 ### Od podkładu do wydruku
 
 - **Podkłady online:** ortofotomapy i działki ewidencyjne GUGiK/KIEG przez WMS.
-- **Rastry lokalne:** PNG, JPG, TIFF/GeoTIFF, wczytywanie georeferencji i wizualna kalibracja GCP.
+- **Rastry lokalne:** PNG, JPG, TIFF/GeoTIFF, WebP oraz pojedynczy arkusz PDF; wczytywanie georeferencji i wizualna kalibracja GCP.
 - **Oprawa mapy:** tytuł, legendy, oznaczenia, róża kierunków, wykonawca i skala opracowania.
 - **Eksport:** PNG, JPG, TIFF, PDF i DXF oraz kopia pliku MAP; zakres i skala zależnie od wybranego trybu.
 
@@ -87,7 +89,7 @@ Po uruchomieniu wybierz plik MAP, wczytaj własne biblioteki kartograficzne i pr
 | :--- | :--- |
 | `.MAP` | Odczyt, edycja i zapis kopii mapy |
 | `.SYM` / `.LAY` / `.CDF` | Symbole, warstwy i style (częściowa interpretacja) |
-| PNG / JPG / TIFF / GeoTIFF | Podkłady rastrowe; eksport PNG/JPG/TIFF |
+| PNG / JPG / TIFF / GeoTIFF / WebP / PDF (jeden arkusz) | Podkłady rastrowe; eksport PNG/JPG/TIFF |
 | WMS | Podkłady i nakładki online |
 | DXF | Eksport geometrii do narzędzi CAD |
 | PDF | Eksport arkusza do wydruku w wersji 2.0 |

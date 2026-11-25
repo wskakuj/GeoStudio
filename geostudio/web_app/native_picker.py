@@ -24,7 +24,7 @@ from .recovery import LocalRecoveryStore
 def _raster_with_world(path: Path) -> dict:
     suffix = path.suffix.lower()
     short = {".png": ".pgw", ".jpg": ".jgw", ".jpeg": ".jgw",
-             ".tif": ".tfw", ".tiff": ".tfw", ".webp": ".wpw"}
+             ".tif": ".tfw", ".tiff": ".tfw", ".webp": ".wpw", ".pdf": ".wld"}
     if suffix not in short or not 0 < path.stat().st_size <= 48 * 1024 * 1024:
         raise ValueError("Wybierz obsługiwany raster o rozmiarze do 48 MB.")
     world = None
@@ -354,7 +354,7 @@ class NativeMapPicker:
                 parent=root, title="Wybierz raster",
                 initialdir=str(self._source_path.parent) if self._source_path
                 else read_last_map_directory(self._settings),
-                filetypes=(("Rastry", "*.png *.jpg *.jpeg *.webp *.tif *.tiff"),))
+                filetypes=(("Rastry", "*.png *.jpg *.jpeg *.webp *.tif *.tiff *.pdf"),))
         finally:
             root.destroy()
         return _raster_with_world(Path(filename)) if filename else {"cancelled": True}

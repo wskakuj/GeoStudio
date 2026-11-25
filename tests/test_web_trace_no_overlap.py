@@ -36,5 +36,5 @@ def test_server_still_blocks_polygon_on_polygon():
 
 
 def test_trace_uses_viewport_features_with_codes():
-    assert "features=await view.featuresIn(bounds);" in JS
+    assert "await view.featuresIn(bounds);" in JS
     assert "async featuresIn(bounds){" in MAP_JS

@@ -21,6 +21,10 @@ $Args = @(
     "--icon", "geostudio.ico",
     "--collect-data", "geostudio.web_app",
     "--collect-data", "certifi",
+    # Include PDFium's native DLL and version data; PDF import is also
+    # exercised by the packaged self-test below.
+    "--collect-all", "pypdfium2_raw",
+    "--copy-metadata", "pypdfium2",
     "--collect-submodules", "webview",
     "--hidden-import", "uvicorn.logging",
     "--hidden-import", "uvicorn.loops.auto",

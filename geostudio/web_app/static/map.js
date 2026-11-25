@@ -3429,8 +3429,8 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
       const lower=file.name.toLowerCase();
       // Local decoder creates a bounded preview for all supported image
       // formats and reports ORIGINAL dimensions for GCP and world files.
-      if(!/\.(tiff?|png|jpe?g|webp)$/i.test(lower))
-        throw Error("Obsługiwane obrazy: PNG, JPG, WebP i TIFF.");
+      if(!/\.(tiff?|png|jpe?g|webp|pdf)$/i.test(lower))
+        throw Error("Obsługiwane rastry: PNG, JPG, WebP, TIFF i jednostronicowy PDF.");
       const response=await documentFetch("/api/underlay/raster/prepare",{
         method:"POST",headers:{"X-GeoStudio-Token":token,
           "Content-Type":"application/octet-stream"},
@@ -7928,11 +7928,11 @@ inform("Klikaj mapę, aby wstawiać kolejne oznaczenia. Naciśnij Esc lub wybier
   rasterInput.addEventListener("change",async ev=>{
     const files=Array.from(ev.target.files||[]);
     ev.target.value="";
-    const images=files.filter(file=>/\.(png|jpe?g|webp|tiff?)$/i.test(file.name));
+    const images=files.filter(file=>/\.(png|jpe?g|webp|tiff?|pdf)$/i.test(file.name));
     if(images.length!==1){if(files.length)inform("Wybierz jeden raster i opcjonalnie jego plik world.",true);return;}
     const file=images[0], name=file.name.toLowerCase();
     const dot=name.lastIndexOf("."), stem=name.slice(0,dot), ext=name.slice(dot+1);
-    const short={png:"pgw",jpg:"jgw",jpeg:"jgw",tif:"tfw",tiff:"tfw",webp:"wpw"};
+    const short={png:"pgw",jpg:"jgw",jpeg:"jgw",tif:"tfw",tiff:"tfw",webp:"wpw",pdf:"wld"};
     const sidecar=[short[ext],ext+"w","wld"].map(suffix=>
       files.find(item=>item.name.toLowerCase()===stem+"."+suffix)).find(Boolean);
     const documentToken=state.edit?.documentToken;
