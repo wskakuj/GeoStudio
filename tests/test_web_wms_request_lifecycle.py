@@ -25,6 +25,12 @@ SCRIPT = Path(__file__).with_suffix(".cjs")
     "remove_cancels_request",
     "remove_keeps_other_layer_refresh",
     "visible_layers_load_independently",
+    "same_view_does_not_restart_debounce",
+    "unchanged_resize_does_not_schedule_fetch",
+    "same_view_after_error_does_not_retry",
+    "client_timeout_finishes_loading_without_retry",
+    "client_timeout_during_decode_allows_manual_retry",
+    "show_after_timeout_bypasses_cooldown",
 ])
 def test_wms_request_lifecycle(scenario):
     result = subprocess.run(

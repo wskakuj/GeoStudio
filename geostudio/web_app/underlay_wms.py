@@ -1,28 +1,32 @@
 """Read-only Geoportal WMS proxy for the localhost GeoStudio 2.0 canvas.
 
 The browser never requests remote imagery directly (CORS, credentials).
-Only approved official HTTPS GUGiK endpoints are accessible; arbitrary URLs,
-redirects, oversized replies and non-image responses are rejected.
-No MAP data or selected geometry is sent to the provider.
+Configured public HTTPS WMS/WMTS services support validated, bounded redirects.
+Oversized replies and non-image map responses are rejected. Only the requested
+extent and image parameters are sent, not MAP records or selected geometry.
 """
 from __future__ import annotations
 
+from base64 import b64encode
 from collections import OrderedDict
-from concurrent.futures import Future
+from concurrent.futures import Future, ThreadPoolExecutor, as_completed
 from contextlib import contextmanager
 from functools import lru_cache, wraps
 from pathlib import Path
 import hashlib
 import http.client
+import ipaddress
 import os
+import socket
 import ssl
 import tempfile
 import threading
 import time
 from io import BytesIO
 from urllib.error import HTTPError, URLError
-from urllib.request import HTTPRedirectHandler, Request, build_opener
-from urllib.parse import urlsplit
+from urllib.request import (HTTPRedirectHandler, Request, build_opener,
+                            getproxies, proxy_bypass)
+from urllib.parse import unquote, urljoin, urlsplit
 from math import isfinite
 
 from geostudio.wms_service import WMSBounds, WMSLayerInfo, capabilities_url, getmap_url, parse_capabilities
@@ -56,6 +60,7 @@ KIEG_PARCELS = "dzialki,numery_dzialek"
 PARCEL_LAYERS = (KIEG_PARCELS, "dzialki", "numery_dzialek")
 MAX_WMS_BYTES = 15_000_000
 REQUEST_TIMEOUT_SECONDS = 35.0
+MAX_REDIRECTS = 3
 
 
 class _RequestBudgetExpired(RuntimeError):
@@ -110,6 +115,36 @@ def _run_with_budget(budget, function, *args, **kwargs):
     # Thread-local contexts do not propagate into tile worker threads.
     with _request_budget(budget):
         return function(*args, **kwargs)
+
+
+def _parallel_tiles(function, items, *, max_workers):
+    """Return tiles in request order, failing as soon as any tile fails.
+
+    Waiting for executor shutdown after a failed tile used to consume the
+    whole preview budget before WMS/smaller-image fallback could even start.
+    Queued tiles are cancelled; active IO keeps its original shared deadline.
+    """
+    budget = _REQUEST_CONTEXT.budget
+    pool = ThreadPoolExecutor(max_workers=max_workers)
+    futures = {}
+    try:
+        for index, item in enumerate(items):
+            future = pool.submit(_run_with_budget, budget, function, item)
+            futures[future] = index
+        results = [None] * len(futures)
+        completed = as_completed(futures, timeout=budget.remaining())
+        for _ in futures:
+            try:
+                future = next(completed)
+            except TimeoutError as exc:
+                raise _RequestBudgetExpired(
+                    "Przekroczono czas pobierania kafelków podkładu.") from exc
+            # Read the result outside the iterator-timeout handler: a tile
+            # can raise its own timeout while fallback still has time left.
+            results[futures[future]] = future.result()
+        return results
+    finally:
+        pool.shutdown(wait=False, cancel_futures=True)
 
 
 _INFLIGHT = {}
@@ -215,8 +250,36 @@ def _connection(host: str, *, relaxed: bool = False) -> "http.client.HTTPSConnec
     conn = pool.get(key)
     if conn is None:
         strict, loose = _tls_contexts()
-        conn = http.client.HTTPSConnection(host, timeout=_timeout_for(host),
-                                           context=loose if relaxed else strict)
+        context = loose if relaxed else strict
+        proxy = getproxies().get("https")
+        if proxy and not proxy_bypass(host):
+            try:
+                route = urlsplit(proxy if "://" in proxy else "http://" + proxy)
+                if route.scheme.lower() != "http" or not route.hostname:
+                    raise ValueError("Unsupported proxy")
+                proxy_port = route.port or 80
+                tunnel_headers = {}
+                if route.username is not None:
+                    credentials = (unquote(route.username) + ":" +
+                                   unquote(route.password or "")).encode("utf-8")
+                    tunnel_headers["Proxy-Authorization"] = (
+                        "Basic " + b64encode(credentials).decode("ascii"))
+            except (TypeError, ValueError):
+                # Proxy URLs can contain credentials; never include them in
+                # the error shown by the map panel.
+                raise _TransportError(
+                    "Nieprawidłowa konfiguracja proxy HTTPS. "
+                    "Wymagane jest proxy HTTP obsługujące tunel CONNECT.") from None
+            conn = http.client.HTTPSConnection(
+                route.hostname, proxy_port, timeout=_timeout_for(host),
+                context=context)
+            # HTTPSConnection performs CONNECT first and then verifies TLS
+            # against the destination host, not the proxy's address. Proxy
+            # credentials are sent only with CONNECT, never to the WMS.
+            conn.set_tunnel(host, 443, headers=tunnel_headers)
+        else:
+            conn = http.client.HTTPSConnection(host, timeout=_timeout_for(host),
+                                               context=context)
         pool[key] = conn
     return conn
 
@@ -258,14 +321,47 @@ def validate_service_url(url: str) -> str:
         raise ValueError("Adres serwera WMS musi zaczynać się od https://")
     if not parsed.hostname:
         raise ValueError("Adres serwera WMS jest nieprawidłowy.")
-    if parsed.username or parsed.password:
+    if parsed.username is not None or parsed.password is not None:
         raise ValueError("Adres nie może zawierać loginu ani hasła.")
-    host = parsed.hostname.lower()
-    if host in _BLOCKED_HOSTS or host.startswith(_PRIVATE_PREFIXES):
-        raise ValueError("Adresy lokalne i prywatne nie są dozwolone.")
-    if host in {"::1", "[::1]"} or host.startswith("fd") or host.startswith("fe80"):
-        raise ValueError("Adresy lokalne i prywatne nie są dozwolone.")
-    return url.strip()
+    if parsed.port not in (None, 443):
+        raise ValueError("Dozwolony jest wyłącznie port 443.")
+    try:
+        host = parsed.hostname.rstrip(".").lower().encode("idna").decode("ascii")
+    except UnicodeError:
+        raise ValueError("Adres serwera WMS jest nieprawidłowy.") from None
+    if "%" in host or "\\" in host or any(ord(char) < 33 for char in host):
+        raise ValueError("Adres serwera WMS jest nieprawidłowy.")
+    try:
+        address = ipaddress.ip_address(host)
+    except ValueError:
+        try:
+            # inet_aton also recognizes abbreviated, integer and hexadecimal
+            # IPv4 spellings which must not bypass local-address checks.
+            socket.inet_aton(host)
+        except OSError:
+            if (host in _BLOCKED_HOSTS or host.startswith(_PRIVATE_PREFIXES) or
+                    host.endswith((".localhost", ".localhost.localdomain", ".localdomain", ".local")) or
+                    "." not in host):
+                raise ValueError("Adresy lokalne i prywatne nie są dozwolone.")
+            return url.strip()
+    else:
+        if address.is_global and not address.is_multicast and not address.is_reserved:
+            return url.strip()
+    raise ValueError("Adresy lokalne, prywatne i nieprawidłowe adresy IP nie są dozwolone.")
+
+
+def _redirect_url(current_url: str, location: str | None) -> str:
+    if not location or not location.strip():
+        raise ValueError("Serwer WMS zwrócił przekierowanie bez adresu celu.")
+    # KIEG delegates a county-sized request to that county's public WMS.
+    # Apply the same checks as for an explicitly configured service at every
+    # hop; never inherit credentials or allow an HTTPS-to-HTTP downgrade.
+    return validate_service_url(urljoin(current_url, location.strip()))
+
+
+class _RedirectResponse:
+    def __init__(self, location: str | None):
+        self.location = location
 
 
 class _GatewayError(RuntimeError):
@@ -311,6 +407,17 @@ def _read_response(reply, conn, host, budget, max_bytes):
 
 @_bounded_request
 def _download(url: str, max_bytes: int) -> bytes:
+    for redirects in range(MAX_REDIRECTS + 1):
+        response = _download_with_retries(url, max_bytes)
+        if isinstance(response, bytes):
+            return response
+        if redirects == MAX_REDIRECTS:
+            raise ValueError("Serwer WMS przekroczył limit przekierowań.")
+        url = _redirect_url(url, response.location)
+    raise ValueError("Serwer WMS przekroczył limit przekierowań.")
+
+
+def _download_with_retries(url: str, max_bytes: int) -> bytes | _RedirectResponse:
     parsed = urlsplit(url)
     if parsed.scheme != "https":
         raise ValueError("Adres usługi musi używać https://.")
@@ -320,7 +427,7 @@ def _download(url: str, max_bytes: int) -> bytes:
         pass
     else:
         validate_service_url(url)
-    if parsed.username or parsed.password:
+    if parsed.username is not None or parsed.password is not None:
         raise ValueError("Nieprawidłowy adres usługi.")
     host = parsed.hostname
     path = parsed.path + ("?" + parsed.query if parsed.query else "")
@@ -346,9 +453,22 @@ def _download(url: str, max_bytes: int) -> bytes:
             budget.remaining()
             if reply.status in (301, 302, 303, 307, 308):
                 _drop_connection(host, relaxed=relaxed)
-                raise ValueError("Usługa przekierowała na niezaufany adres.")
+                return _RedirectResponse(reply.getheader("Location"))
             if reply.status in (502, 503, 504):
                 raise _GatewayError("Geoportal zwrócił błąd " + str(reply.status))
+            if reply.status == 400:
+                # An OGC version/format exception is a usable negotiation
+                # response even when the server sends HTTP 400 instead of
+                # HTTP 200. Other HTTP failures must remain terminal.
+                try:
+                    error_body = _read_response(
+                        reply, conn, host, budget, min(max_bytes, 64_000))
+                except ValueError:
+                    _drop_connection(host, relaxed=relaxed)
+                    raise _TransportError("Serwer WMS zwrócił błąd 400.") from None
+                detail = _service_exception(error_body, allow_generic=False)
+                if detail is not None:
+                    raise ValueError(detail)
             if reply.status >= 400:
                 _drop_connection(host, relaxed=relaxed)
                 raise _TransportError("Serwer WMS zwrócił błąd " + str(reply.status) + ".")
@@ -584,19 +704,12 @@ def _custom_layers_for(service_url: str) -> tuple:
 @lru_cache(maxsize=16)
 def _layers_for_preset(preset: str) -> tuple:
     if preset == "kieg":
-        # The published GetMap example provides these layers in PL-1992,
-        # independently of availability of the capabilities catalogue.
-        defaults = tuple(WMSLayerInfo(key, title, ("EPSG:2180",)) for key, title in (
+        # This preset uses fixed official parcel layers in PL-1992, locally
+        # reprojected for PL-2000 views. The full county catalogue is not
+        # needed before listing these layers or requesting their image.
+        return tuple(WMSLayerInfo(key, title, ("EPSG:2180",)) for key, title in (
             (KIEG_PARCELS, "Granice i numery działek"),
             ("dzialki", "Granice działek"), ("numery_dzialek", "Numery działek")))
-        try:
-            catalogue = parse_capabilities(_download(capabilities_url(_preset(preset)), 4_000_000))
-        except _RequestBudgetExpired:
-            raise
-        except (RuntimeError, ValueError):
-            catalogue = ()
-        keys = {entry.name for entry in defaults}
-        return defaults + tuple(entry for entry in catalogue if entry.name not in keys)
     xml = _download(capabilities_url(_preset(preset)), 4_000_000)
     layers = parse_capabilities(xml)
     if not layers:
@@ -667,8 +780,8 @@ def _wmts_layers(preset: str) -> tuple:
     crs_sets = {entry.crs.upper() for entry in sets}
     if not any(f"EPSG:{epsg}" in crs_sets for epsg in SUPPORTED_EPSG):
         raise ValueError("Serwer WMTS nie obsługuje polskich układów EPSG.")
-    # Kafelki istnieją zwykle tylko dla EPSG:2180, ale dla pozostałych układów
-    # schodzimy na równoważny WMS — dlatego zgłaszamy wszystkie obsługiwane.
+    # Geoportal publikuje kafle w EPSG:2180. Dla map PL-2000 przeliczamy
+    # je lokalnie do układu widoku, bez zamiany wybranego WMTS na WMS.
     supported = tuple(sorted(f"EPSG:{epsg}" for epsg in SUPPORTED_EPSG))
     from ..wms_service import WMSLayerInfo
     published = _wmts_layer_info(preset)
@@ -713,7 +826,6 @@ def _wmts_image(preset: str, layer: str, epsg: int, bounds,
     """Składa obraz z kafelków WMTS i przycina do żądanego rozmiaru."""
     from ..wmts_service import (gettile_url, pick_matrix, tile_selection,
                                top_left_east_north)
-    from concurrent.futures import ThreadPoolExecutor
     from io import BytesIO
     from PIL import Image
 
@@ -726,13 +838,42 @@ def _wmts_image(preset: str, layer: str, epsg: int, bounds,
     matrix_set = next((entry for entry in sets
                        if entry.crs.upper() == wanted and
                        entry.identifier in published.matrix_sets), None)
-    if matrix_set is None:
-        raise ValueError("Serwer WMTS nie obsługuje wybranego układu EPSG.")
     if width <= 0 or height <= 0:
         raise ValueError("Nieprawidłowy rozmiar obrazu WMTS.")
     east_span = bounds.max_y - bounds.min_y
     north_span = bounds.max_x - bounds.min_x
     pixel_size = max(east_span / width, north_span / height)
+    source_bounds = bounds
+    transform = None
+    if matrix_set is None and epsg in SUPPORTED_EPSG:
+        matrix_set = next((entry for entry in sets
+                           if entry.crs.upper() == "EPSG:2180" and
+                           entry.identifier in published.matrix_sets), None)
+        if matrix_set is not None:
+            from math import hypot
+            from pyproj import Transformer
+            transform = Transformer.from_crs(wanted, matrix_set.crs, always_xy=True)
+            west, south, east, north = transform.transform_bounds(
+                bounds.min_y, bounds.min_x, bounds.max_y, bounds.max_x,
+                densify_pts=21, errcheck=True)
+            if (not all(isfinite(v) for v in (west, south, east, north)) or
+                    west >= east or south >= north):
+                raise ValueError("Nie można przeliczyć zasięgu mapy na układ WMTS.")
+            source_bounds = WMSBounds(south, west, north, east)
+            # A rotated source envelope is larger than the visible image.
+            # Measure actual screen-pixel steps to preserve the requested
+            # detail instead of choosing a coarser level from that envelope.
+            steps = []
+            for fx, fy in ((0, 0), (1, 0), (0, 1), (1, 1), (.5, .5)):
+                x = bounds.min_y + east_span * fx
+                y = bounds.min_x + north_span * fy
+                e0, n0 = transform.transform(x, y, errcheck=True)
+                ex, nx = transform.transform(x + east_span / width, y, errcheck=True)
+                ey, ny = transform.transform(x, y + north_span / height, errcheck=True)
+                steps.extend((hypot(ex-e0, nx-n0), hypot(ey-e0, ny-n0)))
+            pixel_size = max(steps)
+    if matrix_set is None:
+        raise ValueError("Serwer WMTS nie obsługuje wybranego układu EPSG.")
     matrix = pick_matrix(matrix_set, pixel_size)
     # Use a coarser WMTS level when necessary instead of abandoning the tile
     # cache for a slow WMS render. Width is easting; height is northing.
@@ -742,7 +883,8 @@ def _wmts_image(preset: str, layer: str, epsg: int, bounds,
         key=lambda entry: entry.resolution(matrix_set.crs))
     for candidate in candidates:
         col0, row0, col1, row1, _ = tile_selection(
-            candidate, bounds.min_x, bounds.min_y, bounds.max_x, bounds.max_y,
+            candidate, source_bounds.min_x, source_bounds.min_y,
+            source_bounds.max_x, source_bounds.max_y,
             crs=matrix_set.crs)
         if (col1 - col0 + 1) * (row1 - row0 + 1) <= 36:
             matrix = candidate
@@ -789,9 +931,7 @@ def _wmts_image(preset: str, layer: str, epsg: int, bounds,
         return _single_flight(("wmts-tile", key), load)
 
     budget = _REQUEST_CONTEXT.budget
-    with ThreadPoolExecutor(max_workers=2) as pool:
-        tiles = list(pool.map(lambda item: _run_with_budget(budget, fetch, *item),
-                              urls))
+    tiles = _parallel_tiles(lambda item: fetch(*item), urls, max_workers=4)
 
     res = matrix.resolution(matrix_set.crs)
     span_x = res * matrix.tile_width
@@ -808,12 +948,32 @@ def _wmts_image(preset: str, layer: str, epsg: int, bounds,
                           (row-row0)*matrix.tile_height))
     mosaic_east = origin_east + col0*span_x
     mosaic_north = origin_north - row0*span_y
-    extent = ((bounds.min_y-mosaic_east)/res,
-              (mosaic_north-bounds.max_x)/res,
-              (bounds.max_y-mosaic_east)/res,
-              (mosaic_north-bounds.min_x)/res)
-    out = mosaic.transform((width, height), Image.Transform.EXTENT, extent,
-                           Image.Resampling.BICUBIC)
+    if transform is None:
+        extent = ((bounds.min_y-mosaic_east)/res,
+                  (mosaic_north-bounds.max_x)/res,
+                  (bounds.max_y-mosaic_east)/res,
+                  (mosaic_north-bounds.min_x)/res)
+        out = mosaic.transform((width, height), Image.Transform.EXTENT, extent,
+                               Image.Resampling.BICUBIC)
+    else:
+        # Sample native tiles directly into the map CRS. Reprojecting an
+        # already resized JPEG would blur imagery and misalign its edges.
+        def source_pixel(x, y):
+            e, n = transform.transform(
+                bounds.min_y + x*east_span/width,
+                bounds.max_x - y*north_span/height, errcheck=True)
+            return ((e-mosaic_east)/res, (mosaic_north-n)/res)
+
+        mesh = []
+        for y in range(0, height, 64):
+            budget.remaining()
+            for x in range(0, width, 64):
+                x1, y1 = min(width, x+64), min(height, y+64)
+                quad = (source_pixel(x, y) + source_pixel(x, y1) +
+                        source_pixel(x1, y1) + source_pixel(x1, y))
+                mesh.append(((x, y, x1, y1), quad))
+        out = mosaic.transform((width, height), Image.Transform.MESH, mesh,
+                               Image.Resampling.BICUBIC)
     buffer = BytesIO()
     out.save(buffer, format="JPEG", quality=88, optimize=True)
     data = buffer.getvalue()
@@ -876,7 +1036,7 @@ def _is_image(content: bytes) -> bool:
             content.startswith(b"GIF8"))
 
 
-def _service_exception(content: bytes) -> str:
+def _service_exception(content: bytes, *, allow_generic: bool = True) -> str | None:
     """Wyciąga czytelny komunikat z ServiceExceptionReport WMS."""
     import re
     text = content[:2000].decode("utf-8", "replace")
@@ -889,7 +1049,9 @@ def _service_exception(content: bytes) -> str:
         message = re.sub(r"<[^>]+>", " ", match.group(1)).strip()
         if message:
             return "Geoportal: " + " ".join(message.split())[:200]
-    return "WMS zwrócił dane inne niż obraz (sprawdź warstwę i EPSG)."
+    if allow_generic:
+        return "WMS zwrócił dane inne niż obraz (sprawdź warstwę i EPSG)."
+    return None
 
 
 def _to_jpeg(raw: bytes) -> bytes:
@@ -1046,16 +1208,13 @@ def _fetch_orto_tiles(base, layer, crs, bounds, width, height,
         (WMSBounds(bounds.min_x, mid_y, mid_x, bounds.max_y), right_w, bottom_h),
         (WMSBounds(mid_x, mid_y, bounds.max_x, bounds.max_y), right_w, bottom_h),
     ]
-    from concurrent.futures import ThreadPoolExecutor
-    budget = _REQUEST_CONTEXT.budget
-    with ThreadPoolExecutor(max_workers=2) as pool:
-        futures = [pool.submit(_run_with_budget, budget, _fetch_once,
-                               base, layer, crs, part, part_w,
-                               part_h, version="1.1.1",
-                               image_format="image/png", transparent=True,
-                               time=time)
-                   for part, part_w, part_h in parts]
-        images = [future.result() for future in futures]
+    def fetch(part):
+        bounds_part, part_w, part_h = part
+        return _fetch_once(base, layer, crs, bounds_part, part_w, part_h,
+                           version="1.1.1", image_format="image/png",
+                           transparent=True, time=time)
+
+    images = _parallel_tiles(fetch, parts, max_workers=2)
     return _stitch(images, width, height, left_w, top_h,
                    preserve_alpha=preserve_alpha)
 
@@ -1125,9 +1284,8 @@ def _render_map(preset, base, layer, epsg, bounds, width, height,
     if parcel:
         content = _parcel_image(layer, epsg, bounds, width, height)
     elif preset in WMTS_PRESETS:
-        # WMTS ma kafelki tylko w układach, które opublikował serwer (zwykle
-        # EPSG:2180). Dla innych układów — albo gdy kafelki są puste — wracamy
-        # do równoważnego podkładu WMS, który obsługuje wszystkie polskie EPSG.
+        # WMTS is reprojected locally when the MAP uses PL-2000. Use the
+        # equivalent WMS only after an actual tile/source failure.
         fallback = "standard" if preset == "standard_wmts" else "high"
         try:
             content = _wmts_image(preset, layer, epsg, bounds, width, height)

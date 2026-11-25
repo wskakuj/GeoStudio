@@ -12,23 +12,29 @@ function section(start,end){
 }
 const client=section("  function underlayRequestDimensions(","  function paintUnderlay(){")+
   section("  function boundsFromViewport(","  function fitToMap()")+
-  section("  function removeUnderlay(","  function wmsLayersState(");
+  section("  function removeUnderlay(","  function wmsLayersState(")+
+  section("  function resizeCanvas()", "  function worldToScreen(")+
+  section("  function scheduleViewport(", "  // Stage 11:");
 
 function harness({autoDecode=true}={}){
-  const fetches=[],images=[],statuses=[],timers=new Map();
+  const fetches=[],images=[],statuses=[],timers=new Map(),clock={now:Date.now()};
   let timerId=0;
   const item={kind:"wms",id:"wms1",title:"Orto",visible:true,preset:"standard",
     layer:"Raster",epsg:2180,ticket:0,image:null,bounds:null,loading:false,error:""};
   const state={meta:{},edit:{documentToken:"map-A"},center:{x:500000,y:-400000},
-    width:1000,height:800,scale:1,pixelRatio:1};
+    width:1000,height:800,scale:1,pixelRatio:1,localMapReady:true};
   const underlay={enabled:true,loading:false,epsg:2180,ticket:0,activeId:item.id};
   const fields={
     "underlay-epsg":{value:"2180"},"underlay-preset":{value:"standard"},
     "underlay-layer":{selectedOptions:[{value:"Raster",textContent:"Orto",dataset:{epsg:"2180"}}]},
     "underlay-opacity":{value:"75"},"underlay-summary":{},
   };
-  const h={state,underlay,underlays:[item],underlaySerial:1,item,fetches,images,statuses,timers,
-    URLSearchParams,AbortController,Date,performance,token:"test",timePresets:new Set(),
+  const rect={width:1000,height:800};
+  const h={state,underlay,underlays:[item],underlaySerial:1,item,fields,fetches,images,statuses,timers,clock,rect,
+    URLSearchParams,AbortController,Date:class extends Date{static now(){return clock.now;}},
+    performance,token:"test",timePresets:new Set(),
+    window:{devicePixelRatio:1},shell:{getBoundingClientRect:()=>rect},
+    canvas:{width:1000,height:800},labelCanvas:{width:1000,height:800},
     $:id=>fields[id],currentWmsUrl:()=>"",inform(){},requestDraw(){},renderRasterLayers(){},
     updateUnderlayStatus:message=>statuses.push(message),
     setTimeout:(fn,ms)=>{const id=++timerId;timers.set(id,{fn,ms});return id;},
@@ -56,8 +62,109 @@ function harness({autoDecode=true}={}){
 }
 async function flush(){for(let n=0;n<20;n++)await Promise.resolve();}
 async function loaded(h){const work=h.refreshUnderlay();h.respond(0);await work;}
+function rasterLayerUI(h){
+  function element(){
+    return {children:[],listeners:{},value:"",setAttribute(){},
+      append(...children){this.children.push(...children);},
+      replaceChildren(...children){this.children=children;},
+      addEventListener(name,callback){this.listeners[name]=callback;}};
+  }
+  for(const id of ["trace-raster-choice","raster-layers-list","raster-layer-count"])
+    h.fields[id]=element();
+  h.document={createElement:element};h.Option=class{};
+  h.raster={layers:[]};h.rasterEntry=()=>null;h.rasterCanShow=()=>false;
+  h.underlayTitle=item=>item.title;
+  vm.runInContext(section("  function renderRasterLayers(){", "  function parseWorldFileText("),h);
+  return checked=>{
+    h.renderRasterLayers();
+    const checkbox=h.fields["raster-layers-list"].children[0].children[0].children[0];
+    checkbox.checked=checked;checkbox.listeners.change();
+  };
+}
 
 const scenarios={
+  async same_view_does_not_restart_debounce(){
+    const h=harness();h.scheduleUnderlayRefresh();
+    const scheduled=h.underlay.timer;
+    for(let n=0;n<20;n++)h.scheduleUnderlayRefresh();
+    assert.equal(h.underlay.timer,scheduled,"Redundant triggers must not postpone the same pending frame");
+    const request=h.fireTimer(380);h.respond(0);await request;
+    h.scheduleUnderlayRefresh();
+    assert.equal(h.timers.size,0);
+    assert.equal(h.fetches.length,1);
+  },
+  async unchanged_resize_does_not_schedule_fetch(){
+    const h=harness();
+    h.resizeCanvas();
+    assert.equal(h.timers.size,0,"A layout callback without a size change is not a new WMS view");
+    assert.equal(h.underlay.loading,false);
+    h.rect.width=1100;
+    assert.equal(h.resizeCanvas(),true);
+    const request=h.fireTimer(380);h.respond(0);await request;
+    h.resizeCanvas();
+    assert.equal(h.timers.size,0);
+    assert.equal(h.fetches.length,1);
+  },
+  async same_view_after_error_does_not_retry(){
+    const h=harness();h.scheduleUnderlayRefresh();
+    const request=h.fireTimer(380);
+    h.fetches[0].reject(new Error("Request failed"));await request;
+    const failure=h.item.error;
+    h.clock.now+=6000;
+    for(let n=0;n<10;n++)h.scheduleViewport();
+    assert.equal(h.timers.size,0,"Unchanged geometry refresh must not retry a failed WMS image");
+    assert.equal(h.fetches.length,1);
+    assert.equal(h.item.error,failure);
+    assert.equal(h.underlay.loading,false);
+  },
+  async client_timeout_finishes_loading_without_retry(){
+    const h=harness();h.scheduleUnderlayRefresh();
+    const request=h.fireTimer(380);
+    h.fireTimer(40000);await request;
+    assert.equal(h.fetches[0].aborted,true);
+    assert.equal(h.item.loading,false);
+    assert.equal(h.underlay.loading,false);
+    assert.equal(h.item.request,null);
+    assert.match(h.item.error,/40 s/);
+    assert.match(h.statuses.at(-1),/błąd/);
+    h.clock.now+=60000;h.scheduleViewport();
+    assert.equal(h.timers.size,0,"Timeout must not schedule an implicit retry");
+    assert.equal(h.fetches.length,1);
+  },
+  async client_timeout_during_decode_allows_manual_retry(){
+    const h=harness({autoDecode:false});h.scheduleUnderlayRefresh();
+    const request=h.fireTimer(380);h.respond(0);await flush();
+    assert.equal(h.images.length,1);
+    h.fireTimer(40000);await request;
+    assert.equal(h.item.image,null);
+    assert.equal(h.item.loading,false);
+    assert.equal(h.underlay.loading,false);
+    assert.match(h.item.error,/40 s/);
+    h.images[0].onload();await flush();
+    assert.equal(h.item.image,null,"A decode completing after the deadline cannot publish an image");
+    h.applyUnderlayUnsafe();
+    const retry=h.fireTimer(0);h.respond(1);await flush();
+    h.images[1].onload();await retry;
+    assert.equal(h.item.image,h.images[1]);
+    assert.equal(h.item.error,"");
+    assert.equal(h.timers.size,0);
+  },
+  async show_after_timeout_bypasses_cooldown(){
+    const h=harness(),setVisible=rasterLayerUI(h);
+    h.scheduleUnderlayRefresh();const request=h.fireTimer(380);
+    h.fireTimer(40000);await request;
+    assert.ok(h.item.retryAfter>h.clock.now);
+    setVisible(false);setVisible(true);
+    assert.equal(h.item.retryAfter,0,"Showing a failed layer is an explicit retry");
+    assert.equal(h.item.error,"");
+    const retry=h.fireTimer(0);
+    assert.equal(h.fetches.length,2,"The visibility checkbox must retry before cooldown expires");
+    h.respond(1);await retry;
+    assert.ok(h.item.image);
+    assert.equal(h.item.loading,false);
+    assert.equal(h.underlay.loading,false);
+    assert.equal(h.timers.size,0);
+  },
   async hidpi_zoom_cancels_obsolete_image(){
     const h=harness();
     h.state.width=400;h.state.height=300;h.state.pixelRatio=2;
@@ -138,7 +245,8 @@ const scenarios={
     assert.equal(h.underlay.loading,true,"Old finally must not finish the new batch");
     assert.equal(h.item.loading,true);
     assert.equal(h.statuses.length,0);
-    assert.equal(h.timers.size,0,"No prefetch may interrupt the current image");
+    assert.deepEqual([...h.timers.values()].map(timer=>timer.ms),[40000],
+      "Only the current request deadline may remain; no prefetch or stale deadline");
     h.respond(1);await second;
     assert.ok(h.item.image);
     assert.equal(h.underlay.loading,false);

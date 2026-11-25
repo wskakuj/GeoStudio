@@ -2531,7 +2531,8 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
       button.classList.toggle("is-error",state==="error");
       button.classList.toggle("is-busy",state==="busy");
       button.textContent=state==="ok"?"Warstwy pobrane":
-        state==="error"?"Nie udało się pobrać":"Pobieranie…";
+        state==="error"?"Nie udało się pobrać":
+        state==="busy"?"Pobieranie…":"Pobierz warstwy";
     }
     if(summary){
       summary.classList.toggle("is-ok",state==="ok");
@@ -2539,20 +2540,42 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
       summary.textContent=text;
     }
   }
+  let underlayLayersGeneration=0,underlayLayersAbort=null;
   async function loadUnderlayLayers(){
+    const generation=++underlayLayersGeneration;
+    if(underlayLayersAbort)underlayLayersAbort.abort();
+    underlayLayersAbort=null;
     const preset=$("underlay-preset").value;
-    if(preset==="custom"&&!/^https:\/\/[^\s]+\.[^\s]+/.test(currentWmsUrl())){
+    const serviceUrl=preset==="custom"?currentWmsUrl():"";
+    const options=$("underlay-layer");
+    if(preset==="custom"&&!/^https:\/\/[^\s]+\.[^\s]+/.test(serviceUrl)){
+      options.replaceChildren(new Option("Podaj poprawny adres WMS",""));
       wmsLayersState("error","Podaj adres własnego serwera WMS (https://…).");
       return;
     }
-    const options=$("underlay-layer");
-    options.replaceChildren(new Option("Wczytywanie warstw Geoportalu…",""));
+    const controller=new AbortController();underlayLayersAbort=controller;
+    const isCurrent=()=>generation===underlayLayersGeneration&&
+      $("underlay-preset").value===preset&&
+      (preset!=="custom"||currentWmsUrl()===serviceUrl);
+    let timeout=null,abortListener=null;
+    options.replaceChildren(new Option("Wczytywanie warstw WMS…",""));
     wmsLayersState("busy","Pobieranie listy warstw WMS…");
     try{
       const params=new URLSearchParams({preset});
-      if(preset==="custom")params.set("url",currentWmsUrl());
-      const response=await api("/api/underlay/wms/layers?"+params);
-      if($("underlay-preset").value!==preset)return;
+      if(preset==="custom")params.set("url",serviceUrl);
+      // Bound queueing, HTTP and JSON decoding, and settle superseded calls
+      // even when their response body was already received before cancellation.
+      const deadline=new Promise((_,reject)=>{
+        abortListener=()=>reject(Object.assign(Error("Anulowano pobieranie warstw."),{name:"AbortError"}));
+        controller.signal.addEventListener("abort",abortListener,{once:true});
+        timeout=setTimeout(()=>{
+          reject(Error("Nie udało się pobrać listy warstw w 40 s. Kliknij Pobierz warstwy, aby ponowić."));
+          controller.abort();
+        },40000);
+      });
+      const response=await Promise.race([
+        api("/api/underlay/wms/layers?"+params,{signal:controller.signal}),deadline]);
+      if(!isCurrent())return;
       options.replaceChildren();
       for(const entry of response.layers){
         const choice=new Option(entry.title+" ("+entry.id+")",entry.id);
@@ -2563,10 +2586,22 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
       wmsLayersState("ok","Pobrano "+options.options.length+" warstw. "+
         "Wybierz rzeczywisty EPSG otwartej MAP, a następnie włącz podkład.");
     }catch(error){
-      if($("underlay-preset").value!==preset)return;
+      if(!isCurrent())return;
       options.replaceChildren(new Option("Nie udało się pobrać warstw",""));
       wmsLayersState("error",error.message);
       inform("Błąd WMS: "+error.message,true);
+    }finally{
+      clearTimeout(timeout);
+      if(abortListener)controller.signal.removeEventListener("abort",abortListener);
+      if(generation===underlayLayersGeneration){
+        underlayLayersAbort=null;
+        // The custom address can be edited without starting another request.
+        // Ignore the old source but do not leave its button permanently busy.
+        if(!isCurrent()){
+          options.replaceChildren(new Option("Pobierz warstwy nowego źródła",""));
+          wmsLayersState("idle","Zmieniono źródło WMS. Pobierz warstwy ponownie.");
+        }
+      }
     }
   }
   async function readUnderlayPrj(file){
@@ -2800,6 +2835,11 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
   }
   function scheduleUnderlayRefresh(immediate=false){
     if(!state.meta||!underlays.some(item=>item.visible))return;
+    const viewKey=underlayViewKey();
+    // Resize/geometry notifications for the same view must not restart the
+    // debounce or silently retry a failed image. Explicit actions can retry.
+    if(!immediate&&viewKey===underlay.viewKey)return;
+    underlay.viewKey=viewKey;
     underlay.enabled=true;
     // Invalidate the old batch's status, but let a useful pending image finish.
     // The per-layer request is replaced only when it no longer covers the view.
@@ -2809,9 +2849,11 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
     underlay.timer=setTimeout(refreshUnderlay,immediate?0:380);
   }
   async function refreshUnderlay(){
+    underlay.timer=null;
     if(!state.meta){underlay.loading=false;return;}
     const targets=underlays.filter(item=>item.visible);
     if(!targets.length){underlay.loading=false;return;}
+    underlay.viewKey=underlayViewKey();
     const ticket=++underlay.ticket;
     underlay.loading=true;
     // Keep a small border around the visible view for subsequent short pans.
@@ -2839,6 +2881,12 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
             :"Pobieranie obrazu dla EPSG:"+underlay.epsg+"…");
       }
     }
+  }
+  function underlayViewKey(){
+    return JSON.stringify([state.edit?.documentToken,state.center.x,state.center.y,
+      state.scale,state.width,state.height,state.pixelRatio,
+      underlays.filter(item=>item.visible).map(item=>[
+        item.id,item.preset,item.layer,item.epsg,item.url||"",item.time||""])]);
   }
   // Pixel density belongs to the requested padded image, not the visible view.
   function underlayDensity(bounds,size){
@@ -2899,38 +2947,33 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
     if(item.time)params.set("time",item.time);
     item.loading=true;item.error="";
     renderRasterLayers();
+    let timeout=null,timedOut=false;
     request.promise=(async()=>{
       try{
-        const response=await documentFetch("/api/underlay/wms/map?"+params,{
-          headers:{"X-GeoStudio-Token":token},cache:"no-store",signal:controller.signal
+        // This includes time spent waiting for the local handler and image
+        // decoding; the server's upstream budget starts later, inside its job.
+        const deadline=new Promise((_,reject)=>{
+          timeout=setTimeout(()=>{
+            timedOut=true;
+            reject(Error("Nie udało się pobrać podkładu w 40 s. Włącz podkład ponownie, aby ponowić."));
+            controller.abort();
+          },40000);
         });
-        if(!response.ok){
-          const err=await response.json().catch(()=>({}));
-          throw Error(err.detail||"Geoportal nie zwrócił obrazu.");
-        }
-        const blob=await response.blob();
-        const url=URL.createObjectURL(blob);
-        let image;
-        try{
-          image=await new Promise((resolve,reject)=>{
-            const bitmap=new Image();
-            bitmap.onload=()=>resolve(bitmap);
-            bitmap.onerror=()=>reject(Error("Nie można odczytać obrazu Geoportalu."));
-            bitmap.src=url;
-          });
-        }finally{URL.revokeObjectURL(url);}
+        const image=await Promise.race([
+          loadUnderlayImage(params,controller.signal),deadline]);
         if(!item.visible||id!==item.ticket||
            documentToken!==state.edit?.documentToken)return;
         item.image=image;item.bounds=bounds;item.error="";item.retryAfter=0;
         item.density=underlayDensity(bounds,size);
         requestDraw();
       }catch(error){
-        if(error.name==="AbortError"||id!==item.ticket||
+        if((error.name==="AbortError"&&!timedOut)||id!==item.ticket||
            documentToken!==state.edit?.documentToken)return;
         item.error=error.message||"Błąd pobierania";
         item.retryAfter=Date.now()+5000;   // karencja: nie ponawiaj co ruch mapy
         inform("Podkład "+item.title+": "+error.message,true);
       }finally{
+        clearTimeout(timeout);
         if(id===item.ticket){
           item.loading=false;item.abort=null;item.request=null;
           renderRasterLayers();
@@ -2938,6 +2981,31 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
       }
     })();
     return request.promise;
+  }
+  async function loadUnderlayImage(params,signal){
+    const response=await documentFetch("/api/underlay/wms/map?"+params,{
+      headers:{"X-GeoStudio-Token":token},cache:"no-store",signal
+    });
+    if(!response.ok){
+      const err=await response.json().catch(()=>({}));
+      throw Error(err.detail||"Geoportal nie zwrócił obrazu.");
+    }
+    const blob=await response.blob();
+    return new Promise((resolve,reject)=>{
+      const bitmap=new Image(),url=URL.createObjectURL(blob);
+      let settled=false;
+      const finish=error=>{
+        if(settled)return;
+        settled=true;signal.removeEventListener("abort",abort);
+        URL.revokeObjectURL(url);
+        if(error)reject(error);else resolve(bitmap);
+      };
+      const abort=()=>finish(Object.assign(Error("Anulowano pobieranie."),{name:"AbortError"}));
+      bitmap.onload=()=>finish();
+      bitmap.onerror=()=>finish(Error("Nie można odczytać obrazu Geoportalu."));
+      signal.addEventListener("abort",abort,{once:true});
+      if(signal.aborted)abort();else bitmap.src=url;
+    });
   }
   function applyUnderlay(){
     try{applyUnderlayUnsafe();}
@@ -3217,6 +3285,7 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
           if(target){
             target.visible=checkbox.checked;
             if(target.visible){
+              target.retryAfter=0;target.error="";
               underlay.activeId=target.id;
               scheduleUnderlayRefresh(true);
             }else{
@@ -3849,10 +3918,14 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
   }
   function resizeCanvas() {
     const rect = shell.getBoundingClientRect();
-    state.width = Math.max(1, rect.width); state.height = Math.max(1, rect.height);
-    state.pixelRatio = Math.min(2, window.devicePixelRatio || 1);
-    const w = Math.round(state.width * state.pixelRatio);
-    const h = Math.round(state.height * state.pixelRatio);
+    if(rect.width<=0||rect.height<=0)return false;
+    const width=rect.width,height=rect.height;
+    const pixelRatio=Math.min(2,window.devicePixelRatio||1);
+    const w=Math.round(width*pixelRatio),h=Math.round(height*pixelRatio);
+    if(state.width===width&&state.height===height&&state.pixelRatio===pixelRatio&&
+       canvas.width===w&&canvas.height===h&&labelCanvas.width===w&&labelCanvas.height===h)
+      return false;
+    state.width=width;state.height=height;state.pixelRatio=pixelRatio;
     if (canvas.width !== w || canvas.height !== h ||
         labelCanvas.width !== w || labelCanvas.height !== h) {
       canvas.width=w;canvas.height=h;
@@ -3862,6 +3935,7 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
     }
     requestDraw();
     scheduleUnderlayRefresh();
+    return true;
   }
   function worldToScreen(x,y) {
     return {x:(x-state.center.x)*state.scale + state.width/2,
@@ -8196,7 +8270,7 @@ inform("Klikaj mapę, aby wstawiać kolejne oznaczenia. Naciśnij Esc lub wybier
       ev.preventDefault();ev.returnValue="";
     }
   });
-  new ResizeObserver(()=>{resizeCanvas();if(state.meta)scheduleViewport();}).observe(shell);
+  new ResizeObserver(()=>{if(resizeCanvas()&&state.meta)scheduleViewport();}).observe(shell);
   new ResizeObserver(()=>{if(gcpView.open)drawGcpCanvas();})
     .observe($("raster-gcp-canvas"));
   restoreAppearance();
