@@ -123,7 +123,9 @@ def test_kieg_classic_source_preset_is_explicitly_allowlisted(stubbed_wms):
     # The KIEG preset pins the parcel layers and numbers instead of trusting
     # whatever the capabilities document lists first.
     assert data["layers"][0]["id"]==underlay_wms.KIEG_PARCELS
-    url=stubbed_wms[-1][0]
+    # Fixed parcel layers no longer depend on downloading the county catalogue.
+    assert stubbed_wms == []
+    url=underlay_wms._preset("kieg")
     assert urlsplit(url).hostname=="integracja.gugik.gov.pl"
     assert "/cgi-bin/KrajowaIntegracjaEwidencjiGruntow" in url
     assert "kieg" in underlay_wms.PRESETS

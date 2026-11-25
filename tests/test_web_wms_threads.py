@@ -66,6 +66,7 @@ def _reset():
 
 
 def test_each_thread_gets_its_own_connection(monkeypatch):
+    monkeypatch.setattr(underlay_wms, "getproxies", lambda: {})
     monkeypatch.setattr(underlay_wms.http.client, "HTTPSConnection", FakeConnection)
     _reset()
     url = ("https://mapy.geoportal.gov.pl/wss/service/PZGIK/ORTO/WMS/"
@@ -97,6 +98,7 @@ def test_each_thread_gets_its_own_connection(monkeypatch):
 
 def test_parallel_tiles_do_not_share_a_connection(monkeypatch):
     """Ścieżka kafelkowa: 4 żądania, 2 wątki, zero współdzielonych połączeń."""
+    monkeypatch.setattr(underlay_wms, "getproxies", lambda: {})
     monkeypatch.setattr(underlay_wms.http.client, "HTTPSConnection", FakeConnection)
     _reset()
     base = "https://mapy.geoportal.gov.pl/wss/service/PZGIK/ORTO/WMS/HighResolution"

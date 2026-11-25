@@ -45,6 +45,7 @@ def test_cache_is_bounded(monkeypatch):
 
 def test_download_reuses_connection(monkeypatch):
     """Keep-alive: drugie żądanie nie tworzy nowego połączenia."""
+    monkeypatch.setattr(underlay_wms, "getproxies", lambda: {})
     created = []
 
     class FakeResponse:

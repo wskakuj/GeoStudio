@@ -77,4 +77,5 @@ def test_ui_exposes_custom_server_option():
     assert '<option value="custom">Własny serwer WMS…</option>' in HTML
     assert 'id="underlay-url" type="text"' in HTML
     assert "function currentWmsUrl()" in JS
-    assert 'params.set("url",currentWmsUrl());' in JS
+    # URL forwarding and stale-source protection execute the production handler
+    # in test_web_wms_layers_lifecycle: layers_latest_custom_url_wins.
