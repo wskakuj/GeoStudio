@@ -20,6 +20,7 @@ function harness(){
     "underlay-preset":{value:"custom"},
     "underlay-url":{value:"https://first.example.test/wms"},
     "underlay-layers":{classList:classes(),textContent:""},
+    "underlay-show":{disabled:false},
     "underlay-summary":{classList:classes(),textContent:""},
     "underlay-layer":{options:[],replaceChildren(...options){this.options=options;},
       add(option){this.options.push(option);}},
@@ -94,6 +95,26 @@ const scenarios={
     h.requests[0].finishJSON("Old response");await first;
     assert.equal(h.fields["underlay-layer"].options[0].value,"New response");
     assert.equal(h.requests[0].aborted,true);
+    assert.equal(h.timers.size,0);
+  },
+  async layers_filter_clears_selection_and_cancels_request(){
+    const h=harness(),first=h.loadUnderlayLayers();
+    h.deferJSON(0);await flush();
+    h.fields["underlay-preset"].value="";
+    await h.loadUnderlayLayers();
+    assert.equal(h.requests.length,1,"Filtering must not request an empty preset");
+    assert.equal(h.requests[0].aborted,true);
+    assert.equal(h.fields["underlay-layer"].options[0].value,"");
+    assert.equal(h.fields["underlay-show"].disabled,true);
+    assert.equal(h.fields["underlay-layers"].disabled,true);
+    h.requests[0].finishJSON("Obsolete");await first;
+    assert.equal(h.fields["underlay-layer"].options[0].value,"");
+    h.fields["underlay-preset"].value="bdl_basic";
+    const next=h.loadUnderlayLayers();
+    assert.equal(h.fields["underlay-layers"].disabled,false);
+    h.reply(1,"Forest");await next;
+    assert.equal(h.fields["underlay-layer"].options[0].value,"Forest");
+    assert.equal(h.fields["underlay-show"].disabled,false);
     assert.equal(h.timers.size,0);
   },
   async layers_changed_url_without_retry_is_idle(){
