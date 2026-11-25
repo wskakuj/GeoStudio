@@ -185,7 +185,10 @@ class WMSDialog(QDialog):
         opacity_row.addWidget(QLabel("Krycie podkładu"))
         self.opacity = QSlider(Qt.Orientation.Horizontal)
         self.opacity.setRange(0, 100)
-        self.opacity.setValue(70)
+        # Restoring the saved source happens before the slider exists, so
+        # _server_changed cannot initialize KIEG opacity during construction.
+        initial_source = self.server_selector.currentData() or ""
+        self.opacity.setValue(100 if "KrajowaIntegracjaEwidencjiGruntow" in initial_source else 70)
         self.opacity.valueChanged.connect(self._opacity_changed)
         opacity_row.addWidget(self.opacity, 1)
         root.addLayout(opacity_row)

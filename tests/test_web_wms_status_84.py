@@ -8,10 +8,8 @@ from geostudio.web_app import underlay_wms
 JS = Path("geostudio/web_app/static/map.js").read_text(encoding="utf-8")
 
 
-def test_abort_clears_the_loading_flag():
-    start = JS.index('if(error.name==="AbortError"||id!==item.ticket){')
-    block = JS[start:start + 320]
-    assert "if(id===item.ticket)item.loading=false;" in block
+# Aborted requests and stale generations are exercised by the actual JS
+# in test_web_wms_request_lifecycle.py instead of checking source strings.
 
 
 def test_panel_refreshes_when_loading_starts():

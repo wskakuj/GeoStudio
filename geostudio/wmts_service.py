@@ -11,6 +11,7 @@ from __future__ import annotations
 import math
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass
+from functools import lru_cache
 
 # Domyślna rozdzielczość kafelka WMTS (Geoportal używa 512).
 DEFAULT_TILE = 512
@@ -30,9 +31,10 @@ class TileMatrix:
     matrix_width: int
     matrix_height: int
 
-    def resolution(self) -> float:
-        """Rozmiar piksela w metrach (0,28 mm na jednostkę skali)."""
-        return self.scale_denominator * 0.00028
+    def resolution(self, crs: str | None = None) -> float:
+        """Rozmiar piksela w jednostkach CRS (domyślnie w metrach)."""
+        metres_per_unit = _crs_axes(crs)[1] if crs else 1.0
+        return self.scale_denominator * 0.00028 / metres_per_unit
 
 
 @dataclass(frozen=True)
@@ -158,133 +160,123 @@ def parse_capabilities(xml: bytes) -> tuple[TileMatrixSet, ...]:
 
 
 def pick_matrix(matrix_set: TileMatrixSet, pixel_size: float) -> TileMatrix:
-    """Poziom, którego piksel jest najbliższy żądanemu (nie gorszy niż 2x)."""
+    """Poziom najbliższy rozdzielczości ekranu w jednostkach CRS."""
+    if not math.isfinite(pixel_size) or pixel_size <= 0:
+        raise ValueError("Nieprawidłowa rozdzielczość widoku WMTS.")
     best = None
     for matrix in matrix_set.matrices:
-        if matrix.resolution() <= 0:
+        resolution = matrix.resolution(matrix_set.crs)
+        if not math.isfinite(resolution) or resolution <= 0:
             continue
-        if best is None or abs(matrix.resolution() - pixel_size) < abs(
-                best.resolution() - pixel_size):
+        if best is None or abs(resolution - pixel_size) < abs(
+                best.resolution(matrix_set.crs) - pixel_size):
             best = matrix
     if best is None:
         raise ValueError("Zestaw matryc WMTS nie zawiera prawidłowych poziomów.")
     return best
 
 
-def _range_for(matrix: TileMatrix, x0: float, y0: float, x1: float, y1: float,
-               *, swapped: bool) -> tuple[int, int, int, int]:
-    """Zakres kafelków dla jednej konwencji osi TopLeftCorner.
+@lru_cache(maxsize=32)
+def _crs_axes(crs: str) -> tuple[bool, float]:
+    """Czy CRS ma kolejność E,N oraz ile metrów ma jednostka współrzędnych."""
+    from pyproj import CRS
+    try:
+        definition = CRS.from_user_input(crs)
+        axes = definition.axis_info
+    except Exception as exc:
+        raise ValueError("Nie można odczytać osi układu WMTS.") from exc
+    directions = tuple(axis.direction.lower() for axis in axes[:2])
+    if directions not in {("north", "east"), ("east", "north")}:
+        raise ValueError("Nieobsługiwane kierunki osi układu WMTS.")
+    factors = tuple(axis.unit_conversion_factor for axis in axes[:2])
+    if (not all(math.isfinite(f) and f > 0 for f in factors)
+            or not math.isclose(factors[0], factors[1])):
+        raise ValueError("Nieobsługiwane jednostki układu WMTS.")
+    # OGC: dla kątów używamy długości łuku na równiku elipsoidy.
+    metres_per_unit = factors[0]
+    if definition.is_geographic:
+        metres_per_unit *= definition.ellipsoid.semi_major_metre
+    return directions[0] == "east", metres_per_unit
 
-    x = północ, y = wschód (układ GEO-MAP). `swapped` mówi, jak zapisano
-    TopLeftCorner w Capabilities:
-      * False: (północ, wschód) — kolumna biegnie po północy,
-      * True:  (wschód, północ) — kolumna biegnie po wschodzie.
-    W obu przypadkach wiersz rośnie w stronę MALEJĄCEJ drugiej osi.
+
+def top_left_east_north(matrix: TileMatrix,
+                        crs: str = "EPSG:2180") -> tuple[float, float]:
+    """Normalizuje TopLeftCorner zapisany w kolejności osi SupportedCRS.
+
+    Kolejność współrzędnych narożnika nie zmienia kierunków kafelkowania:
+    kolumny rosną na wschód, a wiersze na południe. EPSG:2180 zapisuje
+    narożnik jako (północ, wschód), np. (850000, 100000).
     """
-    res = matrix.resolution()
     first, second = matrix.top_left
-    span_x = res * matrix.tile_width
-    span_y = res * matrix.tile_height
-    if swapped:
-        # Kolumna po wschodzie (y), wiersz po malejącej północy (x).
-        col0 = math.floor((y0 - first) / span_x)
-        col1 = math.floor((y1 - first) / span_x)
-        row0 = math.floor((second - x1) / span_y)
-        row1 = math.floor((second - x0) / span_y)
-    else:
-        # Kolumna po północy (x), wiersz po malejącym wschodzie (y).
-        col0 = math.floor((x0 - first) / span_x)
-        col1 = math.floor((x1 - first) / span_x)
-        row0 = math.floor((second - y1) / span_y)
-        row1 = math.floor((second - y0) / span_y)
-    return col0, row0, col1, row1
-
-
-def _range_for_mirror(matrix: TileMatrix, x0: float, y0: float,
-                      x1: float, y1: float, *, swapped: bool):
-    """Wariant „odbity”: TopLeftCorner podaje MINIMUM osi, a nie maksimum.
-
-    Niektóre usługi WMTS zapisują w TopLeftCorner (północ_min, wschód_min)
-    albo (wschód_min, północ_min). Wtedy oba podstawowe warianty dają ujemne
-    indeksy, kod przycinał je do kafelka (0, 0) i wracał czarny obraz.
-    """
-    res = matrix.resolution()
-    first, second = matrix.top_left
-    span_x = res * matrix.tile_width
-    span_y = res * matrix.tile_height
-    if swapped:
-        col0 = math.floor((y0 - first) / span_x)
-        col1 = math.floor((y1 - first) / span_x)
-        row0 = math.floor((x0 - second) / span_y)
-        row1 = math.floor((x1 - second) / span_y)
-    else:
-        col0 = math.floor((x0 - first) / span_x)
-        col1 = math.floor((x1 - first) / span_x)
-        row0 = math.floor((y0 - second) / span_y)
-        row1 = math.floor((y1 - second) / span_y)
-    return col0, row0, col1, row1
-
-
-def _range_valid(matrix: TileMatrix, box: tuple[int, int, int, int]) -> bool:
-    col0, row0, col1, row1 = box
-    return (0 <= col0 <= col1 < matrix.matrix_width and
-            0 <= row0 <= row1 < matrix.matrix_height)
+    if not all(math.isfinite(v) for v in (first, second)):
+        raise ValueError("Nieprawidłowy narożnik matrycy WMTS.")
+    east_first, _ = _crs_axes(crs)
+    return (first, second) if east_first else (second, first)
 
 
 def tile_selection(matrix: TileMatrix, min_x: float, min_y: float,
-                   max_x: float, max_y: float):
-    """(col0, row0, col1, row1, swapped) — zakres i wykryta konwencja osi."""
-    candidates = []
-    # Cztery konwencje: (północ, wschód) i (wschód, północ), każda w wariancie
-    # „TopLeftCorner = maksimum” oraz „= minimum”. Wybieramy pierwszą, która
-    # mieści się w macierzy — zamiast przycinać ujemne indeksy do (0, 0).
-    for swapped in (False, True):
-        box = _range_for(matrix, min_x, min_y, max_x, max_y, swapped=swapped)
-        if _range_valid(matrix, box):
-            candidates.append((*box, swapped))
-    if candidates:
-        return candidates[0]
-    for swapped in (False, True):
-        box = _range_for_mirror(matrix, min_x, min_y, max_x, max_y,
-                                swapped=swapped)
-        if _range_valid(matrix, box):
-            return (*box, swapped)
-    box = _range_for(matrix, min_x, min_y, max_x, max_y, swapped=False)
-    col0, row0, col1, row1 = box
-    col0 = max(0, min(col0, matrix.matrix_width - 1))
-    row0 = max(0, min(row0, matrix.matrix_height - 1))
-    col1 = max(col0, min(col1, matrix.matrix_width - 1))
-    row1 = max(row0, min(row1, matrix.matrix_height - 1))
-    return col0, row0, col1, row1, False
+                   max_x: float, max_y: float, *, crs: str = "EPSG:2180"):
+    """Kafelki przecinające kadr GEO-MAP (X=północ, Y=wschód).
+
+    Zwraca (col0, row0, col1, row1, swapped). Ostatnia wartość zachowuje
+    kształt dotychczasowego API i oznacza tylko zapis narożnika E,N.
+    Składanie obrazu powinno używać top_left_east_north(), bez zgadywania
+    kierunków na podstawie tej flagi. Brak przecięcia nie wybiera kafla 0,0.
+    """
+    values = (min_x, min_y, max_x, max_y)
+    if (not all(math.isfinite(v) for v in values)
+            or min_x >= max_x or min_y >= max_y):
+        raise ValueError("Nieprawidłowy zasięg obrazu WMTS.")
+    res = matrix.resolution(crs)
+    if (not math.isfinite(res) or res <= 0
+            or min(matrix.tile_width, matrix.tile_height,
+                   matrix.matrix_width, matrix.matrix_height) <= 0):
+        raise ValueError("Nieprawidłowa matryca kafelków WMTS.")
+    east, north = top_left_east_north(matrix, crs)
+    span_east = res * matrix.tile_width
+    span_north = res * matrix.tile_height
+
+    def boundary(value):
+        # Odejmowanie dużych współrzędnych może przesunąć dokładną granicę
+        # o ułamek błędu float (np. 0.99999999999998 zamiast 1).
+        nearest = round(value)
+        return nearest if abs(value - nearest) <= 1e-9 else value
+
+    # Dolna/prawa granica jest wyłączna: styk krawędzi nie wymaga kafelka
+    # z sąsiedniej kolumny lub wiersza.
+    col0 = max(0, math.floor(boundary((min_y - east) / span_east)))
+    col1 = min(matrix.matrix_width - 1,
+               math.ceil(boundary((max_y - east) / span_east)) - 1)
+    row0 = max(0, math.floor(boundary((north - max_x) / span_north)))
+    row1 = min(matrix.matrix_height - 1,
+               math.ceil(boundary((north - min_x) / span_north)) - 1)
+    if col0 > col1 or row0 > row1:
+        raise ValueError("Obszar widoku znajduje się poza zasięgiem matrycy WMTS.")
+    east_first, _ = _crs_axes(crs)
+    return col0, row0, col1, row1, east_first
 
 
 def tile_range(matrix: TileMatrix, min_x: float, min_y: float,
-               max_x: float, max_y: float) -> tuple[int, int, int, int]:
-    """Zakres kolumn i wierszy kafelków pokrywających obszar.
-
-    Kolejność osi w TopLeftCorner bywa różna (północ-wschód albo
-    wschód-północ), więc sprawdzamy obie konwencje i wybieramy tę, która
-    mieści się w macierzy. Inaczej serwer odpowiada „Row is out of range”.
-    """
+               max_x: float, max_y: float, *,
+               crs: str = "EPSG:2180") -> tuple[int, int, int, int]:
+    """Zakres kolumn i wierszy przecinających obszar (X=północ, Y=wschód)."""
     col0, row0, col1, row1, _ = tile_selection(matrix, min_x, min_y,
-                                               max_x, max_y)
+                                               max_x, max_y, crs=crs)
     return col0, row0, col1, row1
 
 
 def mosaic_origin(matrix: TileMatrix, col0: int, row0: int,
-                  swapped: bool) -> tuple[float, float]:
-    """Lewy górny narożnik mozaiki jako (oś kolumn, oś wierszy).
+                  swapped: bool | None = None, *,
+                  crs: str = "EPSG:2180") -> tuple[float, float]:
+    """Lewy górny narożnik mozaiki w kolejności (wschód, północ).
 
-    Oś kolumn to północ, oś wierszy to wschód — niezależnie od tego, w jakiej
-    kolejności serwer podał TopLeftCorner.
+    Argument swapped pozostaje dla zgodności wywołań; kolejność narożnika
+    określa wyłącznie SupportedCRS, a nie heurystyka ani kierunek indeksów.
     """
-    res = matrix.resolution()
-    first, second = matrix.top_left
-    span_x = res * matrix.tile_width
-    span_y = res * matrix.tile_height
-    if swapped:
-        return (second + col0 * span_x, first - row0 * span_y)
-    return (first + col0 * span_x, second - row0 * span_y)
+    east, north = top_left_east_north(matrix, crs)
+    res = matrix.resolution(crs)
+    return (east + col0 * res * matrix.tile_width,
+            north - row0 * res * matrix.tile_height)
 
 
 def gettile_url(base_url: str, layer: str, matrix_set: str, matrix: str,

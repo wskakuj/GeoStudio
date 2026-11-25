@@ -2499,8 +2499,7 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
     // Bez id: czyścimy cały stos. Z id: tylko wskazany podkład.
     const targets=id?underlays.filter(item=>item.id===id):[...underlays];
     for(const item of targets){
-      item.ticket++;clearTimeout(item.timer);
-      if(item.abort)item.abort.abort();
+      clearTimeout(item.timer);cancelUnderlayRequest(item);
     }
     if(id){
       const index=underlays.findIndex(item=>item.id===id);
@@ -2520,6 +2519,9 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
         "Podkład usunięty. MAP pozostaje niezmieniony.");
     renderRasterLayers();
     if(state.meta){state.previewActive=false;state.geometrySnapshotValid=false;requestDraw();}
+    // Removing one layer must not discard the queued refresh of the others.
+    // Their useful pending requests will be shared by the replacement batch.
+    if(underlays.some(item=>item.visible))scheduleUnderlayRefresh(true);
   }
   function wmsLayersState(state,text){
     // Zielono = pobrane, czerwono = błąd, szaro = w toku.
@@ -2775,8 +2777,7 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
       });
     }
   }
-  // Jedno żądanie na kadr: 1,2 mln pikseli to kompromis między ostrością
-  // a czasem odpowiedzi Geoportalu (JPEG waży kilkanaście razy mniej niż PNG).
+  // Request at most one million pixels per frame to bound image transfer/rendering.
   function underlayRequestDimensions(bounds, sharp=false){
     // WMS must be requested at screen/HiDPI resolution rather than
     // stretching a single low-resolution bitmap through successive zooms.
@@ -2800,118 +2801,94 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
   function scheduleUnderlayRefresh(immediate=false){
     if(!state.meta||!underlays.some(item=>item.visible))return;
     underlay.enabled=true;
-    // A zoom changes the desired BBOX: invalidate any old request now,
-    // not after a later debounced request has started.
+    // Invalidate the old batch's status, but let a useful pending image finish.
+    // The per-layer request is replaced only when it no longer covers the view.
     underlay.ticket++;
-    if(underlay.abort){underlay.abort.abort();underlay.abort=null;}
     clearTimeout(underlay.timer);
     underlay.loading=true;
     underlay.timer=setTimeout(refreshUnderlay,immediate?0:380);
   }
   async function refreshUnderlay(){
-    if(!state.meta)return;
+    if(!state.meta){underlay.loading=false;return;}
     const targets=underlays.filter(item=>item.visible);
-    if(!targets.length)return;
-    // Odświeżamy WSZYSTKIE widoczne podkłady — wcześniej tylko ostatnio
-    // włączony, więc starsze warstwy zostawały z obrazem z poprzedniego kadru.
-    // Większy zapas (22%) niż wcześniej: drobne przesunięcia mapy mieszczą się
-    // w pobranym obrazie, więc nie trzeba nic dociągać.
-    // Zapas 45%: przy przesuwaniu mapy obraz zwykle jeszcze pokrywa kadr,
-    // więc zamiast czekać na serwer dostajesz go z pamięci.
-    // Zapas 15% — tak jak GEO-MAP: serwer renderuje prawie tylko to, co widać,
-    // więc odpowiedź jest znacznie szybsza. Resztę okolicy dociąga prefetch.
+    if(!targets.length){underlay.loading=false;return;}
+    const ticket=++underlay.ticket;
+    underlay.loading=true;
+    // Keep a small border around the visible view for subsequent short pans.
+    // Coverage must use the visible bounds, not another equally padded image.
+    const visibleBounds=boundsFromViewport(0);
     const bounds=boundsFromViewport(.15);
     const size=underlayRequestDimensions(bounds);
     const documentToken=state.edit?.documentToken;
     const started=performance.now();
-    // Bez drugiej fazy „ostrej”: jeden kadr 1,2 mln px wystarcza, a drugie
-    // 4 żądania na ten sam obraz tylko obciążały Geoportal.
     try{
       await Promise.all(targets.map(item=>refreshUnderlayItem(
-        item,bounds,size,documentToken)));
+        item,bounds,size,documentToken,visibleBounds)));
     }finally{
-      // Bez tego napis „Pobieranie obrazu…” zostawał na zawsze, gdy żądanie
-      // zostało pominięte (kadr mieścił się w pobranym obrazie).
-      underlay.loading=false;
-      const ready=targets.filter(item=>item.image).length;
-      const failed=targets.filter(item=>item.error).length;
-      const elapsed=Math.round(performance.now()-started);
-      updateUnderlayStatus(failed
-        ?"Podkład: "+failed+" błąd(y) pobierania — szczegóły w panelu Rastry."
-        :ready===targets.length
-          ?"Podkład gotowy · EPSG:"+underlay.epsg+" · "+elapsed+" ms"
-          :"Pobieranie obrazu dla EPSG:"+underlay.epsg+"…");
-      if(!failed)scheduleUnderlayPrefetch();
+      // An older aborted batch must not finish the status of a newer request.
+      if(ticket===underlay.ticket&&documentToken===state.edit?.documentToken){
+        underlay.loading=false;
+        const visible=targets.filter(item=>item.visible);
+        const ready=visible.filter(item=>item.image).length;
+        const failed=visible.filter(item=>item.error).length;
+        const elapsed=Math.round(performance.now()-started);
+        updateUnderlayStatus(!visible.length?"Podkłady ukryte.":failed
+          ?"Podkład: "+failed+" błąd(y) pobierania — szczegóły w panelu Rastry."
+          :ready===visible.length
+            ?"Podkład gotowy · EPSG:"+underlay.epsg+" · "+elapsed+" ms"
+            :"Pobieranie obrazu dla EPSG:"+underlay.epsg+"…");
+      }
     }
   }
-  // Po bezczynności dociągamy kadr przesunięty o pół szerokości w stronę
-  // ostatniego ruchu mapy. Dzięki temu kolejne przesunięcie trafia w gotowy
-  // obraz (i w cache), zamiast czekać na Geoportal.
-  let underlayPrefetchTimer=null;
-  let lastPanVector={x:0,y:0};
-  function rememberPanVector(dx,dy){
-    if(Math.abs(dx)>Math.abs(dy))lastPanVector={x:Math.sign(dx),y:0};
-    else if(dy)lastPanVector={x:0,y:Math.sign(dy)};
-  }
-  function scheduleUnderlayPrefetch(){
-    clearTimeout(underlayPrefetchTimer);
-    if(!lastPanVector.x&&!lastPanVector.y)return;
-    underlayPrefetchTimer=setTimeout(async()=>{
-      if(state.editBusy||underlay.loading)return;
-      const targets=underlays.filter(item=>item.visible&&!item.error);
-      if(!targets.length)return;
-      const bounds=boundsFromViewport(.15);
-      const spanX=bounds[2]-bounds[0], spanY=bounds[3]-bounds[1];
-      // Ekran: x = wschód, y = -północ; przesuwamy w stronę ruchu.
-      // Przesuwamy o ~0,85 szerokości: nowy kadr zachodzi na obecny, więc
-      // przesunięcie o ekran trafia w gotowy obraz.
-      const stepX=lastPanVector.x*spanX*.85, stepY=-lastPanVector.y*spanY*.85;
-      const shifted=[bounds[0]+stepX,bounds[1]+stepY,
-                     bounds[2]+stepX,bounds[3]+stepY];
-      const size=underlayRequestDimensions(shifted);
-      const documentToken=state.edit?.documentToken;
-      await Promise.all(targets.map(item=>refreshUnderlayItem(
-        item,shifted,size,documentToken,true)));
-    },1400);
-  }
-  // Czy aktualny kadr mieści się w tym, co już pobraliśmy (z małym zapasem)?
-  // Gęstość obrazu w pikselach na jednostkę mapy (im więcej, tym ostrzej).
+  // Pixel density belongs to the requested padded image, not the visible view.
   function underlayDensity(bounds,size){
     const span=Math.max(1e-9,bounds[2]-bounds[0]);
     return size.width/span;
   }
-  function underlayCovers(item,bounds,size){
-    if(!item.image||!item.bounds)return false;
-    const marginX=(item.bounds[2]-item.bounds[0])*0.02;
-    const marginY=(item.bounds[3]-item.bounds[1])*0.02;
-    const inside=bounds[0]>=item.bounds[0]+marginX&&
-                 bounds[1]>=item.bounds[1]+marginY&&
-                 bounds[2]<=item.bounds[2]-marginX&&
-                 bounds[3]<=item.bounds[3]-marginY;
-    if(!inside)return false;
-    // Przybliżenie mieści się w starym kadrze, ale wymaga OSTRZEJSZEGO obrazu
-    // (więcej pikseli na metr) — wtedy trzeba pobrać nowy, jak w GEO-MAP.
-    if(size){
-      const wanted=underlayDensity(bounds,size);
-      const have=item.density||0;
-      if(wanted>have*1.02)return false;
-    }
-    return true;
+  function underlayBoundsCover(bounds,visibleBounds){
+    if(!bounds)return false;
+    const marginX=(bounds[2]-bounds[0])*0.02;
+    const marginY=(bounds[3]-bounds[1])*0.02;
+    return visibleBounds[0]>=bounds[0]+marginX&&
+           visibleBounds[1]>=bounds[1]+marginY&&
+           visibleBounds[2]<=bounds[2]-marginX&&
+           visibleBounds[3]<=bounds[3]-marginY;
   }
-  async function refreshUnderlayItem(item,bounds,size,documentToken,prefetch=false){
-    // Przesunięcie o kilka pikseli nie wymaga nowego pobrania.
-    if(item.kind!=="raster"&&underlayCovers(item,bounds,size)){
-      item.loading=false;
+  function underlayCovers(item,visibleBounds,density){
+    return !!item.image&&underlayBoundsCover(item.bounds,visibleBounds)&&
+           density<=(item.density||0)*1.02;
+  }
+  function cancelUnderlayRequest(item){
+    item.ticket++;
+    if(item.abort)item.abort.abort();
+    item.abort=null;item.request=null;item.loading=false;
+  }
+  async function refreshUnderlayItem(item,bounds,size,documentToken,visibleBounds){
+    const density=underlayDensity(bounds,size);
+    if(underlayCovers(item,visibleBounds,density)){
+      // A pan back into a ready image also makes any pending image unnecessary.
+      cancelUnderlayRequest(item);
+      item.error="";item.retryAfter=0;
+      renderRasterLayers();
       return;
+    }
+    const pending=item.request;
+    if(pending&&pending.documentToken===documentToken&&
+       underlayBoundsCover(pending.bounds,visibleBounds)&&
+       density<=pending.density*1.02){
+      // Small pans share one download, even when the server takes several seconds.
+      return pending.promise;
     }
     // Po błędzie czekamy 5 s — inaczej każde drgnięcie mapy to nowa próba.
     if(item.retryAfter&&Date.now()<item.retryAfter){
       item.loading=false;
       return;
     }
-    const id=++item.ticket;
-    if(item.abort)item.abort.abort();
+    cancelUnderlayRequest(item);
+    const id=item.ticket;
     const controller=new AbortController();item.abort=controller;
+    const request={bounds,density,documentToken,promise:null};
+    item.request=request;
     const params=new URLSearchParams({
       preset:item.preset,layer:item.layer,epsg:String(item.epsg),
       xmin:String(bounds[0]),ymin:String(bounds[1]),
@@ -2920,48 +2897,47 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
     });
     if(item.url)params.set("url",item.url);
     if(item.time)params.set("time",item.time);
-    item.loading=true;
+    item.loading=true;item.error="";
     renderRasterLayers();
-    try{
-      const response=await documentFetch("/api/underlay/wms/map?"+params,{
-        headers:{"X-GeoStudio-Token":token},cache:"no-store",signal:controller.signal
-      });
-      if(!response.ok){
-        const err=await response.json().catch(()=>({}));
-        throw Error(err.detail||"Geoportal nie zwrócił obrazu.");
-      }
-      const blob=await response.blob();
-      const url=URL.createObjectURL(blob);
-      let image;
+    request.promise=(async()=>{
       try{
-        image=await new Promise((resolve,reject)=>{
-          const bitmap=new Image();
-          bitmap.onload=()=>resolve(bitmap);
-          bitmap.onerror=()=>reject(Error("Nie można odczytać obrazu Geoportalu."));
-          bitmap.src=url;
+        const response=await documentFetch("/api/underlay/wms/map?"+params,{
+          headers:{"X-GeoStudio-Token":token},cache:"no-store",signal:controller.signal
         });
-      }finally{URL.revokeObjectURL(url);}
-      if(!item.visible||id!==item.ticket||
-         documentToken!==state.edit?.documentToken)return;
-      // Pobranie w tle grzeje cache — nie podmieniamy obrazu na ekranie.
-      if(prefetch){item.loading=false;item.error="";item.retryAfter=0;return;}
-      item.image=image;item.bounds=bounds;item.loading=false;item.error="";
-      item.retryAfter=0;
-      // Zapamiętujemy gęstość, żeby przy przybliżeniu pobrać ostrzejszy obraz.
-      item.density=underlayDensity(bounds,size);
-      requestDraw();renderRasterLayers();
-    }catch(error){
-      if(error.name==="AbortError"||id!==item.ticket){
-        // Przerwane żądanie (przesunięcie/zoom) nie może zostawić wpisu
-        // w stanie „Odświeżanie obrazu…” na zawsze.
-        if(id===item.ticket)item.loading=false;
-        return;
+        if(!response.ok){
+          const err=await response.json().catch(()=>({}));
+          throw Error(err.detail||"Geoportal nie zwrócił obrazu.");
+        }
+        const blob=await response.blob();
+        const url=URL.createObjectURL(blob);
+        let image;
+        try{
+          image=await new Promise((resolve,reject)=>{
+            const bitmap=new Image();
+            bitmap.onload=()=>resolve(bitmap);
+            bitmap.onerror=()=>reject(Error("Nie można odczytać obrazu Geoportalu."));
+            bitmap.src=url;
+          });
+        }finally{URL.revokeObjectURL(url);}
+        if(!item.visible||id!==item.ticket||
+           documentToken!==state.edit?.documentToken)return;
+        item.image=image;item.bounds=bounds;item.error="";item.retryAfter=0;
+        item.density=underlayDensity(bounds,size);
+        requestDraw();
+      }catch(error){
+        if(error.name==="AbortError"||id!==item.ticket||
+           documentToken!==state.edit?.documentToken)return;
+        item.error=error.message||"Błąd pobierania";
+        item.retryAfter=Date.now()+5000;   // karencja: nie ponawiaj co ruch mapy
+        inform("Podkład "+item.title+": "+error.message,true);
+      }finally{
+        if(id===item.ticket){
+          item.loading=false;item.abort=null;item.request=null;
+          renderRasterLayers();
+        }
       }
-      item.loading=false;item.error=error.message||"Błąd pobierania";
-      item.retryAfter=Date.now()+5000;   // karencja: nie ponawiaj co ruch mapy
-      renderRasterLayers();
-      inform("Podkład "+item.title+": "+error.message,true);
-    }
+    })();
+    return request.promise;
   }
   function applyUnderlay(){
     try{applyUnderlayUnsafe();}
@@ -3002,6 +2978,8 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
       item.title=title;
       item.visible=true;item.image=null;item.bounds=null;
     }
+    // A deliberate retry must bypass the automatic pan/zoom error cooldown.
+    cancelUnderlayRequest(item);item.retryAfter=0;item.error="";
     underlay.activeId=item.id;
     underlay.enabled=true;
     underlay.preset=preset;underlay.layer=layer;underlay.epsg=epsg;
@@ -3242,8 +3220,7 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
               underlay.activeId=target.id;
               scheduleUnderlayRefresh(true);
             }else{
-              target.ticket++;clearTimeout(target.timer);
-              if(target.abort)target.abort.abort();
+              clearTimeout(target.timer);cancelUnderlayRequest(target);
             }
           }
         }else {
@@ -7362,8 +7339,6 @@ inform("Klikaj mapę, aby wstawiać kolejne oznaczenia. Naciśnij Esc lub wybier
         const stepX=p.x-d.last.x, stepY=p.y-d.last.y;
         state.center.x-=stepX/state.scale;
         state.center.y-=stepY/state.scale;
-        // Kierunek ruchu zapamiętujemy dla wstępnego pobierania kadru.
-        rememberPanVector(stepX,stepY);
         shell.classList.add("dragging");requestDraw();
       }
     }

@@ -8,7 +8,9 @@ No MAP data or selected geometry is sent to the provider.
 from __future__ import annotations
 
 from collections import OrderedDict
-from functools import lru_cache
+from concurrent.futures import Future
+from contextlib import contextmanager
+from functools import lru_cache, wraps
 from pathlib import Path
 import hashlib
 import http.client
@@ -53,6 +55,93 @@ KIEG_IMAGE_URL = "https://integracja02.gugik.gov.pl/cgi-bin/KrajowaIntegracjaEwi
 KIEG_PARCELS = "dzialki,numery_dzialek"
 PARCEL_LAYERS = (KIEG_PARCELS, "dzialki", "numery_dzialek")
 MAX_WMS_BYTES = 15_000_000
+REQUEST_TIMEOUT_SECONDS = 35.0
+
+
+class _RequestBudgetExpired(RuntimeError):
+    """The whole preview exhausted its budget, including every fallback."""
+
+
+class _DownloadTimeout(RuntimeError):
+    """One request timed out; a smaller preview may still fit the budget."""
+
+
+class _TransportError(RuntimeError):
+    """Changing image format cannot repair a failed network connection."""
+
+
+class _RequestBudget:
+    def __init__(self):
+        self.deadline = time.monotonic() + REQUEST_TIMEOUT_SECONDS
+
+    def remaining(self):
+        remaining = self.deadline - time.monotonic()
+        if remaining <= 0:
+            raise _RequestBudgetExpired(
+                "Przekroczono czas pobierania podkładu (35 s). "
+                "Spróbuj ponownie lub wybierz mniejszy obszar.")
+        return remaining
+
+
+_REQUEST_CONTEXT = threading.local()
+
+
+@contextmanager
+def _request_budget(budget=None):
+    previous = getattr(_REQUEST_CONTEXT, "budget", None)
+    budget = budget or previous or _RequestBudget()
+    _REQUEST_CONTEXT.budget = budget
+    try:
+        budget.remaining()
+        yield budget
+    finally:
+        _REQUEST_CONTEXT.budget = previous
+
+
+def _bounded_request(function):
+    @wraps(function)
+    def bounded(*args, **kwargs):
+        with _request_budget():
+            return function(*args, **kwargs)
+    return bounded
+
+
+def _run_with_budget(budget, function, *args, **kwargs):
+    # Thread-local contexts do not propagate into tile worker threads.
+    with _request_budget(budget):
+        return function(*args, **kwargs)
+
+
+_INFLIGHT = {}
+_INFLIGHT_LOCK = threading.Lock()
+
+
+def _single_flight(key, load):
+    """Concurrent requests for one image/catalogue share a single download."""
+    with _INFLIGHT_LOCK:
+        future = _INFLIGHT.get(key)
+        owner = future is None
+        if owner:
+            future = Future()
+            _INFLIGHT[key] = future
+    if not owner:
+        with _request_budget() as budget:
+            try:
+                return future.result(timeout=budget.remaining())
+            except TimeoutError as exc:
+                raise _RequestBudgetExpired(
+                    "Przekroczono czas oczekiwania na podkład.") from exc
+    try:
+        result = load()
+        future.set_result(result)
+        return result
+    except BaseException as exc:
+        future.set_exception(exc)
+        raise
+    finally:
+        with _INFLIGHT_LOCK:
+            if _INFLIGHT.get(key) is future:
+                del _INFLIGHT[key]
 
 
 class NoRedirect(HTTPRedirectHandler):
@@ -183,6 +272,44 @@ class _GatewayError(RuntimeError):
     """502/503/504 z bramki Geoportalu — warto ponowić po chwili."""
 
 
+def _set_io_timeout(conn, host, budget, reply=None):
+    timeout = min(_timeout_for(host), budget.remaining())
+    conn.timeout = timeout
+    sock = getattr(conn, "sock", None)
+    if sock is None and reply is not None:
+        # HTTPConnection detaches the socket when a response announces
+        # Connection: close. Its body still owns that socket through fp.
+        sock = getattr(getattr(getattr(reply, "fp", None), "raw", None),
+                       "_sock", None)
+    if sock is not None:
+        sock.settimeout(timeout)
+
+
+def _read_response(reply, conn, host, budget, max_bytes):
+    # Refresh the remaining timeout between chunks, so a slowly streaming
+    # response cannot restart a fresh 30-second budget for every chunk.
+    read_chunk = getattr(reply, "read1", None)
+    if read_chunk is None:
+        _set_io_timeout(conn, host, budget, reply)
+        content = reply.read(max_bytes + 1)
+    else:
+        chunks = []
+        size = 0
+        while size <= max_bytes:
+            _set_io_timeout(conn, host, budget, reply)
+            chunk = read_chunk(min(65536, max_bytes + 1 - size))
+            if not chunk:
+                break
+            chunks.append(chunk)
+            size += len(chunk)
+        content = b"".join(chunks)
+    budget.remaining()
+    if len(content) > max_bytes:
+        raise ValueError("Odpowiedź WMS przekracza limit rozmiaru.")
+    return content
+
+
+@_bounded_request
 def _download(url: str, max_bytes: int) -> bytes:
     parsed = urlsplit(url)
     if parsed.scheme != "https":
@@ -201,31 +328,44 @@ def _download(url: str, max_bytes: int) -> bytes:
                "Accept": "image/png, image/jpeg, application/xml, text/xml",
                "Connection": "keep-alive"}
     last: Exception | None = None
-    # Cztery próby: zerwane keep-alive (RemoteDisconnected), chwilowe 502
-    # z bramki Geoportalu i błąd certyfikatu TLS wymagają różnych reakcji.
+    budget = _REQUEST_CONTEXT.budget
+    # One retry repairs a stale keep-alive connection or a transient gateway
+    # error. A timeout must not repeat this URL four times before trying
+    # four formats, four tiles, and two smaller images.
     relaxed = False
-    for attempt in range(4):
+    for attempt in range(2):
         if attempt:
-            time.sleep(0.25 * attempt)
+            time.sleep(min(0.25, budget.remaining()))
+        budget.remaining()
         try:
             conn = _connection(host, relaxed=relaxed)
+            _set_io_timeout(conn, host, budget)
             conn.request("GET", path, headers=headers)
+            _set_io_timeout(conn, host, budget)
             reply = conn.getresponse()
+            budget.remaining()
             if reply.status in (301, 302, 303, 307, 308):
+                _drop_connection(host, relaxed=relaxed)
                 raise ValueError("Usługa przekierowała na niezaufany adres.")
             if reply.status in (502, 503, 504):
                 raise _GatewayError("Geoportal zwrócił błąd " + str(reply.status))
             if reply.status >= 400:
-                raise RuntimeError("Geoportal zwrócił błąd " + str(reply.status) + ".")
-            content = reply.read(max_bytes + 1)
-            if len(content) > max_bytes:
-                raise ValueError("Odpowiedź WMS przekracza limit rozmiaru.")
-            return content
+                _drop_connection(host, relaxed=relaxed)
+                raise _TransportError("Serwer WMS zwrócił błąd " + str(reply.status) + ".")
+            return _read_response(reply, conn, host, budget, max_bytes)
+        except _RequestBudgetExpired:
+            _drop_connection(host, relaxed=relaxed)
+            raise
+        except TimeoutError as exc:
+            _drop_connection(host, relaxed=relaxed)
+            budget.remaining()
+            raise _DownloadTimeout(
+                "Serwer nie zdążył przygotować obrazu podkładu.") from exc
         except ssl.SSLCertVerificationError as exc:
             # Na części komputerów brakuje CA dla Geoportalu. Jedno ponowienie
             # bez weryfikacji — usługa jest publiczna i tylko do czytania.
             last = exc
-            _drop_connection(host)
+            _drop_connection(host, relaxed=relaxed)
             if relaxed:
                 break
             relaxed = True
@@ -233,25 +373,28 @@ def _download(url: str, max_bytes: int) -> bytes:
             continue
         except _GatewayError as exc:
             last = exc
-            _drop_connection(host)
+            _drop_connection(host, relaxed=relaxed)
             continue
-        except (http.client.HTTPException, OSError, TimeoutError) as exc:
+        except (http.client.HTTPException, OSError) as exc:
             # Zerwane połączenie keep-alive: nowe i ponowna próba.
             last = exc
-            _drop_connection(host)
+            _drop_connection(host, relaxed=relaxed)
             continue
+        except ValueError:
+            _drop_connection(host, relaxed=relaxed)
+            raise
     reason = type(last).__name__ if last else "nieznany błąd"
     if isinstance(last, _GatewayError):
-        raise RuntimeError(
+        raise _TransportError(
             "Bramka Geoportalu odrzuciła żądanie (502/503). Spróbuj ponownie "
             "za chwilę — serwer bywa chwilowo niedostępny.") from last
     if isinstance(last, ssl.SSLCertVerificationError):
-        raise RuntimeError(
+        raise _TransportError(
             "Nie udało się zweryfikować certyfikatu Geoportalu "
             "(SSLCertVerificationError). Sprawdź datę i godzinę w systemie "
             "oraz ustawienia antywirusa/proxy — program próbował też "
             "połączenia bez weryfikacji.") from last
-    raise RuntimeError(
+    raise _TransportError(
         "Nie można pobrać danych WMS z Geoportalu (" + reason +
         "). Spróbuj ponownie za chwilę.") from last
 
@@ -279,7 +422,8 @@ def _cache_key(preset, layer, epsg, xmin, ymin, xmax, ymax, width, height):
     def snap(value, step):
         return round(round(value / step) * step, 6)
 
-    return (preset, layer, epsg,
+    # New namespace avoids reusing old, incorrectly assembled WMTS images.
+    return ("wms-preview-v2", preset, layer, epsg,
             snap(xmin, step_x), snap(ymin, step_y),
             snap(xmax, step_x), snap(ymax, step_y),
             width, height)
@@ -400,7 +544,11 @@ def clear_cache() -> None:
         _CACHE_BYTES = 0
     # Capabilities to też cache — bez tego testy i zmiana serwera widziałyby
     # stary dokument XML.
+    _clear_layer_cache()
     _wmts_capabilities_xml.cache_clear()
+    _wmts_capabilities.cache_clear()
+    _wmts_layer_info.cache_clear()
+    _wmts_layers.cache_clear()
     _tile_cache_clear()
 
 
@@ -412,20 +560,28 @@ def _preset(name: str, url: str | None = None) -> str:
     return PRESETS[name][1]
 
 
+@_bounded_request
 def layers_for(preset: str, url: str | None = None) -> tuple:
     if preset in WMTS_PRESETS:
         return _wmts_layers(preset)
     if preset == "custom":
-        xml = _download(capabilities_url(validate_service_url(url or "")),
-                        4_000_000)
-        layers = parse_capabilities(xml)
-        if not layers:
-            raise ValueError("Serwer nie udostępnił nazwanych warstw WMS.")
-        return layers
-    return _layers_for_preset(preset)
+        service_url = validate_service_url(url or "")
+        return _single_flight(("capabilities", preset, service_url),
+                              lambda: _custom_layers_for(service_url))
+    return _single_flight(("capabilities", preset),
+                          lambda: _layers_for_preset(preset))
 
 
-@lru_cache(maxsize=3)
+@lru_cache(maxsize=32)
+def _custom_layers_for(service_url: str) -> tuple:
+    xml = _download(capabilities_url(service_url), 4_000_000)
+    layers = parse_capabilities(xml)
+    if not layers:
+        raise ValueError("Serwer nie udostępnił nazwanych warstw WMS.")
+    return layers
+
+
+@lru_cache(maxsize=16)
 def _layers_for_preset(preset: str) -> tuple:
     if preset == "kieg":
         # The published GetMap example provides these layers in PL-1992,
@@ -435,6 +591,8 @@ def _layers_for_preset(preset: str) -> tuple:
             ("dzialki", "Granice działek"), ("numery_dzialek", "Numery działek")))
         try:
             catalogue = parse_capabilities(_download(capabilities_url(_preset(preset)), 4_000_000))
+        except _RequestBudgetExpired:
+            raise
         except (RuntimeError, ValueError):
             catalogue = ()
         keys = {entry.name for entry in defaults}
@@ -446,23 +604,34 @@ def _layers_for_preset(preset: str) -> tuple:
     return layers
 
 
-# Zgodność ze starym API: layers_for() nie jest już bezpośrednio cache'owana
-# (adres własnego serwera zmienia wynik), ale czyszczenie cache zostaje.
-layers_for.cache_clear = _layers_for_preset.cache_clear
+def _clear_layer_cache():
+    _layers_for_preset.cache_clear()
+    _custom_layers_for.cache_clear()
+
+
+layers_for.cache_clear = _clear_layer_cache
 
 
 # Dla GUGiK pokazujemy tylko jedną, używaną warstwę: granice i numery działek.
 KIEG_KEEP = frozenset({KIEG_PARCELS})
 
 
-@lru_cache(maxsize=8)
 def _wmts_capabilities_xml(preset: str) -> bytes:
     """Jeden dokument GetCapabilities dla WMTS, wspólny dla obu parserów.
 
     Wcześniej `_wmts_capabilities()` i `_wmts_layer_info()` pobierały ten sam
     plik XML (do 8 MB) osobno — czyli podwójny transfer i podwójne czekanie.
     """
+    return _single_flight(("wmts-capabilities", preset),
+                          lambda: _cached_wmts_capabilities_xml(preset))
+
+
+@lru_cache(maxsize=8)
+def _cached_wmts_capabilities_xml(preset: str) -> bytes:
     return _download(_wmts_capabilities_url(preset), 8_000_000)
+
+
+_wmts_capabilities_xml.cache_clear = _cached_wmts_capabilities_xml.cache_clear
 
 
 @lru_cache(maxsize=4)
@@ -538,32 +707,50 @@ def _tile_cache_clear() -> None:
         _TILE_CACHE_ORDER.clear()
 
 
+@_bounded_request
 def _wmts_image(preset: str, layer: str, epsg: int, bounds,
                 width: int, height: int) -> bytes:
     """Składa obraz z kafelków WMTS i przycina do żądanego rozmiaru."""
-    from ..wmts_service import gettile_url, pick_matrix, tile_selection
+    from ..wmts_service import (gettile_url, pick_matrix, tile_selection,
+                               top_left_east_north)
     from concurrent.futures import ThreadPoolExecutor
     from io import BytesIO
     from PIL import Image
 
     sets = _wmts_capabilities(preset)
+    published = next((entry for entry in _wmts_layer_info(preset)
+                      if entry.identifier == layer), None)
+    if published is None:
+        raise ValueError("Serwer WMTS nie udostępnia wybranej warstwy.")
     wanted = f"EPSG:{epsg}".upper()
     matrix_set = next((entry for entry in sets
-                       if entry.crs.upper() == wanted), None)
+                       if entry.crs.upper() == wanted and
+                       entry.identifier in published.matrix_sets), None)
     if matrix_set is None:
         raise ValueError("Serwer WMTS nie obsługuje wybranego układu EPSG.")
-    pixel_size = max(1e-9, (bounds.max_x - bounds.min_x) / max(1, width))
-    # Poziom dobieramy o jeden stopień DROBNIEJSZY niż żądany piksel: kafelki
-    # zbyt zgrubne bywają puste (czarne) na brzegach zasięgu opracowania.
-    matrix = pick_matrix(matrix_set, pixel_size / 2.0)
-    col0, row0, col1, row1, swapped = tile_selection(
-        matrix, bounds.min_x, bounds.min_y, bounds.max_x, bounds.max_y)
-    if (col1 - col0 + 1) * (row1 - row0 + 1) > 36:
+    if width <= 0 or height <= 0:
+        raise ValueError("Nieprawidłowy rozmiar obrazu WMTS.")
+    east_span = bounds.max_y - bounds.min_y
+    north_span = bounds.max_x - bounds.min_x
+    pixel_size = max(east_span / width, north_span / height)
+    matrix = pick_matrix(matrix_set, pixel_size)
+    # Use a coarser WMTS level when necessary instead of abandoning the tile
+    # cache for a slow WMS render. Width is easting; height is northing.
+    candidates = [matrix] + sorted(
+        (entry for entry in matrix_set.matrices
+         if entry.resolution(matrix_set.crs) > matrix.resolution(matrix_set.crs)),
+        key=lambda entry: entry.resolution(matrix_set.crs))
+    for candidate in candidates:
+        col0, row0, col1, row1, _ = tile_selection(
+            candidate, bounds.min_x, bounds.min_y, bounds.max_x, bounds.max_y,
+            crs=matrix_set.crs)
+        if (col1 - col0 + 1) * (row1 - row0 + 1) <= 36:
+            matrix = candidate
+            break
+    else:
         raise ValueError("Zbyt wiele kafelków WMTS dla tego kadru.")
     base = _preset(preset)
     # Styl i format bierzemy z Capabilities — serwer odrzuca nieznane wartości.
-    published = next((entry for entry in _wmts_layer_info(preset)
-                      if entry.identifier == layer), None)
     style = published.styles[0] if published and published.styles else "default"
     image_format = "image/jpeg"
     if published and published.formats:
@@ -581,57 +768,52 @@ def _wmts_image(preset: str, layer: str, epsg: int, bounds,
         # Po pierwszym pobraniu przesuwanie mapy nie dotyka Geoportalu.
         key = (preset, layer, matrix_set.identifier, matrix.identifier,
                row, col)
-        cached = _tile_cache_get(key)
-        if cached is not None:
-            return cached
-        url = gettile_url(base, layer, matrix_set.identifier, matrix.identifier,
-                          row, col, style=style, image_format=image_format)
-        raw = _download(url, MAX_WMS_BYTES)
-        _tile_cache_put(key, raw)
-        return raw
+        def load():
+            cached = _tile_cache_get(key)
+            if cached is not None:
+                return cached
+            url = gettile_url(base, layer, matrix_set.identifier, matrix.identifier,
+                              row, col, style=style, image_format=image_format)
+            raw = _download(url, MAX_WMS_BYTES)
+            try:
+                with Image.open(BytesIO(raw)) as image:
+                    if image.size != (matrix.tile_width, matrix.tile_height):
+                        raise ValueError("Nieprawidłowy rozmiar kafelka WMTS.")
+                    image.verify()
+            except (OSError, ValueError) as exc:
+                raise ValueError("Kafelek WMTS nie jest poprawnym obrazem — " +
+                                 _service_exception(raw)) from exc
+            # ExceptionReport with HTTP 200 must never poison the tile cache.
+            _tile_cache_put(key, raw)
+            return raw
+        return _single_flight(("wmts-tile", key), load)
 
+    budget = _REQUEST_CONTEXT.budget
     with ThreadPoolExecutor(max_workers=2) as pool:
-        tiles = list(pool.map(lambda item: fetch(*item), urls))
+        tiles = list(pool.map(lambda item: _run_with_budget(budget, fetch, *item),
+                              urls))
 
-    res = matrix.resolution()
+    res = matrix.resolution(matrix_set.crs)
     span_x = res * matrix.tile_width
     span_y = res * matrix.tile_height
-    first, second = matrix.top_left
-    # swapped=True: TopLeftCorner = (wschód, północ), więc kolumna biegnie po
-    # wschodzie, a wiersz po północy. W przeciwnym razie kolumna to północ.
-    # Obraz docelowy ma zawsze x = wschód i y = -północ (układ canvasu).
-    out = Image.new("RGB", (width, height))
-    if width <= 0 or height <= 0:
-        raise ValueError("Nieprawidłowy rozmiar obrazu WMTS.")
-    east_span = max(1e-9, bounds.max_y - bounds.min_y)
-    north_span = max(1e-9, bounds.max_x - bounds.min_x)
-    px_x = width / east_span
-    px_y = height / north_span
+    origin_east, origin_north = top_left_east_north(matrix, matrix_set.crs)
+    # Assemble at tile resolution, then sample just the requested extent.
+    # Resizing a full tile at deep zoom can allocate an enormous bitmap.
+    mosaic = Image.new("RGB", ((col1-col0+1)*matrix.tile_width,
+                               (row1-row0+1)*matrix.tile_height))
     for (row, col), raw in zip(urls, tiles):
-        try:
-            tile = Image.open(BytesIO(raw)).convert("RGB")
-        except Exception as exc:                      # noqa: BLE001
-            detail = _service_exception(raw)
-            raise ValueError(
-                "Kafelek WMTS nie jest obrazem — " + detail) from exc
-        if swapped:
-            east0 = first + col * span_x
-            east1 = east0 + span_x
-            north1 = second - row * span_y
-            north0 = north1 - span_y
-        else:
-            north0 = first + col * span_x
-            north1 = north0 + span_x
-            east1 = second - row * span_y
-            east0 = east1 - span_y
-        x0 = (east0 - bounds.min_y) * px_x
-        x1 = (east1 - bounds.min_y) * px_x
-        y0 = (bounds.max_x - north1) * px_y
-        y1 = (bounds.max_x - north0) * px_y
-        target_w = max(1, int(round(x1 - x0)))
-        target_h = max(1, int(round(y1 - y0)))
-        out.paste(tile.resize((target_w, target_h), Image.LANCZOS),
-                  (int(round(x0)), int(round(y0))))
+        with Image.open(BytesIO(raw)) as tile:
+            mosaic.paste(tile.convert("RGB"),
+                         ((col-col0)*matrix.tile_width,
+                          (row-row0)*matrix.tile_height))
+    mosaic_east = origin_east + col0*span_x
+    mosaic_north = origin_north - row0*span_y
+    extent = ((bounds.min_y-mosaic_east)/res,
+              (mosaic_north-bounds.max_x)/res,
+              (bounds.max_y-mosaic_east)/res,
+              (mosaic_north-bounds.min_x)/res)
+    out = mosaic.transform((width, height), Image.Transform.EXTENT, extent,
+                           Image.Resampling.BICUBIC)
     buffer = BytesIO()
     out.save(buffer, format="JPEG", quality=88, optimize=True)
     data = buffer.getvalue()
@@ -725,11 +907,12 @@ def _to_jpeg(raw: bytes) -> bytes:
 
 
 def _stitch(tiles: list[bytes], width: int, height: int,
-            left_w: int, top_h: int) -> bytes:
+            left_w: int, top_h: int, *, preserve_alpha: bool = False) -> bytes:
     from PIL import Image
     from io import BytesIO
-    images = [Image.open(BytesIO(raw)).convert("RGB") for raw in tiles]
-    canvas = Image.new("RGB", (width, height))
+    mode = "RGBA" if preserve_alpha else "RGB"
+    images = [Image.open(BytesIO(raw)).convert(mode) for raw in tiles]
+    canvas = Image.new(mode, (width, height))
     # Kafelki dzielimy po (północ, wschód):
     #   0 = północ mała, wschód mały   -> LEWY DOLNY
     #   1 = północ duża, wschód mały   -> LEWY GÓRNY
@@ -741,7 +924,10 @@ def _stitch(tiles: list[bytes], width: int, height: int,
     canvas.paste(images[0], (0, top_h))
     canvas.paste(images[2], (left_w, top_h))
     out = BytesIO()
-    canvas.save(out, format="JPEG", quality=88, optimize=True)
+    if preserve_alpha:
+        canvas.save(out, format="PNG")
+    else:
+        canvas.save(out, format="JPEG", quality=88, optimize=True)
     return out.getvalue()
 
 
@@ -762,8 +948,8 @@ ORTO_ATTEMPTS = (
 
 def _fetch_orto_smaller(base, layer, crs, bounds, width, height,
                         time: str | None = None) -> bytes | None:
-    """Ostatnia deska ratunku: mniejszy obraz, żeby serwer zdążył odpowiedzieć."""
-    for factor in (0.7, 0.5):
+    """One smaller preview, using only the original request's time budget."""
+    for factor in (0.7,):
         small_w = max(128, int(width * factor))
         small_h = max(128, int(height * factor))
         if (small_w, small_h) == (width, height):
@@ -772,6 +958,8 @@ def _fetch_orto_smaller(base, layer, crs, bounds, width, height,
             return _fetch_once(base, layer, crs, bounds, small_w, small_h,
                                version="1.1.1", image_format="image/png",
                                transparent=True, time=time)
+        except _RequestBudgetExpired:
+            raise
         except Exception:                             # noqa: BLE001
             continue
     return None
@@ -781,11 +969,11 @@ def _attempts_for(preset: str):
     """Kolejność formatów: ortofoto lubi JPEG, warstwy wektorowe potrzebują PNG."""
     if preset in {"kieg", "custom"}:
         return tuple((version, "image/png", True)
-                     for version, _fmt, _transparent in ORTO_ATTEMPTS[:2]) + \
-               ORTO_ATTEMPTS[2:]
+                     for version, _fmt, _transparent in ORTO_ATTEMPTS[:2])
     return ORTO_ATTEMPTS
 
 
+@_bounded_request
 def _fetch_orto(base, layer, crs, bounds, width, height,
                 time: str | None = None, preset: str = "standard") -> bytes:
     """Ortofoto: jedno lekkie żądanie, kafelki tylko awaryjnie.
@@ -804,6 +992,18 @@ def _fetch_orto(base, layer, crs, bounds, width, height,
             raw = _fetch_once(base, layer, crs, bounds, width, height,
                               version=version, image_format=image_format,
                               transparent=transparent, time=time)
+        except _RequestBudgetExpired:
+            raise
+        except (_DownloadTimeout, TimeoutError) as exc:
+            # Changing WMS version/format does not fix a slow large render.
+            # Try one smaller frame now, rather than after 16 timed-out GETs.
+            smaller = _fetch_orto_smaller(base, layer, crs, bounds,
+                                          width, height, time=time)
+            if smaller is not None:
+                return smaller
+            raise RuntimeError(str(exc) or "Przekroczono czas pobierania podkładu.") from exc
+        except _TransportError:
+            raise
         except Exception as exc:                      # noqa: BLE001
             errors.append(str(exc))
             continue
@@ -813,7 +1013,9 @@ def _fetch_orto(base, layer, crs, bounds, width, height,
     if width * height > ORTO_TILE_LIMIT or errors:
         try:
             return _fetch_orto_tiles(base, layer, crs, bounds, width, height,
-                                     time=time)
+                                     time=time, preserve_alpha=preset == "custom")
+        except _RequestBudgetExpired:
+            raise
         except Exception as exc:                      # noqa: BLE001
             errors.append(str(exc))
 
@@ -828,8 +1030,10 @@ def _fetch_orto(base, layer, crs, bounds, width, height,
     raise RuntimeError(detail or "Nie można pobrać obrazu ortofoto.")
 
 
+@_bounded_request
 def _fetch_orto_tiles(base, layer, crs, bounds, width, height,
-                      time: str | None = None) -> bytes:
+                      time: str | None = None,
+                      preserve_alpha: bool = False) -> bytes:
     mid_x = (bounds.min_x + bounds.max_x) / 2
     mid_y = (bounds.min_y + bounds.max_y) / 2
     left_w = width // 2
@@ -837,20 +1041,23 @@ def _fetch_orto_tiles(base, layer, crs, bounds, width, height,
     top_h = height // 2
     bottom_h = height - top_h
     parts = [
-        (WMSBounds(bounds.min_x, bounds.min_y, mid_x, mid_y), left_w, top_h),
-        (WMSBounds(mid_x, bounds.min_y, bounds.max_x, mid_y), right_w, top_h),
-        (WMSBounds(bounds.min_x, mid_y, mid_x, bounds.max_y), left_w, bottom_h),
+        (WMSBounds(bounds.min_x, bounds.min_y, mid_x, mid_y), left_w, bottom_h),
+        (WMSBounds(mid_x, bounds.min_y, bounds.max_x, mid_y), left_w, top_h),
+        (WMSBounds(bounds.min_x, mid_y, mid_x, bounds.max_y), right_w, bottom_h),
         (WMSBounds(mid_x, mid_y, bounds.max_x, bounds.max_y), right_w, bottom_h),
     ]
     from concurrent.futures import ThreadPoolExecutor
+    budget = _REQUEST_CONTEXT.budget
     with ThreadPoolExecutor(max_workers=2) as pool:
-        futures = [pool.submit(_fetch_once, base, layer, crs, part, part_w,
+        futures = [pool.submit(_run_with_budget, budget, _fetch_once,
+                               base, layer, crs, part, part_w,
                                part_h, version="1.1.1",
                                image_format="image/png", transparent=True,
                                time=time)
                    for part, part_w, part_h in parts]
         images = [future.result() for future in futures]
-    return _stitch(images, width, height, left_w, top_h)
+    return _stitch(images, width, height, left_w, top_h,
+                   preserve_alpha=preserve_alpha)
 
 
 def map_image(preset: str, layer: str, epsg: int,
@@ -870,6 +1077,7 @@ def map_image(preset: str, layer: str, epsg: int,
     return data, media
 
 
+@_bounded_request
 def map_png(preset: str, layer: str, epsg: int,
             xmin: float, ymin: float, xmax: float, ymax: float,
             width: int, height: int, url: str | None = None,
@@ -883,13 +1091,8 @@ def map_png(preset: str, layer: str, epsg: int,
         raise ValueError("Nieprawidłowa rozdzielczość podkładu.")
     if not all(isfinite(v) for v in (xmin, ymin, xmax, ymax)) or xmin >= xmax or ymin >= ymax:
         raise ValueError("Nieprawidłowy zasięg obrazu WMS.")
-    candidates = layers_for(preset, url)
     if preset == "kieg" and layer not in KIEG_KEEP:
         raise ValueError("Dla GUGiK dostępna jest tylko warstwa granic i numerów działek.")
-    choice = next((entry for entry in candidates if entry.name == layer), None)
-    parcel = preset == "kieg" and layer in PARCEL_LAYERS
-    if choice is None or (not parcel and f"EPSG:{epsg}" not in choice.crs):
-        raise ValueError("Wybrana warstwa nie obsługuje tego EPSG.")
     # Canvas world (horizontal=easting, vertical=-northing) -> GEO-MAP X/Y.
     bounds = WMSBounds(min_x=-ymax, min_y=xmin, max_x=-ymin, max_y=xmax)
     key = _cache_key(preset + "|" + (url or "") + "|" + (time or ""), layer,
@@ -897,6 +1100,28 @@ def map_png(preset: str, layer: str, epsg: int,
     cached = _cache_get(key)
     if cached is not None:
         return cached
+
+    def load():
+        # Another request may have populated the cache before we acquired
+        # ownership of this frame. Check again before any catalogue/network IO.
+        cached = _cache_get(key)
+        if cached is not None:
+            return cached
+        candidates = layers_for(preset, url)
+        choice = next((entry for entry in candidates if entry.name == layer), None)
+        parcel = preset == "kieg" and layer in PARCEL_LAYERS
+        if choice is None or (not parcel and f"EPSG:{epsg}" not in choice.crs):
+            raise ValueError("Wybrana warstwa nie obsługuje tego EPSG.")
+        content = _render_map(preset, base, layer, epsg, bounds, width, height,
+                              parcel=parcel, time=time)
+        _cache_put(key, content)
+        return content
+
+    return _single_flight(("map", key), load)
+
+
+def _render_map(preset, base, layer, epsg, bounds, width, height,
+                *, parcel, time):
     if parcel:
         content = _parcel_image(layer, epsg, bounds, width, height)
     elif preset in WMTS_PRESETS:
@@ -906,6 +1131,8 @@ def map_png(preset: str, layer: str, epsg: int,
         fallback = "standard" if preset == "standard_wmts" else "high"
         try:
             content = _wmts_image(preset, layer, epsg, bounds, width, height)
+        except _RequestBudgetExpired:
+            raise
         except (ValueError, RuntimeError):
             # Nazwa warstwy z WMTS nie musi istnieć w usłudze WMS
             # (Geoportal: „Parameter 'layers' contains unacceptable layer
@@ -917,7 +1144,6 @@ def map_png(preset: str, layer: str, epsg: int,
     else:
         content = _fetch_orto(base, layer, f"EPSG:{epsg}", bounds, width, height,
                               time=time, preset=preset)
-    _cache_put(key, content)
     return content
 
 
@@ -925,6 +1151,8 @@ def _wms_layer_for(preset: str, epsg: int, preferred: str = "") -> str:
     """Nazwa warstwy WMS: ta sama, jeśli istnieje, inaczej pierwsza dla EPSG."""
     try:
         candidates = _layers_for_preset(preset)
+    except _RequestBudgetExpired:
+        raise
     except (ValueError, RuntimeError):
         return preferred
     names = [entry.name for entry in candidates
@@ -963,6 +1191,8 @@ def _parcel_image(layer, epsg, bounds, width, height):
                     return content
                 overlay = image.convert("RGBA")
             break
+        except _RequestBudgetExpired:
+            raise
         except (RuntimeError, OSError, ValueError) as exc:
             error = exc
     else:

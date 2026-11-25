@@ -20,11 +20,12 @@ WMS_CAPABILITIES = b"""<?xml version="1.0"?>
 WMTS_CAPABILITIES = b"""<?xml version="1.0"?>
 <Capabilities><Contents>
  <Layer><Identifier>Raster</Identifier><Title>Orto</Title>
-  <Style><Identifier>default</Identifier></Style><Format>image/jpeg</Format></Layer>
+  <Style><Identifier>default</Identifier></Style><Format>image/jpeg</Format>
+  <TileMatrixSetLink><TileMatrixSet>EPSG:2180</TileMatrixSet></TileMatrixSetLink></Layer>
  <TileMatrixSet><Identifier>EPSG:2180</Identifier>
   <SupportedCRS>EPSG:2180</SupportedCRS>
   <TileMatrix><Identifier>EPSG:2180:0</Identifier><ScaleDenominator>10000</ScaleDenominator>
-   <TopLeftCorner>0 1000000</TopLeftCorner><TileWidth>512</TileWidth><TileHeight>512</TileHeight>
+   <TopLeftCorner>850000 100000</TopLeftCorner><TileWidth>512</TileWidth><TileHeight>512</TileHeight>
    <MatrixWidth>10</MatrixWidth><MatrixHeight>10</MatrixHeight></TileMatrix>
  </TileMatrixSet></Contents></Capabilities>"""
 
@@ -68,8 +69,9 @@ def test_wmts_fallback_uses_the_wms_layer_name(monkeypatch):
         getattr(underlay_wms, name).cache_clear()
     underlay_wms.clear_cache()
     data, media = underlay_wms.map_image(
-        "standard_wmts", "Raster", 2180, 900000, -1200, 1000000, 0, 256, 256)
+        "standard_wmts", "Raster", 2180, 101000, -849000, 104000, -847000, 300, 200)
     assert data
+    assert any("GetTile" in url for url in seen)
     wms_urls = [url for url in seen if "GetMap" in url]
     assert wms_urls
     # Nazwa warstwy z WMTS ("Raster") nie może trafić do WMS.
