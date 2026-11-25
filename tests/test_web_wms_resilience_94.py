@@ -98,7 +98,7 @@ def test_tls_contexts_exist():
 
 
 def test_gcp_magnet_and_crosshair_in_client():
-    assert "function gcpSnapPoint(screen,world,altKey){" in JS
+    assert "function gcpSnapPoint(world,altKey){" in JS
     assert "const GCP_SNAP_PX=26;" in JS
     assert "function paintCrosshair(){" in JS
     assert 'for(const [color,width] of [["#0b1a26",3],["#ffffff",1.4]])' in JS
