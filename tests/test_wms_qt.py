@@ -7,7 +7,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 import pytest
 pytest.importorskip("PySide6")
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QSettings, Qt
 from PySide6.QtGui import QColor, QImage
 from PySide6.QtWidgets import QApplication, QGraphicsScene
 
@@ -98,6 +98,31 @@ def test_wms_dialog_requires_selected_map_crs_without_network(qt_app, monkeypatc
         dialog.fetch_map()
         assert messages == ["warning"]
         assert dialog.pending is None
+    finally:
+        dialog.close()
+        window.close()
+
+
+@pytest.mark.parametrize("last_url,expected_opacity", [
+    ("https://integracja.gugik.gov.pl/cgi-bin/KrajowaIntegracjaEwidencjiGruntow", 100),
+    ("https://mapy.geoportal.gov.pl/wss/service/PZGIK/ORTO/WMS/StandardResolution", 70),
+])
+def test_restored_wms_preset_initializes_opacity(
+        qt_app, monkeypatch, tmp_path, last_url, expected_opacity):
+    """A saved preset must work without another currentIndexChanged signal."""
+    settings = QSettings(str(tmp_path / "wms-dialog.ini"), QSettings.Format.IniFormat)
+    settings.setValue("wms/last_url", last_url)
+    monkeypatch.setattr("geostudio.app.QSettings", lambda *_a, **_kw: settings)
+    window = GeoStudioWindow()
+    dialog = WMSDialog(window)
+    try:
+        assert dialog.server_selector.currentData() == last_url
+        assert dialog.address.text() == last_url
+        assert dialog.opacity.value() == expected_opacity
+        # Selecting the restored source again does not emit the signal that
+        # normally initializes KIEG opacity when switching sources.
+        dialog.server_selector.setCurrentIndex(dialog.server_selector.findData(last_url))
+        assert dialog.opacity.value() == expected_opacity
     finally:
         dialog.close()
         window.close()

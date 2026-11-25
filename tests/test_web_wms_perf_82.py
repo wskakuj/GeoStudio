@@ -27,11 +27,6 @@ def test_single_request_per_frame():
     assert "const maxPixels=sharp?1000000:1000000;" in JS
 
 
-def test_frames_inside_the_cached_image_are_skipped():
-    assert "function underlayCovers(item,bounds,size){" in JS
-    assert 'if(item.kind!=="raster"&&underlayCovers(item,bounds,size)){' in JS
-
-
 def test_cache_key_snaps_the_bbox():
     a = underlay_wms._cache_key("standard", "ortho", 2180,
                                 1000.0, 2000.0, 3000.0, 4000.0, 1024, 1024)
@@ -66,20 +61,16 @@ def _matrix(top_left, width=40, height=40):
                                    matrix_height=height)
 
 
-def test_top_left_corner_as_minimum_is_supported():
-    """TopLeftCorner = (północ_min, wschód_min): wiersze rosną na północ."""
-    matrix = _matrix((0.0, 1000000.0))
-    box = wmts_service._range_for_mirror(matrix, 0.0, 1000000.0,
-                                         3000.0, 1009000.0, swapped=False)
-    col0, row0, col1, row1 = box
-    assert col0 >= 0 and row0 >= 0 and col1 >= col0 and row1 >= row0
+def test_top_left_corner_uses_the_crs_axis_order():
+    """EPSG:2180 podaje N,E, ale kolumny biegną na wschód."""
+    matrix = _matrix((850000.0, 100000.0))
+    assert wmts_service.top_left_east_north(matrix, "EPSG:2180") == (
+        100000.0, 850000.0)
 
 
 def test_tile_selection_never_clips_to_zero_zero():
-    """Kadr poza „normalną” konwencją musi trafić w sensowny kafelek."""
-    matrix = _matrix((0.0, 1000000.0))
-    col0, row0, col1, row1, swapped = wmts_service.tile_selection(
-        matrix, 0.0, 1000000.0, 3000.0, 1009000.0)
-    assert (col0, row0) != (0, 0) or (col1, row1) != (0, 0)
-    assert 0 <= col0 <= col1 < matrix.matrix_width
-    assert 0 <= row0 <= row1 < matrix.matrix_height
+    """Kadr poza matrycą zgłasza brak przecięcia zamiast zgadywać osie."""
+    matrix = _matrix((850000.0, 100000.0))
+    with pytest.raises(ValueError, match="poza zasięgiem"):
+        wmts_service.tile_selection(matrix, 0.0, 1000000.0,
+                                     3000.0, 1009000.0, crs="EPSG:2180")

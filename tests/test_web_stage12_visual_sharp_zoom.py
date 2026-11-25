@@ -27,17 +27,21 @@ def test_live_zoom_never_stretches_previous_map_bitmap():
 
 
 def test_wms_request_is_hidpi_cancelable_and_reloads_after_zoom():
+    node=shutil.which("node")
+    if not node:
+        pytest.skip("Node required to execute WMS request regressions")
+    # Execute the real client: DPR dimensions, debounce, cancellation on zoom,
+    # and publication to the correct layer are observable behaviors, not a
+    # requirement to use the obsolete global underlay.abort controller.
+    script=Path(__file__).with_name("test_web_wms_request_lifecycle.cjs")
+    result=subprocess.run([node,str(script),"hidpi_zoom_cancels_obsolete_image"],
+        capture_output=True,text=True,timeout=15)
+    assert result.returncode==0,result.stdout+result.stderr
     js=(STATIC/"map.js").read_text("utf-8")
-    assert "state.width*dpr)" in js      # piksele dokładnie na ekran
-    assert "underlay.ticket++;" in js
-    assert "if(underlay.abort){underlay.abort.abort();underlay.abort=null;}" in js
-    assert "setTimeout(refreshUnderlay,immediate?0:380)" in js   # debounce 380 ms
     # Rysowanie idzie po stosie podkładów, więc warunek jest per warstwa.
     assert "if(!underlay.enabled)return;" in js
     assert "if(!item.visible||!item.image||!item.bounds)continue;" in js
     assert "documentToken!==state.edit?.documentToken)return" in js
-    # Obraz trafia do konkretnej warstwy stosu (odświeżamy wszystkie widoczne).
-    assert "item.image=image;item.bounds=bounds;item.loading=false;" in js
 
 
 def test_sidebar_layers_and_nonmodal_visual_pairing():
