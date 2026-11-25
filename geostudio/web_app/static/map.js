@@ -3489,7 +3489,7 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
     return index;
   }
   function gcpNearestMapPoint(x,y){
-    let index=-1,best=13*13;
+    let index=-1,best=18*18;   // marker ma 8 px — 18 px to wygodny zapas
     raster.gcps.forEach((point,i)=>{
       const pos=worldToScreen(point.y,-point.x);
       const d=(pos.x-x)**2+(pos.y-y)**2;
@@ -3597,7 +3597,7 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
     ctx.restore();
   }
 
-  function gcpSnapPoint(screen,world,altKey){
+  function gcpSnapPoint(world,altKey){
     if(altKey)return {point:world,kind:null};
     if(typeof state==="undefined"||!state.features)return {point:world,kind:null};
     const radius=GCP_SNAP_PX/state.scale;
@@ -3617,6 +3617,17 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
     return best?{point:best.point,kind:best.kind}:{point:world,kind:null};
   }
 
+  // Podgląd magnesu: pokazujemy pierścień na węźle, do którego trafi kliknięcie.
+  function gcpHoverSnap(ev){
+    if(!gcpView.open)return;
+    const p=eventCoords(ev),world=screenToWorld(p.x,p.y);
+    const snapped=gcpSnapPoint(world,ev.altKey);
+    const target=snapped.kind
+      ? worldToScreen(snapped.point.x,-snapped.point.y) : null;
+    gcpView.hoverSnap=target;
+    if(gcpView.open)requestDraw();
+  }
+
   function pickGcpMapPoint(ev){
     if(!gcpView.open||ev.button!==0||!raster.image)return;
     const p=eventCoords(ev),index=gcpNearestMapPoint(p.x,p.y);
@@ -3631,10 +3642,11 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
       updateGcpUi("Przeciągnij punkt "+(index+1)+" po mapie.");
       return;
     }
-    const raw=gcpMapPoint(ev);
-    const snapped=gcpSnapPoint(p,raw,ev.altKey);
+    const world=screenToWorld(p.x,p.y);
+    const snapped=gcpSnapPoint(world,ev.altKey);
     gcpView.lastSnap=snapped.kind;
-    raster.gcps.push({...gcpView.pending,...snapped.point});
+    raster.gcps.push({...gcpView.pending,
+                      x:-snapped.point.y,y:snapped.point.x});
     gcpView.activeIndex=raster.gcps.length-1;
     gcpView.waiting=false;gcpView.pending=null;gcpView.fitSerial++;
     updateGcpUi("Dodano parę "+raster.gcps.length+
@@ -3645,6 +3657,7 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
   function moveGcpMapPoint(ev){
     const drag=gcpView.mapDragging;
     if(!drag){
+      gcpHoverSnap(ev);
       if(gcpView.open&&raster.image){
         const p=eventCoords(ev);
         const close=gcpNearestMapPoint(p.x,p.y)>=0;
@@ -3655,10 +3668,12 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
     if(drag.pointer!==ev.pointerId)return;
     ev.preventDefault();ev.stopImmediatePropagation();
     if(!raster.gcps[drag.index])return;
-    const raw2=gcpMapPoint(ev);
-    const snapped2=gcpSnapPoint(p,raw2,ev.altKey);
-    gcpView.lastSnap=snapped2.kind;
-    Object.assign(raster.gcps[drag.index],snapped2.point);
+    const p=eventCoords(ev);
+    const world=screenToWorld(p.x,p.y);
+    const snapped=gcpSnapPoint(world,ev.altKey);
+    gcpView.lastSnap=snapped.kind;
+    Object.assign(raster.gcps[drag.index],
+                  {x:-snapped.point.y,y:snapped.point.x});
     drag.moved=true;gcpView.fitSerial++;
     updateGcpUi("Przesuwasz punkt "+(drag.index+1)+" na mapie.");
   }
@@ -3829,6 +3844,12 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
       ctx.lineWidth=2;ctx.strokeStyle="#fff";ctx.stroke();
       ctx.fillStyle="#17465b";ctx.font="bold 13px Arial";
       ctx.fillText(String(index+1),p.x+9,p.y-7);
+    }
+    const hover=gcpView.hoverSnap;
+    if(hover){
+      ctx.beginPath();ctx.arc(hover.x,hover.y,11,0,Math.PI*2);
+      ctx.strokeStyle="#0b1a26";ctx.lineWidth=3.4;ctx.stroke();
+      ctx.strokeStyle="#ffbc57";ctx.lineWidth=1.8;ctx.stroke();
     }
     ctx.restore();
   }
