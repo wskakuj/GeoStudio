@@ -1,0 +1,461 @@
+/* Match raster-derived sides to nearby, co-directed native parcel boundaries.
+ * All distances are map units (metres), independent of view/analysis resolution.
+ * The raster segmentation is deliberately not split by the parcel network. */
+(function(root){
+  "use strict";
+  const EPS=1e-7,COS_ANGLE=Math.cos(Math.PI/12),MAX_POINTS=500;
+  const point=p=>Array.isArray(p)&&p.length>=2&&Number.isFinite(p[0])&&Number.isFinite(p[1]);
+  const compare=(a,b)=>a[0]-b[0]||a[1]-b[1];
+  const key=p=>Math.round(p[0]/EPS)+","+Math.round(p[1]/EPS);
+  const edgeKey=(a,b)=>[key(a),key(b)].sort().join("|");
+  const exactKey=p=>p[0]+","+p[1];
+  const distance=(a,b)=>Math.hypot(a[0]-b[0],a[1]-b[1]);
+  const cross=(x,y,u,v)=>x*v-y*u;
+  function bounds(a,b,padding=0){return [Math.min(a[0],b[0])-padding,Math.min(a[1],b[1])-padding,
+    Math.max(a[0],b[0])+padding,Math.max(a[1],b[1])+padding];}
+  function overlaps(a,b){return a[0]<=b[2]+EPS&&a[2]+EPS>=b[0]&&a[1]<=b[3]+EPS&&a[3]+EPS>=b[1];}
+  function projection(p,a,b,clamp=true){
+    const x=b[0]-a[0],y=b[1]-a[1],den=x*x+y*y;
+    let t=den?((p[0]-a[0])*x+(p[1]-a[1])*y)/den:0;
+    if(clamp)t=Math.max(0,Math.min(1,t));
+    if(t===0)return a.slice();if(t===1)return b.slice();
+    return [a[0]+t*x,a[1]+t*y];
+  }
+  const lineDistance=(p,a,b)=>Math.abs(cross(b[0]-a[0],b[1]-a[1],p[0]-a[0],p[1]-a[1]))/distance(a,b);
+  const segmentDistance=(p,a,b)=>distance(p,projection(p,a,b));
+  function intersection(a,b,c,d){
+    const x=b[0]-a[0],y=b[1]-a[1],u=d[0]-c[0],v=d[1]-c[1],den=cross(x,y,u,v);
+    if(Math.abs(den)<=1e-10*Math.hypot(x,y)*Math.hypot(u,v))return null;
+    const t=cross(c[0]-a[0],c[1]-a[1],u,v)/den;
+    return [a[0]+t*x,a[1]+t*y];
+  }
+  function tree(edges){
+    if(!edges.length)return null;
+    const box=edges.reduce((r,e)=>[Math.min(r[0],e.box[0]),Math.min(r[1],e.box[1]),
+      Math.max(r[2],e.box[2]),Math.max(r[3],e.box[3])],[Infinity,Infinity,-Infinity,-Infinity]);
+    if(edges.length<=12)return {box,edges};
+    const axis=box[2]-box[0]>=box[3]-box[1]?0:1;
+    const sorted=edges.slice().sort((a,b)=>(a.a[axis]+a.b[axis])-(b.a[axis]+b.b[axis])||a.id-b.id);
+    const middle=Math.floor(sorted.length/2);
+    return {box,left:tree(sorted.slice(0,middle)),right:tree(sorted.slice(middle))};
+  }
+  function query(index,box){
+    const result=[],stack=index?.tree?[index.tree]:[];
+    while(stack.length){
+      const node=stack.pop();if(!overlaps(node.box,box))continue;
+      if(node.edges){for(const edge of node.edges)if(overlaps(edge.box,box))result.push(edge);}
+      else stack.push(node.left,node.right);
+    }
+    return result.sort((a,b)=>a.id-b.id);
+  }
+  function buildIndex(features){
+    const unique=new Map();
+    for(const feature of features||[]){
+      if(String(feature?.code)!=="5216")continue;
+      const geometry=Array.isArray(feature.nativeGeometry)?feature.nativeGeometry:feature.geometry;
+      if(!Array.isArray(geometry))continue;
+      for(const ring of geometry){
+        if(!Array.isArray(ring)||ring.length<2)continue;
+        const repeated=point(ring[0])&&point(ring.at(-1))&&distance(ring[0],ring.at(-1))<=EPS;
+        const n=ring.length-(repeated?1:0),closed=!!feature.closed||repeated;
+        for(let i=0;i<n-(closed?0:1);i++){
+          let a=ring[i],b=ring[(i+1)%n];
+          if(!point(a)||!point(b)||distance(a,b)<=EPS)continue;
+          if(compare(a,b)>0)[a,b]=[b,a];
+          const id=exactKey(a)+"|"+exactKey(b);
+          if(!unique.has(id))unique.set(id,{a:a.slice(0,2),b:b.slice(0,2),box:bounds(a,b)});
+        }
+      }
+    }
+    const edges=[...unique.values()].sort((a,b)=>compare(a.a,b.a)||compare(a.b,b.b));
+    edges.forEach((edge,id)=>{edge.id=id;});
+    return {size:edges.length,tree:tree(edges)};
+  }
+  // Crop a reference edge to a narrow, directed corridor. Only actual edges
+  // whose direction agrees with the raster side are admitted to the graph.
+  function crop(edge,a,ux,uy,length,radius){
+    const dx=edge.b[0]-edge.a[0],dy=edge.b[1]-edge.a[1],size=Math.hypot(dx,dy);
+    if(Math.abs(dx*ux+dy*uy)<size*COS_ANGLE)return null;
+    const px=edge.a[0]-a[0],py=edge.a[1]-a[1];
+    let low=0,high=1;
+    for(const [start,delta,min,max] of [[px*ux+py*uy,dx*ux+dy*uy,-radius,length+radius],
+      [cross(ux,uy,px,py),cross(ux,uy,dx,dy),-radius,radius]]){
+      if(Math.abs(delta)<1e-14){if(start<min-EPS||start>max+EPS)return null;continue;}
+      let p=(min-start)/delta,q=(max-start)/delta;if(p>q)[p,q]=[q,p];
+      low=Math.max(low,p);high=Math.min(high,q);if(high-low<=1e-12)return null;
+    }
+    const at=t=>t<=0?edge.a.slice():t>=1?edge.b.slice():[edge.a[0]+t*dx,edge.a[1]+t*dy];
+    let p=at(low),q=at(high);
+    if((q[0]-p[0])*ux+(q[1]-p[1])*uy<0)[p,q]=[q,p];
+    return {a:p,b:q,edge};
+  }
+  function matchSide(a,b,index,radius){
+    const length=distance(a,b);
+    // A side shorter than its search diameter has too little directional
+    // evidence; its corner can still follow an adjacent well-supported side.
+    if(length<=2*radius+EPS)return null;
+    const ux=(b[0]-a[0])/length,uy=(b[1]-a[1])/length;
+    const along=p=>(p[0]-a[0])*ux+(p[1]-a[1])*uy;
+    const across=p=>cross(ux,uy,p[0]-a[0],p[1]-a[1]);
+    const candidates=query(index,bounds(a,b,radius)).map(edge=>crop(edge,a,ux,uy,length,radius)).filter(Boolean);
+    if(!candidates.length||candidates.length>2000)return null;
+    const nodes=new Map(),starts=new Map(),ends=new Map();
+    function node(p){
+      const id=key(p);
+      if(!nodes.has(id))nodes.set(id,{id,p,at:along(p),next:new Map(),states:[]});
+      return nodes.get(id);
+    }
+    for(const candidate of candidates){
+      node(candidate.a);node(candidate.b);
+      for(const [target,list] of [[a,starts],[b,ends]]){
+        const p=projection(target,candidate.a,candidate.b),d=distance(target,p);
+        if(d<=radius+EPS){const n=node(p);list.set(n,Math.min(list.get(n)??Infinity,d));}
+      }
+    }
+    if(!starts.size||!ends.size)return null;
+    // Node partial duplicate edges and genuine joins, including a T junction
+    // represented by a long edge on one parcel and two short edges on another.
+    for(let i=0;i<candidates.length;i++)for(let j=i+1;j<candidates.length;j++){
+      const first=candidates[i],second=candidates[j];
+      if(!overlaps(bounds(first.a,first.b),bounds(second.a,second.b)))continue;
+      const p=intersection(first.a,first.b,second.a,second.b);
+      if(p&&segmentDistance(p,first.a,first.b)<=EPS&&segmentDistance(p,second.a,second.b)<=EPS)node(p);
+    }
+    const ordered=[...nodes.values()].sort((p,q)=>p.at-q.at||compare(p.p,q.p));
+    for(const candidate of candidates){
+      const on=ordered.filter(n=>segmentDistance(n.p,candidate.a,candidate.b)<=EPS);
+      for(let i=1;i<on.length;i++){
+        const previous=on[i-1],next=on[i],progress=next.at-previous.at;if(progress<=EPS)continue;
+        if(previous.next.has(next.id))continue;
+        const ca=across(previous.p),cb=across(next.p);
+        const mean=ca*cb>=0?(Math.abs(ca)+Math.abs(cb))/2:
+          (ca*ca+cb*cb)/(2*(Math.abs(ca)+Math.abs(cb)));
+        previous.next.set(next.id,{node:next,cost:progress*mean/length+
+          .05*(distance(previous.p,next.p)-progress)/length});
+      }
+    }
+    function push(n,state){
+      if(n.states.some(s=>s.ids===state.ids))return;
+      n.states.push(state);n.states.sort((p,q)=>p.cost-q.cost||p.ids.localeCompare(q.ids));
+      if(n.states.length>6)n.states.length=6;
+    }
+    for(const [n,d] of starts)push(n,{cost:.25*d,points:[n.p],ids:n.id});
+    for(const n of ordered)for(const link of n.next.values())for(const state of n.states){
+      push(link.node,{cost:state.cost+link.cost,points:[...state.points,link.node.p],ids:state.ids+"|"+link.node.id});
+    }
+    const finished=[];
+    for(const [n,d] of ends)for(const state of n.states){
+      if(state.points.length<2||along(state.points.at(-1))-along(state.points[0])<.8*length)continue;
+      finished.push({...state,cost:state.cost+.25*d});
+    }
+    finished.sort((p,q)=>Math.abs(p.cost-q.cost)>1e-9?p.cost-q.cost:p.ids.localeCompare(q.ids));
+    const best=finished[0];if(!best)return null;
+    function ordinate(path,t){
+      for(let i=1;i<path.length;i++){
+        const lo=along(path[i-1]),hi=along(path[i]);
+        if(t<=hi+EPS){const f=Math.max(0,Math.min(1,(t-lo)/(hi-lo)));return across(path[i-1])*(1-f)+across(path[i])*f;}
+      }
+      return across(path.at(-1));
+    }
+    // Different projections onto the same noded track are equivalent. Distinct
+    // nearby tracks with similar evidence remain deliberately unresolved.
+    for(const other of finished.slice(1)){
+      if(other.cost-best.cost>.2*radius+EPS)break;
+      if([.2,.5,.8].some(t=>Math.abs(ordinate(best.points,t*length)-ordinate(other.points,t*length))>EPS))
+        return {ambiguous:true};
+    }
+    return {points:best.points,along,cost:best.cost};
+  }
+  // Return the exact reference vertices covering a straight piece. This also
+  // verifies that extending a fitted corner did not invent a parcel edge.
+  function supportedPiece(a,b,index){
+    const length=distance(a,b);if(length<=EPS)return null;
+    const ux=(b[0]-a[0])/length,uy=(b[1]-a[1])/length;
+    const along=p=>(p[0]-a[0])*ux+(p[1]-a[1])*uy;
+    const intervals=[],vertices=[];
+    for(const edge of query(index,bounds(a,b,EPS))){
+      if(lineDistance(edge.a,a,b)>EPS||lineDistance(edge.b,a,b)>EPS)continue;
+      let lo=along(edge.a),hi=along(edge.b);if(lo>hi)[lo,hi]=[hi,lo];
+      if(hi<-EPS||lo>length+EPS)continue;
+      intervals.push([Math.max(0,lo),Math.min(length,hi)]);
+      for(const p of [edge.a,edge.b]){const t=along(p);if(t>EPS&&t<length-EPS)vertices.push({p,t});}
+    }
+    intervals.sort((p,q)=>p[0]-q[0]||p[1]-q[1]);let covered=0;
+    for(const [lo,hi] of intervals){if(lo>covered+EPS)return null;covered=Math.max(covered,hi);}
+    if(covered<length-EPS)return null;
+    vertices.sort((p,q)=>p.t-q.t||compare(p.p,q.p));
+    const result=[a];
+    for(const {p} of vertices)if(distance(p,result.at(-1))>EPS)result.push(p);
+    result.push(b);return result;
+  }
+  function adjustedPath(match,start,end,index){
+    const lo=match.along(start),hi=match.along(end);
+    if(hi-lo<=EPS)return null;
+    const knots=[];
+    for(const p of [start,...match.points.filter(p=>match.along(p)>lo+EPS&&match.along(p)<hi-EPS),end]){
+      // Avoid constructing a support line from a tiny virtual projection and
+      // a nearby extended corner at million-metre coordinates. Native nodes
+      // removed here are restored by supportedPiece below.
+      while(knots.length>1&&lineDistance(knots.at(-1),knots.at(-2),p)<=EPS)knots.pop();
+      knots.push(p);
+    }
+    const result=[];
+    for(let i=1;i<knots.length;i++){
+      const part=supportedPiece(knots[i-1],knots[i],index);if(!part)return null;
+      result.push(...part.slice(0,-1));
+      if(result.length>MAX_POINTS)return null;
+    }
+    result.push(end);
+    // Start/end projections are graph search nodes, not cadastral vertices.
+    // Remove only those artificial collinear points after extending a corner.
+    return result.filter((p,i)=>i===0||i===result.length-1||
+      lineDistance(p,result[i-1],result[i+1])>EPS||
+      query(index,bounds(p,p,EPS)).some(edge=>distance(p,edge.a)<=EPS||distance(p,edge.b)<=EPS));
+  }
+  function referenceCorner(p,before,after,index,radius){
+    if(!before||!after)return null;
+    // At a shallow bend both side searches may continue across the same real
+    // parcel vertex. Their end tangents then coincide, so intersecting those
+    // tangents would attach the original corner to an arbitrary projection.
+    // Assign the corner to the supported native bend and trim both paths there.
+    const candidates=new Map();
+    for(const edge of query(index,bounds(p,p,radius)))for(const q of [edge.a,edge.b])
+      if(distance(p,q)<=radius+EPS)candidates.set(key(q),q);
+    const supported=[];
+    for(const q of candidates.values()){
+      const left=adjustedPath(before,before.points[0],q,index);
+      const right=adjustedPath(after,q,after.points.at(-1),index);
+      if(!left||!right||left.length<2||right.length<2)continue;
+      const a=left.at(-2),b=right[1];
+      // A collinear survey node is not evidence for moving a true interior
+      // T junction along a straight parcel line.
+      if(lineDistance(q,a,b)<=EPS)continue;
+      supported.push(q);
+    }
+    return supported.length===1?supported[0].slice():null;
+  }
+  function area(ring){
+    const origin=ring[0];let sum=0;
+    for(let i=0;i<ring.length;i++){
+      const a=ring[i],b=ring[(i+1)%ring.length];
+      sum+=cross(a[0]-origin[0],a[1]-origin[1],b[0]-origin[0],b[1]-origin[1]);
+    }
+    return sum/2;
+  }
+  function intersects(a,b,c,d){
+    const hit=intersection(a,b,c,d);
+    if(hit&&segmentDistance(hit,a,b)<=EPS&&segmentDistance(hit,c,d)<=EPS)return true;
+    return Math.min(segmentDistance(a,c,d),segmentDistance(b,c,d),segmentDistance(c,a,b),segmentDistance(d,a,b))<=EPS;
+  }
+  function simple(ring){
+    if(ring.length<3||ring.length>MAX_POINTS||!ring.every(point))return false;
+    for(let i=0;i<ring.length;i++){
+      const a=ring[i],b=ring[(i+1)%ring.length];if(distance(a,b)<=EPS)return false;
+      for(let j=i+2;j<ring.length;j++){
+        if(i===0&&j===ring.length-1)continue;
+        const c=ring[j],d=ring[(j+1)%ring.length];
+        if(overlaps(bounds(a,b),bounds(c,d))&&intersects(a,b,c,d))return false;
+      }
+    }
+    return Math.abs(area(ring))>EPS;
+  }
+  function segmentSeparation(a,b,c,d){
+    if(intersects(a,b,c,d))return 0;
+    return Math.min(segmentDistance(a,c,d),segmentDistance(b,c,d),segmentDistance(c,a,b),segmentDistance(d,a,b));
+  }
+  function safe(original,paths,result,radius){
+    if(!simple(result))return false;
+    const before=area(original),after=area(result);
+    if(before*after<=0||Math.abs(after-before)>.15*Math.abs(before)+EPS)return false;
+    for(let i=0;i<paths.length;i++)for(const p of paths[i])
+      if(segmentDistance(p,original[i],original[(i+1)%original.length])>radius+EPS)return false;
+    // An unchanged overall area can conceal a collapsed narrow arm of a large
+    // polygon. Preserve separation of nearby, overlapping opposite sides too.
+    for(let i=0;i<original.length;i++)for(let j=i+2;j<original.length;j++){
+      if(i===0&&j===original.length-1)continue;
+      const a=original[i],b=original[(i+1)%original.length],c=original[j],d=original[(j+1)%original.length];
+      const la=distance(a,b),lb=distance(c,d),ux=(b[0]-a[0])/la,uy=(b[1]-a[1])/la;
+      if(Math.abs(ux*(d[0]-c[0])+uy*(d[1]-c[1]))<lb*COS_ANGLE)continue;
+      const t=p=>(p[0]-a[0])*ux+(p[1]-a[1])*uy;
+      if(Math.min(la,Math.max(t(c),t(d)))-Math.max(0,Math.min(t(c),t(d)))<=.25*Math.min(la,lb))continue;
+      const separation=segmentSeparation(a,b,c,d);if(separation>4*radius||separation<=EPS)continue;
+      let next=Infinity;
+      for(let p=1;p<paths[i].length;p++)for(let q=1;q<paths[j].length;q++)
+        next=Math.min(next,segmentSeparation(paths[i][p-1],paths[i][p],paths[j][q-1],paths[j][q]));
+      if(next<.35*separation-EPS)return false;
+    }
+    return true;
+  }
+  function snapRing(ring,index,options={}){
+    const original=Array.isArray(ring)?ring.map(p=>Array.isArray(p)?p.slice(0,2):p):[];
+    const unchanged=reason=>({points:original.map(p=>Array.isArray(p)?p.slice():p),snappedEdges:0,
+      sourceIndices:original.map((_,i)=>i),reason});
+    const radius=Number(options.distance);
+    if(!Number.isFinite(radius)||radius<=0||!index?.size)return unchanged("disabled");
+    if(!simple(original))return unchanged("invalid");
+    const locks=new Set((Array.isArray(options.locked)?options.locked:[]).filter(point).map(key));
+    const blocked=options.blockedEdges instanceof Set?options.blockedEdges:
+      new Set((Array.isArray(options.blockedEdges)?options.blockedEdges:[])
+        .filter(edge=>Array.isArray(edge)&&point(edge[0])&&point(edge[1])).map(edge=>edgeKey(...edge)));
+    const matches=original.map((a,i)=>blocked.has(edgeKey(a,original[(i+1)%original.length]))?null:
+      matchSide(a,original[(i+1)%original.length],index,radius));
+    let ambiguous=false;
+    for(let i=0;i<matches.length;i++)if(matches[i]?.ambiguous){ambiguous=true;matches[i]=null;}
+    const n=original.length;
+    const targets=new Map(options._targets||[]);
+    original.forEach((p,i)=>{
+      if(locks.has(key(p)))return;
+      const target=referenceCorner(p,matches[(i+n-1)%n],matches[i],index,radius);
+      if(target){
+        if(!targets.has(key(p)))targets.set(key(p),target);
+        if(typeof options._collectAnchors==="function")options._collectAnchors(p,target);
+      }
+    });
+    let corners,paths;
+    for(let pass=0;pass<=n;pass++){
+      let changed=false;corners=original.map(p=>p.slice());
+      for(let i=0;i<n;i++){
+        const previous=(i+n-1)%n,before=matches[previous],after=matches[i],p=original[i];
+        const anchor=locks.has(key(p))?p:targets.get(key(p));
+        if(anchor&&distance(p,anchor)<=radius+EPS)corners[i]=anchor.slice();
+        if(!before&&!after)continue;
+        const left=before?before.points.slice(-2):[original[previous],p];
+        const right=after?after.points.slice(0,2):[p,original[(i+1)%n]];
+        let target;
+        if(anchor&&distance(p,anchor)<=radius+EPS){
+          target=anchor.slice();
+        }else if(locks.has(key(p))){
+          if((!before||lineDistance(p,...left)<=EPS)&&(!after||lineDistance(p,...right)<=EPS))target=p.slice();
+        }else{
+          target=referenceCorner(p,before,after,index,radius)||intersection(...left,...right);
+          if(!target&&before&&after&&lineDistance(right[0],...left)<=EPS&&lineDistance(right[1],...left)<=EPS)
+            target=projection(p,...left,false);
+        }
+        if(!target||distance(p,target)>radius+EPS){
+          if(before){matches[previous]=null;changed=true;}
+          if(after){matches[i]=null;changed=true;}
+        }else corners[i]=target;
+      }
+      if(changed)continue;
+      paths=corners.map((p,i)=>matches[i]?adjustedPath(matches[i],p,corners[(i+1)%n],index):[p,corners[(i+1)%n]]);
+      for(let i=0;i<n;i++)if(!paths[i]){matches[i]=null;changed=true;}
+      if(!changed)break;
+    }
+    let count=matches.filter(Boolean).length;
+    const moved=corners?.some((p,i)=>distance(p,original[i])>EPS);
+    if(!count&&!moved)return unchanged(ambiguous?"ambiguous":"no-match");
+    if(!paths||paths.some(p=>!p))return unchanged("topology");
+    // A short side can be unambiguous once both its ends have independent,
+    // supported native-corner anchors. Recover its real reference nodes then.
+    for(let i=0;i<n;i++)if(!matches[i]&&!blocked.has(edgeKey(original[i],original[(i+1)%n]))){
+      const a=corners[i],b=corners[(i+1)%n],p=original[i],q=original[(i+1)%n];
+      if(distance(a,p)<=EPS&&distance(b,q)<=EPS)continue;
+      if(((b[0]-a[0])*(q[0]-p[0])+(b[1]-a[1])*(q[1]-p[1]))<distance(a,b)*distance(p,q)*COS_ANGLE)continue;
+      const supported=supportedPiece(a,b,index);
+      if(supported){paths[i]=supported;count++;}
+    }
+    const points=[],sourceIndices=[];
+    paths.forEach((path,i)=>path.slice(0,-1).forEach((p,j)=>{points.push(p.slice());sourceIndices.push(j===0?i:null);}));
+    if(!safe(original,paths,points,radius))return unchanged("topology");
+    return {points,snappedEdges:count,sourceIndices,...(!count?{reason:"shared-corner"}:{})};
+  }
+  // A polygon-level area/crossing veto must also apply to its neighbours.
+  // Compute candidates as one partition, then monotonically freeze only the
+  // shared nodes/edges whose proposals disagree. UI unions can consequently
+  // cancel identical shared paths without returning to the raster contours.
+  function snapRings(rings,index,options={}){
+    const source=Array.isArray(rings)?rings:[],vertices=new Map(),edges=new Map();
+    function note(map,id,entry){if(!map.has(id))map.set(id,[]);map.get(id).push(entry);}
+    source.forEach((ring,r)=>{
+      if(!Array.isArray(ring)||!ring.every(point))return;
+      ring.forEach((p,i)=>{
+        note(vertices,key(p),{r,i,p});
+        const q=ring[(i+1)%ring.length];
+        note(edges,edgeKey(p,q),{r,i,a:p,b:q,reverse:key(p)>key(q)});
+      });
+    });
+    const sharedVertices=[...vertices.entries()].filter(([,items])=>new Set(items.map(item=>item.r)).size>1);
+    const sharedEdges=[...edges.entries()].filter(([,items])=>new Set(items.map(item=>item.r)).size>1);
+    const locks=new Map(),blocked=new Set(),cached=[],proposals=new Map(),targets=new Map();
+    if(Array.isArray(options.locked))for(const p of options.locked)if(point(p))locks.set(key(p),p);
+    // A node can be a genuine corner in two neighbouring fields while appearing
+    // almost straight in the third. Share the independently supported native
+    // anchor before comparing proposals; disagreement of corner ownership is
+    // not a reason to freeze an otherwise correct parcel boundary.
+    for(const ring of source)snapRing(ring,index,{distance:options.distance,
+      _collectAnchors(p,q){
+        const id=key(p);if(!proposals.has(id))proposals.set(id,new Map());
+        proposals.get(id).set(key(q),q);
+      }});
+    for(const [id,choices] of proposals)if(choices.size===1)targets.set(id,choices.values().next().value);
+    function run(){
+      return source.map((ring,i)=>{
+        const localLocks=ring.filter(p=>locks.has(key(p)));
+        const localEdges=ring.map((p,j)=>edgeKey(p,ring[(j+1)%ring.length])).filter(id=>blocked.has(id));
+        const signature=localLocks.map(key).join(";")+"/"+localEdges.join(";");
+        if(cached[i]?.signature===signature)return cached[i].result;
+        const result=snapRing(ring,index,{distance:options.distance,locked:localLocks,blockedEdges:blocked,_targets:targets});
+        cached[i]={signature,result};return result;
+      });
+    }
+    function paths(result,length){
+      const offsets=new Array(length);
+      result.sourceIndices.forEach((i,j)=>{if(i!==null&&i>=0&&i<length)offsets[i]=j;});
+      const paths=[];
+      for(let i=0;i<length;i++){
+        const start=offsets[i],stop=offsets[(i+1)%length],path=[];
+        if(start===undefined||stop===undefined){paths.push([]);continue;}
+        const end=stop>start?stop:stop+result.points.length;
+        for(let j=start;j<=end;j++)path.push(result.points[j%result.points.length]);
+        paths.push(path);
+      }
+      return {offsets,paths};
+    }
+    function conflicts(results){
+      const geometry=results.map((result,i)=>paths(result,source[i].length));
+      let changed=false;
+      for(const [id,items] of sharedVertices){
+        const positions=new Set(items.map(({r,i})=>key(results[r].points[geometry[r].offsets[i]])));
+        if(positions.size>1&&!locks.has(id)){locks.set(id,items[0].p);changed=true;}
+      }
+      for(const [id,items] of sharedEdges){
+        const signatures=new Set(items.map(({r,i,reverse})=>{
+          const path=geometry[r].paths[i],ordered=reverse?path.slice().reverse():path;
+          return ordered.map(key).join(";");
+        }));
+        if(signatures.size<=1)continue;
+        if(!blocked.has(id)){blocked.add(id);changed=true;}
+        for(const {a,b} of items)for(const p of [a,b])if(!locks.has(key(p))){locks.set(key(p),p);changed=true;}
+      }
+      return changed;
+    }
+    const bound=Math.max(1,sharedVertices.length+sharedEdges.length+1);
+    const requested=Number(options.maxIterations);
+    const limit=Number.isFinite(requested)?Math.max(1,Math.min(bound,Math.floor(requested))):Math.min(bound,16);
+    let results,stable=false;
+    for(let iteration=0;iteration<limit;iteration++){
+      results=run();if(!conflicts(results)){stable=true;break;}
+    }
+    if(!stable){
+      // Emergency bound for a pathological cascade. Shared geometry stays
+      // original; independent exterior sides may still use their valid fit.
+      // Ordinary conflicts above only freeze their own local nodes and sides.
+      for(const [id,items] of sharedVertices)locks.set(id,items[0].p);
+      for(const [id,items] of sharedEdges){
+        blocked.add(id);
+        for(const {a,b} of items)for(const p of [a,b])locks.set(key(p),p);
+      }
+      results=run();
+      for(const result of results)result.topologyGuard="iteration-limit";
+    }
+    // Equal epsilon keys must mean identical JS coordinates, not merely an
+    // approximate comparison, or exact edge cancellation could leave slivers.
+    const canonical=new Map();
+    for(const result of results)for(const p of result.points){
+      const id=key(p),previous=canonical.get(id);
+      if(!previous||compare(p,previous)<0)canonical.set(id,p);
+    }
+    return results.map(result=>({...result,points:result.points.map(p=>canonical.get(key(p)).slice())}));
+  }
+  root.GeoStudioRasterParcelSnap={buildIndex,snapRing,snapRings};
+})(typeof globalThis!=="undefined"?globalThis:this);

@@ -3219,14 +3219,17 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
         // native=1: maska musi widzieć CAŁE istniejące poligony, także te
         // przycięte wizualnie przez sąsiada — inaczej propozycja wchodzi
         // na już wkreślone wydzielenie.
-        const features=[];
+        // Include parcel edges just outside the image as well. This is the
+        // maximum automatic 5216 snap range, in map metres, not screen pixels.
+        const margin=20,features=[];
         let offset=0;
         for(;;){
-          const qs=new URLSearchParams({xmin:bounds[0],ymin:bounds[1],
-            xmax:bounds[2],ymax:bounds[3],limit:4000,offset,native:"1"});
+          const qs=new URLSearchParams({xmin:bounds[0]-margin,ymin:bounds[1]-margin,
+            xmax:bounds[2]+margin,ymax:bounds[3]+margin,limit:4000,offset,native:"1"});
           const data=await api("/api/viewport?"+qs.toString());
           features.push(...data.features);
-          if(features.length>=data.total||!data.features.length)break;
+          if(features.length>=data.total)break;
+          if(!data.features.length)throw Error("Nie udało się pobrać wszystkich granic mapy. Otwórz Auto Wkreślanie ponownie.");
           offset+=data.features.length;
         }
         return features;
