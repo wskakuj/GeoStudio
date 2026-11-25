@@ -1,4 +1,4 @@
-/* Local catalogue filtering: never sends a request or changes the chosen source. */
+/* Filter the local catalogue. Keep the selected source only while it matches. */
 (function () {
   "use strict";
   const normalize = value => String(value || "").toLocaleLowerCase("pl")
@@ -20,7 +20,6 @@
   }));
   function refresh() {
     const selected = select.value;
-    const current = groups.flatMap(group => group.options).find(option => option.value === selected);
     let found = 0, selectedIncluded = false;
     const result = [];
     for (const group of groups) {
@@ -36,18 +35,26 @@
       }
       result.push(node);
     }
-    if (current && !selectedIncluded) {
-      const pinned = document.createElement("optgroup");
-      pinned.label = "Bieżące źródło (poza filtrem)";
-      pinned.append(current.cloneNode(true));
-      result.unshift(pinned);
+    // Do not leave an out-of-category source in the dropdown. If it was
+    // selected, require an explicit new choice instead of loading a random WMS.
+    if (!selectedIncluded) {
+      const placeholder = document.createElement("option");
+      placeholder.value = "";
+      placeholder.textContent = found ? "Wybierz usługę…" : "Brak pasujących usług";
+      placeholder.disabled = true;
+      result.unshift(placeholder);
     }
     select.replaceChildren(...result);
-    if (current) select.value = selected;
+    select.value = selectedIncluded ? selected : "";
+    select.disabled = found === 0;
     count.textContent = "Wyniki: " + found + " z " +
       groups.reduce((sum, group) => sum + group.options.length, 0) +
-      (!found ? " · zmień filtr lub wpisz inną nazwę" : "") +
-      (current && !selectedIncluded ? " · zachowano bieżące źródło" : "");
+      (!found ? " · zmień filtr lub wpisz inną nazwę" : "");
+    // Notify the existing source-change handler so it clears stale layer
+    // choices and cancels an outstanding capabilities request, if any.
+    if (selected !== select.value) {
+      select.dispatchEvent(new Event("change", {bubbles:true}));
+    }
   }
   category.addEventListener("change", refresh);
   search.addEventListener("input", refresh);

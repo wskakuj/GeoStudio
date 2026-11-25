@@ -216,6 +216,10 @@ def create_app(workspace: PreviewWorkspace | None = None, *,
     def sheet_script():
         return FileResponse(ROOT / "sheet.js", media_type="text/javascript")
 
+    @app.get("/wms_catalog.js")
+    async def wms_catalog_js():
+        return FileResponse(ROOT / "wms_catalog.js", media_type="text/javascript")
+
     @app.get("/map.js")
     async def javascript():
         return FileResponse(ROOT / "map.js", media_type="text/javascript")

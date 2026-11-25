@@ -18,6 +18,7 @@ SCRIPT = Path(__file__).with_suffix(".cjs")
     "layers_latest_custom_url_wins",
     "layers_same_source_second_attempt_wins",
     "layers_changed_url_without_retry_is_idle",
+    "layers_filter_clears_selection_and_cancels_request",
 ])
 def test_wms_layers_lifecycle(scenario):
     result = subprocess.run(

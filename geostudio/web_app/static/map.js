@@ -2526,6 +2526,8 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
   function wmsLayersState(state,text){
     // Zielono = pobrane, czerwono = błąd, szaro = w toku.
     const button=$("underlay-layers"),summary=$("underlay-summary");
+    const showButton=$("underlay-show");
+    if(showButton)showButton.disabled=state!=="ok";
     if(button){
       button.classList.toggle("is-ok",state==="ok");
       button.classList.toggle("is-error",state==="error");
@@ -2548,6 +2550,13 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
     const preset=$("underlay-preset").value;
     const serviceUrl=preset==="custom"?currentWmsUrl():"";
     const options=$("underlay-layer");
+    const loadButton=$("underlay-layers");
+    if(loadButton)loadButton.disabled=!preset;
+    if(!preset){
+      options.replaceChildren(new Option("Najpierw wybierz usługę",""));
+      wmsLayersState("idle","Wybierz usługę z przefiltrowanej listy.");
+      return;
+    }
     if(preset==="custom"&&!/^https:\/\/[^\s]+\.[^\s]+/.test(serviceUrl)){
       options.replaceChildren(new Option("Podaj poprawny adres WMS",""));
       wmsLayersState("error","Podaj adres własnego serwera WMS (https://…).");
@@ -3013,6 +3022,7 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
   }
   function applyUnderlayUnsafe(){
     if(!state.meta){inform("Najpierw otwórz mapę.");return;}
+    if(!$("underlay-preset").value){inform("Najpierw wybierz usługę WMS.",true);return;}
     const epsg=Number($("underlay-epsg").value);
     const option=$("underlay-layer").selectedOptions[0];
     const layer=option?.value||"";
