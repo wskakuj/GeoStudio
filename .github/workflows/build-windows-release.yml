@@ -66,21 +66,8 @@ jobs:
         run: |
           ./tools/windows/build.ps1
           $version = $env:RELEASE_TAG.Substring(1)
-          $expected = "GeoStudio2-Setup-$version-x64.exe"
-          $installers = @(Get-ChildItem "dist/installer/*.exe")
-          if ($installers.Count -ne 1 -or $installers[0].Name -cne $expected) {
-            throw "Expected exactly one installer named $expected."
-          }
-          $installer = $installers[0]
-          if ($installer.Length -lt 1000000) {
-            throw "Installer is unexpectedly small: $($installer.Name)"
-          }
-          $expectedFileVersion = "$version.0"
-          if ($installer.VersionInfo.FileVersion -ne $expectedFileVersion) {
-            throw "Installer file version $($installer.VersionInfo.FileVersion) does not match $expectedFileVersion."
-          }
-          Write-Host "Installer: $($installer.FullName)"
-          "path=dist/installer/$expected" >> $env:GITHUB_OUTPUT
+          $installer = & ./tools/windows/check_installer.ps1 -Version $version
+          "path=dist/installer/$($installer.Name)" >> $env:GITHUB_OUTPUT
       - name: Publish prerelease and attach installer
         uses: softprops/action-gh-release@v2
         with:
