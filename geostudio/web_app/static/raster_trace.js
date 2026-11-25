@@ -61,159 +61,234 @@ function heldBoundarySide(ring,index,features,scale){
   }
   return best;
 }
-// Segment the visible, calibrated raster in preview-pixel coordinates.
-// Simplify between junctions, preserving the same endpoints on both sides of a cut.
-function straightenRing(points,junction,tolerance){
-  if(points.length<4||!tolerance)return points;
-  const compare=(i,j)=>points[i][0]-points[j][0]||points[i][1]-points[j][1];
-  function structuralCorner(i){
-    const p=points[i],prev=points[(i+points.length-1)%points.length],next=points[(i+1)%points.length];
-    const ax=prev[0]-p[0],ay=prev[1]-p[1],bx=next[0]-p[0],by=next[1]-p[1];
-    const a=Math.hypot(ax,ay),b=Math.hypot(bx,by);
-    return Math.min(a,b)>=10 && Math.abs(ax*bx+ay*by)<0.4*a*b;
+// Geometry is fitted in analysis pixels, independently of the source file format.
+// A shared boundary is fitted once, in a canonical direction, and reused by both
+// polygons. Junctions stay fixed and the explicit tolerance bounds every move.
+function traceTolerance(value){
+  return Number.isFinite(Number(value))?Math.max(0,Math.min(8,Number(value))):2.5;
+}
+function traceCompare(a,b){return a[0]-b[0]||a[1]-b[1];}
+function traceDistanceSq(p,a,b){
+  const dx=b[0]-a[0],dy=b[1]-a[1],den=dx*dx+dy*dy;
+  const t=den?Math.max(0,Math.min(1,((p[0]-a[0])*dx+(p[1]-a[1])*dy)/den)):0;
+  return (p[0]-a[0]-t*dx)**2+(p[1]-a[1]-t*dy)**2;
+}
+function traceArea(points){
+  let sum=0;
+  for(let i=0;i<points.length;i++){
+    const a=points[i],b=points[(i+1)%points.length];sum+=a[0]*b[1]-a[1]*b[0];
   }
-  const locked=i=>junction(points[i])||structuralCorner(i);
-  const anchors=[];
-  for(let i=0;i<points.length;i++)if(locked(i))anchors.push(i);
-  if(!anchors.length){
-    let first=0;
-    for(let i=1;i<points.length;i++)if(compare(i,first)<0)first=i;
-    anchors.push(first);
-  }
-  if(anchors.length===1){
-    const [x,y]=points[anchors[0]];
-    let far=anchors[0],distance=0;
-    for(let i=0;i<points.length;i++){
-      const d=(points[i][0]-x)**2+(points[i][1]-y)**2;
-      if(d>distance||(d===distance&&compare(i,far)<0)){far=i;distance=d;}
+  return sum/2;
+}
+function traceSpanError(points,start,end,a,b){
+  let max=0;
+  for(let i=start;i<=end;i++)max=Math.max(max,traceDistanceSq(points[i%points.length],a,b));
+  return max;
+}
+function traceSplitIndices(points,closed,locked,tolerance){
+  const n=points.length,anchors=[];
+  for(let i=0;i<n;i++)if(locked?.has(points[i].join(',')))anchors.push(i);
+  if(!closed){if(anchors[0]!==0)anchors.unshift(0);if(anchors.at(-1)!==n-1)anchors.push(n-1);}
+  else if(!anchors.length)anchors.push(0);
+  if(closed&&anchors.length===1){
+    const first=anchors[0];let far=first,distance=-1;
+    for(let i=0;i<n;i++){
+      const d=(points[i][0]-points[first][0])**2+(points[i][1]-points[first][1])**2;
+      if(d>distance){distance=d;far=i;}
     }
-    anchors.push(far);anchors.sort((a,b)=>a-b);
+    if(far!==first)anchors.push(far);anchors.sort((a,b)=>a-b);
   }
-  const keep=new Set(anchors),length=points.length;
-  const segments=anchors.map((a,i)=>[a,i+1<anchors.length?anchors[i+1]:anchors[0]+length]);
-  while(segments.length){
-    const [start,end]=segments.pop();
-    const [x,y]=points[start%length],[bx,by]=points[end%length];
-    const dx=bx-x,dy=by-y,den=dx*dx+dy*dy;
-    // Long printed sides often have shallow waves or a short pen notch.
-    // Score their length as well as the single worst pixel. Weight by path
-    // length so a noisy patch with many pixel corners cannot dominate the fit.
-    const lengthPx=Math.sqrt(den);
-    const band=Math.max(tolerance,Math.min(12,lengthPx*0.09));
-    const notch=Math.max(band,Math.min(25,lengthPx*0.13));
-    let outside=0,travel=0,previousDistance=0;
+  const keep=new Set(anchors),stack=[];
+  for(let i=0;i<anchors.length-(closed?0:1);i++)
+    stack.push([anchors[i],i+1<anchors.length?anchors[i+1]:anchors[0]+n]);
+  while(stack.length){
+    const [start,end]=stack.pop(),a=points[start%n],b=points[end%n];
     let peak=-1,max=tolerance*tolerance;
     for(let i=start+1;i<end;i++){
-      const [u,v]=points[i%length];
-      const t=den?Math.max(0,Math.min(1,((u-x)*dx+(v-y)*dy)/den)):0;
-      const d=(u-x-t*dx)**2+(v-y-t*dy)**2;
-      const previous=points[(i-1)%length];
-      const step=Math.hypot(u-previous[0],v-previous[1]);
-      const distance=Math.sqrt(d);
-      travel+=step;
-      outside+=step*((distance>band)+(previousDistance>band))/2;
-      previousDistance=distance;
-      if(d>max+1e-8||(peak>=0&&Math.abs(d-max)<1e-8&&compare(i%length,peak%length)<0)){
-        max=d;peak=i;
+      const d=traceDistanceSq(points[i%n],a,b);
+      if(d>max+1e-9){max=d;peak=i;}
+    }
+    if(peak>=0){keep.add(peak%n);stack.push([start,peak],[peak,end]);}
+  }
+  // Remove artificial closed-ring starting points and redundant split points.
+  // Testing the ORIGINAL span prevents several small removals accumulating drift.
+  let ids=[...keep].sort((a,b)=>a-b),changed=true;
+  while(changed&&ids.length>(closed?3:2)){
+    changed=false;
+    for(let j=closed?0:1;j<ids.length-(closed?0:1);j++){
+      const id=ids[j];if(locked?.has(points[id].join(',')))continue;
+      const start=ids[(j+ids.length-1)%ids.length],stop=ids[(j+1)%ids.length];
+      const end=stop>start?stop:stop+n;
+      if(traceSpanError(points,start,end,points[start],points[stop])<=tolerance*tolerance+1e-9){
+        ids.splice(j,1);changed=true;break;
       }
     }
-    const last=points[(end-1)%length];
-    const step=Math.hypot(bx-last[0],by-last[1]);
-    travel+=step;
-    if(previousDistance>band)outside+=step/2;
-    if(max<=notch*notch && outside<=travel*0.24)continue;
-    if(peak>=0){keep.add(peak%length);segments.push([start,peak],[peak,end]);}
   }
-  // The recursive split can retain a bump near the end of an otherwise
-  // straight side. Revisit runs of surviving corners against the original
-  // outline and replace a supported side by its corner-to-corner chord.
-  const corners=[...keep].sort((a,b)=>a-b);
-  const removed=new Set();
-  const proposals=[];
-  for(let first=0;first<corners.length;first++){
-    for(let count=2;count<=Math.min(12,corners.length-2);count++){
-      if(locked(corners[(first+count-1)%corners.length]))break;
-      const start=corners[first],stop=corners[(first+count)%corners.length];
-      const [ax,ay]=points[start],[bx,by]=points[stop];
-      const dx=bx-ax,dy=by-ay,chord=Math.hypot(dx,dy);
-      if(chord<12)continue;
-      const band=Math.max(tolerance,Math.min(12,chord*.09));
-      let path=0,sum=0,peak=0,lastDistance=0;
-      for(let i=start;i!==stop;){
-        const next=(i+1)%length,[x,y]=points[next];
-        const along=((x-ax)*dx+(y-ay)*dy)/chord;
-        const distance=Math.hypot((x-ax)-dx*Math.max(0,Math.min(chord,along))/chord,
-                                  (y-ay)-dy*Math.max(0,Math.min(chord,along))/chord);
-        const step=Math.hypot(x-points[i][0],y-points[i][1]);
-        sum+=step*(distance+lastDistance)/2;
-        path+=step;peak=Math.max(peak,distance);lastDistance=distance;i=next;
-        if(peak>Math.max(band,Math.min(25,chord*.13)) || path>chord*1.35)break;
-      }
-      if(peak<=Math.max(band,Math.min(25,chord*.13)) && path<=chord*1.35 && sum<=path*band*.85)
-        proposals.push({first,count,chord,start,stop});
-    }
-  }
-  const ends=new Set();
-  proposals.sort((a,b)=>b.chord-a.chord ||
-    compare(compare(a.start,a.stop)<0?a.start:a.stop,compare(b.start,b.stop)<0?b.start:b.stop));
-  for(const {first,count,start,stop} of proposals){
-    if(removed.has(start)||removed.has(stop))continue;
-    const inside=[];
-    for(let k=1;k<count;k++)inside.push(corners[(first+k)%corners.length]);
-    if(inside.some(i=>ends.has(i)) || corners.length-removed.size-inside.filter(i=>!removed.has(i)).length<3)continue;
-    for(const i of inside)removed.add(i);
-    ends.add(start);ends.add(stop);
-  }
-  return corners.length<3?points:corners.filter(i=>!removed.has(i)).map(i=>points[i]);
+  return ids;
 }
-// Try four corners only when all four sides follow the observed perimeter.
-// The shorter dimension limits the error for long, narrow fields.
-function fourCornerOutline(ring,tolerance){
-  if(ring.length<4||!tolerance)return null;
-  const n=ring.length;
-  function farthest(from){
-    const [x,y]=ring[from];
-    let far=from,max=0;
-    for(let i=0;i<n;i++){
-      const d=(ring[i][0]-x)**2+(ring[i][1]-y)**2;
-      if(d>max){max=d;far=i;}
+// Orthogonal least squares uses arc-length weights, so a densely jagged part of
+// a stroke does not outweigh a long clean side. Huber weights limit pen notches.
+function traceFitLine(points,start,end,tolerance){
+  const samples=[];
+  for(let i=start;i<=end;i++){
+    const p=points[i%points.length];let weight=0;
+    if(i>start){const q=points[(i-1)%points.length];weight+=Math.hypot(p[0]-q[0],p[1]-q[1])/2;}
+    if(i<end){const q=points[(i+1)%points.length];weight+=Math.hypot(p[0]-q[0],p[1]-q[1])/2;}
+    if(weight)samples.push({p,weight});
+  }
+  let line=null;
+  for(let pass=0;pass<3;pass++){
+    let weight=0,x=0,y=0;
+    const weights=samples.map(sample=>{
+      let w=sample.weight;
+      if(line){const r=Math.abs((sample.p[0]-line.x)*line.nx+(sample.p[1]-line.y)*line.ny);
+        w*=Math.min(1,Math.max(.1,tolerance*.5)/Math.max(r,1e-12));}
+      weight+=w;x+=w*sample.p[0];y+=w*sample.p[1];return w;
+    });
+    if(!weight)return null;x/=weight;y/=weight;
+    let xx=0,yy=0,xy=0;
+    samples.forEach(({p},i)=>{const dx=p[0]-x,dy=p[1]-y,w=weights[i];xx+=w*dx*dx;yy+=w*dy*dy;xy+=w*dx*dy;});
+    if(xx+yy<1e-12)return null;
+    const angle=.5*Math.atan2(2*xy,xx-yy);
+    line={x,y,nx:-Math.sin(angle),ny:Math.cos(angle)};
+  }
+  return line;
+}
+function traceFitVertices(points,ids,closed,locked,tolerance,cornerLimit){
+  const n=points.length,count=ids.length,result=ids.map(i=>points[i]),adjusted=ids.slice(),lines=[];
+  for(let j=0;j<count-(closed?0:1);j++){
+    const start=ids[j],stop=ids[(j+1)%count],end=stop>start?stop:stop+n;
+    lines.push(traceFitLine(points,start,end,tolerance));
+  }
+  for(let j=closed?0:1;j<count-(closed?0:1);j++){
+    const p=points[ids[j]];if(locked?.has(p.join(',')))continue;
+    const a=lines[(j+lines.length-1)%lines.length],b=lines[j];if(!a||!b)continue;
+    const den=a.nx*b.ny-a.ny*b.nx;if(Math.abs(den)<.05)continue;
+    const ca=a.nx*a.x+a.ny*a.y,cb=b.nx*b.x+b.ny*b.y;
+    const q=[(ca*b.ny-a.ny*cb)/den,(a.nx*cb-ca*b.nx)/den];
+    if(Math.hypot(q[0]-p[0],q[1]-p[1])>cornerLimit+1e-9)continue;
+    // Rounded ink corners can put the split point a few pixels along either
+    // side. Locate the fitted intersection on the ORIGINAL corner arc before
+    // checking each side, instead of preserving that arbitrary split point.
+    const previous=j?ids[j-1]:ids[count-1]-n;
+    const next=j+1<count?ids[j+1]:ids[0]+n;
+    let nearest=-1,distance=Infinity;
+    for(let i=Math.ceil((previous+ids[j])/2);i<=Math.floor((ids[j]+next)/2);i++){
+      const k=(i+n)%n,r=points[k],d=(q[0]-r[0])**2+(q[1]-r[1])**2;
+      if(d<distance){distance=d;nearest=k;}
     }
-    return far;
+    if(distance<=tolerance*tolerance+1e-9){result[j]=q;adjusted[j]=nearest;}
   }
-  function distance(i,start,end){
-    const [x,y]=ring[i],[a,b]=ring[start],[c,d]=ring[end];
-    const dx=c-a,dy=d-b;
-    const t=Math.max(0,Math.min(1,((x-a)*dx+(y-b)*dy)/(dx*dx+dy*dy)));
-    return Math.hypot(x-a-t*dx,y-b-t*dy);
+  return {points:result,ids:adjusted};
+}
+function tracePathWithin(points,ids,result,closed,tolerance){
+  if(new Set(ids).size!==ids.length)return false;
+  let wraps=0;
+  for(let j=0;j<ids.length-(closed?0:1);j++)if(ids[(j+1)%ids.length]<ids[j])wraps++;
+  if(wraps!==(closed?1:0))return false;
+  for(let j=0;j<ids.length-(closed?0:1);j++){
+    const start=ids[j],stop=ids[(j+1)%ids.length],end=stop>start?stop:stop+points.length;
+    if(traceSpanError(points,start,end,result[j],result[(j+1)%result.length])>tolerance*tolerance+1e-8)return false;
   }
-  function peak(start,end){
-    let far=start,max=0;
-    for(let i=(start+1)%n;i!==end;i=(i+1)%n){
-      const d=distance(i,start,end);
-      if(d>max){max=d;far=i;}
+  return true;
+}
+function traceRegularizePath(points,closed,locked,tolerance){
+  if(points.length<3)return points;
+  if(!tolerance)return traceSplitIndices(points,closed,locked,0).map(i=>points[i]);
+  // Coarse partitions find the long sides through rounded ink corners. They
+  // are accepted ONLY when the final fitted perimeter meets the real bound.
+  for(const partitionTolerance of [4*tolerance,2*tolerance,tolerance]){
+    const ids=traceSplitIndices(points,closed,locked,partitionTolerance);
+    if(ids.length<(closed?3:2))continue;
+    const fitted=traceFitVertices(points,ids,closed,locked,tolerance,2*partitionTolerance);
+    if(tracePathWithin(points,fitted.ids,fitted.points,closed,tolerance))return fitted.points;
+    if(partitionTolerance===tolerance)return ids.map(i=>points[i]);
+  }
+  return points;
+}
+function traceCanonicalPath(points,closed,locked){
+  let path=points.slice(),reverse=false;
+  if(closed){
+    let first=0;
+    for(let i=1;i<path.length;i++)if(traceCompare(path[i],path[first])<0)first=i;
+    path=path.slice(first).concat(path.slice(0,first));
+    if(traceCompare(path[1],path.at(-1))>0){path=[path[0],...path.slice(1).reverse()];reverse=true;}
+  }else if(traceCompare(path[0],path.at(-1))>0){path.reverse();reverse=true;}
+  return {path,reverse,locked};
+}
+function tracePreparePerimeter(ring,fixed,tolerance,cache){
+  const locked=new Set(),anchors=[];
+  for(let i=0;i<ring.length;i++)if(fixed(ring[i])){anchors.push(i);locked.add(ring[i].join(','));}
+  const bounds=ring.reduce((b,p)=>[Math.min(b[0],p[0]),Math.min(b[1],p[1]),Math.max(b[2],p[0]),Math.max(b[3],p[1])],[Infinity,Infinity,-Infinity,-Infinity]);
+  // Do not collapse narrow strips when the user chooses a broad pen tolerance.
+  const effective=Math.min(traceTolerance(tolerance),Math.min(bounds[2]-bounds[0],bounds[3]-bounds[1])*.1);
+  const chains=[];
+  function add(source,closed){
+    const {path,reverse}=traceCanonicalPath(source,closed,locked);
+    const key=[closed,path.length,path[0].join(','),path.at(-1).join(','),path[Math.floor(path.length/2)].join(',')].join('|');
+    const bucket=cache.get(key)||[];
+    let chain=bucket.find(c=>c.raw.length===path.length&&c.raw.every((p,i)=>p[0]===path[i][0]&&p[1]===path[i][1]));
+    if(!chain){chain={raw:path,closed,locked:new Set(locked),tolerance:effective,points:null};bucket.push(chain);cache.set(key,bucket);}
+    else{chain.tolerance=Math.min(chain.tolerance,effective);for(const p of locked)chain.locked.add(p);}
+    chains.push({chain,reverse});
+  }
+  if(anchors.length<2)add(ring,true);
+  else for(let j=0;j<anchors.length;j++){
+    const start=anchors[j],stop=anchors[(j+1)%anchors.length],end=stop>start?stop:stop+ring.length,path=[];
+    for(let i=start;i<=end;i++)path.push(ring[i%ring.length]);
+    add(path,false);
+  }
+  return {ring,chains,tolerance:effective};
+}
+function traceAssemblePerimeter(prepared){
+  const result=[];
+  for(const {chain,reverse} of prepared.chains){
+    let points=chain.points;
+    if(reverse)points=chain.closed?[points[0],...points.slice(1).reverse()]:points.slice().reverse();
+    result.push(...(chain.closed?points:points.slice(0,-1)));
+  }
+  return result;
+}
+function traceValidPerimeter(original,points){
+  if(points.length<3||points.length>500)return false;
+  const before=traceArea(original),after=traceArea(points);
+  if(before*after<=0||Math.abs(after-before)>Math.abs(before)*.15+1e-6)return false;
+  const repaired=uncrossTraceRing(points);
+  // The automatic result must be simple already. Reordering crossings would
+  // change the relationship to adjacent fields and to the scanned perimeter.
+  return repaired&&repaired.every((p,i)=>p===points[i]);
+}
+function traceFinishPerimeters(prepared,cache){
+  const chains=[...cache.values()].flat();
+  for(const chain of chains){
+    chain.stage=0;
+    chain.points=traceRegularizePath(chain.raw,chain.closed,chain.locked,chain.tolerance);
+  }
+  // If a fit creates a crossing, use a stricter partition of its complete shared
+  // chains on EVERY side, then exact collinear reduction as the last fallback.
+  // A per-polygon fallback would create slivers along a shared boundary.
+  let changed=true;
+  while(changed){
+    changed=false;
+    for(const item of prepared){
+      const points=traceAssemblePerimeter(item);
+      if(traceValidPerimeter(item.ring,points))continue;
+      for(const {chain} of item.chains)if(chain.stage<2){
+        chain.stage++;
+        chain.points=traceSplitIndices(chain.raw,chain.closed,chain.locked,
+          chain.stage===1?chain.tolerance:0).map(i=>chain.raw[i]);
+        changed=true;
+      }
     }
-    return far;
   }
-  const a=farthest(0),c=farthest(a);
-  if(a===c)return null;
-  const ids=[a,peak(a,c),c,peak(c,a)];
-  if(new Set(ids).size!==4)return null;
-  const corners=ids.map(i=>ring[i]);
-  const shortest=Math.min(...corners.map(([x,y],i)=>{
-    const q=corners[(i+1)%4];return Math.hypot(q[0]-x,q[1]-y);
-  }));
-  const band=Math.min(shortest*.12,Math.max(tolerance,Math.min(6,shortest*.045)));
-  let turn=0;
-  for(let j=0;j<4;j++){
-    const [x,y]=corners[j],[u,v]=corners[(j+1)%4],[p,q]=corners[(j+2)%4];
-    const cross=(u-x)*(q-v)-(v-y)*(p-u);
-    if(!cross || turn*cross<0)return null;
-    turn=cross;
-    const start=ids[j],end=ids[(j+1)%4];
-    for(let i=(start+1)%n;i!==end;i=(i+1)%n)
-      if(distance(i,start,end)>band)return null;
-  }
-  return corners;
+  return prepared.map(item=>{
+    const points=traceAssemblePerimeter(item);return traceValidPerimeter(item.ring,points)?points:null;
+  });
+}
+function straightenRing(points,junction,tolerance){
+  if(points.length<3)return points;
+  const cache=new Map(),prepared=tracePreparePerimeter(points,junction,tolerance,cache);
+  return traceFinishPerimeters([prepared],cache)[0]||points;
 }
 function traceLandUses(pixels, forest, width, height, blackWidth, tolerance=2.5) {
   const size = width * height;
@@ -341,7 +416,7 @@ function traceLandUses(pixels, forest, width, height, blackWidth, tolerance=2.5)
     if(labels[i+width]!==id)line(id,v+stride+1,v+stride);
     if(labels[i-1]!==id)line(id,v+stride,v);
   }
-  const shapes=new Map();
+  const shapes=new Map(),outlines=[],perimeters=[],chainCache=new Map();
   for(const [id,links] of borders){
     if(!regions[id].valid)continue;
     const start=links.keys().next().value,ring=[];
@@ -357,16 +432,15 @@ function traceLandUses(pixels, forest, width, height, blackWidth, tolerance=2.5)
       return (a!==b && (c!==a&&c!==b || d!==a&&d!==b)) ||
              (c!==d && (a!==c&&a!==d || b!==c&&b!==d));
     }
-    const corners=ring.filter((p,i)=>{
-      const a=ring[(i+ring.length-1)%ring.length],b=ring[(i+1)%ring.length];
-      return junction(p) || (a[0]!==b[0] && a[1]!==b[1]);
-    });
-    const points=simplifiedTracePerimeter(ring,corners,junction,tolerance,true);
-    if(points)shapes.set(id,{points,suggested:regions[id].suggested,
+    perimeters.push(tracePreparePerimeter(ring,junction,tolerance,chainCache));
+    outlines.push({id,suggested:regions[id].suggested,
       bounds:ring.reduce(([l,t,r,b],[x,y])=>[Math.min(l,x),Math.min(t,y),Math.max(r,x),Math.max(b,y)],
                          [width,height,0,0])});
   }
-  return {labels,shapes};
+  traceFinishPerimeters(perimeters,chainCache).forEach((points,i)=>{
+    if(points){const {id,...shape}=outlines[i];shapes.set(id,{points,...shape});}
+  });
+  return {labels,shapes,tolerance:traceTolerance(tolerance)};
 }
 // Build the perimeter from labelled pixels before straightening. Independently
 // straightened fragments can leave hairline gaps along the original shared edge.
@@ -401,10 +475,9 @@ function uncrossTraceRing(points){
   return null;
 }
 function simplifiedTracePerimeter(ring,corners,fixed,tolerance,allowQuad){
-  const quad=allowQuad && fourCornerOutline(ring,tolerance);
-  if(quad)return quad;
-  const simple=straightenRing(corners,fixed,tolerance);
-  return uncrossTraceRing(simple)||uncrossTraceRing(corners);
+  if(ring.length<3)return null;
+  const cache=new Map(),prepared=tracePreparePerimeter(ring,fixed,tolerance,cache);
+  return traceFinishPerimeters([prepared],cache)[0];
 }
 function selectedRasterOutline(trace,selected,width,height,edited){
   if(!selected.size)return [];
@@ -440,13 +513,26 @@ function selectedRasterOutline(trace,selected,width,height,edited){
     const next=links.get(v);links.delete(v);v=next;
   }while(v!==start&&v!==undefined);
   if(v!==start||links.size)return null;
-  const fixed=p=>edited.has(p.join(","));
+  // Fitted corners need not coincide with an integer raster vertex. Reattach
+  // manual edits to their original corner arc when adjoining fields are merged.
+  // Edits on an internal divider disappear with that divider, as they should.
+  const anchors=new Map();
+  for(const [key,point] of edited){
+    const original=key.split(",").map(Number);
+    let nearest=null,distance=(traceTolerance(trace.tolerance??2.5)+.75)**2;
+    for(const p of ring){
+      const d=(p[0]-original[0])**2+(p[1]-original[1])**2;
+      if(d<distance){distance=d;nearest=p;}
+    }
+    if(nearest)anchors.set(nearest.join(","),point);
+  }
+  const fixed=p=>anchors.has(p.join(","));
   const corners=ring.filter((p,i)=>{
     const a=ring[(i+ring.length-1)%ring.length],b=ring[(i+1)%ring.length];
     return (a[0]!==b[0] && a[1]!==b[1]) || fixed(p);
   });
-  const perimeter=simplifiedTracePerimeter(ring,corners,fixed,2.5,!corners.some(fixed));
-  return perimeter?.map(p=>edited.get(p.join(","))||p);
+  const perimeter=simplifiedTracePerimeter(ring,corners,fixed,trace.tolerance??2.5,!corners.some(fixed));
+  return perimeter?.map(p=>anchors.get(p.join(","))||p);
 }
 function openRasterTracing(item, view) {
   const panel=document.createElement("section");
@@ -459,6 +545,11 @@ function openRasterTracing(item, view) {
       <label><input type="checkbox" class="trace-magnet"> Magnes</label>
       <label title="Nowe wydzielenie z tym samym A1 scala się z istniejącym, nawet gdy leży daleko"><input type="checkbox" class="trace-merge-a1" checked> Scalaj po A1</label>
       <button type="button" class="button ghost trace-fit">Cały raster</button></div>
+    <div class="trace-map-options">
+      <label>Analiza <select class="trace-quality"><option value="12000000">Dokładna</option><option value="6000000">Szybsza</option></select></label>
+      <label title="Maksymalne odchylenie prostego boku od odczytanego konturu, w pikselach analizy">Prostowanie <select class="trace-tolerance"><option value="1">Delikatne</option><option value="2.5" selected>Proste boki</option><option value="4">Drżąca kreska</option></select></label>
+    </div>
+    <span class="trace-accuracy"></span>
     <div class="trace-map-save"><label>A1 <input class="trace-a1" autocomplete="off"></label>
       <button type="button" class="button primary trace-save">Zatwierdź 5310</button></div>
     <span role="status"></span>`;
@@ -469,11 +560,18 @@ function openRasterTracing(item, view) {
   stage.append(canvas,panel);
   const ctx=canvas.getContext("2d"),status=panel.querySelector("[role=status]");
   const save=panel.querySelector(".trace-save"),close=panel.querySelector(".trace-close");
-  const analysisScale=Math.min(1,Math.sqrt(6000000/(item.image.width*item.image.height)),
-                               8192/Math.max(item.image.width,item.image.height));
-  const w=Math.max(1,Math.round(item.image.width*analysisScale));
-  const h=Math.max(1,Math.round(item.image.height*analysisScale));
-  const sx=(item.sourceWidth||item.image.width)/w,sy=(item.sourceHeight||item.image.height)/h;
+  const quality=panel.querySelector(".trace-quality"),tolerance=panel.querySelector(".trace-tolerance");
+  const accuracy=panel.querySelector(".trace-accuracy");
+  let w,h,sx,sy;
+  function configureResolution(){
+    const budget=Number(quality.value)===6000000?6000000:12000000;
+    const scale=Math.min(1,Math.sqrt(budget/(item.image.width*item.image.height)),
+                         8192/Math.max(item.image.width,item.image.height));
+    w=Math.max(1,Math.floor(item.image.width*scale));
+    h=Math.max(1,Math.floor(item.image.height*scale));
+    sx=(item.sourceWidth||item.image.width)/w;sy=(item.sourceHeight||item.image.height)/h;
+  }
+  configureResolution();
   const [a,b,c,d,e,f]=item.affine,det=a*e-b*d;
   // Display geometry uses easting and negative northing. The affine uses
   // original source pixels even when the decoder supplied a smaller preview.
@@ -482,7 +580,14 @@ function openRasterTracing(item, view) {
   const extent=[[0,0],[w,0],[w,h],[0,h]].map(([x,y])=>worldAt(x,y));
   const bounds=[Math.min(...extent.map(p=>p.x)),Math.min(...extent.map(p=>p.y)),
                 Math.max(...extent.map(p=>p.x)),Math.max(...extent.map(p=>p.y))];
-  let features=[],worker=null,analysisId=0,failure="";
+  let features=[],worker=null,analysisId=0,analysisPending=0,preparationId=0,failure="";
+  function stopAnalysisWorker(){
+    const previous=worker;worker=null;analysisPending=0;
+    if(previous){
+      previous.onmessage=previous.onerror=null;
+      previous.terminate();
+    }
+  }
   let pan=null,rectEnd=null,disposed=false;
   const screenAt=p=>{
     const q=worldAt(p.x,p.y);return view.worldToScreen(q.x,q.y);
@@ -642,14 +747,23 @@ function openRasterTracing(item, view) {
     if(!trace)status.textContent=failure||"Rozpoznawanie pól na całym rastrze…";
     if(fitPending)status.textContent="Dopasowuję granicę do istniejących 5310…";
     else if(fitMessage)status.textContent=fitMessage;
+    // The largest singular value bounds ground displacement even for a
+    // rotated/sheared GCP transform. This is a simplification limit, not a
+    // statement about the independent georeferencing accuracy of the scan.
+    const xx=(a*a+d*d)*sx*sx,yy=(b*b+e*e)*sy*sy,xy=(a*b+d*e)*sx*sy;
+    const groundPixel=Math.sqrt((xx+yy+Math.hypot(xx-yy,2*xy))/2);
+    accuracy.textContent="Piksel analizy: do "+groundPixel.toFixed(2)+" m · Prostowanie: do "+
+      (groundPixel*Number(tolerance.value)).toFixed(2)+" m. Dokładność położenia zależy także od kalibracji.";
     save.disabled=busy||fitError||!trace||!outline?.length||!a1.value.trim();
   }
   function analyze(){
-    if(!worker)return;
+    if(disposed||!worker)return;
     trace=null;failure="";selected.clear();edited.clear();drafts.clear();outline=[];invalidateFit();
-    activeNode=null;a1.value="";
+    activeNode=null;anchor=drag=pan=rectEnd=snapHit=null;clearTimeout(holdTimer);a1.value="";
+    analysisPending=++analysisId;
     draw();
-    worker.postMessage({threshold:Number(panel.querySelector("select").value),id:++analysisId});
+    worker.postMessage({threshold:Number(panel.querySelector("select").value),
+      tolerance:Number(panel.querySelector(".trace-tolerance").value),id:analysisPending});
   }
   function position(event){
     const r=canvas.getBoundingClientRect();
@@ -753,7 +867,7 @@ function openRasterTracing(item, view) {
     const u=screenAt(anchor),v=screenAt(p);rectEnd=null;
     if(Math.hypot(v.x-u.x,v.y-u.y)<5){
       const id=p.x>=0&&p.y>=0&&p.x<w&&p.y<h?trace.labels[Math.floor(p.y)*w+Math.floor(p.x)]:0;
-      if(!trace.shapes.has(id)){anchor=null;draw();status.textContent="Brak prostego, zamkniętego konturu. Zmień próg czerni lub powiększenie widoku.";return;}
+      if(!trace.shapes.has(id)){anchor=null;draw();status.textContent="Brak zamkniętego konturu. Sprawdź ustawienie Kontury lub przełącz analizę na Dokładną.";return;}
       if(selected.has(id))selected.delete(id);else selected.add(id);
     }else{
       for(const [id,shape] of trace.shapes){
@@ -765,10 +879,23 @@ function openRasterTracing(item, view) {
     anchor=null;syncAttributes();draw();
   };
   panel.querySelector("select").onchange=analyze;
+  tolerance.onchange=()=>{if(!busy)analyze();};
+  quality.onchange=()=>{
+    if(busy||disposed)return;
+    const oldWidth=w,oldHeight=h;
+    selected.clear();edited.clear();drafts.clear();outline=[];activeNode=null;
+    anchor=drag=pan=rectEnd=snapHit=null;clearTimeout(holdTimer);invalidateFit();
+    a1.value="";
+    configureResolution();
+    for(const ring of completed)for(const p of ring){p[0]*=w/oldWidth;p[1]*=h/oldHeight;}
+    prepare();
+  };
   function finish(){
     if(busy)return false;
     if(!disposed){
-      disposed=true;worker?.terminate();observer.disconnect();canvas.remove();panel.remove();view.closed();
+      disposed=true;preparationId++;analysisId++;stopAnalysisWorker();
+      clearTimeout(holdTimer);anchor=drag=pan=rectEnd=snapHit=null;
+      observer.disconnect();canvas.remove();panel.remove();view.closed();
     }
     return true;
   }
@@ -778,6 +905,7 @@ function openRasterTracing(item, view) {
     if(fitPending){queuedSave=true;return;}
     if(!nativeOutline)return;
     busy=true;save.disabled=close.disabled=a1.disabled=panel.querySelector("select").disabled=true;
+    quality.disabled=tolerance.disabled=true;
     let message="";
     try{
       const points=outline;
@@ -795,6 +923,7 @@ function openRasterTracing(item, view) {
     }catch(error){message=error.message;}
     finally{
       busy=false;close.disabled=a1.disabled=panel.querySelector("select").disabled=false;
+      quality.disabled=tolerance.disabled=false;
       if(message)fitMessage=message;
       draw();a1.focus({preventScroll:true});
     }
@@ -803,9 +932,12 @@ function openRasterTracing(item, view) {
   const observer=new ResizeObserver(resize);
   resize();observer.observe(stage);canvas.focus({preventScroll:true});
   async function prepare(){
+    const generation=++preparationId;
+    analysisId++;stopAnalysisWorker();trace=null;invalidateFit();draw();
     try{
-      features=await view.featuresIn(bounds);
-      if(disposed)return;
+      const loaded=await view.featuresIn(bounds);
+      if(disposed||generation!==preparationId)return;
+      features=loaded;
       const buffer=document.createElement("canvas");buffer.width=w;buffer.height=h;
       const g=buffer.getContext("2d",{willReadFrequently:true});
       g.fillStyle="white";g.fillRect(0,0,w,h);g.drawImage(item.image,0,0,w,h);
@@ -825,14 +957,22 @@ function openRasterTracing(item, view) {
         g.fillStyle="white";g.fill("evenodd");g.strokeStyle="black";g.lineWidth=2;g.stroke();
       }
       const mask=g.getImageData(0,0,w,h).data;
-      worker=new Worker("/raster_trace.js");
-      worker.onmessage=({data})=>{
-        if(data.id!==analysisId)return;
+      const current=new Worker("/raster_trace.js");worker=current;
+      const isCurrent=()=>!disposed&&generation===preparationId&&worker===current;
+      current.onmessage=({data})=>{
+        if(!isCurrent()||data.id!==analysisId||data.id!==analysisPending)return;
+        analysisPending=0;
         trace=data.trace;failure=data.error||"";draw();
       };
-      worker.onerror=()=>{failure="Nie udało się rozpoznać pól na rastrze.";draw();};
-      worker.postMessage({source,mask,w,h},[source.buffer,mask.buffer]);analyze();
-    }catch(error){failure="Błąd wczytywania mapy: "+error.message;draw();}
+      current.onerror=()=>{
+        if(!isCurrent()||!analysisPending)return;
+        analysisPending=0;trace=null;failure="Nie udało się rozpoznać pól na rastrze.";draw();
+      };
+      current.postMessage({source,mask,w,h},[source.buffer,mask.buffer]);analyze();
+    }catch(error){
+      if(disposed||generation!==preparationId)return;
+      stopAnalysisWorker();failure="Błąd wczytywania mapy: "+error.message;draw();
+    }
   }
   prepare();
   return {id:item.id,token:view.token,redraw:draw,close:finish,submit};
@@ -843,7 +983,7 @@ if(typeof WorkerGlobalScope!=="undefined" && self instanceof WorkerGlobalScope){
   self.onmessage=({data})=>{
     if(data.source){sheet=data;return;}
     try{
-      const trace=traceLandUses(sheet.source,sheet.mask,sheet.w,sheet.h,data.threshold);
+      const trace=traceLandUses(sheet.source,sheet.mask,sheet.w,sheet.h,data.threshold,data.tolerance);
       self.postMessage({id:data.id,trace},[trace.labels.buffer]);
     }catch(error){self.postMessage({id:data.id,error:"Błąd rozpoznawania: "+error.message});}
   };

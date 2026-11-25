@@ -7,7 +7,8 @@ u grows right, v grows down. The affine coefficients always map
 from __future__ import annotations
 
 from io import BytesIO
-from math import isfinite, sqrt
+from math import ceil, floor, isfinite, nextafter, sqrt
+from threading import Lock
 from typing import Any
 
 from geostudio.raster_georef import GroundControlPoint, fit_affine
@@ -19,6 +20,9 @@ MAX_SOURCE_PIXELS = 80_000_000
 MAX_RASTER_PIXELS = 14_000_000
 MAX_ALPHA_PREVIEW_PIXELS = 10_000_000
 MAX_PREVIEW_EDGE = 8192  # Typical WebView2/GPU texture-safe maximum.
+PDF_SOURCE_DPI = 300
+# PDFium is not thread safe, even when concurrent requests open different files.
+_PDF_LOCK = Lock()
 
 
 def parse_world_text(text: str) -> tuple[float, float, float, float, float, float]:
@@ -111,6 +115,61 @@ def _geo_transform(tags) -> tuple[float, ...] | None:
     return coeff
 
 
+def _prepare_pdf(content: bytes) -> tuple[bytes, dict]:
+    """Render one map sheet through the same image/georeferencing pipeline.
+
+    PDF source coordinates use a stable 300 dpi grid. Render directly to the
+    bounded preview size; never allocate the full-sized source bitmap first.
+    Multi-page documents require an explicit page choice outside this importer.
+    """
+    import pypdfium2 as pdfium
+
+    try:
+        with _PDF_LOCK, pdfium.PdfDocument(content) as document:
+            if len(document) != 1:
+                raise ValueError("PDF zawiera kilka stron. Zapisz wybrany arkusz jako osobny PDF lub obraz.")
+            page = document[0]
+            try:
+                page_width, page_height = page.get_size()
+                if not all(isfinite(v) and v > 0 for v in (page_width, page_height)):
+                    raise ValueError("PDF ma nieprawidłowy rozmiar strony.")
+                source_width = ceil(page_width * PDF_SOURCE_DPI / 72)
+                source_height = ceil(page_height * PDF_SOURCE_DPI / 72)
+                pixels = source_width * source_height
+                if pixels > MAX_SOURCE_PIXELS:
+                    raise ValueError("Raster PDF przekracza limit 80 mln pikseli przy 300 dpi.")
+                factor = min(1., sqrt(MAX_RASTER_PIXELS / pixels),
+                             MAX_PREVIEW_EDGE / max(source_width, source_height))
+                target_width = max(1, floor(source_width * factor))
+                target_height = max(1, floor(source_height * factor))
+                # Avoid ceil(250.00000000000003) inside PDFium adding a
+                # spurious row and forcing a second, aspect-changing resize.
+                scale = nextafter(min(target_width / page_width,
+                                      target_height / page_height), 0.)
+                bitmap = page.render(scale=scale, rev_byteorder=True)
+                try:
+                    rendered = bitmap.to_pil().convert("RGB")
+                    # PDFium rounds raster dimensions upwards. Enforce the
+                    # same hard pixel/edge limits as image previews.
+                    rendered.thumbnail((target_width, target_height))
+                    output = BytesIO()
+                    rendered.save(output, format="PNG", compress_level=5)
+                    result = output.getvalue()
+                    if len(result) > MAX_RASTER_BYTES:
+                        raise ValueError("Podgląd PDF jest zbyt duży.")
+                    return result, {
+                        "width": rendered.width, "height": rendered.height,
+                        "sourceWidth": source_width, "sourceHeight": source_height,
+                        "epsg": None, "coefficients": None,
+                    }
+                finally:
+                    bitmap.close()
+            finally:
+                page.close()
+    except pdfium.PdfiumError as exc:
+        raise ValueError("Nie można odczytać PDF. Sprawdź, czy plik nie jest uszkodzony lub zabezpieczony hasłem.") from exc
+
+
 def prepare_raster(content: bytes, *, tiff_only: bool = False) -> tuple[bytes, dict]:
     """Prepare a browser-safe preview and keep original pixel coordinates.
 
@@ -121,13 +180,15 @@ def prepare_raster(content: bytes, *, tiff_only: bool = False) -> tuple[bytes, d
     """
     if not content or len(content) > MAX_RASTER_BYTES:
         raise ValueError("Raster jest pusty lub przekracza limit 48 MB pliku.")
+    if not tiff_only and content.lstrip().startswith(b"%PDF-"):
+        return _prepare_pdf(content)
     try:
         from PIL import Image
         with Image.open(BytesIO(content)) as image:
             if tiff_only and image.format != "TIFF":
                 raise ValueError("Przesłano plik inny niż TIFF.")
             if image.format not in ("TIFF", "PNG", "JPEG", "WEBP"):
-                raise ValueError("Obsługiwane obrazy: TIFF, PNG, JPG, WebP.")
+                raise ValueError("Obsługiwane rastry: TIFF, PNG, JPG, WebP i jednostronicowy PDF.")
             source_width, source_height = image.size
             pixels = source_width * source_height
             if source_width < 1 or source_height < 1 or pixels > MAX_SOURCE_PIXELS:

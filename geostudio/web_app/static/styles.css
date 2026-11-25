@@ -2039,6 +2039,7 @@ body[data-theme] .floating {flex-shrink:0;}
 .trace-magnet { accent-color:var(--ui-accent); }
 .trace-a1 { width:6em; }
 .trace-map-panel [role=status] { color:var(--ui-muted); }
+.trace-accuracy { color:var(--ui-muted); font-size:11px; line-height:1.45; }
 #choose-raster { width:100%; min-height:52px; font-size:15px; }
 .raster-world-action { display:flex; justify-content:flex-end; margin-top:10px; }
 #choose-world { width:auto; min-height:30px; padding:4px 10px; font-size:12px; }

@@ -93,6 +93,23 @@ def _selftest(workspace) -> int:
     worker = None
     sock = None
     try:
+        # Exercise the bundled PDFium DLL, not just Python imports.  A build
+        # can launch its UI successfully while missing the native PDF decoder.
+        # The complete fixture and PNG stay in memory; no user file is read.
+        from io import BytesIO
+        from reportlab.pdfgen.canvas import Canvas
+        from .underlay_raster import prepare_raster
+
+        fixture = BytesIO()
+        sheet = Canvas(fixture, pagesize=(24, 24))
+        sheet.setFillColorRGB(.2, .5, .1)
+        sheet.rect(2, 2, 20, 20, fill=1, stroke=0)
+        sheet.save()
+        preview, metadata = prepare_raster(fixture.getvalue())
+        if (not preview.startswith(b"\x89PNG\r\n\x1a\n") or
+                (metadata["width"], metadata["height"]) != (100, 100) or
+                (metadata["sourceWidth"], metadata["sourceHeight"]) != (100, 100)):
+            return 1
         app = create_app(workspace, multi_document=True)
         config = uvicorn.Config(
             app=app, log_level="warning", access_log=False, server_header=False,
