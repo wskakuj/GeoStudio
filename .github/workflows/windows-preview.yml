@@ -43,14 +43,13 @@ jobs:
       - name: Check installer output
         shell: pwsh
         run: |
-          # Nazwa instalatora zawiera wersję (2.0.0), więc szukamy maską,
-          # a nie zaszytym plikiem "preview8".
-          $exe = Get-ChildItem "dist/installer/*.exe" | Select-Object -First 1
-          if (-not $exe) { throw "Missing installer EXE" }
-          if ($exe.Length -lt 1000000) {
-            throw "Installer unexpectedly small: $($exe.Name)"
-          }
-          Write-Host "Installer created: $($exe.FullName)"
+          $version = python -c "from geostudio import __version__; print(__version__)"
+          if ($LASTEXITCODE -ne 0) { throw "Unable to read source version." }
+          $version = $version.Trim()
+          python tools/windows/check_release.py "v$version"
+          if ($LASTEXITCODE -ne 0) { throw "Source versions do not match." }
+          $installer = & ./tools/windows/check_installer.ps1 -Version $version
+          Write-Host "Installer validated: $($installer.FullName)"
       - uses: actions/upload-artifact@v4
         with:
           name: GeoStudio2-Setup-x64
