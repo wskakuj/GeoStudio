@@ -20,7 +20,7 @@ GITHUB_USER = "wskakuj"
 GITHUB_REPO = "GeoStudio"
 USER_AGENT = "GeoStudio-Updater"
 API_LATEST = f"https://api.github.com/repos/{GITHUB_USER}/{GITHUB_REPO}/releases/latest"
-ASSET_PATTERN = re.compile(r"\.exe$", re.IGNORECASE)
+RELEASE_TAG_PATTERN = re.compile(r"v?(\d+\.\d+\.\d+)")
 
 
 _VERSION_PREFIX = re.compile(r"^\s*v?(\d+(?:\.\d+)*)")
@@ -44,7 +44,7 @@ def is_newer(latest: str, current: str) -> bool:
 
 # Musi być zgodna z pyproject.toml; używana, gdy metadane pakietu nie są
 # spakowane (PyInstaller kopiuje je przez --copy-metadata geostudio-pl).
-FALLBACK_VERSION = "2.0.97"
+FALLBACK_VERSION = "2.0.99"
 
 
 def current_version() -> str:
@@ -67,10 +67,14 @@ def fetch_latest_release(timeout: float = 6.0) -> dict:
 
 
 def installer_asset(release: dict) -> dict | None:
-    """Pierwszy załącznik .exe (instalator Inno Setup)."""
+    """Instalator Inno Setup musi odpowiadać dokładnie wersji tagu."""
+    match = RELEASE_TAG_PATTERN.fullmatch(str(release.get("tag_name") or ""))
+    if match is None:
+        return None
+    expected = f"GeoStudio2-Setup-{match.group(1)}-x64.exe"
     for asset in release.get("assets") or []:
-        name = str(asset.get("name") or "")
-        if ASSET_PATTERN.search(name):
+        if (str(asset.get("name") or "") == expected
+                and asset.get("browser_download_url")):
             return asset
     return None
 
@@ -86,6 +90,10 @@ def check_for_update(current: str | None = None, timeout: float = 6.0) -> dict |
     if not latest or not is_newer(latest, current):
         return None
     asset = installer_asset(release)
+    if asset is None:
+        # Do not offer a mislabeled release (e.g. tag 2.0.98 with 2.0.97
+        # installer), or the user will reinstall the same version forever.
+        return None
     return {
         "version": latest,
         "current": current,

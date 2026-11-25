@@ -17,6 +17,10 @@ on:
 permissions:
   contents: write
 
+concurrency:
+  group: windows-release-${{ inputs.release_tag }}
+  cancel-in-progress: false
+
 jobs:
   build:
     name: Build Windows installer
@@ -32,6 +36,19 @@ jobs:
         shell: pwsh
         run: |
           "sha=$(git rev-parse HEAD)" >> $env:GITHUB_OUTPUT
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Validate source version and unused release tag
+        env:
+          RELEASE_TAG: ${{ inputs.release_tag }}
+        shell: pwsh
+        run: |
+          python tools/windows/check_release.py $env:RELEASE_TAG
+          if ($LASTEXITCODE -ne 0) { throw "Selected source and release tag do not match." }
+          $existing = git ls-remote --tags origin "refs/tags/$env:RELEASE_TAG"
+          if ($LASTEXITCODE -ne 0) { throw "Unable to verify release tag." }
+          if ($existing) { throw "Release tag already exists. Use a new version; do not reuse a published tag." }
       - name: Install Inno Setup 6 if missing
         shell: pwsh
         run: |
@@ -41,18 +58,29 @@ jobs:
             if ($LASTEXITCODE -ne 0) { throw "Inno Setup installation failed." }
           }
       - name: Build and smoke-check installer
+        id: installer
         timeout-minutes: 20
+        env:
+          RELEASE_TAG: ${{ inputs.release_tag }}
         shell: pwsh
         run: |
           ./tools/windows/build.ps1
-          # Nazwa instalatora zawiera wersję (np. GeoStudio2-Setup-2.0.1-x64.exe),
-          # więc szukamy maską, a nie zaszytym plikiem "preview8".
-          $installer = Get-ChildItem "dist/installer/*.exe" | Select-Object -First 1
-          if (-not $installer) { throw "Installer not found in dist/installer/" }
+          $version = $env:RELEASE_TAG.Substring(1)
+          $expected = "GeoStudio2-Setup-$version-x64.exe"
+          $installers = @(Get-ChildItem "dist/installer/*.exe")
+          if ($installers.Count -ne 1 -or $installers[0].Name -cne $expected) {
+            throw "Expected exactly one installer named $expected."
+          }
+          $installer = $installers[0]
           if ($installer.Length -lt 1000000) {
             throw "Installer is unexpectedly small: $($installer.Name)"
           }
+          $expectedFileVersion = "$version.0"
+          if ($installer.VersionInfo.FileVersion -ne $expectedFileVersion) {
+            throw "Installer file version $($installer.VersionInfo.FileVersion) does not match $expectedFileVersion."
+          }
           Write-Host "Installer: $($installer.FullName)"
+          "path=dist/installer/$expected" >> $env:GITHUB_OUTPUT
       - name: Publish prerelease and attach installer
         uses: softprops/action-gh-release@v2
         with:
@@ -65,4 +93,5 @@ jobs:
             Źródło: `${{ inputs.source_ref }}` (`${{ steps.source.outputs.sha }}`).
             Instalator tworzy instalację dla bieżącego użytkownika.
           prerelease: false
-          files: dist/installer/*.exe
+          files: ${{ steps.installer.outputs.path }}
+          fail_on_unmatched_files: true
