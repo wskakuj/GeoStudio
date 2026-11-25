@@ -12,6 +12,7 @@ from urllib.parse import unquote, quote
 from io import BytesIO
 from zipfile import ZipFile,ZIP_STORED
 import secrets
+from contextlib import asynccontextmanager
 from contextvars import ContextVar
 
 from fastapi import FastAPI, HTTPException, Request
@@ -25,6 +26,8 @@ from .underlay_wms import (list_layers as wms_layers,
 from .underlay_raster import prepare_raster, fit_gcp_payload, MAX_RASTER_BYTES
 from .underlay_crs import verified_prj_epsg, convert_point, MAX_PRJ
 from . import raster_memory
+from .raster_a1_cache import (RasterA1Cache, RasterOCRBusy, RasterPreviewMissing,
+                              raster_digest)
 from .tile_exports import MAX_TILE_BYTES
 from .documents import DocumentRegistry, ScopedAttribute, make_session, MAX_DOCUMENTS
 from .native_picker import (preference_file, read_appearance_preference,
@@ -39,8 +42,17 @@ UPLOAD_CHUNK = 1024 * 1024
 
 def create_app(workspace: PreviewWorkspace | None = None, *,
                multi_document: bool = False) -> FastAPI:
+    raster_a1_cache = RasterA1Cache()
+
+    @asynccontextmanager
+    async def lifespan(_app):
+        try:
+            yield
+        finally:
+            raster_a1_cache.close()
+
     app = FastAPI(title="GeoStudio 2.0 — local preview", docs_url=None,
-                  redoc_url=None, openapi_url=None)
+                  redoc_url=None, openapi_url=None, lifespan=lifespan)
     # Preserve the standalone single-document API for existing integrations.
     # The desktop launcher enables the tab shell; every tab is a separate
     # workspace, history, tile store and native file picker.
@@ -54,6 +66,7 @@ def create_app(workspace: PreviewWorkspace | None = None, *,
     app.state.api_token = token
     app.state.tile_exports = base.tile_exports
     app.state.documents = registry
+    app.state.raster_a1_cache = raster_a1_cache
 
     @app.middleware("http")
     async def local_only(request: Request, next_handler):
@@ -211,6 +224,14 @@ def create_app(workspace: PreviewWorkspace | None = None, *,
     @app.get("/raster_trace.js")
     async def raster_trace_js():
         return FileResponse(ROOT / "raster_trace.js", media_type="text/javascript")
+
+    @app.get("/raster_trace_metrics.js")
+    async def raster_trace_metrics_js():
+        return FileResponse(ROOT / "raster_trace_metrics.js", media_type="text/javascript")
+
+    @app.get("/raster_a1.js")
+    async def raster_a1_js():
+        return FileResponse(ROOT / "raster_a1.js", media_type="text/javascript")
 
     @app.get("/drawing_snap.js")
     async def drawing_snap_js():
@@ -483,6 +504,7 @@ def create_app(workspace: PreviewWorkspace | None = None, *,
         if raw is None:
             raise HTTPException(404, "Brak zapisanego rastra.")
         image, meta = await run_in_threadpool(prepare_raster, raw)
+        raster_a1_cache.remember(digest, image, meta)
         return Response(image, media_type="image/png", headers={
             "X-Raster-Source-Width": str(meta["sourceWidth"]),
             "X-Raster-Source-Height": str(meta["sourceHeight"])})
@@ -505,8 +527,10 @@ def create_app(workspace: PreviewWorkspace | None = None, *,
             image,meta=await run_in_threadpool(prepare_raster,payload)
         except ValueError as exc:
             raise HTTPException(400,str(exc)) from exc
+        digest = sha256(payload).hexdigest()
+        raster_a1_cache.remember(digest, image, meta)
         return Response(image,media_type="image/png",headers={
-            "X-Raster-Digest":sha256(payload).hexdigest(),
+            "X-Raster-Digest":digest,
             "X-Raster-EPSG":str(meta["epsg"] or ""),
             "X-Raster-Affine":json.dumps(meta["coefficients"]),
             "X-Raster-Width":str(meta["width"]),
@@ -514,6 +538,43 @@ def create_app(workspace: PreviewWorkspace | None = None, *,
             "X-Raster-Source-Width":str(meta["sourceWidth"]),
             "X-Raster-Source-Height":str(meta["sourceHeight"]),
         })
+
+    @app.post("/api/underlay/raster/a1")
+    async def recognize_raster_numbers(request: Request):
+        # OCR uses the prepared image only. A1 coordinates stay in PNG pixels
+        # and are independent of map revisions, calibrations and worker sizes.
+        map_key = raster_key(request)
+        data = await edit_payload(request, 4096)
+        try:
+            digest = raster_digest(data.get("digest"))
+        except ValueError as exc:
+            raise HTTPException(400, str(exc)) from exc
+        try:
+            if not raster_a1_cache.contains(digest):
+                def restore_preview():
+                    raw = raster_memory.raster_bytes(map_key, digest)
+                    return prepare_raster(raw) if raw is not None else None
+                await run_in_threadpool(raster_a1_cache.restore, digest, restore_preview)
+            result = await run_in_threadpool(raster_a1_cache.recognize, digest)
+        except RasterPreviewMissing:
+            # The frontend may re-upload its existing local File and retry
+            # once only for this explicit code, never for a model failure or
+            # the unrelated 404 returned when a document tab has been closed.
+            return JSONResponse({"detail": "Dodaj raster ponownie, aby odczytać A1.",
+                                 "code": "raster_preview_missing"}, status_code=404)
+        except RasterOCRBusy as exc:
+            return JSONResponse({"detail": str(exc), "code": "ocr_busy"},
+                                status_code=503, headers={"Retry-After": "3"})
+        except TimeoutError:
+            return JSONResponse({"detail": "Odczyt A1 trwa zbyt długo. Numer możesz wpisać ręcznie.",
+                                 "code": "ocr_timeout"}, status_code=504)
+        except Exception:
+            return JSONResponse({"detail": "Nie udało się odczytać A1 lokalnie. Numer możesz wpisać ręcznie.",
+                                 "code": "ocr_unavailable"}, status_code=503)
+        # Opening another MAP while the background job was running must not
+        # deliver its result into a different document in the same tab.
+        raster_key(request)
+        return result
 
     @app.post("/api/replace/preview")
     async def replace_phrase_preview(request: Request):
@@ -621,7 +682,9 @@ def create_app(workspace: PreviewWorkspace | None = None, *,
         payload = await edit_payload(request, 256 * 1024)
         try:
             return state.fit_trace_outline(payload.get("points"),
-                document_token=payload.get("documentToken"), revision=payload.get("revision"))
+                document_token=payload.get("documentToken"), revision=payload.get("revision"),
+                seed_points=payload.get("seedPoints", [payload["seedPoint"]] if "seedPoint" in payload else None),
+                snap_distance=payload.get("snapDistance", 0), locked_points=payload.get("lockedPoints"))
         except RuntimeError as exc:
             raise HTTPException(409, str(exc)) from exc
         except (ValueError, KeyError, TypeError) as exc:

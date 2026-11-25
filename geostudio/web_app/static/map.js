@@ -3194,11 +3194,11 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
     const entry=entries.find(e=>String(e.id)===picker.value)||entries[0];
     if(!entry){inform("Dodaj i skalibruj widoczny raster, aby wkreślać 5310.",true);return;}
     if(state.editBusy)return;
-    const token=state.edit.documentToken;
+    const documentToken=state.edit.documentToken;
     let revision=state.edit.revision;
     setTool("select",true);
     activeTrace=openRasterTracing(entry,{
-      shell, token, worldToScreen, screenToWorld, zoomAt,
+      shell, token:documentToken, worldToScreen, screenToWorld, zoomAt,
       scale:()=>state.scale,
       panBy(dx,dy){
         state.center={x:state.center.x-dx/state.scale,y:state.center.y-dy/state.scale};
@@ -3237,12 +3237,35 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
       magnetEnabled:()=>state.drawMagnet,
       toggleMagnet:toggleDrawMagnet,
       isVisible,
-      fitOutline:points=>api("/api/underlay/raster/fit",{method:"POST",
-        headers:{"Content-Type":"application/json"},body:JSON.stringify({documentToken:token,revision,points})}),
+      async recognizeA1(signal){
+        if(!entry.digest)throw Error("Raster nie ma identyfikatora potrzebnego do odczytu A1. Wczytaj go ponownie.");
+        const headers={"X-GeoStudio-Token":token,"X-Map-Token":documentToken};
+        const request=()=>documentFetch("/api/underlay/raster/a1",{method:"POST",signal,
+          headers:{...headers,"Content-Type":"application/json"},body:JSON.stringify({digest:entry.digest})});
+        let response=await request(),result=await response.json().catch(()=>({}));
+        // A fresh import still has its original local File. Refill an evicted
+        // preview once; another 404 (such as a closed document) is never retried.
+        if(response.status===404&&result.code==="raster_preview_missing"&&entry.file){
+          const restored=await documentFetch("/api/underlay/raster/prepare",{method:"POST",signal,
+            headers:{...headers,"Content-Type":"application/octet-stream"},body:entry.file});
+          if(!restored.ok){const error=await restored.json().catch(()=>({}));
+            throw Error(error.detail||"Nie udało się przygotować rastra do odczytu A1.");}
+          if(restored.headers.get("X-Raster-Digest")!==entry.digest)
+            throw Error("Źródło rastra zmieniło się. Wczytaj raster ponownie.");
+          await restored.arrayBuffer();
+          response=await request();result=await response.json().catch(()=>({}));
+        }
+        if(!response.ok)throw Error(result.detail||"Nie udało się odczytać numerów A1. Możesz wpisać je ręcznie.");
+        if(result.digest!==entry.digest)throw Error("Odczyt A1 pochodzi z innego rastra. Otwórz narzędzie ponownie.");
+        return result;
+      },
+      fitOutline:(points,options={})=>api("/api/underlay/raster/fit",{method:"POST",
+        headers:{"Content-Type":"application/json"},body:JSON.stringify({documentToken,revision,points,
+          seedPoints:options.seedPoints||[],lockedPoints:options.lockedPoints||[],snapDistance:options.snapDistance||0})}),
       async add(points,a1,fitted,options){
-        if(state.editBusy||state.edit.documentToken!==token||state.edit.revision!==revision)
+        if(state.editBusy||state.edit.documentToken!==documentToken||state.edit.revision!==revision)
           throw Error("Mapa została zmieniona. Otwórz wykrywanie ponownie.");
-        const body={documentToken:token,revision,operation:{action:"create",code:"5310",
+        const body={documentToken,revision,operation:{action:"create",code:"5310",
           clipRasterOverlap:true,mergeSameA1:options?.mergeSameA1===true,
           fields:a1?{A1:a1}:{},points}};
         const post=(path,data)=>api(path,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(data)});

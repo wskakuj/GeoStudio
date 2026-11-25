@@ -76,6 +76,42 @@ assert.equal(hit.kind,null);
 """)
 
 
+def test_auto_trace_magnet_captures_nodes_along_edges_and_has_stable_release():
+    node_assertions(r"""
+const assert=require('node:assert/strict');
+const {snapPoint}=require('./drawing_snap.js');
+const feature={id:'parcel',code:'5216',closed:true,geometry:[[[0,0],[100,0],[100,100],[0,100]]]};
+const options={scale:1,vertexPixels:26,edgePixels:10,preferVertices:true,releasePixels:34};
+// A cursor already on the reference edge still captures the nearby corner.
+let hit=snapPoint({x:20,y:0},[feature],options);
+assert.equal(hit.kind,'węzeł');assert.deepEqual(hit.point,{x:0,y:0});
+const captured=hit;
+hit=snapPoint({x:30,y:1},[feature],{...options,previous:captured});
+assert.deepEqual(hit.point,{x:0,y:0},'Small movement does not drop a captured node');
+hit=snapPoint({x:36,y:1},[feature],{...options,previous:captured});
+assert.equal(hit.kind,'krawędź');assert.deepEqual(hit.point,{x:36,y:0});
+hit=snapPoint({x:20,y:0},[feature],{...options,bypass:true});
+assert.equal(hit.kind,null,'Alt permits a deliberate parallel or unsnapped point');
+// Capture radius is a screen distance at every zoom level.
+hit=snapPoint({x:2,y:0},[feature],{...options,scale:10});
+assert.equal(hit.kind,'węzeł');assert.deepEqual(hit.point,{x:0,y:0});
+hit=snapPoint({x:3,y:0},[feature],{...options,scale:10});
+assert.equal(hit.kind,'krawędź');
+// Explicitly closed geometry need not repeat its first vertex to close the edge.
+hit=snapPoint({x:2,y:50},[feature],options);
+assert.equal(hit.kind,'krawędź');assert.deepEqual(hit.point,{x:0,y:50});
+// A stale or hidden reference cannot keep a previous capture alive.
+hit=snapPoint({x:30,y:1},[{...feature,visible:false}],{...options,previous:captured});
+assert.equal(hit.kind,null);
+hit=snapPoint({x:30,y:1},[],{...options,previous:captured});
+assert.equal(hit.kind,null);
+// A clearly closer exact node can take over in dense geometry.
+const dense={...feature,geometry:[[[0,0],[24,0],[100,0]]]};
+hit=snapPoint({x:24,y:0},[dense],{...options,previous:captured});
+assert.deepEqual(hit.point,{x:24,y:0});
+""")
+
+
 def test_magnet_applies_to_all_draw_tools_uses_actual_clicked_point_and_alt():
     src=(STATIC/"map.js").read_text(encoding="utf-8")
     assert "state.drawMagnet" in src

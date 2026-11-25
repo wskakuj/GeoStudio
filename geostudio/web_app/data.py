@@ -1999,14 +1999,119 @@ class PreviewWorkspace:
                           "previewKey":preview_key,"canApply":True,**adjusted,
                           **self._editing_status()}}
 
-    def fit_trace_outline(self, points, *, document_token: str, revision: int) -> dict:
-        """Read-only draft fit, independent of the edit preview/commit key."""
+    def fit_trace_outline(self, points, *, document_token: str, revision: int,
+                          seed_points=None, snap_distance=0, locked_points=None) -> dict:
+        """Read-only, non-overlapping draft fitted to nearby existing 5310.
+
+        Seed points identify the user's selected free locations. In particular,
+        clipping must never turn a click on an occupied polygon into a proposal
+        for a leftover strip on its other side. The returned native points are
+        the canonical preview and must also be submitted to the save API.
+        """
         with self._lock:
+            if (type(snap_distance) not in (int, float) or
+                    not isfinite(snap_distance) or not 0 <= snap_distance <= 20):
+                raise ValueError("Zasięg dopasowania musi mieścić się w zakresie 0–20 m.")
+            if seed_points is None:
+                seed_points = []
+            if (not isinstance(seed_points, list) or len(seed_points) > 500 or
+                    any(not isinstance(p, list) or len(p) != 2 or
+                        any(type(v) not in (int, float) or not isfinite(v) or abs(v) >= 1e9
+                            for v in p) for p in seed_points)):
+                raise ValueError("Nieprawidłowe punkty wskazania obrysu.")
+            if locked_points is None:
+                locked_points = []
+            if (not isinstance(locked_points, list) or len(locked_points) > 500 or
+                    any(not isinstance(p, list) or len(p) != 2 or
+                        any(type(v) not in (int, float) or not isfinite(v) or abs(v) >= 1e9
+                            for v in p) for p in locked_points)):
+                raise ValueError("Nieprawidłowe zablokowane węzły obrysu.")
             plan = self._object_operation_plan(
                 {"action": "create", "code": "5310", "fields": {},
                  "clipRasterOverlap": True, "points": points},
                 document_token=document_token, revision=revision)
-            return {"points": plan["coords"], "clipped": "adjustedPoints" in plan["report"]}
+            from shapely.geometry import Point, Polygon, box
+            from shapely.errors import GEOSException
+            from .raster_trace_fit import (canonical_locks, fit_neighbour_boundaries,
+                                           restore_locked_vertices)
+
+            locks = canonical_locks(points, locked_points)
+
+            def preserve_locks(current_plan):
+                if not locks:
+                    return current_plan
+                restored = restore_locked_vertices(current_plan["coords"], locks)
+                if restored == current_plan["coords"]:
+                    return current_plan
+                checked = self._object_operation_plan(
+                    {"action": "create", "code": "5310", "fields": {},
+                     "clipRasterOverlap": True, "points": [list(p) for p in restored]},
+                    document_token=document_token, revision=revision)
+                if not locks.issubset(set(checked["coords"])):
+                    raise ValueError("Nie można zachować ręcznych węzłów bez nałożenia na istniejący 5310.")
+                if "adjustedPoints" in current_plan["report"]:
+                    checked["report"]["adjustedPoints"] = checked["coords"]
+                return checked
+
+            plan = preserve_locks(plan)
+
+            coordinates = plan["coords"]
+            candidate = Polygon(coordinates)
+            xmin, ymin, xmax, ymax = candidate.bounds
+            center = ((xmin + xmax) / 2, (ymin + ymax) / 2)
+            radius = hypot(xmax - xmin, ymax - ymin) / 2 + snap_distance + .002
+            search = box(xmin - snap_distance - .002, ymin - snap_distance - .002,
+                         xmax + snap_distance + .002, ymax + snap_distance + .002)
+            obstacles = []
+            for other in self._index.nearby(*center, radius):
+                if not other.is_closed or other.code != "5310":
+                    continue
+                try:
+                    existing = geometry_of(other)
+                except (ValueError, GEOSException):
+                    # The ordinary creation preflight already rejects an
+                    # overlapping malformed legacy ring. Never use it as a
+                    # snapping reference with invented repaired geometry.
+                    continue
+                if existing.intersects(search):
+                    obstacles.append(existing)
+
+            seeds = [Point(p) for p in seed_points]
+            if any(existing.covers(seed) for seed in seeds for existing in obstacles):
+                raise ValueError("Wskazane miejsce zajmuje już istniejący 5310. Kliknij wewnątrz wolnego pola.")
+            # A raster stroke and its regularized/5216-fitted boundary can be
+            # on opposite sides of a near-edge click. Permit only the chosen
+            # fitting range; never jump to an unrelated detached remainder.
+            seed_tolerance = max(.0015, snap_distance)
+            if any(candidate.distance(seed) > seed_tolerance for seed in seeds):
+                raise ValueError("Dopasowany obrys nie obejmuje wskazanego pola. Kliknij bliżej jego środka.")
+
+            clipped = "adjustedPoints" in plan["report"]
+            snapped = False
+            if snap_distance and obstacles:
+                fitted, matched_edges = fit_neighbour_boundaries(
+                    coordinates, obstacles, snap_distance, locked_points=locks)
+                if matched_edges and fitted != coordinates:
+                    try:
+                        # Reuse the same rounding and overlap checks as save.
+                        # Failed local snapping cannot replace a valid free
+                        # outline with a hole, detached component or overlap.
+                        fitted_plan = self._object_operation_plan(
+                            {"action": "create", "code": "5310", "fields": {},
+                             "clipRasterOverlap": True, "points": [list(p) for p in fitted]},
+                            document_token=document_token, revision=revision)
+                        fitted_plan = preserve_locks(fitted_plan)
+                        fitted_shape = Polygon(fitted_plan["coords"])
+                        if (all(fitted_shape.distance(seed) <= seed_tolerance for seed in seeds)
+                                and abs(fitted_shape.area - candidate.area) <= .35 * candidate.area
+                                and fitted_shape.boundary.hausdorff_distance(candidate.boundary)
+                                    <= snap_distance + .0015):
+                            coordinates = fitted_plan["coords"]
+                            snapped = not fitted_shape.equals_exact(candidate, .0000001)
+                            clipped = clipped or "adjustedPoints" in fitted_plan["report"]
+                    except (ValueError, GEOSException):
+                        pass
+            return {"points": coordinates, "clipped": clipped, "snapped": snapped}
 
     def preview_object_operation(self, payload: dict, *,
                                  document_token: str, revision: int) -> dict:

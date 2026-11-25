@@ -16,7 +16,9 @@ MAP = Path("/scratch/input/02_BYSŁAWEK.MAP")
 def test_mask_covers_every_closed_5310():
     # Maska nie może zależeć tylko od nazwy warstwy — inaczej poligony
     # z innej warstwy nie są wycinane z rozpoznawania.
-    assert 'if(feature.code!=="5310"&&feature.layer!=="Użytki Leśne")continue;' in JS
+    assert 'occupiedFeatures=features.filter(feature=>feature.closed&&feature.code==="5310");' in JS
+    assert 'for(const feature of occupiedFeatures)' in JS
+    assert 'feature.layer!=="Użytki Leśne"' not in JS
     assert 'if(feature.layer!=="Użytki Leśne"||!feature.closed)continue;' not in JS
 
 

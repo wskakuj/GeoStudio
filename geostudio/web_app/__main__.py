@@ -10,6 +10,10 @@ import time
 import webbrowser
 from pathlib import Path
 
+# Keep the local OCR runtime offline from its first native import, including
+# the frozen application's no-console self-test and future plugin imports.
+os.environ["ORT_DISABLE_TELEMETRY"] = "1"
+
 import uvicorn
 
 from . import updater
@@ -110,6 +114,11 @@ def _selftest(workspace) -> int:
                 (metadata["width"], metadata["height"]) != (100, 100) or
                 (metadata["sourceWidth"], metadata["sourceHeight"]) != (100, 100)):
             return 1
+        # Verify the bundled ONNX DLLs, both local models and real OCR, using
+        # a generated number/circle fixture. No user raster or network is used.
+        from .raster_a1 import selftest_raster_a1
+        if not selftest_raster_a1():
+            return 1
         app = create_app(workspace, multi_document=True)
         config = uvicorn.Config(
             app=app, log_level="warning", access_log=False, server_header=False,
@@ -131,9 +140,23 @@ def _selftest(workspace) -> int:
             time.sleep(0.03)
         if not server.started:
             return 1
-        with urllib.request.urlopen(
-                f"http://127.0.0.1:{port}/", timeout=10) as response:
-            return 0 if response.status == 200 else 1
+        # Worker-only imports are not listed in index.html. Verify that a
+        # packaged installer carries the stroke analyser and A1 assignment
+        # helper as well as the window and primary tracing script.
+        assets = {
+            "/": b"<!DOCTYPE html>",
+            "/raster_trace.js": b"function traceLandUses",
+            "/raster_parcel_snap.js": b"GeoStudioRasterParcelSnap",
+            "/raster_trace_metrics.js": b"GeoStudioRasterTraceMetrics",
+            "/raster_a1.js": b"GeoStudioRasterA1",
+        }
+        for path, marker in assets.items():
+            with urllib.request.urlopen(
+                    f"http://127.0.0.1:{port}{path}", timeout=10) as response:
+                body = response.read()
+                if response.status != 200 or marker not in body:
+                    return 1
+        return 0
     except BaseException:
         return 1
     finally:

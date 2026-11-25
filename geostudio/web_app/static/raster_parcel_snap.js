@@ -89,11 +89,11 @@
     if((q[0]-p[0])*ux+(q[1]-p[1])*uy<0)[p,q]=[q,p];
     return {a:p,b:q,edge};
   }
-  function matchSide(a,b,index,radius){
+  function matchSide(a,b,index,radius,shortSupported=false){
     const length=distance(a,b);
     // A side shorter than its search diameter has too little directional
     // evidence; its corner can still follow an adjacent well-supported side.
-    if(length<=2*radius+EPS)return null;
+    if(length<=2*radius+EPS&&!shortSupported)return null;
     const ux=(b[0]-a[0])/length,uy=(b[1]-a[1])/length;
     const along=p=>(p[0]-a[0])*ux+(p[1]-a[1])*uy;
     const across=p=>cross(ux,uy,p[0]-a[0],p[1]-a[1]);
@@ -109,7 +109,10 @@
       node(candidate.a);node(candidate.b);
       for(const [target,list] of [[a,starts],[b,ends]]){
         const p=projection(target,candidate.a,candidate.b),d=distance(target,p);
-        if(d<=radius+EPS){const n=node(p);list.set(n,Math.min(list.get(n)??Infinity,d));}
+        const nativeEnd=distance(p,candidate.edge.a)<=EPS||distance(p,candidate.edge.b)<=EPS;
+        if(d<=(nativeEnd?Math.SQRT2*radius:radius)+EPS){
+          const n=node(p);list.set(n,Math.min(list.get(n)??Infinity,d));
+        }
       }
     }
     if(!starts.size||!ends.size)return null;
@@ -164,7 +167,61 @@
       if([.2,.5,.8].some(t=>Math.abs(ordinate(best.points,t*length)-ordinate(other.points,t*length))>EPS))
         return {ambiguous:true};
     }
-    return {points:best.points,along,cost:best.cost};
+    return {points:best.points,along,cost:best.cost,source:[a,b]};
+  }
+  // Segmentation junctions can split one straight border into many pieces
+  // shorter than the snap diameter. Measure the surrounding co-directed run
+  // before rejecting such a piece for lack of directional evidence.
+  function supportedShortSide(ring,i,radius){
+    const a=ring[i],b=ring[(i+1)%ring.length],length=distance(a,b);
+    if(length>2*radius+EPS)return false;
+    const ux=(b[0]-a[0])/length,uy=(b[1]-a[1])/length;
+    let span=length;
+    const visited=new Set([i]);
+    for(const step of [-1,1])for(let k=1;k<ring.length;k++){
+      const j=(i+step*k+ring.length)%ring.length;
+      if(visited.has(j))break;
+      const p=ring[j],q=ring[(j+1)%ring.length],size=distance(p,q);
+      const progress=(q[0]-p[0])*ux+(q[1]-p[1])*uy;
+      if(progress<size*COS_ANGLE||lineDistance(p,a,b)>.5*radius+EPS||
+        lineDistance(q,a,b)>.5*radius+EPS)break;
+      visited.add(j);span+=progress;
+      if(span>4*radius+EPS)return true;
+    }
+    return false;
+  }
+  // Thick raster strokes often leave a small bevel at a true parcel corner,
+  // or a short slanted connector on an otherwise straight side. Intersecting
+  // its raster tangent with the fitted sides enlarges that bevel. Instead,
+  // follow the real connecting parcel edges when both neighbouring long sides
+  // independently support the same nearby corner/track.
+  function bridgeShortSide(a,b,before,after,index,radius){
+    if(!before||!after||before.ambiguous||after.ambiguous||distance(a,b)>2*radius+EPS)return null;
+    const left=before.points.slice(-2),right=after.points.slice(0,2);
+    const start=projection(a,...left),end=projection(b,...right);
+    if(distance(a,start)>radius+EPS||distance(b,end)>radius+EPS||distance(start,end)<=EPS)return null;
+    let knots;
+    if(lineDistance(right[0],...left)<=EPS&&lineDistance(right[1],...left)<=EPS){
+      knots=[start,end];
+    }else{
+      const corner=intersection(...left,...right);
+      if(!corner||segmentDistance(corner,a,b)>Math.SQRT2*radius+EPS)return null;
+      // A real native vertex must join the two sides; crossing unrelated lines
+      // is not sufficient evidence for replacing an internal raster divider.
+      if(!query(index,bounds(corner,corner,EPS)).some(edge=>
+        distance(corner,edge.a)<=EPS||distance(corner,edge.b)<=EPS))return null;
+      knots=[start,corner,end].filter((p,i,array)=>!i||distance(p,array[i-1])>EPS);
+    }
+    const dx=b[0]-a[0],dy=b[1]-a[1],length=distance(a,b);
+    const along=p=>((p[0]-a[0])*dx+(p[1]-a[1])*dy)/length;
+    const points=[];
+    for(let i=1;i<knots.length;i++){
+      if(along(knots[i])-along(knots[i-1])<=EPS)return null;
+      const part=supportedPiece(knots[i-1],knots[i],index);if(!part)return null;
+      points.push(...part.slice(0,-1));
+    }
+    points.push(end);
+    return {points,along,cost:0,cornerBridge:true};
   }
   // Return the exact reference vertices covering a straight piece. This also
   // verifies that extending a fitted corner did not invent a parcel edge.
@@ -213,14 +270,16 @@
       query(index,bounds(p,p,EPS)).some(edge=>distance(p,edge.a)<=EPS||distance(p,edge.b)<=EPS));
   }
   function referenceCorner(p,before,after,index,radius){
-    if(!before||!after)return null;
+    if(!before||!after||before.cornerBridge||after.cornerBridge)return null;
     // At a shallow bend both side searches may continue across the same real
     // parcel vertex. Their end tangents then coincide, so intersecting those
     // tangents would attach the original corner to an arbitrary projection.
     // Assign the corner to the supported native bend and trim both paths there.
     const candidates=new Map();
-    for(const edge of query(index,bounds(p,p,radius)))for(const q of [edge.a,edge.b])
-      if(distance(p,q)<=radius+EPS)candidates.set(key(q),q);
+    const cornerRadius=Math.SQRT2*radius;
+    for(const edge of query(index,bounds(p,p,cornerRadius)))for(const q of [edge.a,edge.b])
+      if(distance(p,q)<=cornerRadius+EPS&&lineDistance(q,...before.source)<=radius+EPS&&
+        lineDistance(q,...after.source)<=radius+EPS)candidates.set(key(q),q);
     const supported=[];
     for(const q of candidates.values()){
       const left=adjustedPath(before,before.points[0],q,index);
@@ -263,12 +322,27 @@
     if(intersects(a,b,c,d))return 0;
     return Math.min(segmentDistance(a,c,d),segmentDistance(b,c,d),segmentDistance(c,a,b),segmentDistance(d,a,b));
   }
-  function safe(original,paths,result,radius){
+  function safe(original,paths,result,radius,matches,targets){
     if(!simple(result))return false;
     const before=area(original),after=area(result);
-    if(before*after<=0||Math.abs(after-before)>.15*Math.abs(before)+EPS)return false;
-    for(let i=0;i<paths.length;i++)for(const p of paths[i])
-      if(segmentDistance(p,original[i],original[(i+1)%original.length])>radius+EPS)return false;
+    if(before*after<=0)return false;
+    // A thick stroke shrinks the detected white interior on every side of a
+    // narrow field. Its fully supported cadastral perimeter can therefore be
+    // substantially larger. Permit that bounded correction only when every
+    // side follows a real reference path; a single nearby line must still not
+    // expand a thin field or override a shared-neighbour veto.
+    const fullyReferenced=matches.every(Boolean);
+    const areaAllowance=fullyReferenced&&Math.abs(after)>Math.abs(before)?.5:.15;
+    if(Math.abs(after-before)>areaAllowance*Math.abs(before)+EPS)return false;
+    for(let i=0;i<paths.length;i++)for(let j=0;j<paths[i].length;j++){
+      // The diagonal of two accepted offset bands may contain a native corner
+      // just beyond one side's radius. Only an independently supported native
+      // anchor or short bevel may use that additional corner allowance.
+      const p=paths[i][j],a=original[i],b=original[(i+1)%original.length];
+      const nativeCorner=[a,b].some(q=>targets.has(key(q))&&distance(p,q)<=Math.SQRT2*radius+EPS);
+      const limit=nativeCorner||matches[i]?.cornerBridge&&j>0&&j<paths[i].length-1?Math.SQRT2*radius:radius;
+      if(segmentDistance(paths[i][j],original[i],original[(i+1)%original.length])>limit+EPS)return false;
+    }
     // An unchanged overall area can conceal a collapsed narrow arm of a large
     // polygon. Preserve separation of nearby, overlapping opposite sides too.
     for(let i=0;i<original.length;i++)for(let j=i+2;j<original.length;j++){
@@ -298,10 +372,14 @@
       new Set((Array.isArray(options.blockedEdges)?options.blockedEdges:[])
         .filter(edge=>Array.isArray(edge)&&point(edge[0])&&point(edge[1])).map(edge=>edgeKey(...edge)));
     const matches=original.map((a,i)=>blocked.has(edgeKey(a,original[(i+1)%original.length]))?null:
-      matchSide(a,original[(i+1)%original.length],index,radius));
+      matchSide(a,original[(i+1)%original.length],index,radius,supportedShortSide(original,i,radius)));
     let ambiguous=false;
     for(let i=0;i<matches.length;i++)if(matches[i]?.ambiguous){ambiguous=true;matches[i]=null;}
     const n=original.length;
+    const direct=matches.slice();
+    for(let i=0;i<n;i++)if(!matches[i]&&!blocked.has(edgeKey(original[i],original[(i+1)%n]))&&
+      !locks.has(key(original[i]))&&!locks.has(key(original[(i+1)%n])))
+      matches[i]=bridgeShortSide(original[i],original[(i+1)%n],direct[(i+n-1)%n],direct[(i+1)%n],index,radius);
     const targets=new Map(options._targets||[]);
     original.forEach((p,i)=>{
       if(locks.has(key(p)))return;
@@ -317,12 +395,13 @@
       for(let i=0;i<n;i++){
         const previous=(i+n-1)%n,before=matches[previous],after=matches[i],p=original[i];
         const anchor=locks.has(key(p))?p:targets.get(key(p));
-        if(anchor&&distance(p,anchor)<=radius+EPS)corners[i]=anchor.slice();
+        const cornerRadius=targets.has(key(p))?Math.SQRT2*radius:radius;
+        if(anchor&&distance(p,anchor)<=cornerRadius+EPS)corners[i]=anchor.slice();
         if(!before&&!after)continue;
         const left=before?before.points.slice(-2):[original[previous],p];
         const right=after?after.points.slice(0,2):[p,original[(i+1)%n]];
         let target;
-        if(anchor&&distance(p,anchor)<=radius+EPS){
+        if(anchor&&distance(p,anchor)<=cornerRadius+EPS){
           target=anchor.slice();
         }else if(locks.has(key(p))){
           if((!before||lineDistance(p,...left)<=EPS)&&(!after||lineDistance(p,...right)<=EPS))target=p.slice();
@@ -331,7 +410,7 @@
           if(!target&&before&&after&&lineDistance(right[0],...left)<=EPS&&lineDistance(right[1],...left)<=EPS)
             target=projection(p,...left,false);
         }
-        if(!target||distance(p,target)>radius+EPS){
+        if(!target||distance(p,target)>cornerRadius+EPS){
           if(before){matches[previous]=null;changed=true;}
           if(after){matches[i]=null;changed=true;}
         }else corners[i]=target;
@@ -356,7 +435,7 @@
     }
     const points=[],sourceIndices=[];
     paths.forEach((path,i)=>path.slice(0,-1).forEach((p,j)=>{points.push(p.slice());sourceIndices.push(j===0?i:null);}));
-    if(!safe(original,paths,points,radius))return unchanged("topology");
+    if(!safe(original,paths,points,radius,matches,targets))return unchanged("topology");
     return {points,snappedEdges:count,sourceIndices,...(!count?{reason:"shared-corner"}:{})};
   }
   // A polygon-level area/crossing veto must also apply to its neighbours.

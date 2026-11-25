@@ -15,14 +15,19 @@ function deferred() {
 
 function createUI(featureLoads = [], options = {}) {
   const workers = [], controls = new Map(), draws = { count: 0 };
-  const fitCalls = [], addCalls = [], snapCalls = [];
+  const fitCalls = [], fitOptions = [], addCalls = [], snapCalls = [], snapOptions = [], imageCaptures = [];
   const timers = new Map(); let timerID = 0, fitIndex = 0;
   const scale = options.scale || 1;
   const screenOrigin = options.screenOrigin || [0, 0];
-  let panel, canvas, featureCalls = 0, closed = 0, added = 0;
+  let panel, canvas, featureCalls = 0, closed = 0, added = 0, currentPath = [];
   const context = new Proxy({
-    clearRect() { draws.count++; },
+    clearRect() { draws.count++; draws.rings = []; },
+    beginPath() { currentPath = []; },
+    moveTo(x,y) { currentPath.push([x,y]); },
+    lineTo(x,y) { currentPath.push([x,y]); },
+    stroke() { if(currentPath.length>=3)draws.rings.push(currentPath.slice()); },
     getImageData(x, y, width, height) {
+      imageCaptures.push((draws.rings||[]).map(ring=>ring.slice()));
       // Workers are the mocked boundary here; do not allocate 12M real pixels.
       return { data: new Uint8ClampedArray(4) };
     },
@@ -68,11 +73,11 @@ function createUI(featureLoads = [], options = {}) {
     }
   }
   const sandbox = {
-    console, Worker, Uint8ClampedArray,
+    console, Worker, Uint8ClampedArray, AbortController,
     setTimeout(callback) { const id = ++timerID; timers.set(id, callback); return id; },
     clearTimeout(id) { timers.delete(id); },
     window: { devicePixelRatio: 1, GeoStudioDrawingSnap: {
-      snapPoint(world, targets) { snapCalls.push(targets); return { point: world, kind: null }; },
+      snapPoint(world, targets, snapSettings) { snapCalls.push(targets); snapOptions.push(snapSettings); return { point: world, kind: null }; },
     } },
     ResizeObserver: class { observe() {} disconnect() {} },
     document: {
@@ -89,6 +94,7 @@ function createUI(featureLoads = [], options = {}) {
   // In a browser globalThis and window are the same global object. The narrow
   // DOM fixture keeps window separate, so expose the actual helper on both.
   sandbox.window.GeoStudioRasterParcelSnap = sandbox.GeoStudioRasterParcelSnap;
+  vm.runInContext(fs.readFileSync(path.join(__dirname, '../geostudio/web_app/static/raster_a1.js'), 'utf8'),sandbox);
   vm.runInContext(source, sandbox, { filename: 'raster_trace.js' });
   const view = {
     shell: { clientWidth: 160, clientHeight: 120, append(overlay) { canvas = overlay; } },
@@ -97,13 +103,16 @@ function createUI(featureLoads = [], options = {}) {
     screenToWorld: (x, y) => ({ x: x / scale + screenOrigin[0], y: -y / scale + screenOrigin[1] }),
     scale: () => scale, magnetEnabled: () => false, isVisible: options.isVisible || (() => true),
     featuresIn() { return featureLoads[featureCalls++] || Promise.resolve([]); },
-    fitOutline: async points => {
+    fitOutline: async (points, settings) => {
       fitCalls.push(points);
+      fitOptions.push(settings);
       return options.fitLoads?.[fitIndex++] || { points, clipped: false };
     },
     async add(points, a1, fitted) { added++; addCalls.push({ points, a1, fitted }); }, async refresh() {},
     closed() { closed++; },
   };
+  const a1Requests=[];
+  if(options.a1Load)view.recognizeA1=signal=>{a1Requests.push(signal);return options.a1Load;};
   const api = sandbox.openRasterTracing({
     id: 1, image: { width: options.width || 160, height: options.height || 120 },
     sourceWidth: options.sourceWidth, sourceHeight: options.sourceHeight,
@@ -118,7 +127,7 @@ function createUI(featureLoads = [], options = {}) {
     controls.get('.trace-a1').oninput();
   };
   return {
-    api, workers, controls, draws, click, fitCalls, addCalls, snapCalls, timers,
+    api, workers, controls, draws, click, fitCalls, fitOptions, addCalls, snapCalls, snapOptions, imageCaptures, a1Requests, timers,
     canvas: () => canvas,
     status: () => controls.get('[role=status]').textContent,
     panel: () => panel,
@@ -199,31 +208,333 @@ function pointer(clientX, clientY, extra = {}) {
     preventDefault() {}, stopPropagation() {}, ...extra };
 }
 
-function mapTracingView(batches) {
+function mapTracingView(batches, ocrResponses=[]) {
   const text = fs.readFileSync(path.join(__dirname, '../geostudio/web_app/static/map.js'), 'utf8');
   const start = text.indexOf('function startRasterTracing(){');
   const stop = text.indexOf('function renderRasterLayers(){', start);
   assert.ok(start >= 0 && stop > start, 'The map integration entry point must be present');
-  const requests = [];
+  const requests = [],fetchRequests=[];
+  const entry={id:1,digest:'a'.repeat(64),file:{name:'synthetic.png'}};
   const state = { editBusy: false, edit: { documentToken: 'fixture-map', revision: 7 },
     width: 1000, height: 800, center: { x: 0, y: 0 }, scale: 1 };
   const control = { value: '1', classList: { add() {}, remove() {} }, setAttribute() {} };
   let view;
   const sandbox = {
-    URLSearchParams, state, activeTrace: null, shell: {}, raster: { layers: [] },
-    $: () => control, rasterEntry: () => ({ id: 1 }), rasterCanShow: () => true,
+    URLSearchParams, state, activeTrace: null, shell: {}, raster: { layers: [] },token:'test-api-token',
+    $: () => control, rasterEntry: () => entry, rasterCanShow: () => true,
     setTool() {}, worldToScreen() {}, screenToWorld() {}, zoomAt() {},
     requestDraw() {}, scheduleViewport() {}, toggleDrawMagnet() {}, isVisible: () => false,
     api: async url => { requests.push(new URL(url, 'http://fixture.local')); return batches[requests.length - 1]; },
+    documentFetch:async (url,options)=>{fetchRequests.push({url,options});return ocrResponses[fetchRequests.length-1];},
     openRasterTracing(_entry, callbacks) { view = callbacks; return {}; },
   };
   vm.createContext(sandbox);
   vm.runInContext(text.slice(start, stop), sandbox, { filename: 'map.js:startRasterTracing' });
   sandbox.startRasterTracing();
-  return { view, requests, state };
+  return { view, requests, state, fetchRequests,entry };
 }
 
 const cases = {
+  async asynchronous_a1_fills_current_field_and_never_overwrites_manual_input() {
+    const result={width:160,height:120,annotations:[
+      {text:'178',status:'ok',confidence:.98,anchor:[40,50],source:'callout',hasLeader:true,leaderEndpoints:[[40,50]]},
+      {text:'175',status:'ok',confidence:.98,anchor:[80,50],source:'inside',hasLeader:false}]};
+    for(const manual of [false,true]){
+      const ocr=deferred(),ui=createUI([Promise.resolve([])],{a1Load:ocr.promise});await tick();
+      ui.workers[0].result(adjacentTrace());
+      ui.canvas().onpointerdown(pointer(40,50));ui.canvas().onpointerup(pointer(40,50));await tick();
+      assert.equal(ui.controls.get('.trace-a1').value,'');
+      assert.match(ui.controls.get('.trace-a1-status').textContent,/Odczytuję/);
+      if(manual){ui.controls.get('.trace-a1').value='178a';ui.controls.get('.trace-a1').oninput();}
+      ocr.resolve(result);await tick();
+      assert.equal(ui.controls.get('.trace-a1').value,manual?'178a':'178');
+      assert.equal(ui.a1Requests.length,1,'OCR runs once per raster, not once per click');
+      ui.api.close();
+    }
+    const ocr=deferred(),ui=createUI([Promise.resolve([])],{a1Load:ocr.promise});await tick();ui.workers[0].result(adjacentTrace());
+    for(const x of [40,40,80]){ui.canvas().onpointerdown(pointer(x,50));ui.canvas().onpointerup(pointer(x,50));await tick();}
+    ocr.resolve(result);await tick();
+    assert.equal(ui.controls.get('.trace-a1').value,'175','A late sheet result is assigned to the currently selected field');
+    ui.api.close();
+  },
+
+  async cached_a1_is_available_on_first_click_and_late_closed_result_is_ignored() {
+    const result={width:160,height:120,annotations:[{text:'178',status:'ok',anchor:[50,50],hasLeader:false}]};
+    const ui=createUI([Promise.resolve([])],{a1Load:Promise.resolve(result)});await tick();ui.workers[0].result();
+    ui.canvas().onpointerdown(pointer(50,50));ui.canvas().onpointerup(pointer(50,50));
+    assert.equal(ui.controls.get('.trace-a1').value,'178','Cached recognition fills A1 in the first-click handler');
+    ui.api.close();
+    const deferredOCR=deferred(),closed=createUI([Promise.resolve([])],{a1Load:deferredOCR.promise});await tick();
+    closed.api.close();const draws=closed.draws.count,description=closed.controls.get('.trace-a1-status').textContent;
+    assert.equal(closed.a1Requests[0].aborted,true);
+    deferredOCR.resolve(result);await tick();
+    assert.equal(closed.draws.count,draws);assert.equal(closed.controls.get('.trace-a1-status').textContent,description);
+  },
+
+  async unavailable_a1_keeps_manual_drawing_usable() {
+    const ocr=deferred(),ui=createUI([Promise.resolve([])],{a1Load:ocr.promise});await tick();ui.workers[0].result();
+    ui.canvas().onpointerdown(pointer(50,50));ui.canvas().onpointerup(pointer(50,50));await tick();
+    ocr.reject(new Error('Local OCR failed'));await tick();
+    assert.match(ui.controls.get('.trace-a1-status').textContent,/niedostępny/);
+    ui.controls.get('.trace-a1').value='17';ui.controls.get('.trace-a1').oninput();
+    assert.equal(ui.controls.get('.trace-save').disabled,false);await ui.api.submit();
+    assert.equal(ui.addCalls[0].a1,'17');assert.equal(ui.a1Requests.length,1);
+    ui.api.close();
+  },
+
+  async a1_api_uses_document_tokens_and_only_restores_an_explicit_cache_miss() {
+    const digest='a'.repeat(64),result={digest,width:160,height:120,annotations:[]};
+    const response=(status,body,headers={})=>({status,ok:status===200,json:async()=>body,
+      headers:{get:key=>headers[key]},arrayBuffer:async()=>new ArrayBuffer(0)});
+    const map=mapTracingView([], [response(404,{code:'raster_preview_missing'}),
+      response(200,null,{'X-Raster-Digest':digest}),response(200,result)]);
+    const controller=new AbortController();
+    assert.equal(await map.view.recognizeA1(controller.signal),result);
+    assert.deepEqual(map.fetchRequests.map(r=>r.url),['/api/underlay/raster/a1','/api/underlay/raster/prepare','/api/underlay/raster/a1']);
+    for(const {options} of map.fetchRequests){
+      assert.equal(options.headers['X-GeoStudio-Token'],'test-api-token');
+      assert.equal(options.headers['X-Map-Token'],'fixture-map');assert.equal(options.signal,controller.signal);
+    }
+    assert.equal(map.fetchRequests[1].options.body,map.entry.file,'Reuse the original local File, not a newly encoded raster');
+    assert.equal(JSON.parse(map.fetchRequests[0].options.body).digest,digest);
+    for(const status of [404,503]){
+      const failed=mapTracingView([], [response(status,{detail:'Unavailable'})]);
+      await assert.rejects(failed.view.recognizeA1(controller.signal),/Unavailable/);
+      assert.equal(failed.fetchRequests.length,1,'Never retry missing documents or failed OCR as if they were an evicted preview');
+    }
+    const wrong=mapTracingView([], [response(200,{...result,digest:'b'.repeat(64)})]);
+    await assert.rejects(wrong.view.recognizeA1(controller.signal),/innego rastra/);
+  },
+
+  async neighbour_fitted_manual_corner_and_node_survive_merging() {
+    for(const parcels of [false,true])for(const inserted of [false,true]){
+      const fitted=[[20,15],[20,60],[100,60],[100,15]];
+      if(inserted)fitted.push([60,15]);
+      const ui=createUI([Promise.resolve(parcels?[rectangle5216(20,20,100,100)]:[])],
+        {fitLoads:[{points:fitted,clipped:false,snapped:true}]});
+      await tick();const trace=adjacentTrace();trace.strokeMetrics={radiusPixels:8};ui.workers[0].result(trace);
+      await ui.click(40,50);
+      const from=inserted?[15,60]:[15,20],to=inserted?[12,62]:[10,18];
+      ui.canvas().onpointerdown(pointer(...from));
+      ui.canvas().onpointermove(pointer(...to,{altKey:true}));
+      ui.canvas().onpointerup(pointer(...to,{altKey:true}));await tick();
+      assert.ok(ui.fitCalls.at(-1).some(([north,east])=>north===to[1]&&east===to[0]));
+      await ui.click(80,50);
+      assert.ok(ui.fitCalls.at(-1).some(([north,east])=>north===to[1]&&east===to[0]),
+        'Manual correction of a5310-fitted vertex must survive addition of a neighbour');
+      assert.equal(ui.fitOptions.at(-1).snapDistance,8,'Newly added parts still fit their existing neighbours');
+      assert.ok(ui.fitOptions.at(-1).lockedPoints.some(([north,east])=>north===to[1]&&east===to[0]),
+        'Inherited manual corrections are explicit locks during the combined fit');
+      ui.controls.get('.trace-parcel-snap').checked=false;ui.controls.get('.trace-parcel-snap').onchange();await tick();
+      assert.equal(ui.fitOptions.at(-1).snapDistance,0,'An accepted manual draft is stable under settings changes');
+      await ui.api.submit();
+      assert.ok(ui.addCalls[0].points.some(([north,east])=>north===to[1]&&east===to[0]));
+      ui.api.close();
+    }
+  },
+
+  async neighbour_bridge_origins_do_not_replace_manual_corners_on_next_union() {
+    // Both manually moved endpoints stay as vertices. The backend adds a
+    // short bridge to each one so that the middle follows the real 5310.
+    // Those new endpoints project onto the same original corner identities;
+    // they must not overwrite the edits merely because they occur later.
+    const withBridges = [[20,22],[20,100],[100,100],[100,22],[100,20],[20,20]];
+    const ui = createUI([Promise.resolve([rectangle5216(20,20,140,100)])], {
+      fitLoads: [undefined, undefined, undefined,
+        {points:withBridges,clipped:false,snapped:true}],
+    });
+    await tick();
+    const trace = adjacentTrace();
+    for(let y=20;y<100;y++)for(let x=100;x<140;x++)trace.labels[y*160+x]=3;
+    trace.shapes.set(3,{points:[[100,20],[140,20],[140,100],[100,100]],
+      bounds:[100,20,140,100],suggested:true});
+    ui.workers[0].result(trace);
+    await ui.click(40,50);
+    for(const y of [20,100]){
+      ui.canvas().onpointerdown(pointer(20,y));
+      ui.canvas().onpointermove(pointer(22,y,{altKey:true}));
+      ui.canvas().onpointerup(pointer(22,y,{altKey:true}));
+      await tick();
+    }
+    await ui.click(80,50);
+    assert.equal(ui.fitCalls.length,4);
+    assert.equal(ui.fitOptions.at(-1).lockedPoints.length,2);
+    sameRing(ui.draws.rings[0],withBridges.map(([north,east])=>[east,north]));
+    await ui.click(120,50);
+    const combined = ui.fitCalls.at(-1),locks=ui.fitOptions.at(-1).lockedPoints;
+    for(const point of [[20,22],[100,22]]){
+      assert.ok(combined.some(p=>p[0]===point[0]&&p[1]===point[1]),
+        'A newly inserted reference bridge must not replace a manual endpoint in the next union');
+      assert.ok(locks.some(p=>p[0]===point[0]&&p[1]===point[1]),
+        'Both original manual endpoints remain protected during the next fit');
+    }
+    await ui.api.submit();
+    for(const point of [[20,22],[100,22]])assert.ok(ui.addCalls[0].points.some(p=>
+      p[0]===point[0]&&p[1]===point[1]),'The final saved outline preserves both manual corrections');
+    ui.api.close();
+  },
+
+  async rejected_hidden_vertices_cannot_be_dragged_back_into_a_proposal() {
+    const failure=deferred(),ui=createUI([Promise.resolve([])],{fitLoads:[failure.promise]});
+    await tick();ui.workers[0].result();
+    ui.canvas().onpointerdown(pointer(50,50));ui.canvas().onpointerup(pointer(50,50));
+    failure.reject(new Error('Zajęty obszar.'));await tick();
+    assert.equal(ui.draws.rings.length,0);
+    // Shift suppresses a replacement region selection and isolates the hidden
+    // node hit-test, which used to start a drag despite the rejected preview.
+    ui.canvas().onpointerdown(pointer(20,20,{shiftKey:true}));
+    ui.canvas().onpointermove(pointer(23,23,{shiftKey:true}));
+    ui.canvas().onpointerup(pointer(23,23,{shiftKey:true}));await tick();
+    assert.equal(ui.fitCalls.length,1);
+    assert.equal(ui.draws.rings.length,0);
+    ui.canvas().onpointerdown(pointer(50,20,{button:2}));
+    ui.canvas().onpointerup(pointer(50,20,{button:2}));await tick();
+    assert.equal(ui.fitCalls.length,1,'Invisible rejected sides cannot accept inserted vertices');
+    ui.api.close();
+  },
+
+  async first_useful_stroke_measurement_initializes_the_range() {
+    const ui=createUI([Promise.resolve([])]);await tick();ui.workers[0].result();
+    assert.equal(Number(ui.controls.get('.trace-parcel-distance').value),3);
+    ui.controls.get('select').onchange();
+    const trace=sampleTrace();trace.strokeMetrics={radiusPixels:8};ui.workers[0].result(trace);
+    assert.equal(Number(ui.controls.get('.trace-parcel-distance').value),8);
+    ui.controls.get('select').onchange();trace.strokeMetrics.radiusPixels=14;ui.workers[0].result(trace);
+    assert.equal(Number(ui.controls.get('.trace-parcel-distance').value),8);
+    ui.api.close();
+  },
+
+  async forest_reference_classes_do_not_occupy_the_trace_mask() {
+    const rings=code=>({code,closed:true,layer:'Użytki Leśne',
+      geometry:[[[20,-20],[100,-20],[100,-100],[20,-100],[20,-20]]]});
+    const ui=createUI([Promise.resolve([rings('5220'),rings('5230'),rings('5216')])]);
+    await tick();
+    assert.equal(ui.imageCaptures[1].length,0,'Forest/parcel reference areas must remain drawable');
+    ui.workers[0].result();await ui.click();
+    assert.equal(ui.fitCalls.length,1);
+    ui.api.close();
+    const existing={...rings('5310'),visible:false,geometry:[],nativeGeometry:rings('5310').geometry};
+    const blocked=createUI([Promise.resolve([rings('5220'),existing])]);await tick();
+    assert.equal(blocked.imageCaptures[1].length,1,'Only full native5310 geometry is painted, even when hidden');
+    sameRing(blocked.imageCaptures[1][0],[[20,20],[100,20],[100,100],[20,100],[20,20]]);
+    blocked.api.close();
+  },
+
+  async first_click_fills_a1_and_preserves_manual_corrections() {
+    const ui=createUI([Promise.resolve([])]);await tick();
+    const trace=adjacentTrace();
+    trace.a1Suggestions=new Map([[1,{text:'178',confidence:.99,source:'callout',status:'ok'}],
+      [2,{text:'178',confidence:.99,source:'inside',status:'ok'}]]);
+    ui.workers[0].result(trace);
+    ui.canvas().onpointerdown(pointer(40,50));ui.canvas().onpointerup(pointer(40,50));await tick();
+    assert.equal(ui.controls.get('.trace-a1').value,'178','The first proposal must already have the recognized A1');
+    assert.equal(ui.controls.get('.trace-save').disabled,false);
+    assert.match(ui.controls.get('.trace-a1-status').textContent,/A1 z rastra: 178/);
+    ui.controls.get('.trace-a1').value='178a';ui.controls.get('.trace-a1').oninput();
+    ui.controls.get('.trace-parcel-snap').checked=false;ui.controls.get('.trace-parcel-snap').onchange();await tick();
+    assert.equal(ui.controls.get('.trace-a1').value,'178a');
+    ui.canvas().onpointerdown(pointer(80,50));ui.canvas().onpointerup(pointer(80,50));await tick();
+    assert.equal(ui.controls.get('.trace-a1').value,'178a','Adding a fragment must not replace a manual A1');
+    await ui.api.submit();assert.equal(ui.addCalls[0].a1,'178a');
+    assert.equal(ui.controls.get('.trace-a1').value,'','Saved number must not leak to the next field');
+    ui.api.close();
+  },
+
+  async uncertain_or_conflicting_a1_is_not_guessed() {
+    for(const status of ['uncertain','conflict']){
+      const ui=createUI([Promise.resolve([])]);await tick();
+      const trace=sampleTrace();trace.a1Suggestions=new Map([[1,{text:'18',confidence:.99,source:'callout',status}]]);
+      ui.workers[0].result(trace);
+      ui.canvas().onpointerdown(pointer(50,50));ui.canvas().onpointerup(pointer(50,50));await tick();
+      assert.equal(ui.controls.get('.trace-a1').value,'');
+      assert.equal(ui.controls.get('.trace-save').disabled,true);ui.api.close();
+    }
+    const ui=createUI([Promise.resolve([])]);await tick();
+    const trace=adjacentTrace();trace.a1Suggestions=new Map([[1,{text:'17',status:'ok'}],[2,{text:'18',status:'ok'}]]);
+    ui.workers[0].result(trace);
+    ui.canvas().onpointerdown(pointer(40,50));ui.canvas().onpointerup(pointer(40,50));await tick();
+    assert.equal(ui.controls.get('.trace-a1').value,'17');
+    ui.canvas().onpointerdown(pointer(80,50));ui.canvas().onpointerup(pointer(80,50));await tick();
+    assert.equal(ui.controls.get('.trace-a1').value,'','Two different raster numbers require an explicit choice');
+    assert.match(ui.controls.get('.trace-a1-status').textContent,/różne lub niejednoznaczne/);
+    ui.api.close();
+  },
+
+  async stroke_width_sets_initial_range_once_and_respects_manual_override() {
+    const ui=createUI([Promise.resolve([]),Promise.resolve([])]);await tick();
+    const trace=sampleTrace();trace.strokeMetrics={radiusPixels:8.2,samples:20,edges:4};ui.workers[0].result(trace);
+    assert.equal(Number(ui.controls.get('.trace-parcel-distance').value),8.2);
+    ui.controls.get('.trace-quality').value='6000000';ui.controls.get('.trace-quality').onchange();await tick();
+    const other=sampleTrace();other.strokeMetrics={radiusPixels:14,samples:20,edges:4};ui.workers[1].result(other);
+    assert.equal(Number(ui.controls.get('.trace-parcel-distance').value),8.2,'Quality changes must preserve the chosen metre range');
+    ui.api.close();
+    const manual=createUI([Promise.resolve([])]);await tick();
+    manual.controls.get('.trace-parcel-distance').value='1.5';manual.controls.get('.trace-parcel-distance').onchange();
+    manual.workers[0].result(trace);
+    assert.equal(Number(manual.controls.get('.trace-parcel-distance').value),1.5,'Early manual range is never replaced by an analyser');
+    manual.api.close();
+  },
+
+  async occupied_click_is_blocked_using_hidden_full_geometry() {
+    const full=[[[20,-20],[60,-20],[60,-100],[20,-100],[20,-20]]];
+    const ui=createUI([Promise.resolve([{code:'5310',closed:true,geometry:[],nativeGeometry:full,visible:false}])]);
+    await tick();ui.workers[0].result();
+    ui.canvas().onpointerdown(pointer(50,50));ui.canvas().onpointerup(pointer(50,50));
+    await tick();
+    assert.equal(ui.fitCalls.length,0,'Do not even request a proposal for an occupied click');
+    assert.equal(ui.draws.rings.length,0,'No red outline may appear over an existing5310');
+    assert.match(ui.status(),/zajmuje już poligon 5310/);
+    assert.equal(ui.controls.get('.trace-save').disabled,true);
+    ui.canvas().onpointerdown(pointer(80,50));ui.canvas().onpointerup(pointer(80,50));
+    await tick();
+    assert.equal(ui.fitCalls.length,1,'A free neighbouring click still works');
+    assert.deepEqual(Array.from(ui.fitOptions[0].seedPoints[0]),[50,80]);
+    assert.ok(ui.fitOptions[0].snapDistance>0);
+    ui.api.close();
+  },
+
+  async failed_automatic_fit_hides_proposal_and_prevents_save() {
+    const fit=deferred(),ui=createUI([Promise.resolve([])],{fitLoads:[fit.promise]});
+    await tick();ui.workers[0].result();
+    ui.canvas().onpointerdown(pointer(50,50));ui.canvas().onpointerup(pointer(50,50));
+    fit.reject(new Error('Całe zaznaczenie zajmuje już istniejący 5310.'));
+    await tick();
+    ui.controls.get('.trace-a1').value='17';ui.controls.get('.trace-a1').oninput();
+    assert.equal(ui.draws.rings.length,0,'A rejected ring is not offered as a red proposal');
+    assert.equal(ui.controls.get('.trace-save').disabled,true);
+    await ui.api.submit();assert.equal(ui.added(),0);
+    ui.api.close();
+  },
+
+  async neighbour_fit_saves_exact_preview_and_manual_edit_is_not_resnapped() {
+    const ui=createUI([Promise.resolve([])],{fitLoads:[{points:fittedNative,clipped:false,snapped:true}]});
+    await tick();ui.workers[0].result();await ui.click();
+    sameRing(ui.draws.rings[0],[[21,21],[101,21],[101,101],[21,101]]);
+    assert.match(ui.status(),/Dopasowano do istniejących 5310/);
+    ui.canvas().onpointerdown(pointer(21,21));
+    ui.canvas().onpointermove(pointer(24,25,{altKey:true}));
+    ui.canvas().onpointerup(pointer(24,25,{altKey:true}));await tick();
+    assert.equal(ui.fitOptions.at(-1).snapDistance,0,'A deliberate manual correction is authoritative');
+    assert.equal(ui.fitOptions.at(-1).seedPoints.length,0);
+    await ui.api.submit();
+    closePoints(ui.addCalls[0].points,ui.addCalls[0].fitted);
+    assert.ok(ui.addCalls[0].points.some(([north,east])=>north===25&&east===24));
+    ui.api.close();
+  },
+
+  async magnet_uses_native_vertices_and_prioritizes_nodes() {
+    const native=[[[0,0],[40,-20],[100,-100]]],feature={code:'5216',closed:false,
+      geometry:[[[0,0],[100,-100]]],nativeGeometry:native};
+    const ui=createUI([Promise.resolve([feature])]);await tick();ui.workers[0].result();await ui.click();
+    ui.controls.get('.trace-magnet').checked=true;
+    ui.canvas().onpointerdown(pointer(20,20));ui.canvas().onpointermove(pointer(35,22));
+    assert.deepEqual(ui.snapCalls.at(-1)[0].geometry,native,'Clipped display geometry must not hide reference nodes');
+    assert.equal(ui.snapOptions.at(-1).preferVertices,true);
+    assert.equal(ui.snapOptions.at(-1).vertexPixels,26);
+    assert.equal(ui.snapOptions.at(-1).releasePixels,34);
+    ui.canvas().onpointercancel();ui.api.close();
+  },
+
   async close_during_prepare() {
     for (const fail of [false, true]) {
       const load = deferred(), ui = createUI([load.promise]);
@@ -454,6 +765,8 @@ const cases = {
     const enabled = ui.controls.get('.trace-parcel-snap');
     enabled.checked = false; enabled.onchange(); await tick();
     sameRing(ui.fitCalls.at(-1), originalNative);
+    assert.equal(distance.disabled, false, 'Neighbour 5310 fitting still has an adjustable range when 5216 fitting is off');
+    assert.equal(ui.fitOptions.at(-1).snapDistance, 3, 'Disabling 5216 must not disable adjoining 5310 fitting');
     enabled.checked = true; enabled.onchange(); await tick();
     sameRing(ui.fitCalls.at(-1), fittedNative);
     assert.equal(worker.messages.length, count, 'Changing the reference fit must not analyze the raster again');

@@ -1,6 +1,8 @@
 # Build a self-contained Windows preview app. No administrator rights needed.
 param([switch]$SkipInstaller)
 $ErrorActionPreference = "Stop"
+# Disable ONNX Runtime telemetry even while build hooks inspect the package.
+$env:ORT_DISABLE_TELEMETRY = "1"
 $Repo = Split-Path (Split-Path $PSScriptRoot -Parent) -Parent
 Set-Location $Repo
 Write-Host "Building GeoStudio 2.0 from $Repo"
@@ -25,6 +27,14 @@ $Args = @(
     # exercised by the packaged self-test below.
     "--collect-all", "pypdfium2_raw",
     "--copy-metadata", "pypdfium2",
+    # Offline A1 OCR: the pinned RapidOCR wheel contains both PP-OCRv6
+    # models. Package the local ONNX runtime/DLLs and model/config resources.
+    "--collect-data", "rapidocr",
+    "--collect-all", "onnxruntime",
+    "--copy-metadata", "rapidocr",
+    "--copy-metadata", "onnxruntime",
+    "--copy-metadata", "opencv-python-headless",
+    "--hidden-import", "rapidocr.inference_engine.onnxruntime",
     "--collect-submodules", "webview",
     "--hidden-import", "uvicorn.logging",
     "--hidden-import", "uvicorn.loops.auto",
