@@ -534,6 +534,53 @@ function selectedRasterOutline(trace,selected,width,height,edited){
   const perimeter=simplifiedTracePerimeter(ring,corners,fixed,trace.tolerance??2.5,!corners.some(fixed));
   return perimeter?.map(p=>anchors.get(p.join(","))||p);
 }
+// Union the consistently fitted vector boundaries, instead of tracing the
+// pixels again: a fresh independent fit could undo a shared-edge veto and
+// reopen a gap beside a neighbouring field. Interior reversed edges cancel.
+function selectedParcelOutline(shapes,selected,edited){
+  const empty={points:[],origins:new Map()};
+  if(!selected.size)return empty;
+  const edges=new Map(),counts=new Map();
+  for(const id of selected){
+    const shape=shapes.get(id);if(!shape)return {points:null,origins:new Map()};
+    shape.points.forEach((p,i)=>{
+      const q=shape.points[(i+1)%shape.points.length],from=p.join(","),to=q.join(",");
+      const key=from<to?from+"|"+to:to+"|"+from;
+      const count=(counts.get(key)||0)+1;counts.set(key,count);
+      const previous=edges.get(key);
+      if(previous&&previous.from===to&&previous.to===from)edges.delete(key);
+      else edges.set(key,{from,to,p,origin:shape.origins[i],invalid:!!previous||count>2});
+    });
+  }
+  const links=new Map();
+  for(const edge of edges.values()){
+    if(edge.invalid||links.has(edge.from))return {points:null,origins:new Map()};
+    links.set(edge.from,edge);
+  }
+  if(!links.size)return {points:null,origins:new Map()};
+  const start=links.keys().next().value,ring=[];
+  let current=start;
+  do{
+    const edge=links.get(current);if(!edge)return {points:null,origins:new Map()};
+    ring.push({p:edited.get(edge.origin)||edge.p,origin:edge.origin});
+    links.delete(current);current=edge.to;
+  }while(current!==start);
+  if(links.size)return {points:null,origins:new Map()}; // disjoint pieces or holes
+  // After a union, an obsolete interior junction need not remain a redundant
+  // vertex of a straight outer side. Deliberate manual vertices are retained.
+  if(selected.size>1){
+    let changed=true;
+    while(changed&&ring.length>3){
+      changed=false;
+      for(let i=0;i<ring.length;i++){
+        if(edited.has(ring[i].origin))continue;
+        if(traceDistanceSq(ring[i].p,ring[(i+ring.length-1)%ring.length].p,
+          ring[(i+1)%ring.length].p)<=1e-14){ring.splice(i,1);changed=true;break;}
+      }
+    }
+  }
+  return {points:ring.map(item=>item.p),origins:new Map(ring.map(item=>[item.p.join(","),item.origin]))};
+}
 function openRasterTracing(item, view) {
   const panel=document.createElement("section");
   panel.className="trace-map-panel";
@@ -549,6 +596,11 @@ function openRasterTracing(item, view) {
       <label>Analiza <select class="trace-quality"><option value="12000000">Dokładna</option><option value="6000000">Szybsza</option></select></label>
       <label title="Maksymalne odchylenie prostego boku od odczytanego konturu, w pikselach analizy">Prostowanie <select class="trace-tolerance"><option value="1">Delikatne</option><option value="2.5" selected>Proste boki</option><option value="4">Drżąca kreska</option></select></label>
     </div>
+    <div class="trace-map-options">
+      <label title="Dopasowuje bliskie, współbieżne boki obrysu do rzeczywistych granic działek"><input type="checkbox" class="trace-parcel-snap" checked> Dopasuj do 5216</label>
+      <label title="Maksymalny zasięg dopasowania w metrach, niezależny od powiększenia mapy">Zasięg <input type="number" class="trace-parcel-distance" min="0.1" max="20" step="0.1" aria-label="Zasięg dopasowania do 5216 w metrach"> m</label>
+    </div>
+    <span class="trace-parcel-status"></span>
     <span class="trace-accuracy"></span>
     <div class="trace-map-save"><label>A1 <input class="trace-a1" autocomplete="off"></label>
       <button type="button" class="button primary trace-save">Zatwierdź 5310</button></div>
@@ -562,6 +614,10 @@ function openRasterTracing(item, view) {
   const save=panel.querySelector(".trace-save"),close=panel.querySelector(".trace-close");
   const quality=panel.querySelector(".trace-quality"),tolerance=panel.querySelector(".trace-tolerance");
   const accuracy=panel.querySelector(".trace-accuracy");
+  const parcelSnap=panel.querySelector(".trace-parcel-snap");
+  const parcelDistance=panel.querySelector(".trace-parcel-distance");
+  const parcelStatus=panel.querySelector(".trace-parcel-status");
+  parcelSnap.checked=true;
   let w,h,sx,sy;
   function configureResolution(){
     const budget=Number(quality.value)===6000000?6000000:12000000;
@@ -573,6 +629,16 @@ function openRasterTracing(item, view) {
   }
   configureResolution();
   const [a,b,c,d,e,f]=item.affine,det=a*e-b*d;
+  // Choose the initial range from the imported preview, not from the current
+  // analysis budget or screen zoom. Once chosen, it remains a map distance.
+  const previewSx=(item.sourceWidth||item.image.width)/item.image.width;
+  const previewSy=(item.sourceHeight||item.image.height)/item.image.height;
+  const previewXX=(a*a+d*d)*previewSx*previewSx;
+  const previewYY=(b*b+e*e)*previewSy*previewSy;
+  const previewXY=(a*b+d*e)*previewSx*previewSy;
+  let parcelRange=Math.round(Math.max(.5,Math.min(5,
+    3*Math.sqrt((previewXX+previewYY+Math.hypot(previewXX-previewYY,2*previewXY))/2)))*10)/10;
+  parcelDistance.value=String(parcelRange);
   // Display geometry uses easting and negative northing. The affine uses
   // original source pixels even when the decoder supplied a smaller preview.
   const worldAt=(x,y)=>({x:d*x*sx+e*y*sy+f,y:-(a*x*sx+b*y*sy+c)});
@@ -581,6 +647,7 @@ function openRasterTracing(item, view) {
   const bounds=[Math.min(...extent.map(p=>p.x)),Math.min(...extent.map(p=>p.y)),
                 Math.max(...extent.map(p=>p.x)),Math.max(...extent.map(p=>p.y))];
   let features=[],worker=null,analysisId=0,analysisPending=0,preparationId=0,failure="";
+  let parcelIndex=null,parcelShapes=null,parcelMessage="",vertexOrigins=new Map();
   function stopAnalysisWorker(){
     const previous=worker;worker=null;analysisPending=0;
     if(previous){
@@ -641,11 +708,18 @@ function openRasterTracing(item, view) {
       }
     }
   }
-  const edited=new Map(),drafts=new Map();
+  const edited=new Map(),drafts=new Map(),manualDrafts=new Set();
+  const draftOrigins=new Map(),draftReports=new Map();
   let activeNode=null;
   const selectionKey=()=>Array.from(selected).sort((a,b)=>a-b).join(",");
+  function clearDrafts(){
+    drafts.clear();manualDrafts.clear();draftOrigins.clear();draftReports.clear();
+    vertexOrigins=new Map();parcelShapes=null;parcelMessage="";
+  }
   function keepDraft(){
+    manualDrafts.add(selectionKey());
     drafts.set(selectionKey(),outline.slice());
+    parcelMessage="Ręczne poprawki zachowano. Dopasowanie 5216 ich nie zmienia.";
     fitSelection();
   }
   function removeVertex(v){
@@ -702,9 +776,62 @@ function openRasterTracing(item, view) {
     for(const vertex of drag.vertices){vertex[0]=target.x;vertex[1]=target.y;}
     draw();
   }
+  function fittedParcelShapes(){
+    if(parcelShapes)return parcelShapes;
+    const entries=Array.from(trace.shapes);
+    const rings=entries.map(([,shape])=>shape.points.map(([x,y])=>{const p=worldAt(x,y);return [p.x,p.y];}));
+    // Decide shared boundaries together. A narrow neighbour that cannot safely
+    // accept a fit must also veto that fit on the other side of the same edge.
+    const results=globalThis.GeoStudioRasterParcelSnap.snapRings(rings,parcelIndex,{distance:parcelRange});
+    parcelShapes=new Map();
+    entries.forEach(([id,shape],index)=>{
+      const points=shape.points,world=rings[index],result=results[index],origins=[];
+      const snapped=result.points.map(([x,y])=>{const p=pixelAt(x,y);return [p.x,p.y];});
+      // Retain the original corner/side identity for manual edits when the
+      // selection is later extended to an adjoining field.
+      let sourceEdge=0;
+      for(let j=0;j<snapped.length;j++){
+        const sourceIndex=result.sourceIndices[j];let original;
+        if(sourceIndex!==null){sourceEdge=sourceIndex;original=points[sourceIndex];}
+        else{
+          const next=(sourceEdge+1)%world.length,start=world[sourceEdge],end=world[next];
+          const dx=end[0]-start[0],dy=end[1]-start[1],den=dx*dx+dy*dy;
+          const t=den?Math.max(0,Math.min(1,((result.points[j][0]-start[0])*dx+
+            (result.points[j][1]-start[1])*dy)/den)):0;
+          original=[points[sourceEdge][0]+t*(points[next][0]-points[sourceEdge][0]),
+            points[sourceEdge][1]+t*(points[next][1]-points[sourceEdge][1])].map(v=>Math.round(v*1e8)/1e8);
+        }
+        origins.push(original.join(","));
+      }
+      const changed=result.points.length!==world.length||result.points.some((p,i)=>
+        Math.hypot(p[0]-world[i][0],p[1]-world[i][1])>1e-6);
+      parcelShapes.set(id,{points:snapped,origins,changed});
+    });
+    return parcelShapes;
+  }
+  function freshOutline(){
+    vertexOrigins=new Map();parcelMessage="";
+    if(!selected.size||!parcelSnap.checked||!parcelIndex?.size)
+      return selectedRasterOutline(trace,selected,w,h,edited);
+    const shapes=fittedParcelShapes(),result=selectedParcelOutline(shapes,selected,edited);
+    vertexOrigins=result.origins;
+    parcelMessage=Array.from(selected,id=>shapes.get(id).changed).some(Boolean)
+      ?"Dopasowano obrys do 5216 z uwzględnieniem sąsiednich pól. Sprawdź czerwony obrys."
+      :"Brak bezpiecznego dopasowania do 5216 w wybranym zasięgu.";
+    return result.points;
+  }
   function syncAttributes(){
     activeNode=null;
-    outline=drafts.get(selectionKey())?.slice() || selectedRasterOutline(trace,selected,w,h,edited);
+    const key=selectionKey(),cached=drafts.get(key);
+    if(cached){
+      outline=cached.slice();vertexOrigins=draftOrigins.get(key)||new Map();
+      parcelMessage=manualDrafts.has(key)
+        ?"Ręcznie poprawiony szkic zachowuje kształt przy zmianie ustawień 5216."
+        :draftReports.get(key)||"";
+    }else{
+      outline=freshOutline();
+      draftOrigins.set(key,vertexOrigins);draftReports.set(key,parcelMessage);
+    }
     if(!selected.size)a1.value="";
     else a1.focus({preventScroll:true});
     fitSelection();
@@ -754,11 +881,15 @@ function openRasterTracing(item, view) {
     const groundPixel=Math.sqrt((xx+yy+Math.hypot(xx-yy,2*xy))/2);
     accuracy.textContent="Piksel analizy: do "+groundPixel.toFixed(2)+" m · Prostowanie: do "+
       (groundPixel*Number(tolerance.value)).toFixed(2)+" m. Dokładność położenia zależy także od kalibracji.";
+    parcelStatus.textContent=parcelMessage||(!parcelSnap.checked?"Dopasowanie do 5216 wyłączone.":
+      !parcelIndex?"Wczytywanie granic 5216…":!parcelIndex.size?"Brak granic 5216 w pobliżu rastra.":
+      "Bliskie, współbieżne boki zostaną dopasowane do 5216. Zasięg: "+parcelRange.toFixed(1)+" m.");
+    parcelDistance.disabled=busy||!parcelSnap.checked;
     save.disabled=busy||fitError||!trace||!outline?.length||!a1.value.trim();
   }
   function analyze(){
     if(disposed||!worker)return;
-    trace=null;failure="";selected.clear();edited.clear();drafts.clear();outline=[];invalidateFit();
+    trace=null;failure="";selected.clear();edited.clear();clearDrafts();outline=[];invalidateFit();
     activeNode=null;anchor=drag=pan=rectEnd=snapHit=null;clearTimeout(holdTimer);a1.value="";
     analysisPending=++analysisId;
     draw();
@@ -832,8 +963,9 @@ function openRasterTracing(item, view) {
         parts.push([v,next].map(([x,y])=>{const p=worldAt(x,y);return [p.x,p.y];}));
       }
       if(parts.length)targets.push({geometry:parts,code:"5310"});
-      let key=nearest.join(",");
-      for(const [original,point] of edited)if(point===nearest){key=original;break;}
+      let key=vertexOrigins.get(nearest.join(","))||nearest.join(",");
+      for(const [original,point] of edited)if(point===nearest||
+        (point[0]===nearest[0]&&point[1]===nearest[1])){key=original;break;}
       const vertex=nearest.slice();
       outline[outline.indexOf(nearest)]=vertex;
       drag={vertices:[vertex],previous:nearest,key,targets,start:p,moved:false};
@@ -880,10 +1012,28 @@ function openRasterTracing(item, view) {
   };
   panel.querySelector("select").onchange=analyze;
   tolerance.onchange=()=>{if(!busy)analyze();};
+  function changeParcelSettings(){
+    if(busy||disposed)return;
+    const value=Number(parcelDistance.value);
+    if(Number.isFinite(value)&&value>0)parcelRange=Math.max(.1,Math.min(20,value));
+    parcelDistance.value=String(parcelRange);
+    parcelShapes=null;
+    clearTimeout(holdTimer);
+    if(drag)outline[outline.indexOf(drag.vertices[0])]=drag.previous;
+    anchor=drag=pan=rectEnd=snapHit=null;
+    // Rebuild automatic previews only. A deliberate manual correction takes
+    // precedence, including a move made with Alt or with the magnet disabled.
+    for(const key of drafts.keys())if(!manualDrafts.has(key)){
+      drafts.delete(key);draftOrigins.delete(key);draftReports.delete(key);
+    }
+    if(trace)syncAttributes();
+    draw();
+  }
+  parcelSnap.onchange=parcelDistance.onchange=changeParcelSettings;
   quality.onchange=()=>{
     if(busy||disposed)return;
     const oldWidth=w,oldHeight=h;
-    selected.clear();edited.clear();drafts.clear();outline=[];activeNode=null;
+    selected.clear();edited.clear();clearDrafts();outline=[];activeNode=null;
     anchor=drag=pan=rectEnd=snapHit=null;clearTimeout(holdTimer);invalidateFit();
     a1.value="";
     configureResolution();
@@ -905,7 +1055,7 @@ function openRasterTracing(item, view) {
     if(fitPending){queuedSave=true;return;}
     if(!nativeOutline)return;
     busy=true;save.disabled=close.disabled=a1.disabled=panel.querySelector("select").disabled=true;
-    quality.disabled=tolerance.disabled=true;
+    quality.disabled=tolerance.disabled=parcelSnap.disabled=parcelDistance.disabled=true;
     let message="";
     try{
       const points=outline;
@@ -915,7 +1065,7 @@ function openRasterTracing(item, view) {
       completed.push(points);
       invalidateFit();
       for(const id of selected)trace.shapes.delete(id);
-      selected.clear();outline=[];activeNode=null;drafts.clear();a1.value="";
+      selected.clear();outline=[];activeNode=null;clearDrafts();a1.value="";
       await view.refresh();
       // Nowy poligon musi wejść do maski, inaczej następna propozycja
       // wkreślenia wypadłaby dokładnie na nim.
@@ -923,7 +1073,7 @@ function openRasterTracing(item, view) {
     }catch(error){message=error.message;}
     finally{
       busy=false;close.disabled=a1.disabled=panel.querySelector("select").disabled=false;
-      quality.disabled=tolerance.disabled=false;
+      quality.disabled=tolerance.disabled=parcelSnap.disabled=false;
       if(message)fitMessage=message;
       draw();a1.focus({preventScroll:true});
     }
@@ -933,11 +1083,13 @@ function openRasterTracing(item, view) {
   resize();observer.observe(stage);canvas.focus({preventScroll:true});
   async function prepare(){
     const generation=++preparationId;
-    analysisId++;stopAnalysisWorker();trace=null;invalidateFit();draw();
+    analysisId++;stopAnalysisWorker();trace=null;parcelShapes=null;invalidateFit();draw();
     try{
       const loaded=await view.featuresIn(bounds);
       if(disposed||generation!==preparationId)return;
       features=loaded;
+      if(!globalThis.GeoStudioRasterParcelSnap)throw Error("Nie wczytano modułu dopasowania do 5216. Uruchom program ponownie.");
+      parcelIndex=globalThis.GeoStudioRasterParcelSnap.buildIndex(features);
       const buffer=document.createElement("canvas");buffer.width=w;buffer.height=h;
       const g=buffer.getContext("2d",{willReadFrequently:true});
       g.fillStyle="white";g.fillRect(0,0,w,h);g.drawImage(item.image,0,0,w,h);

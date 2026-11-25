@@ -50,7 +50,11 @@ Wybieraj obiekty na mapie, filtruj je według kodu i wartości A1/A2, zmieniaj g
 
 Połącz podkład rastrowy z geometrią mapy. Narzędzie **Auto Wkreślanie** w rozwijanej wersji 2.0 służy do tworzenia wydzieleń `5310` na podstawie skalibrowanego rastra. Wynik wymaga kontroli i ewentualnej ręcznej korekty.
 
-Proste boki są dopasowywane do całej kreski z ograniczoną tolerancją, a sąsiadujące pola zachowują wspólną granicę. Tryby **Dokładna / Szybsza** i **Delikatne / Proste boki / Drżąca kreska** pozwalają dobrać rozpoznawanie do skanu. Numer A1 nadal wpisuje użytkownik; odczyt odręcznych numerów i wysięgników nie jest jeszcze dostępny. [Opis ustawień i dokładności](docs/auto-wkreslanie.md).
+Proste boki są dopasowywane do całej kreski z ograniczoną tolerancją, a sąsiadujące pola zachowują wspólną granicę. Tryby **Dokładna / Szybsza** i **Delikatne / Proste boki / Drżąca kreska** pozwalają dobrać rozpoznawanie do skanu.
+
+Domyślnie włączone **Dopasuj do 5216** dosuwa bliskie, współbieżne boki wybranego obrysu do granic działek, z regulowanym **Zasięgiem** w metrach niezależnym od przybliżenia. Wynik widać przed zapisem, a węzły można nadal poprawiać ręcznie. Dopasowanie nie zmienia działek ani nie wprowadza wszystkich ich granic do wydzieleń. Przy rzeczywistej linii podziału biegnącej tuż obok 5216 można zmniejszyć zasięg lub wyłączyć dopasowanie.
+
+Numer A1 nadal wpisuje użytkownik; odczyt odręcznych numerów i wysięgników nie jest jeszcze dostępny. [Opis ustawień i dokładności](docs/auto-wkreslanie.md).
 
 ### Od podkładu do wydruku
 

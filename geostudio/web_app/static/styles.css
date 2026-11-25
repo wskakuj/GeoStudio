@@ -2031,15 +2031,16 @@ body[data-theme] .floating {flex-shrink:0;}
 }
 .trace-map-heading { justify-content:space-between; font-size:14px; }
 .trace-map-panel label { display:inline-flex; align-items:center; gap:4px; }
-.trace-map-panel select,.trace-a1 {
+.trace-map-panel select,.trace-a1,.trace-parcel-distance {
   color:var(--ui-ink); background:var(--ui-input); border:1px solid var(--ui-edge);
   border-radius:5px; min-height:28px; padding:2px 5px;
 }
 .trace-map-panel .button { min-height:28px; padding:4px 8px; font-size:12px; }
-.trace-magnet { accent-color:var(--ui-accent); }
+.trace-magnet,.trace-parcel-snap { accent-color:var(--ui-accent); }
 .trace-a1 { width:6em; }
+.trace-parcel-distance { width:4.5em; }
 .trace-map-panel [role=status] { color:var(--ui-muted); }
-.trace-accuracy { color:var(--ui-muted); font-size:11px; line-height:1.45; }
+.trace-accuracy,.trace-parcel-status { color:var(--ui-muted); font-size:11px; line-height:1.45; }
 #choose-raster { width:100%; min-height:52px; font-size:15px; }
 .raster-world-action { display:flex; justify-content:flex-end; margin-top:10px; }
 #choose-world { width:auto; min-height:30px; padding:4px 10px; font-size:12px; }
