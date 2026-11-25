@@ -1,6 +1,7 @@
 """WMTS: kafelki zamiast GetMap oraz presety archiwalne z osią czasu."""
 from __future__ import annotations
 
+from html.parser import HTMLParser
 from io import BytesIO
 from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
@@ -118,9 +119,31 @@ def test_time_parameter_is_added_to_getmap(monkeypatch):
 
 
 def test_ui_lists_new_sources_and_date_field():
+    class UnderlayPicker(HTMLParser):
+        def __init__(self):
+            super().__init__()
+            self.in_picker = False
+            self.options = {}
+            self.has_date_input = False
+
+        def handle_starttag(self, tag, attrs):
+            attrs = dict(attrs)
+            if tag == "select":
+                self.in_picker = attrs.get("id") == "underlay-preset"
+            elif tag == "option" and self.in_picker:
+                self.options[attrs["value"]] = attrs.get("data-url")
+            elif tag == "input" and attrs.get("id") == "underlay-time":
+                self.has_date_input = True
+
+        def handle_endtag(self, tag):
+            if tag == "select":
+                self.in_picker = False
+
+    picker = UnderlayPicker()
+    picker.feed(HTML)
     for preset in ("standard_wmts", "high_wmts", "standard_time", "high_time"):
-        assert f'<option value="{preset}">' in HTML
-    assert 'id="underlay-time"' in HTML
+        assert picker.options[preset] == underlay_wms.PRESETS[preset][1]
+    assert picker.has_date_input
     assert "const timePresets=new Set(" in JS
 
 

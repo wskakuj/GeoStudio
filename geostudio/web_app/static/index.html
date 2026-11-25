@@ -11,6 +11,7 @@
   <script defer src="/drawing_snap.js"></script>
   <script defer src="/sheet.js"></script>
   <script defer src="/map.js"></script>
+  <script defer src="/wms_catalog.js"></script>
 </head>
 <body data-theme="dark">
   <div class="app-shell">
@@ -873,25 +874,145 @@
   <!-- Stage 12: distinct task-focused dialogs, no sprawling shared form. -->
   <dialog id="underlay-dialog" class="advanced-select-dialog bulk-dialog layer-source-dialog">
     <div class="select-head">
-      <div><div class="eyebrow">PODKŁADY · WMS</div><h2>Podgląd WMS — podkład mapy</h2></div>
+      <div><div class="eyebrow">PODKŁADY · WMS</div><h2>Podkłady WMS / WMTS</h2></div>
       <button type="button" id="underlay-close" class="select-close" aria-label="Zamknij WMS">×</button>
     </div>
     <div class="select-content">
       <p class="select-explain">Wybierz usługę, pobierz listę jej warstw i wskaż układ zgodny z Twoją mapą. Obraz zostanie wyświetlony <strong>pod</strong> obiektami.</p>
-      <label for="underlay-preset">Źródło danych</label>
-      <select id="underlay-preset">
-        <option value="standard">Geoportal — ortofotomapa standardowa</option>
-        <option value="high">Geoportal — ortofotomapa wysokiej rozdzielczości</option>
-        <option value="kieg">GUGiK — działki ewidencyjne i numery</option>
-        <option value="standard_wmts">Geoportal — ortofotomapa standardowa (WMTS)</option>
-        <option value="high_wmts">Geoportal — ortofotomapa wysoka (WMTS)</option>
-        <option value="standard_time">Geoportal — ortofotomapa archiwalna standardowa</option>
-        <option value="high_time">Geoportal — ortofotomapa archiwalna wysoka</option>
-        <option value="custom">Własny serwer WMS…</option>
-      </select>
+      <section class="wms-catalog-panel" aria-label="Katalog usług">
+        <div class="wms-section-heading"><strong>1 · Wybierz źródło</strong><span>Geoportal / GUGiK · Bank Danych o Lasach</span></div>
+        <div class="wms-filter-grid">
+          <div><label for="underlay-category">Kategoria</label>
+            <select id="underlay-category"><option value="">Wszystkie kategorie</option><option value="Ortofotomapy">Ortofotomapy</option><option value="Mapa zasadnicza i planowanie">Mapa zasadnicza i planowanie</option><option value="Adresy i granice">Adresy i granice</option><option value="Topografia i statystyki">Topografia i statystyki</option><option value="Rzeźba terenu (NMT)">Rzeźba terenu (NMT)</option><option value="Osnowy geodezyjne">Osnowy geodezyjne</option><option value="Mapy tematyczne">Mapy tematyczne</option><option value="Skorowidze map i danych">Skorowidze map i danych</option><option value="INSPIRE">INSPIRE</option><option value="Lasy — Bank Danych o Lasach">Lasy — Bank Danych o Lasach</option><option value="Własne źródło">Własne źródło</option></select></div>
+          <div><label for="underlay-search">Szukaj w katalogu</label>
+            <input id="underlay-search" type="search" placeholder="np. KIUT, osnowa, drzewostany" autocomplete="off" spellcheck="false"></div>
+        </div>
+        <label for="underlay-preset">Usługa</label>
+        <select id="underlay-preset">
+        <optgroup label="Ortofotomapy">
+          <option value="standard" data-url="https://mapy.geoportal.gov.pl/wss/service/PZGIK/ORTO/WMS/StandardResolution">Geoportal — ortofotomapa standardowa (WMS)</option>
+          <option value="high" data-url="https://mapy.geoportal.gov.pl/wss/service/PZGIK/ORTO/WMS/HighResolution">Geoportal — ortofotomapa wysokiej rozdzielczości (WMS)</option>
+          <option value="standard_wmts" data-url="https://mapy.geoportal.gov.pl/wss/service/PZGIK/ORTO/WMTS/StandardResolution">Geoportal — ortofotomapa standardowa (WMTS)</option>
+          <option value="high_wmts" data-url="https://mapy.geoportal.gov.pl/wss/service/PZGIK/ORTO/WMTS/HighResolution">Geoportal — ortofotomapa wysoka (WMTS)</option>
+          <option value="standard_time" data-url="https://mapy.geoportal.gov.pl/wss/service/PZGIK/ORTO/WMS/StandardResolutionTime">Geoportal — ortofotomapa archiwalna standardowa (WMS)</option>
+          <option value="high_time" data-url="https://mapy.geoportal.gov.pl/wss/service/PZGIK/ORTO/WMS/HighResolutionTime">Geoportal — ortofotomapa archiwalna wysoka (WMS)</option>
+          <option value="gugik_true_ortho" data-url="https://mapy.geoportal.gov.pl/wss/service/PZGIK/ORTO/WMS/TrueOrtho">Prawdziwa ortofotomapa (WMS)</option>
+        </optgroup>
+        <optgroup label="Mapa zasadnicza i planowanie">
+          <option value="kieg" data-url="https://integracja.gugik.gov.pl/cgi-bin/KrajowaIntegracjaEwidencjiGruntow">GUGiK — działki ewidencyjne i numery (WMS)</option>
+          <option value="gugik_kiut" data-url="https://integracja.gugik.gov.pl/cgi-bin/KrajowaIntegracjaUzbrojeniaTerenu">Krajowa Integracja Uzbrojenia Terenu (KIUT) (WMS)</option>
+          <option value="gugik_kibdot" data-url="https://integracja.gugik.gov.pl/cgi-bin/KrajowaIntegracjaBazDanychObiektowTopograficznych">Krajowa Integracja Baz Danych Obiektów Topograficznych (KIBDOT) (WMS)</option>
+          <option value="gugik_kimp" data-url="https://mapy.geoportal.gov.pl/wss/ext/KrajowaIntegracjaMiejscowychPlanowZagospodarowaniaPrzestrzennego">Krajowa Integracja Miejscowych Planów Zagospodarowania Przestrzennego (KIMP) (WMS)</option>
+          <option value="gugik_kiskzp" data-url="https://mapy.geoportal.gov.pl/wss/ext/KrajowaIntegracjaStudiumKierunkowZagospodarowaniaPrzestrzennego">Krajowa Integracja Studium Kierunków Zagospodarowania Przestrzennego (KISKZP) (WMS)</option>
+          <option value="gugik_kicn" data-url="https://integracja.gugik.gov.pl/cgi-bin/KrajowaIntegracjaCenNieruchomosci">Krajowa Integracja Cen Nieruchomości (WMS)</option>
+        </optgroup>
+        <optgroup label="Adresy i granice">
+          <option value="gugik_adresy" data-url="https://mapy.geoportal.gov.pl/wss/ext/KrajowaIntegracjaNumeracjiAdresowej">Państwowy Rejestr Granic — adresy i ulice (WMS)</option>
+          <option value="gugik_prg" data-url="https://mapy.geoportal.gov.pl/wss/service/PZGIK/PRG/WMS/AdministrativeBoundaries">Państwowy Rejestr Granic — jednostki terytorialne (WMS)</option>
+        </optgroup>
+        <optgroup label="Topografia i statystyki">
+          <option value="gugik_bdot10k" data-url="https://mapy.geoportal.gov.pl/wss/service/pub/guest/kompozycja_BDOT10k_WMS/MapServer/WMSServer">Baza Danych Obiektów Topograficznych (BDOT10k) (WMS)</option>
+          <option value="gugik_bdoo" data-url="https://mapy.geoportal.gov.pl/wss/service/PZGIK/BDOO/WMS/aktualne">Baza Danych Obiektów Ogólnogeograficznych (BDOO) (WMS)</option>
+          <option value="gugik_prng" data-url="https://mapy.geoportal.gov.pl/wss/service/PZGiK/PRNG/WMS/GeographicalNames">Państwowy Rejestr Nazw Geograficznych (PRNG) (WMS)</option>
+          <option value="gugik_stats_buildings" data-url="https://mapy.geoportal.gov.pl/wss/service/PZGIK/BDOT10k/WMS/StatystykiBudynkow">Statystyki budynków i budowli w BDOT10k (WMS)</option>
+          <option value="gugik_stats_roads" data-url="https://mapy.geoportal.gov.pl/wss/service/PZGIK/BDOT10k/WMS/StatystykiSieciKomunikacyjnej">Statystyki sieci komunikacyjnej w BDOT10k (WMS)</option>
+          <option value="gugik_stats_water" data-url="https://mapy.geoportal.gov.pl/wss/service/PZGIK/BDOT10k/WMS/StatystykiSieciWodnej">Statystyki sieci wodnej w BDOT10k (WMS)</option>
+          <option value="gugik_stats_other" data-url="https://mapy.geoportal.gov.pl/wss/service/PZGIK/BDOT10k/WMS/StatystykiObiektowInnych">Statystyki obiektów innych w BDOT10k (WMS)</option>
+          <option value="gugik_new_buildings" data-url="https://mapy.geoportal.gov.pl/wss/service/PZGIK/BDOT10k/WMS/NoweBudynki">Nowe budynki w BDOT10k (WMS)</option>
+          <option value="gugik_wind" data-url="https://mapy.geoportal.gov.pl/wss/service/PZGIK/BDOT10k/WMS/MasztyStrefyWylaczone">Strefy wyłączone wokół turbin wiatrowych (WMS)</option>
+          <option value="gugik_border_zone" data-url="https://mapy.geoportal.gov.pl/wss/ext/KGSG/CzasowyZakazPrzebywania">Strefa buforowa przy polsko-białoruskiej granicy (WMS)</option>
+          <option value="gugik_gddkia" data-url="https://mapy.geoportal.gov.pl/wss/ext/GDDKiA/SiecDrogowa">Sieć drogowa (GDDKiA) (WMS)</option>
+        </optgroup>
+        <optgroup label="Rzeźba terenu (NMT)">
+          <option value="gugik_relief" data-url="https://mapy.geoportal.gov.pl/wss/service/PZGIK/NMT/GRID1/WMS/ShadedRelief">Cieniowanie (WMS)</option>
+          <option value="gugik_hypsometry" data-url="https://mapy.geoportal.gov.pl/wss/service/PZGIK/NMT/GRID1/WMS/Hypsometry">Hipsometria (WMS)</option>
+          <option value="gugik_peaks" data-url="https://mapy.geoportal.gov.pl/wss/service/img/guest/WMS/Szczyty">Wykaz szczytów (WMS)</option>
+        </optgroup>
+        <optgroup label="Osnowy geodezyjne">
+          <option value="gugik_control_h" data-url="https://mapy.geoportal.gov.pl/wss/service/PZGIK/PodstawowaOsnowaGeodezyjnaPozioma">Podstawowa Osnowa Geodezyjna Pozioma (WMS)</option>
+          <option value="gugik_control_v" data-url="https://mapy.geoportal.gov.pl/wss/service/PZGIK/PodstawowaOsnowaGeodezyjnaWysokosciowa">Podstawowa Osnowa Geodezyjna Wysokościowa (WMS)</option>
+          <option value="gugik_gravity" data-url="https://mapy.geoportal.gov.pl/wss/service/PZGIK/OsnowaGrawimetryczna">Osnowa Grawimetryczna (WMS)</option>
+          <option value="gugik_magnetic" data-url="https://mapy.geoportal.gov.pl/wss/service/PZGIK/OsnowaMagnetyczna">Osnowa Magnetyczna (WMS)</option>
+          <option value="gugik_asg" data-url="https://mapy.geoportal.gov.pl/wss/service/pub/guest/G2_ASG_EUPOS_WMS/MapServer/WMSServer">Stacje ASG-EUPOS (WMS)</option>
+          <option value="gugik_kisog" data-url="https://integracja.gugik.gov.pl/cgi-bin/KrajowaIntegracjaSzczegolowychOsnowGeodezyjnych">Krajowa Integracja Szczegółowych Osnów Geodezyjnych (KISOG) (WMS)</option>
+          <option value="gugik_control_archive" data-url="https://mapy.geoportal.gov.pl/wss/service/PZGIK/Osnowy/WMS/Archiwalne_kartoteki">Archiwalne Kartoteki Osnów (WMS)</option>
+        </optgroup>
+        <optgroup label="Mapy tematyczne">
+          <option value="gugik_general_map" data-url="https://mapy.geoportal.gov.pl/wss/service/img/guest/Ogolnogeograficzna/MapServer/WMSServer">Ogólnogeograficzna Mapa Polski (WMS)</option>
+          <option value="gugik_sozo" data-url="https://mapy.geoportal.gov.pl/wss/service/img/guest/SOZO/MapServer/WMSServer">Mapa Sozologiczna Polski (WMS)</option>
+          <option value="gugik_hydro" data-url="https://mapy.geoportal.gov.pl/wss/service/img/guest/HYDRO/MapServer/WMSServer">Mapa Hydrograficzna Polski (WMS)</option>
+          <option value="gugik_landscape" data-url="https://mapy.geoportal.gov.pl/wss/service/img/guest/Krajobrazowa/MapServer/WMSServer">Krajobrazowa Mapa Polski (WMS)</option>
+          <option value="gugik_topo" data-url="https://mapy.geoportal.gov.pl/wss/service/img/guest/TOPO/MapServer/WMSServer">Rastrowa Mapa Topograficzna Polski (WMS)</option>
+          <option value="gugik_soil" data-url="https://mapy.geoportal.gov.pl/wss/service/pub/guest/MapaGlebowoRolnicza/MapServer/WMSServer">Mapa glebowo-rolnicza (WMS)</option>
+          <option value="gugik_rail" data-url="https://mapy.geoportal.gov.pl/wss/service/sdi/Przejazdy/get">Przejazdy kolejowe (WMS)</option>
+          <option value="gugik_ndvi" data-url="https://mapy.geoportal.gov.pl/wss/service/PZGIK/ORTO/WMS/NDVI">Wskaźnik wegetacji NDVI (WMS)</option>
+          <option value="gugik_noise" data-url="https://mapy.geoportal.gov.pl/wss/ext/PPLChopin">Mapa hałasu PPL Chopin (WMS)</option>
+        </optgroup>
+        <optgroup label="Skorowidze map i danych">
+          <option value="gugik_idx_sozo" data-url="https://mapy.geoportal.gov.pl/wss/service/PZGIK/mapy/WMS/MapySozologiczne">Skorowidz — mapa sozologiczna (WMS)</option>
+          <option value="gugik_idx_general" data-url="https://mapy.geoportal.gov.pl/wss/service/PZGIK/mapy/WMS/SkorowidzMapOgolnogeograficznych">Skorowidz — mapa ogólnogeograficzna (WMS)</option>
+          <option value="gugik_idx_landscape" data-url="https://mapy.geoportal.gov.pl/wss/service/PZGIK/mapy/WMS/SkorowidzMapKrajobrazowych">Skorowidz — mapy krajobrazowe (WMS)</option>
+          <option value="gugik_idx_geomorph" data-url="https://mapy.geoportal.gov.pl/wss/service/PZGIK/mapy/WMS/SkorowidzMapGeomorfologicznych">Skorowidz — mapy geomorfologiczne (WMS)</option>
+          <option value="gugik_idx_typhlo" data-url="https://mapy.geoportal.gov.pl/wss/service/PZGIK/mapy/WMS/SkorowidzMapTyflologicznych">Skorowidz — mapy tyflologiczne (WMS)</option>
+          <option value="gugik_idx_control" data-url="https://mapy.geoportal.gov.pl/wss/service/pub/guest/G2_SKOROWIDZE_OSNOWA/MapServer/WMSServer">Skorowidz — osnowa (WMS)</option>
+          <option value="gugik_idx_bdoo" data-url="https://mapy.geoportal.gov.pl/wss/service/pub/guest/Skorowidze_BDOO/MapServer/WMSServer">Skorowidz — BDOO (WMS)</option>
+          <option value="gugik_idx_bdot" data-url="https://mapy.geoportal.gov.pl/wss/service/pub/guest/Skorowidze_BDOT10k/MapServer/WMSServer">Skorowidz — BDOT10k (WMS)</option>
+          <option value="gugik_idx_topo" data-url="https://mapy.geoportal.gov.pl/wss/service/pub/guest/G2_SKOROWIDZE_TOPO/MapServer/WMSServer">Skorowidz — mapa topograficzna (WMS)</option>
+          <option value="gugik_idx_hydro" data-url="https://mapy.geoportal.gov.pl/wss/service/pub/guest/G2_SKOROWIDZE_HYDRO/MapServer/WMSServer">Skorowidz — mapa hydrograficzna (WMS)</option>
+          <option value="gugik_idx_admin" data-url="https://mapy.geoportal.gov.pl/wss/service/PZGIK/mapy/WMS/SkorowidzMapAdministracyjnych">Skorowidz — mapy administracyjne (WMS)</option>
+          <option value="gugik_idx_ortho_age" data-url="https://mapy.geoportal.gov.pl/wss/service/PZGIK/ORTO/WMS/SkorowidzeWgAktualnosci">Ortofotomapa do pobrania według aktualności (WMS)</option>
+          <option value="gugik_idx_ortho_res" data-url="https://mapy.geoportal.gov.pl/wss/service/PZGIK/ORTO/WMS/SkorowidzeWgRozdzielczosci">Ortofotomapa do pobrania według rozdzielczości (WMS)</option>
+          <option value="gugik_idx_true_ortho" data-url="https://mapy.geoportal.gov.pl/wss/service/PZGIK/ORTO/WMS/SkorowidzePrawdziwejOrtofotomapy">Skorowidz — prawdziwa ortofotomapa (WMS)</option>
+          <option value="gugik_idx_oblique" data-url="https://mapy.geoportal.gov.pl/wss/service/PZGIK/ORTO/WMS/SkorowidzeOrtofotomapyUkosnej">Skorowidz — ortofotomapa ukośna (WMS)</option>
+          <option value="gugik_idx_nmt_data_kron" data-url="https://mapy.geoportal.gov.pl/wss/service/PZGIK/DanePomiaroweNMT/WMS/SkorowidzeUkladKRON86">Dane pomiarowe NMT — PL-KRON86-NH (WMS)</option>
+          <option value="gugik_idx_nmt_data_evrf" data-url="https://mapy.geoportal.gov.pl/wss/service/PZGIK/DanePomiaroweNMT/WMS/SkorowidzeUkladEVRF2007">Dane pomiarowe NMT — PL-EVRF2007-NH (WMS)</option>
+          <option value="gugik_idx_nmt_1_kron" data-url="https://mapy.geoportal.gov.pl/wss/service/PZGIK/NMT/WMS/SkorowidzeUkladKRON86">Skorowidz — NMT PL-KRON86-NH 1 m (WMS)</option>
+          <option value="gugik_idx_nmt_1_evrf" data-url="https://mapy.geoportal.gov.pl/wss/service/PZGIK/NMT/WMS/SkorowidzeUkladEVRF2007">Skorowidz — NMT PL-EVRF2007-NH 1 m (WMS)</option>
+          <option value="gugik_idx_nmt_5_evrf" data-url="https://mapy.geoportal.gov.pl/wss/service/PZGIK/NMT/WMS/SheetsGrid5mEVRF2007">Skorowidz — NMT PL-EVRF2007-NH 5 m (WMS)</option>
+          <option value="gugik_idx_nmpt_kron" data-url="https://mapy.geoportal.gov.pl/wss/service/PZGIK/NMPT/WMS/SkorowidzeUkladKRON86">Skorowidz — NMPT PL-KRON86-NH (WMS)</option>
+          <option value="gugik_idx_nmpt_evrf" data-url="https://mapy.geoportal.gov.pl/wss/service/PZGIK/NMPT/WMS/SkorowidzeUkladEVRF2007">Skorowidz — NMPT PL-EVRF2007-NH (WMS)</option>
+          <option value="gugik_idx_mesh" data-url="https://mapy.geoportal.gov.pl/wss/service/PZGIK/NMT/WMS/ModeleSiatkowe3D">Skorowidz — modele siatkowe (3D mesh) (WMS)</option>
+          <option value="gugik_idx_photo" data-url="https://mapy.geoportal.gov.pl/wss/service/PZGIK/ZDJ/WMS/Fotopunkty">Osnowa fotogrametryczna (WMS)</option>
+          <option value="gugik_idx_aero" data-url="https://mapy.geoportal.gov.pl/wss/service/PZGIK/ZDJ/WMS/Aerotriangulacja">Aerotriangulacja (WMS)</option>
+          <option value="gugik_idx_mosaic" data-url="https://mapy.geoportal.gov.pl/wss/service/PZGIK/ZDJ/WMS/LinieMozaikowania">Linia mozaikowania (WMS)</option>
+          <option value="gugik_idx_intensity" data-url="https://mapy.geoportal.gov.pl/wss/service/PZGIK/OI/WMS/SkorowidzeObrazowIntensywnosci">Obrazy intensywności (WMS)</option>
+        </optgroup>
+        <optgroup label="INSPIRE">
+          <option value="inspire_gn" data-url="https://mapy.geoportal.gov.pl/wss/geosrv/wmsGN/wms">Nazwy geograficzne (WMS)</option>
+          <option value="inspire_au" data-url="https://mapy.geoportal.gov.pl/wss/geosrv/wmsAU/wms">Jednostki administracyjne (WMS)</option>
+          <option value="inspire_ad" data-url="https://mapy.geoportal.gov.pl/wss/service/INSPIRE/Addresses">Adresy (WMS)</option>
+          <option value="inspire_tn" data-url="https://mapy.geoportal.gov.pl/wss/geosrv/wmsTN/ows">Sieci transportowe (BDOT) (WMS)</option>
+          <option value="inspire_lc" data-url="https://mapy.geoportal.gov.pl/wss/geosrv/wmsLC/wms">Użytkowanie terenu (WMS)</option>
+          <option value="inspire_bu" data-url="https://mapy.geoportal.gov.pl/wss/geosrv/wmsBU/wms">Budynki (WMS)</option>
+          <option value="inspire_pf" data-url="https://mapy.geoportal.gov.pl/wss/geosrv/wmsPF/wms">Obiekty produkcyjne i przemysłowe (WMS)</option>
+          <option value="inspire_us" data-url="https://mapy.geoportal.gov.pl/wss/geosrv/wmsUS/wms">Usługi użyteczności publicznej i służby państwowe (WMS)</option>
+          <option value="inspire_am" data-url="https://mapy.geoportal.gov.pl/wss/geosrv/wmsAM/wms">Gospodarowanie obszarem / strefy ograniczone i jednostki sprawozdawcze (WMS)</option>
+        </optgroup>
+        <optgroup label="Lasy — Bank Danych o Lasach">
+          <option value="bdl_basic" data-url="https://mapserver.bdl.lasy.gov.pl/ArcGIS/services/WMS_BDL/mapserver/WMSServer">BDL — mapa podstawowa (oddziały i wydzielenia) (WMS)</option>
+          <option value="bdl_ownership" data-url="https://mapserver.bdl.lasy.gov.pl/ArcGIS/services/WMS_BDL_kat_wlasnosci/MapServer/WMSServer">BDL — kategorie własności (WMS)</option>
+          <option value="bdl_restrictions" data-url="https://mapserver.bdl.lasy.gov.pl/ArcGIS/services/WMS_zakazy_wstepu_do_lasu/MapServer/WMSServer">BDL — zakazy wstępu do lasu (WMS)</option>
+          <option value="bdl_fire_risk" data-url="https://mapserver.bdl.lasy.gov.pl/ArcGIS/services/WMS_zagrozenie_pozarowe_w_lasach/MapServer/WMSServer">BDL — zagrożenie pożarowe (WMS)</option>
+          <option value="bdl_tourism" data-url="https://mapserver.bdl.lasy.gov.pl/ArcGIS/services/WMS_BDL_Mapa_turystyczna/MapServer/WMSServer">BDL — mapa turystyczna i Zanocuj w lesie (WMS)</option>
+          <option value="bdl_hunting" data-url="https://mapserver.bdl.lasy.gov.pl/ArcGIS/services/WMS_Obwody_lowieckie/MapServer/WMSServer">BDL — obwody łowieckie (WMS)</option>
+          <option value="bdl_stands" data-url="https://mapserver.bdl.lasy.gov.pl/arcgis/services/WMS_BDL_mapa_drzewostanow/MapServer/WMSServer">BDL — mapa drzewostanów (WMS)</option>
+          <option value="bdl_vegetation" data-url="https://mapserver.bdl.lasy.gov.pl/arcgis/services/WMS_BDL_mapa_zbiorowisk_roslinnych/MapServer/WMSServer">BDL — zbiorowiska roślinne (WMS)</option>
+          <option value="bdl_habitats" data-url="https://mapserver.bdl.lasy.gov.pl/arcgis/services/WMS_BDL_mapa_siedlisk/MapServer/WMSServer">BDL — mapa siedlisk leśnych (WMS)</option>
+          <option value="bdl_protection" data-url="https://mapserver.bdl.lasy.gov.pl/arcgis/services/WMS_BDL_kategorie_ochronnosci/MapServer//WMSServer">BDL — kategorie ochronności PGL LP (WMS)</option>
+          <option value="bdl_fire_roads" data-url="https://mapserver.bdl.lasy.gov.pl/ArcGIS/services/WMS_BDL_dojazdy_pozarowe/MapServer/WMSServer">BDL — dojazdy i lokalizacje pożarów (WMS)</option>
+          <option value="bdl_planning" data-url="https://mapserver.bdl.lasy.gov.pl/ArcGIS/services//WMS_BDL_prace_urzadzeniowe/MapServer/WMSServer">BDL — prace urządzeniowe (PUL / UPUL) (WMS)</option>
+          <option value="bdl_monitoring" data-url="https://mapserver.bdl.lasy.gov.pl/ArcGIS/services/WMS_BDL_monitoring_lasu/MapServer/WMSServer">BDL — monitoring lasów (WMS)</option>
+        </optgroup>
+        <optgroup label="Własne źródło">
+          <option value="custom">Własny serwer WMS…</option>
+        </optgroup>
+        </select>
+        <p id="underlay-catalog-count" class="underlay-dialog-hint" aria-live="polite">94 usługi publiczne · własny adres WMS</p>
+      </section>
+      <div class="wms-section-heading"><strong>2 · Ustawienia warstwy</strong><span>Warstwy, układ MAP i krycie</span></div>
       <label for="underlay-time" id="underlay-time-label" hidden>Data archiwalna (RRRR-MM-DD, opcjonalnie)</label>
       <input id="underlay-time" type="text" placeholder="2020-06-15" spellcheck="false" hidden>
-      <label for="underlay-url">Adres WMS</label>
+      <label for="underlay-url">Adres usługi</label>
       <input id="underlay-url" type="text" spellcheck="false"
              value="https://mapy.geoportal.gov.pl/wss/service/PZGIK/ORTO/WMS/StandardResolution"
              placeholder="https://twoj-serwer/wms" title="Adres GetCapabilities wybranego serwera WMS (tylko https)">

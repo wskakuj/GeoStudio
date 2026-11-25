@@ -196,3 +196,34 @@ def test_version_endpoint_reports_pending_update():
     finally:
         updater.set_pending_update(None)
     assert TestClient(create_app()).get("/version").json()["update"] is None
+
+
+@pytest.mark.parametrize("assets", [
+    [],
+    [{"name": "GeoStudio2-Setup-2.0.97-x64.exe", "browser_download_url": "old"}],
+    [{"name": "another-tool.exe", "browser_download_url": "unrelated"}],
+    [{"name": "GeoStudio2-Setup-2.0.98-x64.exe"}],
+])
+def test_reject_release_without_matching_installer(monkeypatch, assets):
+    monkeypatch.setattr(updater, "fetch_latest_release",
+                        lambda timeout=6.0: _release("v2.0.98", assets))
+    assert updater.check_for_update(current="2.0.97") is None
+
+
+def test_selects_exact_installer_not_first_exe(monkeypatch):
+    monkeypatch.setattr(updater, "fetch_latest_release",
+                        lambda timeout=6.0: _release("v2.0.99", [
+                            {"name": "GeoStudio2-Setup-2.0.97-x64.exe",
+                             "browser_download_url": "old"},
+                            {"name": "GeoStudio2-Setup-2.0.99-x64.exe",
+                             "browser_download_url": "correct"},
+                        ]))
+    info = updater.check_for_update(current="2.0.97")
+    assert info["assetUrl"] == "correct"
+
+
+def test_release_versions_match():
+    from pathlib import Path
+    from tools.windows.check_release import check_source
+    from geostudio import __version__
+    assert check_source(Path(__file__).resolve().parents[1], "v" + __version__) == __version__

@@ -2724,7 +2724,7 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
       return;
     }
     field.readOnly=true;
-    field.value=wmsPresetUrls[preset]||"";
+    field.value=wmsPresetUrls[preset]||$("underlay-preset").selectedOptions?.[0]?.dataset?.url||"";
   }
   function currentWmsUrl(){
     return String($("underlay-url").value||"").trim();
