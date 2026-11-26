@@ -4,6 +4,45 @@ window.GeoStudioSheet = (() => {
   const signs=["conifer","deciduous","clearcut","marsh","power","gas","boundary","path","shared"];
   for(const kind of signs)sizes[kind]=[48,16];
   sizes.compartment=[54,32];
+  const normalAngle=value=>((Number(value)+180)%360+360)%360-180;
+  function frame(item,project,zoom){
+    const centre=project(item.x+item.w/2,item.y+item.h/2);
+    const width=item.w*zoom,height=item.h*zoom,rad=Number(item.angle||0)*Math.PI/180;
+    const ca=Math.cos(rad),sa=Math.sin(rad);
+    const point=(x,y)=>({x:centre.x+x*ca-y*sa,y:centre.y+x*sa+y*ca});
+    const local=p=>({x:(p.x-centre.x)*ca+(p.y-centre.y)*sa,
+      y:-(p.x-centre.x)*sa+(p.y-centre.y)*ca});
+    return {centre,width,height,point,local,
+      corners:[point(-width/2,-height/2),point(width/2,-height/2),
+        point(width/2,height/2),point(-width/2,height/2)],
+      handle:point(0,-Math.max(28,Math.max(width,height)/2+22))};
+  }
+  function hit(item,p,project,zoom,padding=6){
+    const box=frame(item,project,zoom),q=box.local(p);
+    return Math.abs(q.x)<=box.width/2+padding&&Math.abs(q.y)<=box.height/2+padding;
+  }
+  function dragAngle(base,start,current,centre,snap=false){
+    if(Math.hypot(current.x-centre.x,current.y-centre.y)<3)return normalAngle(base);
+    const bearing=p=>Math.atan2(p.y-centre.y,p.x-centre.x)*180/Math.PI;
+    const angle=Number(base||0)+normalAngle(bearing(current)-bearing(start));
+    return normalAngle(snap?Math.round(angle/15)*15:Math.round(angle));
+  }
+  function resize(item,point,minimum=1){
+    const box=frame(item,(x,y)=>({x,y}),1),a=box.corners[0],b=box.corners[2];
+    const dx=b.x-a.x,dy=b.y-a.y;
+    const factor=Math.max(minimum/Math.min(item.w,item.h),
+      ((point.x-a.x)*dx+(point.y-a.y)*dy)/(dx*dx+dy*dy));
+    const w=item.w*factor,h=item.h*factor;
+    const centre={x:a.x+dx*factor/2,y:a.y+dy*factor/2};
+    return {...item,x:centre.x-w/2,y:centre.y-h/2,w,h};
+  }
+  function paintSelection(g,item,project,zoom){
+    const box=frame(item,project,zoom);
+    g.save();g.strokeStyle="#2664db";g.lineWidth=1.5;
+    g.beginPath();box.corners.forEach((p,i)=>i?g.lineTo(p.x,p.y):g.moveTo(p.x,p.y));
+    g.closePath();g.stroke();g.fillStyle="#2664db";
+    const corner=box.corners[2];g.fillRect(corner.x-5,corner.y-5,10,10);g.restore();
+  }
   function defaultText(type,map){
     if(type==="compartment")return "1";
     if(type==="title")return ["Mapa gospodarcza lasu","wsi "+map.replace(/\.map$/i,""),"gm. …   pow. …","woj. …","01.01.2027 – 31.12.2036","Stan na 30.06.2026"].join("\n");
@@ -153,26 +192,23 @@ window.GeoStudioSheet = (() => {
         g.textAlign="center";g.textBaseline="middle";
         g.fillText(String(item.text||""),width/2,height/2);
         g.restore();
-        if(selection===item.id){
-          g.save();g.strokeStyle="#2664db";g.strokeRect(p.x,p.y,width,height);
-          g.fillStyle="#2664db";g.fillRect(p.x+width-5,p.y+height-5,10,10);g.restore();
-        }
+        if(selection===item.id)paintSelection(g,item,project,zoom);
         continue;
       }
-      g.scale(width/w,height/h);g.lineWidth=.65;
-      // Obrót wokół środka znaku; kąt w stopniach, dodatni = w prawo.
+      // Obrót w jednostkach ekranu PRZED skalowaniem osi. Tak samo jak
+      // natywna geometria MAP, również dla znaku o innym stosunku boków.
       if(item.angle){
-        g.translate(w/2,h/2);g.rotate(Number(item.angle)*Math.PI/180);g.translate(-w/2,-h/2);
+        g.translate(width/2,height/2);g.rotate(Number(item.angle)*Math.PI/180);
+        g.translate(-width/2,-height/2);
       }
+      g.scale(width/w,height/h);g.lineWidth=.65;
       for(const s of shapes(item,scale)){
         if(s.text!==undefined){g.fillStyle="#202020";g.font=fontSpec(s);g.textAlign=s.center?"center":"left";g.fillText(s.text,s.x,s.y);}
         else{g.beginPath();s.points.forEach(([x,y],i)=>i?g.lineTo(x,y):g.moveTo(x,y));if(s.fill){g.fillStyle=s.fill;g.fill();}if(s.stroke){g.strokeStyle=s.stroke;g.stroke();}}
       }
       g.restore();
-      if(selection===item.id){
-        g.save();g.strokeStyle="#2664db";g.strokeRect(p.x,p.y,width,height);g.fillStyle="#2664db";g.fillRect(p.x+width-5,p.y+height-5,10,10);g.restore();
-      }
+      if(selection===item.id)paintSelection(g,item,project,zoom);
     }
   }
-  return {sizes,signs,defaultText,shapes,paint,textFor,families};
+  return {sizes,signs,defaultText,shapes,paint,textFor,families,normalAngle,frame,hit,dragAngle,resize};
 })();

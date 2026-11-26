@@ -3,8 +3,8 @@ from math import cos, radians, sin
 
 KINDS = ("conifer","deciduous","clearcut","marsh","power","gas","boundary","path","shared")
 NUMBER = "compartment"
-# Znaki, które mają kierunek i można je obracać na mapie.
-ROTATABLE = frozenset({"clearcut","marsh","power","gas"})
+# Każde oznaczenie z katalogu można ustawić zgodnie z kierunkiem na mapie.
+ROTATABLE = frozenset(KINDS)
 
 def _rotate(parts, item):
     """Obrót geometrii wokół środka znaku (kąt w stopniach, zgodny z widokiem)."""
@@ -20,9 +20,9 @@ def _rotate(parts, item):
         moved = []
         for y, x in points:
             dx, dy = x - cx, y - cy
-            # Ekran ma odwróconą oś pionową, więc obrót „w prawo” na mapie
-            # odpowiada dodatniemu kątowi tutaj.
-            moved.append((cy + dx * sa + dy * ca, cx + dx * ca - dy * sa))
+            # Natywne punkty to (północ, wschód), a ekran ma oś Y w dół.
+            # Dodatni kąt jest zgodny z ruchem wskazówek zegara w podglądzie.
+            moved.append((cy - dx * sa + dy * ca, cx + dx * ca + dy * sa))
         rotated.append((code, moved, filled, color, fields))
     return rotated
 

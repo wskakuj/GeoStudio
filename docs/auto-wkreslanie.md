@@ -30,6 +30,20 @@ Przycisk **Wkreśl całą mapę (test)** przygotowuje wspólny podgląd wszystki
 
 Przy niepewnym numerze widoczny jest znak **?**. Gdy rozpoznano kilka wariantów cyfr, lista pokazuje te warianty. Własne A1 i świadome odznaczenia są zachowywane przy zmianie zasięgu oraz ponownym odczycie numerów. Ponowne rozpoznawanie konturów lub zmiana rozdzielczości tworzy nowy zestaw propozycji i usuwa niezapisane poprawki tego zestawu.
 
+Od wersji 2.0.105 warianty odczytu są przyciskami, także przy pustym A1 z powodu
+niejednoznacznego przypisania. Po sprawdzeniu numeru na rastrze i wskazanego pola
+kliknij właściwy wariant. Ten wybór uzupełnia A1 i jest traktowany jak ręczna
+poprawka. Nie uruchamia zapisu; w trybie całej mapy zaznacza poprawioną propozycję
+do późniejszego zbiorczego zatwierdzenia. Niepoprawny lub kolidujący obrys nadal
+pozostaje zablokowany. Warianty są dostępne również w trybie pojedynczym.
+
+Odczyt sprawdza również cyfry częściowo zasłonięte drukowaną linią. Zgodne wyniki
+kilku wycinków mogą uzupełnić brakujący początek numeru, ale pozostają oznaczone
+do sprawdzenia. Podobnie wyróżnione są propozycje uzyskane z kierunku wysięgnika
+kończącego się na grubej granicy. Takie wiersze nie zaznaczają się automatycznie
+do zbiorczego zapisu. Rzeczywiste rozgałęzienia prowadzące do różnych pól nadal
+wymagają decyzji użytkownika.
+
 Domyślny filtr **Tylko obszar działek 5216** pomija propozycje leżące poza zasięgiem działek MAP, np. kolorowe prostokąty legendy skanu. Wymaga prawidłowego położenia rastra. Można go wyłączyć, gdy potrzebny obszar wykracza poza działki; wtedy dokładnie sprawdź dodatkowe propozycje. Jeżeli mapa nie zawiera zamkniętych 5216, filtr nie ogranicza obszaru.
 
 Do zestawu trafiają pola wyróżnione kolorem lub granicą oraz pola z rozpoznanym A1, także białe. Pewnie umiejscowione kółko z nieczytelnym numerem również może wskazać pole do przeglądu — jego A1 pozostaje puste. Program nie zakłada, że każdy biały fragment i każdy napis drukowany na arkuszu jest wydzieleniem. Obszary istniejących 5310 są wykluczone. Wspólne boki nowych pól są uzgadniane razem, a przed zapisem serwer sprawdza całą wybraną grupę. Partie nie scalają istniejących obiektów o takim samym A1; opcja **Scalaj po A1** dotyczy trybu pojedynczego.

@@ -956,7 +956,7 @@ class PreviewWorkspace:
                 angle=item["angle"]
                 if (item["kind"] not in SHEET_ROTATABLE or type(angle) not in (int,float)
                         or not isfinite(angle) or not -360<=angle<=360):
-                    raise ValueError("Obrót dotyczy tylko zrębu, bagna, linii energetycznej i gazociągu.")
+                    raise ValueError("Obrót wymaga oznaczenia z katalogu i kąta od −360° do 360°.")
             if item["kind"]==SHEET_NUMBER and not re.fullmatch(r"[\w./ -]{1,24}",item["text"]):
                 raise ValueError("Numer oddziału musi mieć od 1 do 24 znaków.")
             runs=item.get("runs",[])
@@ -984,22 +984,34 @@ class PreviewWorkspace:
         for item in record.get("items",[]):
             if item["kind"] in (*SHEET_SIGNS,SHEET_NUMBER):
                 ids=groups.get(item["id"],[])
-                parts=sheet_primitives(item)
-                if not isinstance(ids,list) or len(ids)!=len(parts):
-                    continue
-                for uid,(code,pts,filled,_,fields) in zip(ids,parts):
-                    obj=self._doc.by_id.get(uid)
-                    if not obj or obj.code!=code or any(obj.fields.get(k)!=v for k,v in fields.items()):
-                        break
-                    actual=[(p.x,p.y) for p in obj.points]
-                    coords=[(round(x,3),round(y,3)) for x,y in pts]
-                    if filled:
-                        if not obj.is_closed:break
-                        actual=actual[:-1]
-                    if actual!=coords and not (filled and actual==[coords[0],*coords[:0:-1]]):
-                        break
-                else:
+                def matches(candidate):
+                    parts=sheet_primitives(candidate)
+                    if not isinstance(ids,list) or len(ids)!=len(parts):
+                        return False
+                    for uid,(code,pts,filled,_,fields) in zip(ids,parts):
+                        obj=self._doc.by_id.get(uid)
+                        if not obj or obj.code!=code or any(obj.fields.get(k)!=v for k,v in fields.items()):
+                            return False
+                        actual=[(p.x,p.y) for p in obj.points]
+                        coords=[(round(x,3),round(y,3)) for x,y in pts]
+                        if filled:
+                            if not obj.is_closed:return False
+                            actual=actual[:-1]
+                        if actual!=coords and not (filled and actual==[coords[0],*coords[:0:-1]]):
+                            return False
+                    return True
+                if matches(item):
                     items.append(item)
+                elif item["kind"] in SHEET_ROTATABLE and item.get("angle"):
+                    # Starsze wersje zapisywały przeciwny kierunek kąta, a przy
+                    # zmianie samego kąta potrafiły zostawić nieobrócone P.
+                    # Odtwarzamy kontrolki z rzeczywistych punktów; nie zmieniamy
+                    # geometrii istniejącej mapy ani ręcznie zmienionych znaków.
+                    for angle in (-item["angle"],0):
+                        candidate={**item,"angle":angle}
+                        if matches(candidate):
+                            items.append(candidate)
+                            break
             else:
                 items.append(item)
         return items
@@ -1019,7 +1031,7 @@ class PreviewWorkspace:
                     key=item["id"]
                     if item["kind"] not in (*SHEET_SIGNS,SHEET_NUMBER) or old.get(key)==item:continue
                     if key in groups and all(old[key].get(field)==item.get(field)
-                            for field in ("kind","x","y","w","h","text")):
+                            for field in ("kind","x","y","w","h","text","angle","fontSize")):
                         continue
                     parts=sheet_primitives(item)
                     if key in groups:
@@ -3744,7 +3756,7 @@ class PreviewWorkspace:
                         # Multi-contour GEO-MAP geometry needs a native parser.
                         # Preserve the original rather than risk data loss.
                         pass
-        return {"id":entry.fid,"code":obj.code,"layer":entry.layer,
+        return {"id":entry.fid,"sourceUid":obj.uid,"code":obj.code,"layer":entry.layer,
                 "grade":entry.grade,
                 "landUse": (str(obj.fields.get("A2", "") or "").strip().casefold()
                             if entry.layer == "Użytki" else None),

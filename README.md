@@ -60,6 +60,20 @@ Istniejące 5310 są wykluczone z propozycji. Bliskie wspólne boki dosuwają si
 
 Lokalny odczyt cyfr może uzupełnić **A1 już po pierwszym kliknięciu**. Numery w kółkach są przypisywane z uwzględnieniem wysięgników. Słabszy odczyt z pewną kotwicą jest wpisywany jako propozycja do sprawdzenia; przy nieustalonym przypisaniu A1 pozostaje puste. Własne poprawki są zachowywane, a błędy odczytu mają opis przyczyny i przycisk ponowienia. [Opis ustawień i dokładności](docs/auto-wkreslanie.md).
 
+Przy niejednoznacznym A1 można wybrać rozpoznany wariant jednym kliknięciem po
+sprawdzeniu kółka i wysięgnika. Wybór jest zachowany tak samo jak numer wpisany
+ręcznie, zarówno przy pojedynczym poligonie, jak i na liście całej mapy.
+
+### Wygodna kalibracja i oznaczenia
+
+Okno kalibracji rastra można przesuwać, rozciągać i powiększać; obraz obsługuje
+przybliżenie do 256× względem dopasowania do okna. Formularze A1/A2 poligonu i
+linii są przesuwane i pozostawiają mapę dostępną do oglądania. Wszystkie dziewięć
+oznaczeń z listy wstawiania można obracać uchwytem na mapie, suwakiem lub podanym
+kątem. Obrót jest zapisywany w geometrii MAP i można go cofnąć.
+[Kalibracja i okna A1](docs/okna-rysowania-i-kalibracji.md) ·
+[Obracanie oznaczeń](docs/oznaczenia-map.md).
+
 ### Od podkładu do wydruku
 
 - **Podkłady online:** ortofotomapy i działki ewidencyjne GUGiK/KIEG przez WMS.

@@ -80,4 +80,4 @@ def test_ui_offers_custom_code_and_styles():
     assert 'id="line-style"' in HTML
     for style in ("dashed", "dotted", "dashdot", "dashdotdot", "longdash"):
         assert f"{style}:[" in JS
-    assert "applyLineStyle(res.createdUids[0]);" in JS
+    assert "applyLineStyle(res.createdUids[0],lineDash);" in JS

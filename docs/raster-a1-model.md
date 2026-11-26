@@ -33,12 +33,30 @@ Sieć atramentu mająca więcej niż cztery końce nie jest rozsyłana jako wska
 do wielu pól. Zapobiega to tworzeniu fałszywych konfliktów przez drukowane linie
 mapy połączone z przypadkowo rozpoznanym kółkiem.
 
+Krótkie zakrzywione resztki obcej, odłączonej obwódki obok wyraźnego wysięgnika
+nie tworzą dodatkowych celów. Połączenia sprzed wycięcia kółka są zachowywane:
+rzeczywiste rozgałęzienia pozostają zachowane, również
+gdy krótka gałąź zawraca w stronę kółka. Gdy wszystkie rozpoznane końce leżą
+jednoznacznie wewnątrz tego samego pola, można przypisać numer do tego pola.
+Jeśli koniec pojedynczego wysięgnika wypada na grubej granicy, program sprawdza
+krótki odcinek w zmierzonym kierunku końcowej kreski. Przypisanie wymaga zgodnych
+próbek wewnątrz jednego pola i zawsze pozostaje propozycją do sprawdzenia,
+bez domyślnego zaznaczenia do zapisu. Odcinek nie może przechodzić przez zajęty obszar;
+kierunek biegnący wzdłuż granicy nadal pozostawia wynik niepewny.
+
 Dopiero zgodne wyniki rozpoznania całego napisu i/lub kilku wariantów obrazu
 mogą otrzymać status `ok`. Sam wysoki wynik pewności pojedynczego odczytu nie
 wystarcza: przycięty numer `189` może wyglądać jak poprawne `18`. Nawet słabszy
 wiarygodny dłuższy odczyt blokuje taki skrócony wynik. Program zachowuje
 warianty tekstu do sprawdzenia. Pojedyncza cyfra w kółku wymaga
 niezależnego wykrycia całego napisu, aby nie odczytać samej końcówki numeru.
+
+Dla niepewnego kolorowego numeru dodatkowe próby naprawiają krótkie przerwy
+w cyfrze zakryte drukowaną linią oraz sprawdzają lekko obrócone wycinki.
+Nowy, dłuższy numer wymaga zgodności co najmniej dwóch różnych wycinków.
+Pozostaje **propozycją do sprawdzenia** (`recovered_text`), bez automatycznego
+zatwierdzenia. Te próby nie zastępują pewnego odczytu, nie skracają numeru i nie
+wybierają automatycznie między różnymi wariantami o tej samej liczbie cyfr.
 
 Niepełne lub zamazane kółko może uniemożliwić ustalenie wysięgnika. Wykryty
 słabszy zarys kółka blokuje przypisanie zwykłego napisu do pola pod jego środkiem.
@@ -78,8 +96,8 @@ OCR działa w tle, niezależnie od obliczania geometrii. Duży arkusz jest dziel
 na nakładające się fragmenty, aby małe numery nie znikały przy pomniejszeniu
 całej mapy. Wynik jest przechowywany w ograniczonej pamięci podręcznej dla danego
 rastra. Kolejne kliknięcia korzystają z tego wyniku; nie uruchamiają ponownie
-rozpoznawania całego arkusza. Pierwsze rozpoznanie dużej mapy może trwać kilka
-lub kilkanaście sekund, zależnie od komputera i treści skanu.
+rozpoznawania całego arkusza. Pierwsze rozpoznanie dużej mapy może trwać
+kilkanaście lub kilkadziesiąt sekund, zależnie od komputera i treści skanu.
 
 Odczyt pozostaje propozycją do weryfikacji. Słaba rozdzielczość, skreślenia,
 cyfry złączone z kółkiem lub granicą, pionowy zapis i trudne pismo mogą wymagać

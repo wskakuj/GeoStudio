@@ -147,6 +147,7 @@ const b=src.indexOf('  function drawGcpMapMarkers()',a);
 assert.ok(a>=0&&b>a);
 const handlers={};
 const imageCanvas={
+  clientLeft:1,clientTop:1,
   addEventListener(name,fn){handlers[name]=fn;},
   getBoundingClientRect(){return {left:0,top:0};}
 };
@@ -164,10 +165,10 @@ raster,view,id=>id==='raster-gcp-canvas'?imageCanvas:mapCanvas,
 ()=>{},()=>{},()=>{},()=>{},()=>{},()=>{},()=>{});
 fn();
 handlers.pointerdown({button:0,clientX:10,clientY:15});
-assert.deepEqual(view.pending,{u:30,v:30});
+assert.deepEqual(view.pending,{u:27,v:28});
 assert.equal(view.waiting,true);
 handlers.pointerdown({button:0,clientX:23,clientY:31});
-assert.deepEqual(view.pending,{u:69,v:62});
+assert.deepEqual(view.pending,{u:66,v:60});
 assert.equal(view.waiting,true);
 assert.equal(raster.gcps.length,0);
 """

@@ -4,16 +4,19 @@
   "use strict";
   function label(hints){
     const usable=hints.filter(Boolean),certain=usable.filter(h=>h.status==="ok"&&h.assignmentStatus==="ok"&&/^\d{1,8}$/.test(String(h.text||"")));
+    // Keep the actual readings available for an explicit human choice even
+    // when automatic assignment must abstain. Never use a variant by default.
+    const alternatives=[...new Set(usable.flatMap(h=>[String(h.text||""),
+      ...(Array.isArray(h.alternatives)?h.alternatives:[]).map(a=>String(a?.text||""))]))]
+      .filter(text=>/^\d{1,8}$/.test(text)).slice(0,8);
     const values=new Set(certain.map(h=>String(h.text)));
-    if(values.size>1||usable.some(h=>h.status==="conflict"))return {text:"",status:"conflict",alternatives:[]};
+    if(values.size>1||usable.some(h=>h.status==="conflict"))return {text:"",status:"conflict",alternatives};
     if(values.size===1){
       const text=[...values][0],competing=usable.some(h=>h.assignmentStatus==="ok"&&h.text&&String(h.text)!==text);
-      return {text,status:competing?"uncertain":"ok",reason:competing?"selected_field_numbers":"ready",alternatives:[]};
+      return {text,status:competing?"uncertain":"ok",reason:competing?"selected_field_numbers":"ready",alternatives};
     }
     const tentative=usable.filter(h=>h.assignmentStatus==="ok"&&/^\d{1,8}$/.test(String(h.text||"")));
     const guesses=new Set(tentative.map(h=>String(h.text)));
-    const alternatives=[...new Set(usable.flatMap(h=>(h.alternatives||[]).map(a=>String(a.text||""))))]
-      .filter(text=>/^\d{1,8}$/.test(text));
     return {text:guesses.size===1?[...guesses][0]:"",status:usable.length?"uncertain":"missing",
       reason:usable.some(h=>h.reason==="multiple_field_numbers")?"multiple_field_numbers":
         usable.some(h=>h.reason==="unread_field_number")?"unread_field_number":"weak_text",alternatives};

@@ -13,6 +13,7 @@
   <script defer src="/raster_trace.js"></script>
   <script defer src="/drawing_snap.js"></script>
   <script defer src="/sheet.js"></script>
+  <script defer src="/floating_dialog.js"></script>
   <script defer src="/map.js"></script>
   <script defer src="/wms_catalog.js"></script>
 </head>
@@ -162,13 +163,17 @@
 <option value="boundary">Granice lasów · 5200</option>
 <option value="path">Ścieżki · 4588</option>
 <option value="shared">Współwłasność z ALP · 5219</option>
-</select><label>Wielkość <input type="range" id="sheet-size-factor" min="0.5" max="3" step="0.1" value="1"><output id="sheet-size-value">100%</output></label><span class="hint-inline" title="Zaznacz wstawiony znak i przeciągnij uchwyt nad nim, aby go obrócić">Obrót: uchwyt nad znakiem</span><button type="button" id="sheet-place-sign" class="tool-button">Wstawiaj znak</button></div></div>
+</select><label>Wielkość <input type="range" id="sheet-size-factor" min="0.5" max="3" step="0.1" value="1"><output id="sheet-size-value">100%</output></label><span class="hint-inline" title="Po wstawieniu naciśnij Esc, zaznacz znak i przeciągnij okrągły uchwyt. Shift: co 15°. Możesz też obracać prawym przyciskiem albo klawiszami [ i ].">Obrót każdego znaku: okrągły uchwyt · Shift co 15°</span><button type="button" id="sheet-place-sign" class="tool-button">Wstawiaj znak</button></div></div>
   <div class="ribbon-group"><div class="section-label">Wybrany element</div><div class="tool-row">
     <button type="button" class="tool-button" id="sheet-edit" disabled>Tekst i czcionka</button>
     <button type="button" class="tool-button" id="sheet-remove" disabled>Usuń</button>
-    <label id="sheet-rotate-wrap" hidden title="Obrót zaznaczonego znaku">Obrót
-      <input type="range" id="sheet-rotate" min="-180" max="180" step="1" value="0">
-      <output id="sheet-rotate-value">0°</output></label>
+    <div id="sheet-rotate-wrap" hidden title="Obrót zaznaczonego oznaczenia. Dodatni kąt obraca w prawo. Ctrl+Z cofa zmianę.">
+      <label for="sheet-rotate">Obrót</label>
+      <input type="range" id="sheet-rotate" aria-label="Obrót oznaczenia" min="-180" max="180" step="1" value="0">
+      <output id="sheet-rotate-value" for="sheet-rotate">0°</output>
+      <input type="number" id="sheet-angle" aria-label="Kąt oznaczenia w stopniach" min="-360" max="360" step="1" value="0">
+      <button type="button" id="sheet-rotate-reset" class="button ghost" title="Wyzeruj obrót oznaczenia">0°</button>
+    </div>
   </div></div>
 </div>
 
@@ -589,17 +594,17 @@
       </div>
     </form>
   </dialog>
-  <dialog id="create-dialog" class="advanced-select-dialog bulk-dialog">
+  <dialog id="create-dialog" class="advanced-select-dialog bulk-dialog drawing-attributes-dialog" aria-label="Atrybuty nowego poligonu" aria-modal="false">
     <form id="create-form" autocomplete="off">
       <div class="select-head">
-        <div><div class="eyebrow">ETAP 5B · NOWY OBIEKT</div>
+        <div class="floating-dialog-handle" tabindex="0" role="button" aria-label="Przesuń okno poligonu — przeciągnij lub użyj strzałek" title="Przeciągnij, aby przesunąć okno; strzałki przesuwają o 20 px, Shift + strzałki o 1 px"><div class="eyebrow">NOWY POLIGON · PRZESUŃ OKNO</div>
           <h2>Utwórz nowy poligon</h2>
         </div>
         <button id="create-close" type="button" class="select-close" aria-label="Zamknij">×</button>
       </div>
       <div class="select-content">
         <p id="create-selection-description" class="select-explain">Kliknij na mapie co najmniej 3 punkty.</p>
-        <p class="select-explain">Magnes G: węzły 7 px, linie 5 px; przytrzymaj <kbd>Alt</kbd>, aby postawić punkt tuż obok granicy. Przełącznik znajduje się obok „Nowy poligon”.</p>
+        <p class="select-explain">Możesz przesunąć to okno za tytuł. Przeciągaj mapę i powiększaj ją kółkiem, aby odczytać numer. „Wróć do rysowania” pozwala poprawić obrys.</p>
         <div class="select-grid">
           <div><label for="create-code">Kod GEO-MAP</label>
             <select id="create-code">
@@ -630,16 +635,17 @@
       </div>
     </form>
   </dialog>
-  <dialog id="line-dialog" class="advanced-select-dialog bulk-dialog">
+  <dialog id="line-dialog" class="advanced-select-dialog bulk-dialog drawing-attributes-dialog" aria-label="Atrybuty linii" aria-modal="false">
     <form id="line-form" autocomplete="off">
       <div class="select-head">
-        <div><div class="eyebrow">ETAP 6 · LINIE</div>
+        <div class="floating-dialog-handle" tabindex="0" role="button" aria-label="Przesuń okno linii — przeciągnij lub użyj strzałek" title="Przeciągnij, aby przesunąć okno; strzałki przesuwają o 20 px, Shift + strzałki o 1 px"><div class="eyebrow">LINIA · PRZESUŃ OKNO</div>
           <h2 id="line-dialog-title">Nowa linia</h2>
         </div>
         <button id="line-close" type="button" class="select-close" aria-label="Zamknij">×</button>
       </div>
       <div class="select-content">
         <p id="line-count" class="select-explain">Narysuj linię co najmniej 2 punktami.</p>
+        <p class="select-explain">Przesuń okno za tytuł. Mapę możesz przesuwać i powiększać, nie zmieniając narysowanej linii.</p>
         <div class="select-grid">
           <div><label for="line-code">Kod nowej linii (możesz wpisać własny)</label>
             <input id="line-code" type="text" list="line-code-list"
@@ -1153,13 +1159,20 @@
       <button type="button" id="carto-catalog-close-bottom" class="button primary">Zamknij</button>
     </div>
   </dialog>
-  <dialog id="raster-visual-dialog" class="raster-visual-dialog" aria-label="Wizualna kalibracja obrazu">
+  <dialog id="raster-visual-dialog" class="raster-visual-dialog" aria-label="Wizualna kalibracja obrazu" aria-modal="false">
     <div class="select-head">
-      <div><div class="eyebrow">PODKŁADY · KALIBRACJA WIZUALNA</div><h2>Dopasuj punkty obrazu i mapy</h2></div>
+      <div class="floating-dialog-handle" tabindex="0" role="button" aria-label="Przesuń okno kalibracji — przeciągnij lub użyj strzałek" title="Przeciągnij okno za tytuł lub przesuń je strzałkami"><div class="eyebrow">KALIBRACJA · PRZESUŃ OKNO</div><h2>Dopasuj punkty obrazu i mapy</h2></div>
       <button type="button" id="raster-visual-close" class="select-close" aria-label="Zamknij kalibrację">×</button>
     </div>
     <div class="visual-calibration-body">
-      <p class="select-explain">Kliknij punkt na obrazie, a następnie jego odpowiednik na mapie — bez dodatkowego przycisku. Ponowne kliknięcie obrazu zastępuje oczekujący punkt. Istniejące punkty można przeciągać na obrazie i na mapie. Zalecane 6–10 par rozmieszczonych po całym rastrze.</p>
+      <p class="select-explain">Kliknij punkt obrazu, potem ten sam punkt na mapie. Istniejące punkty można przeciągać. Kółko powiększa obraz pod kursorem, prawy lub środkowy przycisk go przesuwa. Zalecane 6–10 par na całym rastrze.</p>
+      <div class="visual-calibration-zoom" role="group" aria-label="Powiększenie obrazu">
+        <button type="button" id="raster-gcp-zoom-out" class="button ghost" aria-label="Oddal obraz">−</button>
+        <output id="raster-gcp-zoom" title="Powiększenie względem widoku całego obrazu">1×</output>
+        <button type="button" id="raster-gcp-zoom-in" class="button ghost" aria-label="Powiększ obraz">+</button>
+        <button type="button" id="raster-gcp-fit" class="button ghost">Cały obraz</button>
+        <button type="button" id="raster-gcp-expand" class="button ghost floating-dialog-expand" aria-pressed="false">Powiększ okno</button>
+      </div>
       <canvas id="raster-gcp-canvas" width="450" height="270" aria-label="Kliknij punkt charakterystyczny na rastrowym obrazie"></canvas>
       <div class="visual-calibration-actions">
         <button type="button" id="raster-gcp-cancel" class="button ghost" disabled>Anuluj oczekujący punkt</button>
@@ -1169,7 +1182,6 @@
       <div id="raster-gcp-pairs" class="visual-gcp-pairs" aria-live="polite"></div>
       <div class="visual-calibration-actions">
         <button type="button" id="raster-gcp-apply" class="button primary" disabled>Oblicz dopasowanie i nałóż raster</button>
-        <button type="button" id="raster-gcp-fit" class="button ghost">Dopasuj podgląd obrazu</button>
       </div>
     </div>
   </dialog>

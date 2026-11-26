@@ -15,4 +15,4 @@ def test_raster_a1_assignment_and_leaders():
         capture_output=True, text=True, timeout=90,
     )
     assert result.returncode == 0, result.stdout + result.stderr
-    assert "12 raster A1 assignment regressions passed" in result.stdout
+    assert "15 raster A1 assignment regressions passed" in result.stdout

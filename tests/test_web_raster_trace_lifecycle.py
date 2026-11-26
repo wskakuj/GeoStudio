@@ -18,6 +18,8 @@ import pytest
     "forest_reference_classes_do_not_occupy_the_trace_mask",
     "first_click_fills_a1_and_preserves_manual_corrections",
     "uncertain_or_conflicting_a1_is_not_guessed",
+    "explicit_a1_variant_fills_missing_number_and_survives_refit",
+    "stale_a1_variant_cannot_change_a_new_selection_or_closed_tool",
     "stroke_width_sets_initial_range_once_and_respects_manual_override",
     "occupied_click_is_blocked_using_hidden_full_geometry",
     "failed_automatic_fit_hides_proposal_and_prevents_save",

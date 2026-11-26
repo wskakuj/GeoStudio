@@ -61,7 +61,7 @@ def test_sidebar_layers_and_nonmodal_visual_pairing():
     assert "target.opacity=value" in js
     assert "gcpView.waiting=true;" in js
     assert "gcpView.pending=point;gcpView.waiting=true" in js
-    assert '$("raster-visual-dialog").show();' in js
+    assert 'floatingWindows.calibration.show();' in js
     assert 'map.addEventListener("pointerdown",pickGcpMapPoint,true);' in js
     assert ".layer-tab-panel[hidden]{display:none!important;}" in css
 

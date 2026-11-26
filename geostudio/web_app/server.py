@@ -257,6 +257,10 @@ def create_app(workspace: PreviewWorkspace | None = None, *,
     async def javascript():
         return FileResponse(ROOT / "map.js", media_type="text/javascript")
 
+    @app.get("/floating_dialog.js")
+    async def floating_dialog_js():
+        return FileResponse(ROOT / "floating_dialog.js", media_type="text/javascript")
+
     @app.get("/api/map")
     async def metadata():
         return state.metadata()

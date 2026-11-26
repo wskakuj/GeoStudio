@@ -167,7 +167,7 @@ def test_code_wide_preset_editor_and_enter_shortcut_are_visible():
               js.index('  async function applyObject(which,ev)')]
     for phrase in ['"/api/objects/preview"','"/api/objects/apply"',
                    'state.drawPoints=[];state.drawHover=null;',
-                   'setTool("draw");','await refreshEditedDocument(null);']:
+                   'setTool("draw");','await refreshEditedDocument(null,']:
         assert phrase in create
     # Zapas bbox pokrywa wzmocniony magnes węzłów (16 px).
     assert "const pad=20/Math.max(.000001,state.scale);" in js

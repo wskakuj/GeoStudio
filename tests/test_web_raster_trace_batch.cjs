@@ -102,6 +102,16 @@ const cases = {
       { text: '176', status: 'ok', assignmentStatus: 'ok' }]);
     assert.equal(result.text, '');
     assert.equal(result.status, 'conflict');
+    assert.deepEqual(plain(result.alternatives), ['175','176']);
+  },
+
+  variant_choices_are_bounded_numeric_values_without_automatic_assignment() {
+    const result=label([{text:'175',status:'uncertain',assignmentStatus:'uncertain',
+      alternatives:[null,{text:'<script>'},{text:'175'},{text:'123456789'},
+        ...Array.from({length:20},(_,i)=>({text:String(i)}))]}]);
+    assert.equal(result.text,'');
+    assert.equal(result.status,'uncertain');
+    assert.deepEqual(plain(result.alternatives),['175','0','1','2','3','4','5','6']);
   },
 
   async several_numbers_in_one_field_warn_about_the_missing_boundary() {
@@ -177,12 +187,41 @@ const cases = {
     assert.equal(uncertain.input.value, '175');
     assert.equal(uncertain.check.checked, false);
     assert.match(uncertain.state.textContent, /Sprawdź A1/);
-    assert.match(uncertain.row.children[4].textContent, /175, 178/);
+    assert.deepEqual(uncertain.row.children[4].children.slice(1).map(child=>child.textContent), ['175','178']);
     assert.match(button(ui, 'save').textContent, /\(1\)/);
     uncertain.check.checked = true;
     uncertain.check.onchange();
     assert.match(button(ui, 'save').textContent, /\(2\)/);
     ui.api.close();
+  },
+
+  async explicit_batch_variant_resolves_missing_a1_and_is_retained_after_refit() {
+    const trace=numbered();
+    trace.a1Suggestions.set(2,{text:'',status:'conflict',assignmentStatus:'ok',
+      alternatives:[{text:'175'},{text:'178'}]});
+    const ui=createUI();await start(ui,trace);
+    const row=rows(ui)[1],oldChoice=row.row.children[4].children[2];
+    assert.equal(row.input.value,'');assert.equal(row.check.checked,false);
+    oldChoice.onclick();
+    assert.equal(row.input.value,'178');assert.equal(row.check.checked,true);
+    assert.match(row.state.textContent,/ręcznie/);
+    ui.controls.get('.trace-parcel-distance').value='5';ui.controls.get('.trace-parcel-distance').onchange();await tick();
+    assert.equal(rows(ui)[1].input.value,'178');assert.equal(rows(ui)[1].check.checked,true);
+    setNumber(rows(ui)[1],'180');oldChoice.onclick();
+    assert.equal(rows(ui)[1].input.value,'180','A removed row cannot overwrite the current proposal');
+    await button(ui,'save').onclick();
+    assert.deepEqual(plain(ui.batchAddCalls[0].map(item=>item.a1)),['17','180']);ui.api.close();
+  },
+
+  async rejected_batch_geometry_blocks_variant_selection() {
+    const trace=numbered();
+    trace.a1Suggestions.set(2,{text:'',status:'conflict',assignmentStatus:'ok',alternatives:[{text:'178'}]});
+    const fit={items:selectedItems().map((item,index)=>({...item,a1:index?'':'17',
+      status:index?'rejected':'ready',reason:index?'Synthetic overlap':''}))};
+    const ui=createUI([],{batchFits:[Promise.resolve(fit)]});await start(ui,trace);
+    const row=rows(ui)[1],choice=row.row.children[4].children[1];
+    assert.equal(choice.disabled,true);choice.onclick();assert.equal(row.input.value,'');
+    assert.equal(row.check.checked,false);ui.api.close();
   },
 
   async confirmed_tentative_a1_survives_refits_and_changed_ocr_retry() {
