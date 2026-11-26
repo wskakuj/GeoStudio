@@ -223,6 +223,71 @@ const cases={
     // The unreferenced divider at y=50 must not acquire any bend or parcel split.
     for(const result of results.slice(0,2))assert.ok(result.points.some(p=>p[0]===100&&p[1]===50));
   },
+  supported_shared_projection_recovers_a_neighbours_raster_bevel(){
+    const left=[[-20,0],[2,0],[2,10],[-20,10]];
+    const right=[[2,0],[2.5,1],[20,5],[20,10],[2,10]];
+    const expectedLeft=[[-20,0],[0,0],[0,10],[-20,10]];
+    const expectedRight=[[0,0],[2.5,1],[20,5],[20,10],[0,10]];
+    for(const [dx,dy] of [[0,0],[5500000,7500000]]){
+      const rings=[left,right].map(ring=>shift(ring,dx,dy));
+      const index=buildIndex([line(shift([[0,-20],[0,30]],dx,dy))]);
+      const before=JSON.stringify(rings);
+      // The short raster bevel would intersect the reference outside the
+      // range. Its neighbour supplies the one shared, supported projection.
+      assert.equal(snapRing(rings[1],index,{distance:2.1}).snappedEdges,0);
+      const result=snapRings(rings,index,{distance:2.1});
+      close(result[0].points,shift(expectedLeft,dx,dy));
+      close(result[1].points,shift(expectedRight,dx,dy));
+      assert.equal(result[0].snappedEdges,1);assert.equal(result[1].snappedEdges,1);
+      assert.deepEqual(plain(result[0].points[1]),plain(result[1].points[0]));
+      assert.deepEqual(plain(result[0].points[2]),plain(result[1].points[4]));
+      const reverse=snapRings(rings.slice().reverse().map(ring=>ring.slice().reverse()),index,{distance:2.1});
+      assert.equal(set(reverse[0].points),set(result[1].points));
+      assert.equal(set(reverse[1].points),set(result[0].points));
+      for(let y=.125;y<10;y+=.5)for(let x=-19.125;x<20;x+=.5)
+        assert.ok(result.filter(item=>inside([x+dx,y+dy],item.points)).length<=1,
+          'The recovered common side must not introduce area overlap');
+      assert.equal(JSON.stringify(rings),before);
+    }
+  },
+  propagated_shared_projections_respect_manual_locks(){
+    const left=[[-20,0],[2,0],[2,10],[-20,10]];
+    const right=[[2,0],[2.5,1],[20,5],[20,10],[2,10]];
+    const index=buildIndex([line([[0,-20],[0,30]])]);
+    const result=snapRings([left,right],index,{distance:2.1,locked:[[2,0]]});
+    close(result[0].points,left);close(result[1].points,right);
+    assert.equal(result.diagnostics.movedVertices,0);
+  },
+  conflicting_supported_shared_projections_remain_unresolved(){
+    const left=[[-20,-5],[2,0],[2,10],[-20,10]];
+    const right=[[2,0],[20,0],[20,10],[2,10]];
+    const index=buildIndex([line([[0,-20],[0,30]])]);
+    const independent=[left,right].map(ring=>snapRing(ring,index,{distance:3}));
+    assert.equal(independent[0].snappedEdges,1);assert.equal(independent[1].snappedEdges,1);
+    const leftTarget=independent[0].points[independent[0].sourceIndices.indexOf(1)];
+    const rightTarget=independent[1].points[independent[1].sourceIndices.indexOf(0)];
+    assert.equal(leftTarget[0],0);assert.equal(rightTarget[0],0);
+    assert.ok(Math.abs(leftTarget[1]-rightTarget[1])>.1,
+      'The same source vertex has two genuinely different supported projections');
+    const result=snapRings([left,right],index,{distance:3});
+    close(result[0].points,left);close(result[1].points,right);
+    assert.ok(result.diagnostics.reasons['shared-veto']>0);
+    const reverse=snapRings([right.slice().reverse(),left.slice().reverse()],index,{distance:3});
+    assert.equal(set(reverse[0].points),set(right));assert.equal(set(reverse[1].points),set(left));
+  },
+  a_fit_cannot_reverse_a_short_unreferenced_connector(){
+    // A narrow spur remains a simple ring with a small area change. Moving
+    // its endpoint past the preceding vertex must nevertheless be rejected.
+    const ring=[[0,0],[20,0],[20,20],[2,20],[1.5,19],[0,20]];
+    for(const [dx,dy] of [[0,0],[5500000,7500000]]){
+      const source=shift(ring,dx,dy),index=buildIndex([line(shift([[2.1,-10],[2.1,30]],dx,dy))]);
+      const result=snapRing(source,index,{distance:3});
+      close(result.points,source);assert.equal(result.reason,'topology');
+      assert.equal(result.diagnostics.reasons.topology,1);
+      const reverse=snapRing(source.slice().reverse(),index,{distance:3});
+      assert.equal(set(reverse.points),set(source));assert.equal(reverse.reason,'topology');
+    }
+  },
   order_direction_and_repeated_calls_are_deterministic(){
     const original=[[0,0],[120,0],[120,60],[0,60]];
     const features=[line([[-10,2],[40,2]]),line([[40,2],[80,3],[130,2]])];
