@@ -249,6 +249,109 @@ def test_printed_ink_network_cannot_spread_ocr_conflicts_to_many_fields():
     assert result["anchor"] is None and result["leaderEndpoints"] == []
 
 
+def test_nearby_ring_fragment_does_not_turn_a_straight_leader_into_a_fork():
+    np = pytest.importorskip("numpy")
+    cv2 = pytest.importorskip("cv2")
+    mask = np.zeros((180, 240), np.uint8)
+    circle = (70., 70., 25., 25., 0., 1.)
+    cv2.circle(mask, (70, 70), 25, 1, 1)
+    cv2.line(mask, (95, 70), (180, 70), 1, 1)
+    cv2.polylines(mask, [np.array([[65, 101], [73, 103], [81, 109]])], False, 1, 1)
+    result = a1._leader_data(mask, [circle], 1.)[0]
+    assert result["anchor"] == pytest.approx([180, 70], abs=2)
+    assert len(result["leaderEndpoints"]) == 1
+    assert result["leaderDirections"][0] == pytest.approx([1, 0], abs=.05)
+    # A lone bent leader cannot be discarded for resembling a short arc.
+    mask[69:72, 96:181] = 0
+    only_curve = a1._leader_data(mask, [circle], 1.)[0]
+    assert only_curve["hasLeader"] and only_curve["leaderEndpoints"]
+
+
+@pytest.mark.parametrize("tip", [(100, 85), (103, 86), (100, 90)])
+def test_a_real_fork_turning_back_toward_the_circle_remains_ambiguous(tip):
+    np = pytest.importorskip("numpy")
+    cv2 = pytest.importorskip("cv2")
+    mask = np.zeros((180, 240), np.uint8)
+    cv2.circle(mask, (70, 70), 25, 1, 1)
+    cv2.line(mask, (95, 70), (180, 70), 1, 1)
+    cv2.line(mask, (130, 70), tip, 1, 1)
+    result = a1._leader_data(mask, [(70., 70., 25., 25., 0., 1.)], 1.)[0]
+    assert result["reason"] == "branched_leader"
+    assert result["anchor"] is None and len(result["leaderEndpoints"]) == 2
+
+
+@pytest.mark.parametrize("start", [(95, 70), (97, 70)])
+def test_a_short_straight_fork_separated_by_erasing_the_ring_is_preserved(start):
+    np = pytest.importorskip("numpy")
+    cv2 = pytest.importorskip("cv2")
+    mask = np.zeros((200, 240), np.uint8)
+    cv2.circle(mask, (70, 70), 25, 1, 1)
+    cv2.line(mask, (95, 70), (180, 70), 1, 1)
+    cv2.line(mask, start, (100, 105), 1, 1)
+    result = a1._leader_data(mask, [(70., 70., 25., 25., 0., 1.)], 1.)[0]
+    assert result["reason"] == "branched_leader"
+    assert result["anchor"] is None and len(result["leaderEndpoints"]) == 2
+
+
+def test_a_missing_far_terminal_is_not_replaced_by_a_nearby_ring_fragment():
+    np = pytest.importorskip("numpy")
+    cv2 = pytest.importorskip("cv2")
+    mask = np.zeros((200, 260), np.uint8)
+    cv2.circle(mask, (70, 70), 25, 1, 1)
+    cv2.line(mask, (95, 70), (180, 70), 1, 1)
+    cv2.circle(mask, (180, 90), 20, 1, 1)
+    cv2.polylines(mask, [np.array([[65, 101], [73, 103], [81, 109]])], False, 1, 1)
+    result = a1._leader_data(mask, [(70., 70., 25., 25., 0., 1.)], 1.)[0]
+    assert result["reason"] == "missing_leader"
+    assert result["anchor"] is None and result["leaderEndpoints"] == []
+
+
+def test_large_connected_ink_network_is_rejected_before_per_circle_expansion():
+    np = pytest.importorskip("numpy")
+    cv2 = pytest.importorskip("cv2")
+    mask = np.zeros((400, 400), np.uint8)
+    cv2.circle(mask, (40, 40), 20, 1, 1)
+    cv2.line(mask, (40, 60), (40, 390), 1, 1)
+    for y in range(80, 390, 5):
+        cv2.line(mask, (20, y), (390, y), 1, 1)
+    result = a1._leader_data(mask, [(40., 40., 20., 20., 0., 1.)], 1.)[0]
+    assert result["hasLeader"] and result["reason"] == "leader_network"
+    assert result["anchor"] is None and result["leaderEndpoints"] == []
+
+
+@pytest.mark.parametrize("original,readings,expected", [
+    ("", [("100", .80), ("100", .82)], "100"),
+    ("53", [("153", .86), ("153", .84)], "153"),
+    ("189", [("18", .98), ("18", .99)], "189"),
+    ("71", [("21", .98), ("21", .99)], "71"),
+    ("", [("66", .99)], ""),
+    ("", [("100", .84), ("100", .83), ("102", .88), ("102", .86)], ""),
+])
+def test_extra_circle_readings_only_offer_a_supported_complete_review_number(monkeypatch, original, readings, expected):
+    np = pytest.importorskip("numpy")
+    cv2 = pytest.importorskip("cv2")
+    ink = np.zeros((40, 60), np.uint8)
+    cv2.line(ink, (4, 5), (19, 30), 1, 2)
+    cv2.line(ink, (26, 17), (55, 35), 1, 2)
+    sequence = iter(readings)
+    monkeypatch.setattr(a1, "_read_line", lambda *_: next(sequence, None))
+    old = {"text": original, "confidence": .7, "status": "uncertain",
+           "reason": "weak_text", "alternatives": []}
+    yy, xx = np.mgrid[:40, :60]
+    radius = ((xx - 30) / 30) ** 2 + ((yy - 20) / 20) ** 2
+    result = a1._recover_circle_text(object(), ink, radius, None, old)
+    assert result["text"] == expected
+    assert result["status"] == "uncertain"
+    if expected != original:
+        assert result["reason"] == "recovered_text"
+
+
+def test_extra_circle_readings_never_reinterpret_a_confident_number(monkeypatch):
+    monkeypatch.setattr(a1, "_read_line", lambda *_: pytest.fail("Confident text must remain unchanged"))
+    old = {"text": "71", "confidence": .99, "status": "ok", "reason": "ready", "alternatives": []}
+    assert a1._recover_circle_text(object(), None, None, None, old) is old
+
+
 def test_real_bundled_models_recognize_callout_without_network(monkeypatch):
     # The process-lifetime opt-out MUST precede even importorskip/import.
     monkeypatch.setenv("ORT_DISABLE_TELEMETRY", "1")

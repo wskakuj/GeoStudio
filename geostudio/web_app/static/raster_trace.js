@@ -671,6 +671,7 @@ function openRasterTracing(item, view) {
     <div class="trace-map-save"><label>A1 <input class="trace-a1" autocomplete="off"></label>
       <button type="button" class="button primary trace-save">Zatwierdź 5310</button></div>
     <span class="trace-a1-status" aria-live="polite"></span>
+    <div class="trace-a1-alternatives" hidden aria-label="Warianty A1 do sprawdzenia"></div>
     <button type="button" class="button ghost trace-a1-retry" hidden>Ponów odczyt A1</button>
     <div class="trace-batch" hidden>
       <label title="Pomija pola poza obszarem działek, np. kolorowe prostokąty legendy"><input type="checkbox" class="trace-batch-parcels" checked> Tylko obszar działek 5216</label>
@@ -694,6 +695,7 @@ function openRasterTracing(item, view) {
   const parcelDistance=panel.querySelector(".trace-parcel-distance");
   const parcelStatus=panel.querySelector(".trace-parcel-status");
   const a1Status=panel.querySelector(".trace-a1-status");
+  const a1Choices=panel.querySelector(".trace-a1-alternatives");
   const a1Retry=panel.querySelector(".trace-a1-retry");
   const batchStart=panel.querySelector(".trace-batch-start"),batchPanel=panel.querySelector(".trace-batch");
   const batchList=panel.querySelector(".trace-batch-list"),batchSummary=panel.querySelector(".trace-batch-summary");
@@ -761,6 +763,7 @@ function openRasterTracing(item, view) {
   const a1=panel.querySelector(".trace-a1");
   const a1Drafts=new Map();
   let a1Key="",a1Manual=false,a1Message="Kliknij pole, aby odczytać jego numer A1 z rastra.";
+  let a1Alternatives=[],a1ChoicesKey="";
   let a1Result=null,a1Request=null,a1Controller=null,a1Failure="";
   function attachA1(){
     if(!trace||typeof view.recognizeA1!=="function")return;
@@ -868,28 +871,33 @@ function openRasterTracing(item, view) {
   }
   function resetA1(){
     a1.value="";a1Key="";a1Manual=false;a1Drafts.clear();
+    a1Alternatives=[];
     a1Message="Kliknij pole, aby odczytać jego numer A1 z rastra.";
   }
   function suggestA1(){
     const key=selectionKey();
     if(!selected.size){
       a1.value="";a1Key="";a1Manual=false;
+      a1Alternatives=[];
       a1Message="Kliknij pole, aby odczytać jego numer A1 z rastra.";return;
     }
     if(key===a1Key&&a1Manual)return;
     const cached=a1Drafts.get(key);
     if(cached?.manual){
       a1.value=cached.value;a1Manual=true;
+      a1Alternatives=[];
       a1Message="A1 wpisany ręcznie — zachowano Twoją wartość.";
     }else if(a1Manual){
       // Adding another fragment must not replace a number the user entered
       // deliberately, including an intentionally cleared input.
       a1Drafts.set(key,{value:a1.value,manual:true});
+      a1Alternatives=[];
       a1Message="A1 wpisany ręcznie — zachowano Twoją wartość.";
     }else{
       const hints=Array.from(selected,id=>trace?.a1Suggestions?.get(id)).filter(Boolean);
       const hint=globalThis.GeoStudioRasterTraceBatch.label(hints);
       a1.value=hint.text;
+      a1Alternatives=hint.status==="ok"?[]:hint.alternatives;
       a1Manual=false;
       a1Message=hint.reason==="multiple_field_numbers"
         ?"A1 do sprawdzenia"+(a1.value?": "+a1.value:"")+". W tym obrysie wykryto różne numery. Sprawdź brakującą granicę przed zatwierdzeniem."
@@ -905,6 +913,26 @@ function openRasterTracing(item, view) {
       a1Drafts.set(key,{value:a1.value,manual:false});
     }
     a1Key=key;
+  }
+  function renderA1Choices(){
+    const selection=selectionKey();
+    const values=batchActive||a1Manual||!selection?[]:a1Alternatives;
+    const key=JSON.stringify([selection,values,busy]);
+    if(key===a1ChoicesKey)return;
+    a1ChoicesKey=key;a1Choices.replaceChildren();a1Choices.hidden=!values.length;
+    if(!values.length)return;
+    const caption=document.createElement("small");caption.textContent="Warianty odczytu — wybierz po sprawdzeniu kółka i pola:";
+    a1Choices.append(caption);
+    for(const value of values){
+      const choice=document.createElement("button");choice.type="button";
+      choice.className="button ghost trace-a1-choice";choice.textContent=value;choice.disabled=busy;
+      choice.setAttribute("aria-label","Wybierz A1 "+value);
+      choice.onclick=()=>{
+        if(disposed||busy||batchActive||selection!==selectionKey())return;
+        a1.value=value;a1.oninput();a1.focus({preventScroll:true});
+      };
+      a1Choices.append(choice);
+    }
   }
   function keepDraft(){
     inheritedManualFits.delete(selectionKey());
@@ -1108,6 +1136,7 @@ function openRasterTracing(item, view) {
   }
   a1.oninput=()=>{
     a1Manual=true;a1Key=selectionKey();a1Drafts.set(a1Key,{value:a1.value,manual:true});
+    a1Alternatives=[];
     a1Message="A1 wpisany ręcznie — zachowano Twoją wartość.";draw();
   };
   function invalidateBatch(){
@@ -1127,6 +1156,8 @@ function openRasterTracing(item, view) {
     for(const entry of batchItems)if(entry.controls){
       entry.controls.check.disabled=busy||batchPending||entry.status==="rejected"||!entry.a1.trim();
       entry.controls.input.disabled=busy||batchPending;
+      for(const choice of entry.controls.choices||[])choice.disabled=busy||batchPending||entry.status==="rejected";
+      if(entry.controls.choiceBox)entry.controls.choiceBox.hidden=!!(entry.manual||entry.confirmed);
       entry.controls.check.checked=entry.chosen&&entry.status!=="rejected";
       entry.controls.row.className="trace-batch-row"+(entry.id===batchFocus?" focused":"")+
         (entry.status==="rejected"?" rejected":entry.a1Status==="ok"||entry.manual||entry.confirmed?" ready":" review");
@@ -1172,11 +1203,22 @@ function openRasterTracing(item, view) {
         entry.chosen=!!entry.a1&&entry.status!=="rejected";draw();
       };
       row.append(check,locate,input,state);
-      if(entry.alternatives?.length>1){
-        const alternatives=document.createElement("small");alternatives.className="trace-batch-alternatives";
-        alternatives.textContent="Odczytane warianty: "+entry.alternatives.join(", ");row.append(alternatives);
+      const choices=[];let choiceBox=null;
+      if(entry.a1Status!=="ok"&&entry.alternatives?.length){
+        choiceBox=document.createElement("div");choiceBox.className="trace-batch-alternatives";
+        const caption=document.createElement("small");caption.textContent="Warianty — wybierz po sprawdzeniu:";choiceBox.append(caption);
+        for(const value of entry.alternatives){
+          const choice=document.createElement("button");choice.type="button";choice.className="button ghost trace-a1-choice";
+          choice.textContent=value;choice.setAttribute("aria-label","Wybierz A1 "+value+" dla pola "+entry.id);
+          choice.onclick=()=>{
+            if(disposed||busy||batchPending||!batchActive||!batchItems.includes(entry)||entry.status==="rejected")return;
+            input.value=value;input.oninput();input.focus({preventScroll:true});
+          };
+          choices.push(choice);choiceBox.append(choice);
+        }
+        row.append(choiceBox);
       }
-      entry.controls={row,check,input,state};batchList.append(row);
+      entry.controls={row,check,input,state,choices,choiceBox};batchList.append(row);
     }
     updateBatchSummary();
   }
@@ -1333,6 +1375,7 @@ function openRasterTracing(item, view) {
       batchActive?(a1Request?"Odczytuję A1 z całego rastra…":
         "Numery odczytane z rastra są wpisane na liście. Znak ? przy numerze oznacza odczyt do sprawdzenia."):a1Message;
     a1Retry.hidden=!a1Failure;a1Retry.disabled=busy||!!a1Request;
+    renderA1Choices();
     batchPanel.hidden=!batchActive;
     panel.querySelector(".trace-map-save").hidden=batchActive;
     mergeA1.disabled=busy||batchActive;

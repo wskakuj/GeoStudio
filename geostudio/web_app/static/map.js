@@ -69,6 +69,12 @@
     snapEnabled: true, sharedNodes: false, vertexDrag: null,
     hoverInsert: null, selectedVertex: null, mapEPSG:""
   };
+  const floatingWindows={};
+  let drawingAttributeEpoch=0,drawingInspectionDrag=null,attributeSave=null;
+  // While A1 is being entered the map is still usable as a reference.
+  // Capture before label/sheet/node tools: inspecting must not alter geometry.
+  for(const name of ["pointerdown","pointermove","pointerup","pointercancel","dblclick"])
+    window.addEventListener(name,inspectMapDuringAttributes,true);
   // WMS is a read-only background; never part of MAP, geometry or export.
   const underlay = {
     enabled:false, image:null, bounds:null, opacity:.75, preset:"standard",
@@ -185,6 +191,7 @@
     }
     state.edit={
       sheetItems:status.sheetItems||[],
+      sheetGroups:status.sheetGroups||{},
       dirty:!!status.dirty,
       canUndo:!!status.canUndo,
       canRedo:!!status.canRedo,
@@ -393,9 +400,12 @@
     const first=list.querySelector("input");
     if(first)first.focus();
   }
-  async function refreshEditedDocument(activeId) {
+  async function refreshEditedDocument(activeId,guard=null) {
+    const current=()=>!guard||(guard.documentToken===state.edit?.documentToken&&guard.revision===state.edit?.revision);
+    if(!current())return;
     const oldLayers=new Set(state.meta.layers.map(item=>item.name));
     const refreshed=await api("/api/map");
+    if(!current())return;
     state.meta=refreshed;
     updateEditState(refreshed);
     for(const layer of refreshed.layers) {
@@ -407,6 +417,7 @@
     state.inspectorCache.clear();
     renderLayers();
     await refreshViewport();
+    if(!current())return;
     if(activeId)await selectFeature(activeId);
     else {state.detail=null;updateInspector();}
   }
@@ -632,6 +643,7 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
   }
 
   function finishOpeningMap(meta) {
+    closeDrawingAttributes(null,true);
     removeUnderlay();removeRaster(true);
     // An EPSG choice belongs to the previously opened map and must
     // NEVER be silently reused for unrelated GEO-MAP coordinates.
@@ -1903,6 +1915,9 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
     let request;
     try{request={...editRequestBody(),operation:objectOperation("create")};}
     catch(error){$("create-summary").textContent=error.message;return;}
+    const context=drawingAttributesContext();
+    if(!drawingAttributesCurrent(context))return;
+    const save={context};attributeSave=save;
     state.editBusy=true;state.editBusySince=Date.now();updateEditState(state.edit);
     $("create-apply").disabled=true;
     $("create-summary").textContent="Tworzę poligon i sprawdzam topologię…";
@@ -1913,12 +1928,14 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
         method:"POST",headers:{"Content-Type":"application/json"},
         body:JSON.stringify(request)
       });
+      if(!drawingAttributesCurrent(context))return;
       if(!report.canApply||!report.previewKey)
         throw Error(report.message||report.reason||"Nieprawidłowy obrys.");
       const result=await api("/api/objects/apply",{
         method:"POST",headers:{"Content-Type":"application/json"},
         body:JSON.stringify({...request,previewKey:report.previewKey})
       });
+      if(!drawingAttributesCurrent(context))return;
       updateEditState(result);
       $("create-dialog").close();
       state.objectPreview=null;
@@ -1926,21 +1943,26 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
       state.pinned.clear();state.active=null;state.detail=null;
       $("create-a1").value="";$("create-a2").value="";
       state.editBusy=false;state.editBusySince=0;updateEditState(state.edit);
+      attributeSave=null;$("create-apply").disabled=false;
       // A drawing session continues until the user explicitly presses S,
       // Escape (when no nodes are left), or chooses another tool.
       setTool("draw");
-      await refreshEditedDocument(null);
+      await refreshEditedDocument(null,{documentToken:result.documentToken,revision:result.revision});
+      if(request.documentToken!==state.edit?.documentToken)return;
       updateSelectionCount();
       inform(result.mergedSameA1
         ?"Poligon utworzony i scalony z "+result.mergedSameA1+
           " wydzieleniem o tym samym A1. Rysuj następny — tryb N aktywny."
         :"Poligon utworzony. Rysuj następny — tryb N nadal aktywny.");
     }catch(error){
+      if(attributeSave!==save||!drawingAttributesCurrent(context))return;
       $("create-summary").textContent="Nie utworzono: "+error.message;
       inform("Błąd tworzenia poligonu: "+error.message,true);
     }finally{
-      state.editBusy=false;state.editBusySince=0;updateEditState(state.edit);
-      $("create-apply").disabled=false;
+      if(attributeSave===save){
+        attributeSave=null;state.editBusy=false;state.editBusySince=0;updateEditState(state.edit);
+        $("create-apply").disabled=false;
+      }
     }
   }
   async function applyObject(which,ev) {
@@ -2017,6 +2039,76 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
       inform("Nie usunięto obiektów: "+error.message,true);
     }finally{state.editBusy=false;updateEditState(state.edit);}
   }
+  function drawingAttributesOpen(){
+    return ["create","line"].map(name=>$(name+"-dialog")).find(dialog=>dialog.open)||null;
+  }
+  function drawingAttributesContext(){
+    return {epoch:drawingAttributeEpoch,dialog:drawingAttributesOpen(),
+      token:state.edit?.documentToken,revision:state.edit?.revision,tool:state.tool};
+  }
+  function drawingAttributesCurrent(context){
+    return !!context.dialog?.open&&context.epoch===drawingAttributeEpoch&&
+      context.token===state.edit?.documentToken&&context.revision===state.edit?.revision&&
+      context.tool===state.tool;
+  }
+  function closeDrawingAttributes(which=null,force=false){
+    if(state.editBusy&&!force)return;
+    for(const name of which?[which]:["create","line"]){
+      const dialog=$(name+"-dialog");
+      if(!dialog.open)continue;
+      drawingAttributeEpoch++;
+      if(floatingWindows[name])floatingWindows[name].close();else dialog.close();
+      if(attributeSave?.context.dialog===dialog){
+        attributeSave=null;state.editBusy=false;state.editBusySince=0;updateEditState(state.edit);
+      }
+      if(name==="create")state.objectPreview=null;else state.geometryPreview=null;
+    }
+    if(drawingInspectionDrag&&canvas.hasPointerCapture?.(drawingInspectionDrag.pointer))
+      canvas.releasePointerCapture(drawingInspectionDrag.pointer);
+    drawingInspectionDrag=null;shell.classList.remove("dragging");
+    state.drawHover=null;state.drawSnap=null;state.drawCursorWorld=null;
+    requestDraw();
+  }
+  function openDrawingAttributes(which){
+    if(gcpView.open)closeVisualCalibration();
+    closeDrawingAttributes(which==="create"?"line":"create",true);
+    drawingAttributeEpoch++;
+    state.drag=null;state.drawHover=null;state.drawSnap=null;state.drawCursorWorld=null;
+    $(which+"-preview").disabled=false;
+    floatingWindows[which].show();requestDraw();
+  }
+  function inspectMapDuringAttributes(ev){
+    if(ev.target!==canvas||(!drawingAttributesOpen()&&!drawingInspectionDrag))return;
+    ev.preventDefault();ev.stopImmediatePropagation();
+    if(ev.type==="dblclick")return;
+    const p=eventCoords(ev);
+    if(ev.type==="pointerdown"){
+      if(!state.meta||ev.button<0||ev.button>2||drawingInspectionDrag)return;
+      drawingInspectionDrag={pointer:ev.pointerId,last:p,moved:false};
+      canvas.setPointerCapture(ev.pointerId);return;
+    }
+    const drag=drawingInspectionDrag;
+    if(!drag||drag.pointer!==ev.pointerId)return;
+    if(ev.type==="pointermove"){
+      const dx=p.x-drag.last.x,dy=p.y-drag.last.y;
+      if(dx||dy){state.center.x-=dx/state.scale;state.center.y-=dy/state.scale;
+        drag.last=p;drag.moved=true;shell.classList.add("dragging");requestDraw();}
+      return;
+    }
+    drawingInspectionDrag=null;shell.classList.remove("dragging");
+    if(canvas.hasPointerCapture?.(ev.pointerId))canvas.releasePointerCapture(ev.pointerId);
+    if(drag.moved)scheduleViewport();
+  }
+  function setupFloatingWindows(){
+    for(const name of ["create","line"]){
+      const dialog=$(name+"-dialog");
+      floatingWindows[name]=GeoStudioFloatingDialog.attach(dialog);
+      dialog.addEventListener("cancel",ev=>{ev.preventDefault();closeDrawingAttributes(name);});
+    }
+    floatingWindows.calibration=GeoStudioFloatingDialog.attach($("raster-visual-dialog"),
+      {onGeometry:resizeGcpCanvas});
+    if(window.ResizeObserver)new ResizeObserver(resizeGcpCanvas).observe($("raster-gcp-canvas"));
+  }
   function finishDrawPolygon() {
     if(state.tool!=="draw"||$("create-dialog").open)return;
     if(state.drawPoints.length<3){
@@ -2029,9 +2121,9 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
     $("create-apply").disabled=false;
     $("create-summary").textContent="Enter — utwórz poligon. "+
       "Sprawdzanie poprawności nastąpi automatycznie.";
-    $("create-dialog").showModal();
+    openDrawingAttributes("create");
     $("create-a1").focus({preventScroll:true});
-    // WebView2 can autofocus the modal's first toolbar button AFTER it
+    // WebView2 can autofocus the window's first toolbar button AFTER it
     // opens. Restore the requested A1 focus on the next paint too.
     requestAnimationFrame(()=>{
       if($("create-dialog").open)$("create-a1").focus({preventScroll:true});
@@ -2083,6 +2175,7 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
     }
   }
   async function finishGeometryDrawing() {
+    if(drawingAttributesOpen())return;
     if(state.tool==="link"){await finishConnector();return;}
     if(state.tool==="draw"){finishDrawPolygon();return;}
     if(state.tool==="cut"){
@@ -2113,7 +2206,8 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
       $("line-summary").textContent=
         "Kliknij „"+(editing?"Zapisz linię":"Utwórz linię")+"” — sprawdzenie wykona się automatycznie.";
       state.geometryPreview=null;$("line-apply").disabled=false;
-      $("line-dialog").showModal();
+      openDrawingAttributes("line");
+      if(!editing)$("line-a1").focus({preventScroll:true});
     }
   }
   function startSplit() {
@@ -2152,17 +2246,19 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
   function selectedLineStyle(){
     return LINE_STYLES[$("line-style")?.value]||[];
   }
-  async function applyLineStyle(uid){
-    const dash=selectedLineStyle();
+  async function applyLineStyle(uid,dash=selectedLineStyle()){
     if(!uid)return;
+    const documentToken=state.edit?.documentToken;
     try{
       const result=await api("/api/objects/dash",{
         method:"POST",headers:{"Content-Type":"application/json"},
         body:JSON.stringify({uid,dash,
-          documentToken:state.edit.documentToken,revision:state.edit.revision})});
+          documentToken,revision:state.edit.revision})});
+      if(documentToken!==state.edit?.documentToken)return;
       updateEditState(result);
       await refreshLabelsNow();
     }catch(error){
+      if(documentToken!==state.edit?.documentToken)return;
       inform("Nie ustawiono rodzaju linii: "+error.message,true);
     }
   }
@@ -2190,6 +2286,8 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
     throw Error("Nieznane polecenie geometrii.");
   }
   async function previewGeometryForm(which) {
+    const context=which==="line"?drawingAttributesContext():null;
+    if(context&&!drawingAttributesCurrent(context))return;
     state.geometryPreview=null;
     $(which+"-apply").disabled=true;
     const request={...editRequestBody(),
@@ -2200,6 +2298,7 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
       const report=await api("/api/geometry/preview",{
         method:"POST",headers:{"Content-Type":"application/json"},
         body:JSON.stringify(request)});
+      if(context&&!drawingAttributesCurrent(context))return;
       const notes=report.metadataWarning
         ?"\nUWAGA: stare dane powierzchniowe w A4/A6 wymagają sprawdzenia!"
         :"";
@@ -2211,25 +2310,32 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
       state.geometryPreview={which,report,request};
       $(which+"-apply").disabled=!report.canApply;
     }catch(err){
+      if(context&&!drawingAttributesCurrent(context))return;
       $(which+"-summary").textContent="Nie można zastosować: "+err.message;
       inform(err.message,true);
-    }finally{$(which+"-preview").disabled=false;}
+    }finally{if(!context||drawingAttributesCurrent(context))$(which+"-preview").disabled=false;}
   }
   // „Utwórz linię" ma działać od razu: jeśli nie ma świeżego podglądu,
   // robimy go po cichu i od razu zatwierdzamy — bez dodatkowego kliknięcia.
   async function applyOrPreviewGeometry(which, ev) {
     ev?.preventDefault();
     if(state.editBusy)return;
+    const context=which==="line"?drawingAttributesContext():null;
+    if(context&&!drawingAttributesCurrent(context))return;
     if(!state.geometryPreview||state.geometryPreview.which!==which){
       await previewGeometryForm(which);
       if(!state.geometryPreview||state.geometryPreview.which!==which)return;
     }
+    if(context&&!drawingAttributesCurrent(context))return;
     return applyGeometryForm(which);
   }
   async function applyGeometryForm(which,ev) {
     ev?.preventDefault();
     const current=state.geometryPreview;
     if(!current||current.which!==which||state.editBusy)return;
+    const context=which==="line"?drawingAttributesContext():null;
+    if(context&&!drawingAttributesCurrent(context))return;
+    const lineDash=which==="line"?selectedLineStyle():null;
     const request={...editRequestBody(),
       operation:operationForGeometry(which)};
     if(JSON.stringify(current.request)!==JSON.stringify(request)){
@@ -2239,12 +2345,14 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
     if(which!=="split"&&current.report.metadataWarning&&!window.confirm(
       "Scalenie/podział wymaga ręcznego sprawdzenia danych powierzchniowych "+
       "A4/A6 w GEO-MAP. Czy kontynuować?"))return;
+    const save=context?{context}:null;if(save)attributeSave=save;
     state.editBusy=true;state.editBusySince=Date.now();updateEditState(state.edit);
     try{
       const res=await api("/api/geometry/apply",{
         method:"POST",headers:{"Content-Type":"application/json"},
         body:JSON.stringify({...request,previewKey:current.report.previewKey})
       });
+      if(context&&!drawingAttributesCurrent(context))return;
       updateEditState(res);
       $(which+"-dialog").close();
       state.geometryPreview=null;
@@ -2253,19 +2361,25 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
       state.pinned=new Set(res.createdIds||[]);
       state.active=res.createdIds?.[0]||null;
       state.editBusy=false;state.editBusySince=0;updateEditState(state.edit);
+      if(save)attributeSave=null;
       setTool("select");
-      await refreshEditedDocument(state.active);
+      await refreshEditedDocument(state.active,{documentToken:res.documentToken,revision:res.revision});
+      if(request.documentToken!==state.edit?.documentToken)return;
       updateSelectionCount();
       // Rodzaj linii nakładamy na nowo utworzony obiekt.
       if(which==="line"&&(res.createdUids||[]).length)
-        await applyLineStyle(res.createdUids[0]);
+        await applyLineStyle(res.createdUids[0],lineDash);
       inform("Geometria zapisana w kopii roboczej. Ctrl+Z cofa.");
     }catch(error){
+      if(context&&(attributeSave!==save||!drawingAttributesCurrent(context)))return;
       state.geometryPreview=null;
       $(which+"-apply").disabled=true;
       $(which+"-summary").textContent=error.message;
       inform("Nie zapisano geometrii: "+error.message,true);
-    }finally{state.editBusy=false;updateEditState(state.edit);}
+    }finally{if(!save||attributeSave===save){
+      if(save)attributeSave=null;
+      state.editBusy=false;updateEditState(state.edit);
+    }}
   }
   async function simpleGeometryAction(action) {
     if(state.editBusy||!state.meta)return;
@@ -2797,7 +2911,7 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
       item.hidden=item!==panel;
       item.classList.toggle("active",item===panel);
     });
-    pendingSheet=null;sheetDrag=null;requestDraw();
+    pendingSheet=null;sheetDrag=null;sheetRotate=null;commitSheetAngle();requestDraw();
     // Klik w zakładkę rozwija wstążkę tak samo jak przycisk „Zwiń/Rozwiń”.
     if(document.body.classList.contains("ribbon-collapsed")||
        document.body.classList.contains("focus-mode")){
@@ -3558,11 +3672,11 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
   // raster pixel click -> matching map click -> 3+ pairs -> affine RMSE.
   const gcpView={waiting:false,pending:null,zoom:1,panX:0,panY:0,
     dragging:null,mapDragging:null,consumeMapUp:null,activeIndex:null,
-    fitSerial:0,recalibrationActive:false,open:false};
+    fitSerial:0,recalibrationActive:false,open:false,fitted:true,lastLayout:null};
   function gcpCanvasLayout(){
     const canvas=$("raster-gcp-canvas");
-    const w=Math.max(250,canvas.clientWidth||450);
-    const h=Math.max(160,canvas.clientHeight||270);
+    const w=Math.max(1,canvas.clientWidth||450);
+    const h=Math.max(1,canvas.clientHeight||270);
     const img=raster.image;
     if(!img)return {w,h,scale:1,left:0,top:0};
     const scale=Math.min(w/img.width,h/img.height)*gcpView.zoom;
@@ -3578,10 +3692,10 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
     const u=(x-before.left)/before.scale;
     const v=(y-before.top)/before.scale;
     const normalized=deltaY*(deltaMode===1?16:deltaMode===2?before.h:1);
-    const next=Math.max(.4,Math.min(35,
+    const next=Math.max(.4,Math.min(256,
       gcpView.zoom*Math.exp(-normalized*.0025)));
     if(next===gcpView.zoom)return;
-    gcpView.zoom=next;
+    gcpView.zoom=next;gcpView.fitted=false;
     const after=gcpCanvasLayout();
     gcpView.panX+=x-(after.left+u*after.scale);
     gcpView.panY+=y-(after.top+v*after.scale);
@@ -3619,6 +3733,7 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
     if(!raster.image)return;
     const canvas=$("raster-gcp-canvas");
     const pos=gcpCanvasLayout();
+    gcpView.lastLayout={...pos,image:raster.image};
     const dpr=Math.max(1,Math.min(2,window.devicePixelRatio||1));
     const w=Math.round(pos.w*dpr),h=Math.round(pos.h*dpr);
     if(canvas.width!==w||canvas.height!==h){canvas.width=w;canvas.height=h;}
@@ -3626,7 +3741,7 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
     g.setTransform(dpr,0,0,dpr,0,0);
     g.clearRect(0,0,pos.w,pos.h);
     g.fillStyle="#102538";g.fillRect(0,0,pos.w,pos.h);
-    g.imageSmoothingEnabled=true;g.imageSmoothingQuality="high";
+    g.imageSmoothingEnabled=pos.scale<2;g.imageSmoothingQuality="high";
     g.drawImage(raster.image,pos.left,pos.top,
       raster.image.width*pos.scale,raster.image.height*pos.scale);
     const markers=raster.gcps.map((pt,i)=>({u:pt.u,v:pt.v,
@@ -3641,6 +3756,30 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
       g.strokeStyle="#092335";g.lineWidth=2;g.stroke();
       g.font="bold 13px sans-serif";g.fillStyle="#fff";g.fillText(item.label,x+9,y-7);
     }
+    const zoom=$("raster-gcp-zoom");
+    zoom.textContent=(Math.round(gcpView.zoom*10)/10)+"×";
+    zoom.title="Powiększenie względem całego obrazu; "+
+      Math.round(pos.scale*raster.image.width/(raster.sourceWidth||raster.image.width)*100)+
+      "% rozmiaru piksela źródłowego";
+    $("raster-gcp-zoom-in").disabled=gcpView.zoom>=256;
+    $("raster-gcp-zoom-out").disabled=gcpView.zoom<=.4;
+  }
+  function resizeGcpCanvas(){
+    if(!gcpView.open||!raster.image)return;
+    const previous=gcpView.lastLayout,next=gcpCanvasLayout();
+    if(previous?.image===raster.image&&
+       (previous.w!==next.w||previous.h!==next.h)&&!gcpView.fitted){
+      // Resizing a zoomed window reveals more of the same area; the source
+      // pixel at the centre and its on-screen scale stay stable.
+      const u=(previous.w/2-previous.left)/previous.scale;
+      const v=(previous.h/2-previous.top)/previous.scale;
+      const fit=Math.min(next.w/raster.image.width,next.h/raster.image.height);
+      gcpView.zoom=Math.max(.4,Math.min(256,previous.scale/fit));
+      const layout=gcpCanvasLayout();
+      gcpView.panX+=layout.w/2-(layout.left+u*layout.scale);
+      gcpView.panY+=layout.h/2-(layout.top+v*layout.scale);
+    }
+    drawGcpCanvas();
   }
   function updateGcpUi(message){
     $("raster-gcp-cancel").disabled=!gcpView.pending;
@@ -3668,20 +3807,25 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
   }
   function openVisualCalibration(){
     if(!raster.image){inform("Najpierw dodaj obraz rastra.",true);return;}
+    if(state.editBusy){inform("Poczekaj na zakończenie zapisu.");return;}
+    closeDrawingAttributes();
+    cancelSheetTransforms();
     if($("raster-dialog").open)$("raster-dialog").close();
     gcpView.open=true;gcpView.waiting=false;gcpView.pending=null;
     gcpView.recalibrationActive=!!raster.affine;
     gcpView.activeIndex=null;gcpView.dragging=null;gcpView.mapDragging=null;
     gcpView.zoom=1;gcpView.panX=0;gcpView.panY=0;
+    gcpView.fitted=true;gcpView.lastLayout=null;
     // show(), not showModal(): the MAP behind the window must receive
     // the second click without closing the calibration workspace.
-    if(!$("raster-visual-dialog").open)$("raster-visual-dialog").show();
+    floatingWindows.calibration.show();
     updateGcpUi(raster.gcps.length+" par. Wskaż punkt charakterystyczny na obrazie.");
   }
   function closeVisualCalibration(){
     gcpView.waiting=false;gcpView.pending=null;gcpView.open=false;
     gcpView.activeIndex=null;gcpView.mapDragging=null;gcpView.dragging=null;
     gcpView.consumeMapUp=null;gcpView.fitSerial++;
+    gcpView.lastLayout=null;
     canvas.style.cursor="";
     $("raster-gcp-canvas").style.cursor="crosshair";
     if($("raster-visual-dialog").open)$("raster-visual-dialog").close();
@@ -3856,6 +4000,8 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
   }
   function setupVisualCalibration(){
     const canvas=$("raster-gcp-canvas");
+    const imageRect=()=>{const r=canvas.getBoundingClientRect();return {
+      left:r.left+(canvas.clientLeft||0),top:r.top+(canvas.clientTop||0)};};
     canvas.addEventListener("pointerdown",ev=>{
       if(ev.button===2||ev.button===1){
         ev.preventDefault();canvas.setPointerCapture?.(ev.pointerId);
@@ -3863,7 +4009,7 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
         return;
       }
       if(ev.button!==0||!raster.image)return;
-      const rect=canvas.getBoundingClientRect();
+      const rect=imageRect();
       const x=ev.clientX-rect.left,y=ev.clientY-rect.top;
       const index=gcpNearestRasterPoint(x,y);
       if(index>=0){
@@ -3887,20 +4033,21 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
     canvas.addEventListener("pointermove",ev=>{
       const drag=gcpView.dragging;
       if(!drag){
-        const rect=canvas.getBoundingClientRect();
+        const rect=imageRect();
         canvas.style.cursor=gcpNearestRasterPoint(
           ev.clientX-rect.left,ev.clientY-rect.top)>=0?"grab":"crosshair";
         return;
       }
       if(drag.id!==ev.pointerId)return;
       if(drag.kind==="pan"){
+        gcpView.fitted=false;
         gcpView.panX+=ev.clientX-drag.x;
         gcpView.panY+=ev.clientY-drag.y;
         drag.x=ev.clientX;drag.y=ev.clientY;
         drawGcpCanvas();return;
       }
       if(drag.kind==="point"&&raster.gcps[drag.index]){
-        const rect=canvas.getBoundingClientRect();
+        const rect=imageRect();
         const point=gcpScreenToSource(ev.clientX-rect.left,ev.clientY-rect.top);
         const sw=raster.sourceWidth||raster.image.width;
         const sh=raster.sourceHeight||raster.image.height;
@@ -3923,7 +4070,7 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
     canvas.addEventListener("contextmenu",ev=>ev.preventDefault());
     canvas.addEventListener("wheel",ev=>{
       ev.preventDefault();
-      const rect=canvas.getBoundingClientRect();
+      const rect=imageRect();
       zoomGcpAt(ev.clientX-rect.left,ev.clientY-rect.top,
         ev.deltaY,ev.deltaMode);
     },{passive:false});
@@ -3937,8 +4084,10 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
     });
     link("raster-gcp-apply",()=>applyVisualGCP(false));
     link("raster-gcp-fit",()=>{
-      gcpView.zoom=1;gcpView.panX=0;gcpView.panY=0;drawGcpCanvas();
+      gcpView.zoom=1;gcpView.panX=0;gcpView.panY=0;gcpView.fitted=true;drawGcpCanvas();
     });
+    for(const [id,factor] of [["raster-gcp-zoom-in",1.6],["raster-gcp-zoom-out",1/1.6]])
+      link(id,()=>{const p=gcpCanvasLayout();zoomGcpAt(p.w/2,p.h/2,-Math.log(factor)/.0025);});
     link("raster-visual-close",closeVisualCalibration);
     // Intercept markers before standard select/node/pan handlers.
     canvasMapGcpEvents();
@@ -4183,6 +4332,9 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
   function setTool(tool,quiet=false) {
     if(state.editBusy)return;
     if(activeTrace&&!activeTrace.close())return;
+    if(tool!==state.tool&&drawingAttributesOpen()){
+      closeDrawingAttributes(null,true);state.drawPoints=[];state.lineEditId=null;
+    }
     state.tool=tool;
     state.hoverInsert=null;
     if(tool!=="nodes")state.selectedVertex=null;
@@ -5084,7 +5236,11 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
     // snapshot is blurry and can crop previously unseen map fragments.
     state.previewActive=false;state.previewCamera=null;
     const box=boundsFromViewport(.05);
-    const features=state.features.filter(f=>isVisible(f)&&isInView(f.bbox,box));
+    const sheetPreview=liveSheetPreview();
+    const previewUids=new Set(sheetPreview&&GeoStudioSheet.signs.includes(sheetPreview.kind)
+      ?state.edit?.sheetGroups?.[sheetPreview.id]||[]:[]);
+    const features=state.features.filter(f=>isVisible(f)&&isInView(f.bbox,box)&&
+      !previewUids.has(f.uid||f.sourceUid));
     // Match the classic QGraphicsScene: paint fills below ALL outlines.
     // Painting fill+stroke for each object separately erased earlier
     // parcel borders beneath later overlapping polygons.
@@ -6619,7 +6775,7 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
   async function selectFeature(fid) {
     if(fid!==null){
       const group=groupMembersOf(fid);
-      if(group&&group.members.length>1){
+      if(group&&group.members.length){
         state.active=fid;state.detail=null;state.selectedVertex=null;
         state.pinned=new Set(group.members.filter(id=>id!==fid));
         state.sheetGroup={itemId:group.itemId,members:group.members};
@@ -6632,6 +6788,7 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
       }
       state.sheetGroup=null;
     }
+    selectedSheet=null;
     if(state.active!==fid)state.selectedVertex=null;
     state.active=fid;state.detail=null;updateDeleteNodeButton();updateInspector();
     updateSelectionCount();updateLeaderButtons();requestDraw();
@@ -6769,6 +6926,7 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
     if(state.labelDrag)Object.assign(state.labelDrag.label,state.labelDrag.origin);
     state.drag=null;state.labelDrag=null;state.anchorDrag=null;
     state.vertexDrag=null;state.moveGhost=null;state.sheetRotate=null;
+    sheetRotate=null;sheetDrag=null;cancelSheetAngle();
     state.blockRectDrag=null;state.blockRectPicking=false;
     shell.classList.remove("dragging");
     try{canvas.releasePointerCapture?.(0);}catch(_){}
@@ -6803,9 +6961,12 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
   }
   let pendingSheet=null,selectedSheet=null,sheetDrag=null,sheetSaving=false,sheetSize=1,sheetCursor=null;
   let pendingNumber=null,numberEdit=null;
-  let sheetRotate=null;
-  const rotatableSigns=new Set(["clearcut","marsh","power","gas"]);
+  let sheetRotate=null,sheetAngleDraft=null,rotateCommit=null;
+  const rotatableSigns=new Set(GeoStudioSheet.signs);
   const insertMode=()=>!$("ribbon-panel-insert").hidden;
+  const sheetInteractionAllowed=()=>!!state.meta&&!gcpView.open&&(insertMode()||state.tool==="select")&&
+    !document.querySelector(".drawing-attributes-dialog[open]");
+  const sheetContextCurrent=edit=>edit&&edit.token===state.edit?.documentToken&&edit.revision===state.edit?.revision;
 
   const singleSheetKinds=new Set(["title","credits","compass","symbols","species"]);
   function sheetWorldPerPixel(){return (state.edit?.compilationScale||5000)/3779.527559;}
@@ -6818,21 +6979,33 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
     const per=sheetWorldPerPixel();
     return {w:unitsW*per,h:unitsH*per};
   }
+  function liveSheetPreview(){
+    if(state.exporting||gcpView.open)return null;
+    for(const edit of [sheetRotate,sheetDrag,sheetAngleDraft])
+      if(sheetContextCurrent(edit))return edit.item;
+    return null;
+  }
   function sheetItems(){
-    return (state.edit?.sheetItems||[]).map(i=>sheetDrag?.item.id===i.id?sheetDrag.item:i);
+    const live=liveSheetPreview();
+    return (state.edit?.sheetItems||[]).map(i=>live?.id===i.id?live:i);
   }
   function drawSheetItems(){
     const items=sheetItems(),selected=items.find(i=>i.id===selectedSheet);
     $("sheet-edit").disabled=!selected||GeoStudioSheet.signs.includes(selected.kind);
     $("sheet-remove").disabled=!selected;
-    const rotatable=!!selected&&rotatableSigns.has(selected.kind);
+    const rotatable=!!selected&&rotatableSigns.has(selected.kind)&&sheetInteractionAllowed();
     $("sheet-rotate-wrap").hidden=!rotatable;
     if(rotatable){
       $("sheet-rotate").value=String(Math.round(selected.angle||0));
       $("sheet-rotate-value").value=Math.round(selected.angle||0)+"°";
+      if(document.activeElement!==$("sheet-angle"))$("sheet-angle").value=String(Math.round(selected.angle||0));
     }
-    GeoStudioSheet.paint(ctx,items,worldToScreen,state.scale,state.edit?.compilationScale||5000,insertMode()?selectedSheet:null);
-    if(selected&&rotatableSigns.has(selected.kind)){
+    for(const id of ["sheet-rotate","sheet-angle","sheet-rotate-reset"])
+      $(id).disabled=sheetSaving||state.editBusy||!rotatable;
+    GeoStudioSheet.paint(ctx,items,worldToScreen,state.scale,state.edit?.compilationScale||5000,sheetInteractionAllowed()?selectedSheet:null);
+    const live=liveSheetPreview();
+    if(live&&rotatableSigns.has(live.kind))GeoStudioSheet.paint(ctx,[{...live,id:"__preview__"}],worldToScreen,state.scale,state.edit?.compilationScale||5000);
+    if(rotatable){
       const h=rotateHandlePos(selected);
       ctx.save();ctx.strokeStyle="#2664db";ctx.fillStyle="#fff";ctx.lineWidth=1.5;
       ctx.beginPath();ctx.moveTo(h.centre.x,h.centre.y);ctx.lineTo(h.x,h.y);ctx.stroke();
@@ -6858,12 +7031,17 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
       labelCtx.restore();
     }
   }
-  async function saveSheet(items){
+  async function saveSheet(items,guard=null){
     if(sheetSaving||state.editBusy)return;
+    if(guard&&!sheetContextCurrent(guard))return;
     sheetSaving=true;
     try{
-      const res=await api("/api/sheet-items",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({...editRequestBody(),items})});
-      if(res.documentToken===state.edit?.documentToken){updateEditState(res);await refreshEditedDocument(null);return true;}
+      const request={...editRequestBody(),items};
+      const res=await api("/api/sheet-items",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(request)});
+      if(res.documentToken===request.documentToken&&request.documentToken===state.edit?.documentToken&&request.revision===state.edit?.revision){
+        updateEditState(res);
+        await refreshEditedDocument(null,{documentToken:res.documentToken,revision:res.revision});return true;
+      }
     }catch(err){inform(err.message,true);}
     finally{sheetSaving=false;requestDraw();}
   }
@@ -6898,15 +7076,20 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
   $("sheet-size-factor").oninput=e=>{sheetSize=Number(e.target.value);$("sheet-size-value").value=Math.round(sheetSize*100)+"%";};
   // Uchwyt obrotu nad zaznaczonym znakiem: pozycja w ekranie.
   function rotateHandlePos(item){
-    const centre=worldToScreen(item.x+item.w/2,item.y+item.h/2);
-    const rad=Number(item.angle||0)*Math.PI/180;
-    const radius=Math.max(28,Math.max(item.w,item.h)*state.scale/2+22);
-    return {x:centre.x+Math.sin(rad)*radius,y:centre.y-Math.cos(rad)*radius,centre,radius};
+    const box=GeoStudioSheet.frame(item,worldToScreen,state.scale);
+    return {...box.handle,centre:box.centre};
   }
   function hitRotateHandle(item,p){
     if(!item||!rotatableSigns.has(item.kind))return false;
     const h=rotateHandlePos(item);
     return Math.hypot(p.x-h.x,p.y-h.y)<=11;
+  }
+  function beginSheetRotation(item,p,ev){
+    pendingSheet=null;sheetCursor=null;
+    selectedSheet=item.id;
+    sheetRotate={id:ev.pointerId,token:state.edit.documentToken,revision:state.edit.revision,
+      start:p,base:{...item},item:{...item}};
+    canvas.setPointerCapture(ev.pointerId);requestDraw();
   }
   $("sheet-sign").addEventListener("change",()=>{
     const kind=$("sheet-sign").value;
@@ -6946,38 +7129,26 @@ inform("Klikaj mapę, aby wstawiać kolejne oznaczenia. Naciśnij Esc lub wybier
     if(insertMode()||state.tool==="select")ev.preventDefault();
   },true);
   canvas.addEventListener("pointerdown",ev=>{
-    if(!(insertMode()||state.tool==="select")||!state.meta)return;
+    if(!sheetInteractionAllowed())return;
     if(ev.button!==0&&ev.button!==2)return;
-    if(ev.button===2){
-      const p=eventCoords(ev),items=sheetItems();
-      const hit=items.slice().reverse().find(i=>{
-        const a=worldToScreen(i.x,i.y);
-        return p.x>=a.x-6&&p.y>=a.y-6&&p.x<=a.x+i.w*state.scale+6&&p.y<=a.y+i.h*state.scale+6;
-      });
-      if(!hit||!rotatableSigns.has(hit.kind))return;
-    }
     const p=eventCoords(ev),world=screenToWorld(p.x,p.y),items=sheetItems();
-    const under=items.slice().reverse().find(i=>{
-      const a=worldToScreen(i.x,i.y);
-      return p.x>=a.x-6&&p.y>=a.y-6&&p.x<=a.x+i.w*state.scale+6&&p.y<=a.y+i.h*state.scale+6;
-    });
-    // Prawy przycisk na znaku kierunkowym = obrót ruchem myszy.
+    const under=items.slice().reverse().find(i=>GeoStudioSheet.hit(i,p,worldToScreen,state.scale));
+    if(ev.button===2&&(!under||!rotatableSigns.has(under.kind)))return;
+    if(sheetSaving||state.editBusy){ev.stopImmediatePropagation();ev.preventDefault();return;}
+    if(sheetAngleDraft){
+      ev.stopImmediatePropagation();ev.preventDefault();commitSheetAngle();return;
+    }
+    // Prawy przycisk na dowolnym oznaczeniu = obrót bez skoku początkowego.
     if(ev.button===2&&under&&rotatableSigns.has(under.kind)){
       ev.stopImmediatePropagation();ev.preventDefault();
-      selectedSheet=under.id;
-      sheetRotate={id:ev.pointerId,token:state.edit?.documentToken,item:{...under}};
-      canvas.setPointerCapture(ev.pointerId);requestDraw();return;
+      beginSheetRotation(under,p,ev);return;
     }
     const active=items.find(i=>i.id===selectedSheet);
     if(active&&hitRotateHandle(active,p)){
       ev.stopImmediatePropagation();ev.preventDefault();
-      sheetRotate={id:ev.pointerId,token:state.edit?.documentToken,item:{...active}};
-      canvas.setPointerCapture(ev.pointerId);return;
+      beginSheetRotation(active,p,ev);return;
     }
-    const hit=items.slice().reverse().find(i=>{
-      const a=worldToScreen(i.x,i.y);
-      return p.x>=a.x-5&&p.y>=a.y-5&&p.x<=a.x+i.w*state.scale+6&&p.y<=a.y+i.h*state.scale+6;
-    });
+    const hit=under;
     if(!pendingSheet&&!hit){selectedSheet=null;requestDraw();return;}
     ev.stopImmediatePropagation();ev.preventDefault();
     if(sheetSaving||state.editBusy)return;
@@ -7001,8 +7172,9 @@ inform("Klikaj mapę, aby wstawiać kolejne oznaczenia. Naciśnij Esc lub wybier
       inform("Klikaj dalej, aby wstawić następne. Esc kończy wstawianie.");return;
     }
     selectedSheet=hit.id;
-    const corner=worldToScreen(hit.x+hit.w,hit.y+hit.h);
-    sheetDrag={id:ev.pointerId,token:state.edit.documentToken,start:world,base:hit,item:{...hit},resize:Math.hypot(corner.x-p.x,corner.y-p.y)<12};
+    const corner=GeoStudioSheet.frame(hit,worldToScreen,state.scale).corners[2];
+    sheetDrag={id:ev.pointerId,token:state.edit.documentToken,revision:state.edit.revision,
+      start:world,base:hit,item:{...hit},resize:Math.hypot(corner.x-p.x,corner.y-p.y)<12};
     canvas.setPointerCapture(ev.pointerId);requestDraw();
   },true);
   // Przeciąganie punktu zaczepienia wysięgnika (tryb „Etykiety”).
@@ -7182,98 +7354,110 @@ inform("Klikaj mapę, aby wstawiać kolejne oznaczenia. Naciśnij Esc lub wybier
   },true);
   window.addEventListener("pointermove",ev=>{
     if(sheetRotate?.id!==ev.pointerId)return;
-    ev.preventDefault();ev.stopPropagation();
-    const p=eventCoords(ev),item=sheetRotate.item;
-    const centre=worldToScreen(item.x+item.w/2,item.y+item.h/2);
-    const deg=Math.atan2(p.x-centre.x,-(p.y-centre.y))*180/Math.PI;
-    const snapped=ev.shiftKey?Math.round(deg/15)*15:Math.round(deg);
-    const updated={...item,angle:((snapped+180)%360+360)%360-180};
-    sheetRotate.item=updated;
-    GeoStudioSheet.paint(ctx,sheetItems().map(i=>i.id===updated.id?updated:i),
-      worldToScreen,state.scale,state.edit?.compilationScale||5000,selectedSheet);
-    requestDraw();
-  },true);
-  window.addEventListener("pointerup",ev=>{
-    if(sheetRotate?.id!==ev.pointerId)return;
-    const r=sheetRotate;sheetRotate=null;
-    if(r.token===state.edit?.documentToken)
-      saveSheet(sheetItems().map(i=>i.id===r.item.id?r.item:i));
-    requestDraw();
-  },true);
-  canvas.addEventListener("pointermove",ev=>{
-    if(sheetRotate?.id===ev.pointerId){
-      ev.stopImmediatePropagation();
-      const p=eventCoords(ev),item=sheetRotate.item;
-      const centre=worldToScreen(item.x+item.w/2,item.y+item.h/2);
-      const deg=Math.atan2(p.x-centre.x,-(p.y-centre.y))*180/Math.PI;
-      const snapped=ev.shiftKey?Math.round(deg/15)*15:Math.round(deg);
-      const updated={...item,angle:((snapped+180)%360+360)%360-180};
-      sheetRotate.item=updated;
-      const live=sheetItems().map(i=>i.id===updated.id?updated:i);
-      GeoStudioSheet.paint(ctx,live,worldToScreen,state.scale,state.edit?.compilationScale||5000,selectedSheet);
-      requestDraw();
-      return;
+    ev.preventDefault();ev.stopImmediatePropagation();
+    if(!sheetContextCurrent(sheetRotate)||!sheetInteractionAllowed()){
+      sheetRotate=null;requestDraw();return;
     }
+    const p=eventCoords(ev),edit=sheetRotate;
+    const centre=GeoStudioSheet.frame(edit.base,worldToScreen,state.scale).centre;
+    edit.item={...edit.item,angle:GeoStudioSheet.dragAngle(edit.base.angle||0,edit.start,p,centre,ev.shiftKey)};
+    requestDraw();
+  },true);
+  for(const event of ["pointerup","pointercancel"])window.addEventListener(event,ev=>{
+    if(sheetRotate?.id!==ev.pointerId)return;
+    ev.preventDefault();ev.stopImmediatePropagation();
+    const edit=sheetRotate;sheetRotate=null;
+    try{canvas.releasePointerCapture(ev.pointerId);}catch(_){}
+    if(event==="pointerup"&&sheetContextCurrent(edit)&&sheetInteractionAllowed()&&
+       Number(edit.item.angle||0)!==Number(edit.base.angle||0)){
+      sheetAngleDraft=edit;commitSheetAngle();
+    }
+    requestDraw();
+  },true);
+  window.addEventListener("blur",()=>{
+    if(sheetRotate){sheetRotate=null;requestDraw();}
+  });
+  document.addEventListener("visibilitychange",()=>{
+    if(document.hidden&&sheetRotate){sheetRotate=null;requestDraw();}
+  });
+  canvas.addEventListener("lostpointercapture",ev=>{
+    if(sheetRotate?.id===ev.pointerId){sheetRotate=null;requestDraw();}
+  });
+  canvas.addEventListener("pointermove",ev=>{
     if(sheetDrag?.id!==ev.pointerId)return;
     ev.stopImmediatePropagation();
     const p=eventCoords(ev),w=screenToWorld(p.x,p.y),d=sheetDrag;
     const dx=w.x-d.start.x,dy=w.y-d.start.y;
-    if(d.resize){
-      const {w,h}=d.base;
-      const factor=Math.max(8/(state.scale*Math.min(w,h)),1+(dx*w+dy*h)/(w*w+h*h));
-      d.item.w=w*factor;d.item.h=h*factor;
-    }
+    if(d.resize)d.item=GeoStudioSheet.resize(d.base,w,8/state.scale);
     else{d.item.x=d.base.x+dx;d.item.y=d.base.y+dy;}
     requestDraw();
   },true);
   for(const event of ["pointerup","pointercancel"])canvas.addEventListener(event,ev=>{
-    if(sheetRotate?.id===ev.pointerId){
-      ev.stopImmediatePropagation();
-      const r=sheetRotate;sheetRotate=null;
-      if(event==="pointerup"&&r.token===state.edit?.documentToken)
-        saveSheet(sheetItems().map(i=>i.id===r.item.id?r.item:i));
-      requestDraw();
-      return;
-    }
     if(sheetDrag?.id!==ev.pointerId)return;
     ev.stopImmediatePropagation();const d=sheetDrag;sheetDrag=null;
-    if(event==="pointerup"&&d.token===state.edit?.documentToken&&JSON.stringify(d.base)!==JSON.stringify(d.item))
-      saveSheet(sheetItems().map(i=>i.id===d.item.id?d.item:i));
+    if(event==="pointerup"&&sheetContextCurrent(d)&&JSON.stringify(d.base)!==JSON.stringify(d.item))
+      saveSheet(sheetItems().map(i=>i.id===d.item.id?d.item:i),d);
     requestDraw();
   },true);
-  $("sheet-remove").addEventListener("click",()=>saveSheet(sheetItems().filter(i=>i.id!==selectedSheet)));
-  // Awaryjna, zawsze dostępna droga obrotu: klawisze [ i ] na zaznaczonym znaku.
+  $("sheet-remove").addEventListener("click",()=>{
+    if(!sheetInteractionAllowed()||sheetSaving||state.editBusy)return;
+    cancelSheetAngle();saveSheet(sheetItems().filter(i=>i.id!==selectedSheet));
+  });
+  function cancelSheetAngle(){
+    clearTimeout(rotateCommit);rotateCommit=null;sheetAngleDraft=null;
+  }
+  function cancelSheetTransforms(){
+    const pointer=sheetRotate?.id??sheetDrag?.id;
+    sheetRotate=null;sheetDrag=null;cancelSheetAngle();
+    if(pointer!==undefined)try{canvas.releasePointerCapture(pointer);}catch(_){}
+  }
+  async function commitSheetAngle(){
+    clearTimeout(rotateCommit);rotateCommit=null;
+    const edit=sheetAngleDraft;if(!edit)return;
+    if(sheetContextCurrent(edit)&&!gcpView.open&&!document.querySelector(".drawing-attributes-dialog[open]")){
+      const items=(state.edit.sheetItems||[]).map(i=>i.id===edit.item.id?edit.item:i);
+      await saveSheet(items,edit);
+    }
+    if(sheetAngleDraft===edit)sheetAngleDraft=null;
+    requestDraw();
+  }
+  function setSheetAngle(value,immediate=false){
+    if(!sheetInteractionAllowed()||sheetSaving||state.editBusy||!Number.isFinite(value))return;
+    const item=sheetItems().find(i=>i.id===selectedSheet);
+    if(!item||!rotatableSigns.has(item.kind))return;
+    const angle=GeoStudioSheet.normalAngle(value);
+    if(angle===Number(item.angle||0)&&!sheetAngleDraft)return;
+    sheetAngleDraft={token:state.edit.documentToken,revision:state.edit.revision,
+      item:{...item,angle}};
+    requestDraw();clearTimeout(rotateCommit);
+    if(immediate)commitSheetAngle();else rotateCommit=setTimeout(commitSheetAngle,400);
+  }
+  // Obrót działa też przy zwiniętej wstążce: [ / ] co 5°, Shift co 15°.
   window.addEventListener("keydown",ev=>{
-    if(ev.target instanceof HTMLInputElement||ev.target instanceof HTMLTextAreaElement)return;
-    if(ev.key!=="["&&ev.key!=="]")return;
+    if(!sheetInteractionAllowed()||ev.ctrlKey||ev.metaKey||ev.altKey||
+       /INPUT|TEXTAREA|SELECT/.test(ev.target?.tagName||"")||ev.target?.isContentEditable)return;
+    if(ev.key==="Escape"&&(sheetRotate||sheetAngleDraft)){
+      ev.preventDefault();ev.stopImmediatePropagation();cancelSheetTransforms();requestDraw();return;
+    }
+    const left=ev.key==="["||ev.code==="BracketLeft";
+    const right=ev.key==="]"||ev.code==="BracketRight";
+    if(!left&&!right)return;
     const item=sheetItems().find(i=>i.id===selectedSheet);
     if(!item||!rotatableSigns.has(item.kind))return;
     ev.preventDefault();
     const step=ev.shiftKey?15:5;
-    const delta=ev.key==="]"?step:-step;
-    item.angle=(((Number(item.angle||0)+delta)+180)%360+360)%360-180;
-    $("sheet-rotate").value=String(Math.round(item.angle));
-    $("sheet-rotate-value").value=Math.round(item.angle)+"°";
-    requestDraw();
-    clearTimeout(rotateCommit);
-    rotateCommit=setTimeout(()=>{
-      const current=sheetItems().find(i=>i.id===selectedSheet);
-      if(current)saveSheet(sheetItems().map(i=>i.id===current.id?current:i));
-    },400);
+    setSheetAngle(Number(item.angle||0)+(right?step:-step));
+  },true);
+  $("sheet-rotate").addEventListener("input",e=>setSheetAngle(Number(e.target.value)));
+  $("sheet-rotate").addEventListener("change",commitSheetAngle);
+  $("sheet-angle").addEventListener("change",e=>{
+    const angle=e.target.valueAsNumber;
+    if(Number.isFinite(angle)){
+      e.target.value=String(GeoStudioSheet.normalAngle(angle));setSheetAngle(angle,true);
+    }
+    else e.target.value=String(sheetItems().find(i=>i.id===selectedSheet)?.angle||0);
   });
-  let rotateCommit=null;
-  $("sheet-rotate").addEventListener("input",e=>{
-    const item=sheetItems().find(i=>i.id===selectedSheet);
-    if(!item||!rotatableSigns.has(item.kind))return;
-    item.angle=Number(e.target.value);
-    $("sheet-rotate-value").value=Math.round(item.angle)+"°";
-    requestDraw();
-    clearTimeout(rotateCommit);
-    rotateCommit=setTimeout(()=>{
-      const current=sheetItems().find(i=>i.id===selectedSheet);
-      if(current)saveSheet(sheetItems().map(i=>i.id===current.id?current:i));
-    },400);
-  });
+  $("sheet-rotate-reset").addEventListener("click",()=>setSheetAngle(0,true));
   let fontDraft=null;
   const sheetLines=$("sheet-lines");
   function fontRuns(){
@@ -7335,9 +7519,9 @@ inform("Klikaj mapę, aby wstawiać kolejne oznaczenia. Naciśnij Esc lub wybier
     fontDraft=null;
   });
   canvas.addEventListener("dblclick",ev=>{
-    if(!(insertMode()||state.tool==="select")||!state.meta)return;
-    const p=eventCoords(ev),w=screenToWorld(p.x,p.y),items=sheetItems();
-    const item=items.slice().reverse().find(i=>{const a=worldToScreen(i.x,i.y);return p.x>=a.x&&p.y>=a.y&&p.x<=a.x+i.w*state.scale&&p.y<=a.y+i.h*state.scale;});
+    if(!sheetInteractionAllowed()||sheetSaving||state.editBusy)return;
+    const p=eventCoords(ev),items=sheetItems();
+    const item=items.slice().reverse().find(i=>GeoStudioSheet.hit(i,p,worldToScreen,state.scale));
     if(!item)return;
     ev.preventDefault();ev.stopImmediatePropagation();selectedSheet=item.id;pendingSheet=null;
     if(item.kind==="compartment"){
@@ -7347,9 +7531,10 @@ inform("Klikaj mapę, aby wstawiać kolejne oznaczenia. Naciśnij Esc lub wybier
     requestDraw();
   },true);
   document.addEventListener("keydown",ev=>{
+    if(drawingAttributesOpen())return;
     if(ev.key==="Escape"&&pendingSheet){pendingSheet=null;sheetCursor=null;inform("Wstawianie zakończone.");requestDraw();return;}
-    if((ev.key==="Delete"||ev.key==="Backspace")&&(insertMode()||state.tool==="select")&&selectedSheet&&!/INPUT|TEXTAREA|SELECT/.test(document.activeElement?.tagName||"")){
-      ev.preventDefault();saveSheet(sheetItems().filter(i=>i.id!==selectedSheet));selectedSheet=null;requestDraw();
+    if((ev.key==="Delete"||ev.key==="Backspace")&&sheetInteractionAllowed()&&selectedSheet&&!/INPUT|TEXTAREA|SELECT/.test(document.activeElement?.tagName||"")){
+      ev.preventDefault();cancelSheetAngle();saveSheet(sheetItems().filter(i=>i.id!==selectedSheet));selectedSheet=null;requestDraw();
     }
   },true);
   canvas.addEventListener("pointerdown", ev=>{
@@ -7622,6 +7807,20 @@ inform("Klikaj mapę, aby wstawiać kolejne oznaczenia. Naciśnij Esc lub wybier
   });
 
   document.addEventListener("keydown",ev=>{
+    const attributeDialog=drawingAttributesOpen();
+    if(attributeDialog){
+      if(document.querySelector("dialog[open]:not(.drawing-attributes-dialog):not(.raster-visual-dialog)"))return;
+      if(ev.key==="Escape"&&!ev.isComposing){
+        ev.preventDefault();closeDrawingAttributes();
+      }else if(ev.key==="Enter"&&!ev.isComposing&&!ev.repeat&&!ev.ctrlKey&&!ev.metaKey&&!ev.altKey&&
+               !attributeDialog.contains(ev.target)&&
+               !ev.target.matches("input,textarea,select,button,[contenteditable]")){
+        ev.preventDefault();attributeDialog.querySelector("form").requestSubmit();
+      }
+      // Native input editing and form submission remain available; global
+      // shortcuts must not change the pending sketch while entering A1.
+      return;
+    }
     if(activeTrace && !document.querySelector("dialog[open]")){
       if(ev.key==="Escape"){ev.preventDefault();activeTrace.close();}
       else if(ev.key==="Enter"&&!ev.isComposing&&!ev.repeat&&
@@ -7877,8 +8076,8 @@ inform("Klikaj mapę, aby wstawiać kolejne oznaczenia. Naciśnij Esc lub wybier
   }catch(_){/* brak zapisu */}
   applyPanelState();
   $("inspector-line-style").addEventListener("change",setInspectorLineStyle);
-  link("line-close",()=>$("line-dialog").close());
-  link("line-back",()=>$("line-dialog").close());
+  link("line-close",()=>closeDrawingAttributes("line"));
+  link("line-back",()=>closeDrawingAttributes("line"));
   link("line-preview",()=>previewGeometryForm("line"));
   $("line-form").addEventListener("submit",ev=>applyOrPreviewGeometry("line",ev));
   for(const key of ["line-code","line-a1","line-a2"])
@@ -7891,8 +8090,8 @@ inform("Klikaj mapę, aby wstawiać kolejne oznaczenia. Naciśnij Esc lub wybier
   link("tool-copy",quickDuplicate);
   link("tool-delete-objects",deleteObjects);
   link("copy-close",()=>$("copy-dialog").close());
-  link("create-close",()=>$("create-dialog").close());
-  link("create-back",()=>$("create-dialog").close());
+  link("create-close",()=>closeDrawingAttributes("create"));
+  link("create-back",()=>closeDrawingAttributes("create"));
   link("copy-preview",()=>previewObject("copy"));
   link("create-preview",()=>previewObject("create"));
   $("copy-form").addEventListener("submit",ev=>applyObject("copy",ev));
@@ -8015,6 +8214,7 @@ inform("Klikaj mapę, aby wstawiać kolejne oznaczenia. Naciśnij Esc lub wybier
   setupVisualCalibration();
   installExportAreaCapture();
   // Visual calibration installs its own GCP capture handlers.
+  setupFloatingWindows();
   $("raster-opacity").addEventListener("input",ev=>{
     raster.opacity=Number(ev.target.value)/100;
     $("raster-opacity-value").textContent=ev.target.value+"%";
@@ -8343,8 +8543,6 @@ inform("Klikaj mapę, aby wstawiać kolejne oznaczenia. Naciśnij Esc lub wybier
     }
   });
   new ResizeObserver(()=>{if(resizeCanvas()&&state.meta)scheduleViewport();}).observe(shell);
-  new ResizeObserver(()=>{if(gcpView.open)drawGcpCanvas();})
-    .observe($("raster-gcp-canvas"));
   restoreAppearance();
   resizeCanvas();renderRasterLayers();
   api("/api/map").then(meta=>{

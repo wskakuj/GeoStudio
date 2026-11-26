@@ -35,6 +35,30 @@
       }
       return {id,ambiguous,anchor:[x,y]};
     }
+    function directedOwner(p,direction){
+      const located=owner(p);
+      if(located&&!located.ambiguous)return located;
+      if(!point(p)||!point(direction))return located;
+      const length=Math.hypot(...direction);
+      if(length<.85||length>1.15)return located;
+      const [x,y]=scaled(p),xx=Math.floor(x),yy=Math.floor(y);
+      // Zero is an occupied/excluded pixel, not an invitation to find the
+      // nearest free polygon. Only a real terminal stroke supplies direction.
+      if(xx<0||yy<0||xx>=width||yy>=height||!trace.labels[yy*width+xx])return located;
+      const matches=[];
+      for(let distance=1;distance<=6;distance++){
+        const probe=[p[0]+direction[0]*distance,p[1]+direction[1]*distance];
+        const [px,py]=scaled(probe),ix=Math.floor(px),iy=Math.floor(py);
+        if(ix<0||iy<0||ix>=width||iy>=height||!trace.labels[iy*width+ix])return located;
+        const candidate=owner(probe);
+        if(candidate&&!candidate.ambiguous)matches.push(candidate);
+      }
+      // A tip just on a thick boundary may point unambiguously into a field.
+      // Crossing two fields, staying on the boundary or one isolated sample
+      // cannot settle ownership; no circle-centre/nearest-field fallback.
+      const ids=new Set(matches.map(item=>item.id));
+      return matches.length>=2&&ids.size===1?{...matches[0],inferredDirection:true}:located;
+    }
     const score=value=>Number.isFinite(Number(value))?Math.max(0,Math.min(1,Number(value))):0;
     function alternatives(items){
       const values=new Map();
@@ -61,7 +85,7 @@
     }
     for(const annotation of result.annotations.slice(0,20000)){
       if(!annotation||typeof annotation!=="object")continue;
-      const text=String(annotation.text||"").trim();
+      let text=String(annotation.text||"").trim();
       if(text&&!/^\d{1,8}$/.test(text))continue;
       let status=annotation.status==="ok"&&text?"ok":annotation.status==="conflict"?"conflict":"uncertain";
       const textStatus=annotation.textStatus==="ok"||(!annotation.textStatus&&status==="ok")?"ok":"uncertain";
@@ -75,9 +99,22 @@
       // A connected map-line network is not a usable callout. This also
       // protects clients receiving an older OCR result with hundreds of tips.
       if(ends.length>4||annotation.reason==="leader_network")continue;
-      const endOwners=annotation.hasLeader?ends.map(owner).filter(Boolean):[];
+      const directions=Array.isArray(annotation.leaderDirections)?annotation.leaderDirections:[];
+      const endOwners=annotation.hasLeader?ends.map((end,index)=>
+        ends.length===1?directedOwner(end,directions[index]):owner(end)).filter(Boolean):[];
       const ids=new Set(endOwners.map(p=>p.id));
-      const located=owner(annotation.anchor);
+      let located=owner(annotation.anchor);
+      if(annotation.hasLeader&&ends.length===1&&point(annotation.anchor)&&
+        Math.hypot(annotation.anchor[0]-ends[0][0],annotation.anchor[1]-ends[0][1])<1e-4){
+        located=endOwners[0]||located;
+      }
+      const oneFieldFork=annotation.hasLeader&&ends.length>1&&endOwners.length===ends.length&&
+        ids.size===1&&endOwners.every(end=>!end.ambiguous)&&
+        (!located||ids.has(located.id))&&annotation.reason==="branched_leader";
+      if(oneFieldFork){
+        located=endOwners[0];assignmentStatus="ok";status=textStatus;
+        reason=textStatus==="ok"?"ready":"weak_text";
+      }
       // Never substitute a callout centre for a missing/branched leader tip.
       if(annotation.hasLeader&&(!located||!endOwners.length||ids.size>1||ids.size===1&&!ids.has(located.id))){
         for(const end of endOwners)add(end.id,{text,status:"uncertain",textStatus,
@@ -89,7 +126,14 @@
       if(located.ambiguous||endOwners.some(p=>p.ambiguous)){
         assignmentStatus="uncertain";reason="boundary_anchor";
       }
-      if(annotation.hasLeader&&ends.length!==1){assignmentStatus="uncertain";reason="branched_leader";}
+      if(located.inferredDirection||endOwners.some(p=>p.inferredDirection)){
+        // The measured terminal points into this field, but no ink exists
+        // beyond its tip. Offer the number for review; never preselect this
+        // inference as a confirmed field during whole-map tracing.
+        status="uncertain";reason="boundary_direction";
+        if(annotation.possibleTruncation){text="";reason="partial_text";}
+      }
+      if(annotation.hasLeader&&ends.length!==1&&!oneFieldFork){assignmentStatus="uncertain";reason="branched_leader";}
       if(assignmentStatus!=="ok")status="uncertain";
       const box=Array.isArray(annotation.box)&&annotation.box.length===4&&annotation.box.every(Number.isFinite)
         ?[annotation.box[0]*sx,annotation.box[1]*sy,annotation.box[2]*sx,annotation.box[3]*sy]:null;

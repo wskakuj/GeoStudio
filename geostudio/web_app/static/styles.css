@@ -417,6 +417,8 @@ button:disabled { opacity:.38; cursor:not-allowed; filter:none !important; }
 @media(max-width:500px){.layout-dialog .select-grid,.layout-options{grid-template-columns:1fr}}
 
 /* Stage 14B: simple GeoMap-style region selection and export sheet controls. */
+#sheet-rotate-wrap:not([hidden]){display:flex;align-items:center;gap:.45rem;flex-wrap:wrap}
+#sheet-angle{width:5rem}
 .layout-rectangle-tools{
   display:flex;align-items:center;flex-wrap:wrap;gap:11px;
   padding:10px 0;font-size:12px;color:#a5c2d4;
@@ -572,20 +574,40 @@ button:disabled { opacity:.38; cursor:not-allowed; filter:none !important; }
 /* GCP picker is intentionally MODELESS: the user clicks the real map
    while the image picker remains open, exactly as in classic GeoStudio. */
 .raster-visual-dialog{position:fixed;top:110px;right:24px;left:auto;bottom:auto;margin:0;
-  width:min(500px,calc(100vw - 32px));max-height:calc(100vh - 145px);overflow:auto;
+  width:min(580px,calc(100vw - 32px));height:min(820px,calc(100vh - 130px));
+  min-width:min(350px,calc(100vw - 16px));min-height:min(420px,calc(100vh - 16px));
+  max-width:calc(100vw - 16px);max-height:calc(100vh - 16px);overflow:auto;resize:both;
   z-index:15;padding:0;color:#d9edf2;background:#13283b;border:1px solid #3e6f7b;
   box-shadow:0 18px 45px #001c2ccc;border-radius:12px;}
-.visual-calibration-body{display:grid;gap:10px;padding:14px 17px 18px;}
-#raster-gcp-canvas{width:100%;height:290px;display:block;background:#092237;
+.raster-visual-dialog[open]{display:flex;flex-direction:column;}
+.raster-visual-dialog>.select-head{flex:none;padding:14px 17px 12px;}
+.visual-calibration-body{display:flex;flex:1;min-height:0;flex-direction:column;gap:10px;padding:12px 17px 18px;overflow:auto;}
+.visual-calibration-body>*{flex-shrink:0;}
+#raster-gcp-canvas{width:100%;height:290px;flex:1 0 180px;min-height:180px;display:block;background:#092237;
   border:1px solid #376878;border-radius:9px;cursor:crosshair;touch-action:none;}
 .visual-calibration-actions{display:flex;gap:8px;flex-wrap:wrap;}
 .visual-calibration-actions button{flex:1 1 150px;font-size:11px;padding:8px;}
+.visual-calibration-zoom{display:flex;align-items:center;gap:6px;flex-wrap:wrap;}
+.visual-calibration-zoom .button{min-height:32px;padding:6px 10px;font-size:11px;}
+.visual-calibration-zoom output{min-width:44px;text-align:center;font-size:12px;font-variant-numeric:tabular-nums;}
+.floating-dialog-handle{flex:1;min-width:0;cursor:move;touch-action:none;user-select:none;}
+.floating-dialog-handle:focus-visible{outline:2px solid #37bdae;outline-offset:5px;border-radius:4px;}
+.floating-dialog-moving,.floating-dialog-moving *{cursor:grabbing!important;}
+.drawing-attributes-dialog{left:auto;right:24px;top:120px;bottom:auto;margin:0;
+  width:min(460px,calc(100vw - 16px));max-width:calc(100vw - 16px);
+  max-height:calc(100vh - 16px);z-index:16;box-shadow:0 10px 36px #0006;resize:both;
+  min-width:min(320px,calc(100vw - 16px));}
+.drawing-attributes-dialog .select-head{padding:14px 17px 12px;}
+.drawing-attributes-dialog .select-content{padding:12px 17px;gap:9px;}
+.drawing-attributes-dialog .select-actions{padding:12px 17px;flex-wrap:wrap;}
+.drawing-attributes-dialog .select-head h2{font-size:17px;}
+.drawing-attributes-dialog .select-explain{font-size:11px;}
+.drawing-attributes-dialog::backdrop{background:transparent;backdrop-filter:none;}
 .visual-gcp-pairs{display:flex;flex-wrap:wrap;gap:5px;max-height:100px;overflow-y:auto;}
 .gcp-pair-tag{padding:5px 8px;border-radius:7px;background:#1c4552;border:1px solid #396b74;
   color:#c4eeed;font-size:10px;white-space:nowrap;}
 @media(max-width:760px){
-  .raster-visual-dialog{right:8px;top:92px;max-height:calc(100vh - 120px);}
-  #raster-gcp-canvas{height:220px;}
+  .raster-visual-dialog{right:8px;top:92px;height:calc(100vh - 110px);}
 }
 
 /* Stage 13: read-only cartography catalog and editable calibration handles. */
@@ -2052,6 +2074,9 @@ body[data-theme] .floating {flex-shrink:0;}
 .trace-batch-row.rejected { border-left-color:#ee4052; }
 .trace-batch-row.focused { outline:2px solid #db4a9a; outline-offset:-2px; }
 .trace-batch-row small { grid-column:2 / -1; color:var(--ui-muted); line-height:1.35; }
+.trace-a1-alternatives,.trace-batch-alternatives { display:flex; flex-wrap:wrap; align-items:center; gap:4px; }
+.trace-a1-alternatives small,.trace-batch-alternatives small { flex-basis:100%; color:var(--ui-muted); line-height:1.35; }
+.trace-batch-alternatives { grid-column:2 / -1; }
 .trace-batch-actions { position:sticky; bottom:-9px; z-index:1; background:var(--ui-panel);
   border-top:1px solid var(--ui-edge); padding:8px 0 4px; }
 .trace-batch-a1 { min-width:0; width:100%; box-sizing:border-box; color:var(--ui-ink); background:var(--ui-input);

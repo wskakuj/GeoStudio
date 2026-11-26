@@ -490,6 +490,37 @@ const cases = {
     ui.api.close();
   },
 
+  async explicit_a1_variant_fills_missing_number_and_survives_refit() {
+    const ui=createUI([Promise.resolve([])]);await tick();
+    const trace=sampleTrace();trace.a1Suggestions=new Map([[1,{text:'178',status:'uncertain',
+      assignmentStatus:'uncertain',alternatives:[{text:'178'},{text:'175'}]}]]);
+    ui.workers[0].result(trace);
+    ui.canvas().onpointerdown(pointer(50,50));ui.canvas().onpointerup(pointer(50,50));await tick();
+    assert.equal(ui.controls.get('.trace-a1').value,'','Unknown leader ownership never auto-fills a guess');
+    const box=ui.controls.get('.trace-a1-alternatives');
+    assert.equal(box.hidden,false);
+    assert.deepEqual(box.children.slice(1).map(child=>child.textContent),['178','175']);
+    box.children[2].onclick();
+    assert.equal(ui.controls.get('.trace-a1').value,'175');
+    assert.equal(box.hidden,true,'An explicit choice is treated as the user\'s own A1');
+    ui.controls.get('.trace-parcel-distance').value='5';ui.controls.get('.trace-parcel-distance').onchange();await tick();
+    assert.equal(ui.controls.get('.trace-a1').value,'175');
+    await ui.api.submit();assert.equal(ui.addCalls[0].a1,'175');ui.api.close();
+  },
+
+  async stale_a1_variant_cannot_change_a_new_selection_or_closed_tool() {
+    const ui=createUI([Promise.resolve([])]);await tick();
+    const trace=adjacentTrace();trace.a1Suggestions=new Map([[1,{text:'178',status:'conflict',
+      assignmentStatus:'ok',alternatives:[{text:'175'}]}],[2,{text:'18',status:'ok',assignmentStatus:'ok'}]]);
+    ui.workers[0].result(trace);
+    ui.canvas().onpointerdown(pointer(40,50));ui.canvas().onpointerup(pointer(40,50));await tick();
+    const stale=ui.controls.get('.trace-a1-alternatives').children[1];
+    assert.equal(ui.controls.get('.trace-a1').value,'');
+    for(const x of [40,80]){ui.canvas().onpointerdown(pointer(x,50));ui.canvas().onpointerup(pointer(x,50));await tick();}
+    stale.onclick();assert.equal(ui.controls.get('.trace-a1').value,'18');
+    ui.api.close();stale.onclick();assert.equal(ui.controls.get('.trace-a1').value,'18');
+  },
+
   async stroke_width_sets_initial_range_once_and_respects_manual_override() {
     const ui=createUI([Promise.resolve([]),Promise.resolve([])]);await tick();
     const trace=sampleTrace();trace.strokeMetrics={radiusPixels:8.2,samples:20,edges:4};ui.workers[0].result(trace);

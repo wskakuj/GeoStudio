@@ -142,13 +142,14 @@ def _selftest(workspace) -> int:
             return 1
         # Worker-only imports are not listed in index.html. Verify that a
         # packaged installer carries the stroke analyser and A1 assignment
-        # helper as well as the window and primary tracing script.
+        # helper as well as the floating windows and primary tracing script.
         assets = {
             "/": b"<!DOCTYPE html>",
             "/raster_trace.js": b"function traceLandUses",
             "/raster_parcel_snap.js": b"GeoStudioRasterParcelSnap",
             "/raster_trace_metrics.js": b"GeoStudioRasterTraceMetrics",
             "/raster_a1.js": b"GeoStudioRasterA1",
+            "/floating_dialog.js": b"GeoStudioFloatingDialog",
         }
         for path, marker in assets.items():
             with urllib.request.urlopen(

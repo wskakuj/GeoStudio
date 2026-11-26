@@ -95,6 +95,48 @@ test('occupied, outside and ambiguous boundary anchors cannot acquire a guessed 
   assert.equal(assign({width:w,height:h,annotations:[ann('17',[40,50])]},
     {labels:occupied,shapes},w,h).size,0,'An occupied pixel is not moved to its nearest free neighbour');
 });
+test('a measured leader direction resolves a tip on thick ink into one field',()=>{
+  const source=ann('178',[59.5,50],{source:'callout',hasLeader:true,
+    leaderEndpoints:[[59.5,50]],leaderDirections:[[1,0]]});
+  const result=run([source]);
+  assert.equal(result.size,1);assert.equal(result.get(2).text,'178');
+  assert.equal(result.get(2).assignmentStatus,'ok');
+  assert.equal(result.get(2).status,'uncertain');
+  assert.equal(result.get(2).reason,'boundary_direction');
+  assert.ok(result.get(2).anchor[0]>60);
+  const parallel=run([{...source,leaderDirections:[[0,1]]}]);
+  assert.equal(parallel.get(1).assignmentStatus,'uncertain');
+  const invalid=run([{...source,leaderDirections:[[30,0]]}]);
+  assert.equal(invalid.get(1).assignmentStatus,'uncertain');
+  const partial=run([{...source,text:'33',status:'uncertain',textStatus:'uncertain',
+    possibleTruncation:true,alternatives:[{text:'173',confidence:.45}]}]).get(2);
+  assert.equal(partial.text,'');assert.equal(partial.reason,'partial_text');
+  assert.ok(partial.alternatives.some(item=>item.text==='173'));
+});
+test('directional resolution keeps source-pixel scale and never crosses an occupied pixel',()=>{
+  const source=ann('178',[119,100],{source:'callout',hasLeader:true,
+    leaderEndpoints:[[119,100]],leaderDirections:[[1,0]]});
+  const result=assign({width:320,height:240,annotations:[source]},trace,w,h);
+  assert.equal(result.get(2).assignmentStatus,'ok');
+  assert.equal(result.get(2).status,'uncertain');
+  const occupied=new Int32Array(labels);occupied[50*w+61]=0;
+  const blocked=assign({width:320,height:240,annotations:[source]},
+    {labels:occupied,shapes},w,h);
+  assert.equal(blocked.get(1).assignmentStatus,'uncertain');
+  occupied[50*w+59]=0;
+  assert.equal(assign({width:320,height:240,annotations:[source]},
+    {labels:occupied,shapes},w,h).size,0);
+});
+test('two leader terminals wholly inside one field settle ownership without a centre fallback',()=>{
+  const result=run([ann('178',null,{status:'uncertain',textStatus:'ok',source:'callout',
+    hasLeader:true,associationStatus:'uncertain',reason:'branched_leader',
+    leaderEndpoints:[[75,45],[85,55]]})]);
+  assert.equal(result.size,1);assert.equal(result.get(2).text,'178');
+  assert.equal(result.get(2).assignmentStatus,'ok');assert.equal(result.get(2).status,'ok');
+  const missing=run([ann('178',null,{status:'uncertain',textStatus:'ok',source:'callout',
+    hasLeader:true,reason:'branched_leader',leaderEndpoints:[[75,45],[10,10]]})]);
+  assert.equal(missing.get(2).assignmentStatus,'uncertain');
+});
 test('invalid OCR data and stale region IDs are ignored',()=>{
   assert.equal(run([ann('1x7',[40,50]),ann('17',[NaN,20]),null]).size,0);
   assert.equal(assign({width:w,height:h,annotations:[ann('17',[40,50])]},

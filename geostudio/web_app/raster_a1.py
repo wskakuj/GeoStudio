@@ -255,6 +255,7 @@ def _leader_data(small, circles, scale, occluder=None):
                    np.eye(7, dtype=np.uint8), np.fliplr(np.eye(7, dtype=np.uint8))):
         joined |= cv2.morphologyEx(small, cv2.MORPH_CLOSE, kernel) & allowed
     skeleton = _thin(joined)
+    _, connected_before_cut = cv2.connectedComponents(skeleton, 8)
     blocked = np.zeros_like(skeleton)
     for c in circles:
         cx, cy, rx, ry, angle = c[:5]
@@ -273,6 +274,25 @@ def _leader_data(small, circles, scale, occluder=None):
             continue
         terminals.setdefault(ident, []).append((x, y))
     result = []
+
+    def tip_direction(ident, point, steps):
+        """Direction of a terminal stroke, stopping before a real junction."""
+        origin = np.asarray(point, dtype=float)
+        current = tuple(point)
+        visited = {current}
+        for _ in range(steps):
+            xx, yy = current
+            neighbours = [(xx + dx, yy + dy) for dy in (-1, 0, 1) for dx in (-1, 0, 1)
+                if (dx or dy) and 0 <= yy + dy < labels.shape[0] and 0 <= xx + dx < labels.shape[1]
+                and labels[yy + dy, xx + dx] == ident and (xx + dx, yy + dy) not in visited]
+            if len(neighbours) != 1:
+                break
+            current = neighbours[0]
+            visited.add(current)
+        vector = origin - np.asarray(current, dtype=float)
+        length = float(np.linalg.norm(vector))
+        return vector / length if length >= 2 else None
+
     for c in circles:
         cx, cy, rx, ry, angle = c[:5]
         extent = max(rx, ry) * 1.5
@@ -281,15 +301,23 @@ def _leader_data(small, circles, scale, occluder=None):
         y, x = np.mgrid[t:b, l:r]
         radius = _radius(c, np.stack([x, y], axis=-1))
         ids = np.unique(labels[t:b, l:r][(radius > 1.04) & (radius < 1.9)])
-        endpoints, has_leader = [], False
+        endpoints, directions, has_leader = [], [], False
+        network_component = False
+        components = []
         for ident in ids:
             if not ident or stats[ident, cv2.CC_STAT_AREA] < max(3, min(rx, ry) * .18):
                 continue
             st = stats[ident]
-            corners = [(st[0], st[1]), (st[0] + st[2], st[1] + st[3])]
-            if max(float(_radius(c, p)) for p in corners) < 1.65:
+            if st[cv2.CC_STAT_AREA] > 4096:
+                network_component = True
+                has_leader = True
                 continue
-            has_leader = True
+            cyy, cxx = np.where(labels[st[1]:st[1] + st[3], st[0]:st[0] + st[2]] == ident)
+            pixels = np.column_stack((cxx + st[0], cyy + st[1]))
+            radii = _radius(c, pixels)
+            maximum = float(np.max(radii))
+            if maximum < 1.65:
+                continue
             tips = terminals.get(int(ident), [])
             if len(tips) == 2 and len(all_terminals.get(int(ident), [])) == 2:
                 # A scan gap just outside the ring leaves a simple line with
@@ -302,24 +330,73 @@ def _leader_data(small, circles, scale, occluder=None):
                 alignment = float(np.dot(u, v) / max(1e-9, np.linalg.norm(u) * np.linalg.norm(v)))
                 if 1.15 < near_radius < 2.25 and far_radius > 2.4 and alignment > .8:
                     tips = [far]
-            endpoints.extend(tips)
+            tip_vectors = [tip_direction(ident, p, max(4, min(12, round(min(rx, ry) * .5)))) for p in tips]
+            # Preserve every terminal of a genuinely forked component. Even
+            # a short branch turning back toward the ring can mark a second
+            # field; radial direction alone must never erase that evidence.
+            retained = list(zip(tips, tip_vectors))
+            if len(all_terminals.get(int(ident), [])) == 1 and len(retained) == 1 and maximum >= 3.5:
+                tip, vector = retained[0]
+                radial = np.asarray(tip, dtype=float) - [cx, cy]
+                outward = float(np.dot(vector, radial) / max(1e-9, np.linalg.norm(radial))) if vector is not None else 0.
+                if float(_radius(c, tip)) < 2.25 and outward < -.3:
+                    # The only terminal is the start at the ring, while the
+                    # far stroke enters a loop/network. Its target is missing;
+                    # a separate short ring fragment cannot replace that tip.
+                    retained = []
+            # Bounding-box corners exaggerate a short circular arc's reach.
+            # Measure the actual pixels and their angular/radial movement.
+            angles = np.unwrap(np.arctan2(pixels[:, 1] - cy, pixels[:, 0] - cx))
+            angles = np.sort(np.mod(angles, 2 * pi))
+            angular_span = 2 * pi - float(np.max(np.diff(np.r_[angles, angles[0] + 2 * pi])))
+            radial_span = maximum ** .5 - float(np.min(radii)) ** .5
+            ring_fragment = maximum < 3.5 and radial_span < .75 and angular_span > .25
+            tiny_fragment = maximum < 2.5 and len(pixels) < max(6., min(rx, ry) * .5)
+            original_component = int(connected_before_cut[pixels[0, 1], pixels[0, 0]])
+            components.append((maximum, ring_fragment or tiny_fragment, retained, original_component))
+        outgoing_components = {original_component for maximum, fragment, retained, original_component in components
+                               if not fragment and maximum >= 3.5 and retained}
+        unresolved_outgoing = any(maximum >= 3.5 and not retained
+                                 for maximum, fragment, retained, _ in components if not fragment)
+        for maximum, fragment, retained, original_component in components:
+            # Cutting out the ring can separate two genuine arms. Their
+            # shared component before that cut is positive connection
+            # evidence and must survive any short-fragment heuristic.
+            if fragment and outgoing_components and original_component not in outgoing_components:
+                continue
+            has_leader = True
+            for tip, vector in retained:
+                endpoints.append(tip)
+                directions.append(vector)
         clusters = []
-        for point in endpoints:
+        cluster_directions = []
+        for point, direction in zip(endpoints, directions):
             if float(_radius(c, point)) < 1.35:
                 continue
             cluster = next((group for group in clusters if np.linalg.norm(np.mean(group, axis=0) - point) <= 7), None)
             if cluster is None:
                 clusters.append([point])
+                cluster_directions.append([] if direction is None else [direction])
             else:
                 cluster.append(point)
+                if direction is not None:
+                    cluster_directions[clusters.index(cluster)].append(direction)
         ends = [[round(float(v) / scale, 3) for v in np.mean(group, axis=0)] for group in clusters]
-        network = len(ends) > 4
-        result.append({"hasLeader": has_leader, "leaderEndpoints": [] if network else ends,
+        end_directions = []
+        for vectors in cluster_directions:
+            vector = np.mean(vectors, axis=0) if vectors else np.zeros(2)
+            length = float(np.linalg.norm(vector))
+            end_directions.append([round(float(v) / length, 5) for v in vector] if length >= .85 else None)
+        network = len(ends) > 4 or network_component
+        result.append({"hasLeader": has_leader, "leaderEndpoints": [] if network or unresolved_outgoing else ends,
+                       "leaderDirections": [] if network or unresolved_outgoing else end_directions,
                        "leaderEndpointCount": len(ends),
                        "reason": "leader_network" if network else
+                       "missing_leader" if unresolved_outgoing else
                        "branched_leader" if len(ends) > 1 else
                        "missing_leader" if has_leader and not ends else "ready",
-                       "anchor": ends[0] if len(ends) == 1 else (None if has_leader else [cx / scale, cy / scale])})
+                       "anchor": None if network or unresolved_outgoing else ends[0] if len(ends) == 1 else
+                       (None if has_leader else [cx / scale, cy / scale])})
     return result
 
 
@@ -356,6 +433,75 @@ def _consensus(readings, *, prefer_complete=True):
             "alternatives": [{"text": value, "confidence": round(max(evidence), 5),
                               "votes": sum(v >= .82 for v in evidence)}
                              for value, evidence in ranked[:4]]}
+
+
+def _recover_circle_text(engine, ink, radius, occluder, suggestion):
+    """Recover a complete review number without promoting rotated guesses.
+
+    Printed black strokes can cut a blue digit into several pieces. Only
+    short gaps covered by actual printed ink are repaired. Rotation/cropping
+    agreement is useful for a *longer* number, but not grounds to replace a
+    confident number or choose between same-length alternatives automatically.
+    """
+    import cv2
+    import numpy as np
+
+    if suggestion["status"] == "ok":
+        return suggestion
+    original = ink.astype(np.uint8)
+    seen, groups = set(), {}
+
+    def inspect(part):
+        signature = part.tobytes()
+        if signature in seen:
+            return
+        seen.add(signature)
+        reading = _read_line(engine, part)
+        if reading and len(reading[0]) >= 2 and reading[1] >= .40:
+            groups.setdefault(reading[0], []).append(reading[1])
+
+    if occluder is not None and np.any(occluder):
+        allowed = cv2.dilate(occluder.astype(np.uint8), np.ones((3, 3), np.uint8))
+        for size in (3, 5, 7):
+            repaired = original.copy()
+            for kernel in (np.ones((size, 1), np.uint8), np.ones((1, size), np.uint8),
+                           np.eye(size, dtype=np.uint8), np.fliplr(np.eye(size, dtype=np.uint8))):
+                repaired |= cv2.morphologyEx(original, cv2.MORPH_CLOSE, kernel) & allowed
+            if np.array_equal(repaired, original):
+                continue
+            for threshold in (.62, .80, .95):
+                inspect(repaired & (radius < threshold))
+    for threshold in (.70, .80, .90):
+        part = original & (radius < threshold)
+        for angle in (-10, 10, 20):
+            rotated = cv2.warpAffine(part, cv2.getRotationMatrix2D(
+                (part.shape[1] / 2, part.shape[0] / 2), angle, 1), part.shape[::-1],
+                flags=cv2.INTER_NEAREST)
+            inspect(rotated)
+    candidates = [{"text": text, "confidence": round(max(scores), 5),
+                   "votes": sum(score >= .55 for score in scores)} for text, scores in groups.items()]
+    supported = [item for item in candidates if item["votes"] >= 2 and item["confidence"] >= .75]
+    if not candidates:
+        return suggestion
+    choices = {item["text"]: dict(item) for item in suggestion["alternatives"]}
+    for item in candidates:
+        old = choices.get(item["text"])
+        if old:
+            item = {**item, "confidence": max(item["confidence"], old["confidence"]),
+                    "votes": max(item["votes"], old.get("votes", 0))}
+        choices[item["text"]] = item
+    alternatives = sorted(choices.values(), key=lambda item: -item["confidence"])[:8]
+    possible_truncation = any(len(item["text"]) > len(suggestion["text"]) and
+                              item["confidence"] >= .55 for item in candidates)
+    longer = [item for item in supported if len(item["text"]) > len(suggestion["text"])]
+    if not longer:
+        return {**suggestion, "alternatives": alternatives, "possibleTruncation": possible_truncation}
+    longest = max(len(item["text"]) for item in longer)
+    complete = [item for item in longer if len(item["text"]) == longest]
+    if len(complete) != 1:
+        return {**suggestion, "alternatives": alternatives, "possibleTruncation": possible_truncation}
+    return {**suggestion, **complete[0], "status": "uncertain", "reason": "recovered_text",
+            "alternatives": alternatives, "possibleTruncation": False}
 
 
 def _has_outgoing_ink(mask, box):
@@ -437,6 +583,9 @@ def _analyze_mask(engine, mask, color, occluder=None):
             if reading:
                 readings.append(reading)
         suggestion = _consensus(readings)
+        if color != "dark":
+            suggestion = _recover_circle_text(engine, mask[t:b, l:r], radius,
+                None if occluder is None else occluder[t:b, l:r], suggestion)
         if not suggestion["text"]:
             # A well supported coloured callout is still evidence that the
             # field has another label even when none of its digits is legible.
@@ -446,7 +595,7 @@ def _analyze_mask(engine, mask, color, occluder=None):
                     "status": "uncertain", "textStatus": "uncertain",
                     "associationStatus": "ok" if not leader["hasLeader"] or
                     len(leader["leaderEndpoints"]) == 1 else "uncertain",
-                    "reason": "unread_callout", "alternatives": [],
+                    "reason": "unread_callout", "alternatives": suggestion["alternatives"],
                     "circleConfidence": round(float(circle[5]), 5),
                     "source": "callout", "box": box, "ink": color})
             continue
