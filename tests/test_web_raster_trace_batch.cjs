@@ -131,13 +131,17 @@ const cases = {
       return {settings,trace};
     }
     const initial=await analyze();
-    assert.equal(initial.settings.threshold,5);
+    assert.equal(initial.settings.threshold,0);
     assert.equal(initial.settings.tolerance,2.5);
     assert.equal(rows(ui).length,2,
       'default whole-map tracing must ignore thin printed parcel lines and digits');
     assert.ok([...initial.trace.shapes.values()].every(shape=>
       shape.points.every(([x])=>x<=181)||shape.points.every(([x])=>x>=179)),
     'a real thin red boundary still separates the two forestry fields');
+    ui.controls.get('select').value='5';
+    const thick=await analyze();
+    assert.equal(thick.settings.threshold,5);
+    assert.equal(rows(ui).length,2,'explicit thick-contour mode must remain available');
     ui.controls.get('select').value='3';ui.controls.get('.trace-tolerance').value='4';
     const thin=await analyze();
     assert.equal(thin.settings.threshold,3);
@@ -148,6 +152,11 @@ const cases = {
     assert.equal(coarse.settings.threshold,7);
     assert.equal(coarse.settings.tolerance,1);
     assert.equal(rows(ui).length,2,'repeated whole-map analysis must retain both changed controls');
+    ui.controls.get('select').value='0';
+    const automatic=await analyze();
+    assert.equal(automatic.settings.threshold,0);
+    assert.equal(automatic.settings.tolerance,1);
+    assert.equal(rows(ui).length,2,'returning to automatic contours must not split a known field by thin print');
     ui.api.close();
   },
 

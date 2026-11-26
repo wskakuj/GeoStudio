@@ -290,15 +290,41 @@ function straightenRing(points,junction,tolerance){
   const cache=new Map(),prepared=tracePreparePerimeter(points,junction,tolerance,cache);
   return traceFinishPerimeters([prepared],cache)[0]||points;
 }
+function tracePaperTone(pixels,width,height){
+  // Use the dominant light paper colour near the sheet margin. Black scanner
+  // borders, ink and coloured legend swatches cannot define the white point.
+  const counts=new Uint32Array(4096),sums=new Float64Array(4096*3);
+  const band=Math.max(1,Math.ceil(Math.min(width,height)*.08));
+  let best=-1;
+  for(let y=0;y<height;y++)for(let x=0;x<width;x++){
+    if(x>=band&&x<width-band&&y>=band&&y<height-band)continue;
+    const i=4*(y*width+x),r=pixels[i],g=pixels[i+1],b=pixels[i+2];
+    if(Math.min(r,g,b)<160||Math.max(r,g,b)<200||Math.max(r,g,b)-Math.min(r,g,b)>40)continue;
+    const key=((r>>4)<<8)|((g>>4)<<4)|(b>>4);
+    const count=++counts[key];sums[key*3]+=r;sums[key*3+1]+=g;sums[key*3+2]+=b;
+    if(best<0||count>counts[best])best=key;
+  }
+  return best<0?[255,255,255]:[0,1,2].map(k=>sums[best*3+k]/counts[best]);
+}
 function traceLandUses(pixels, forest, width, height, blackWidth, tolerance=2.5) {
   const size = width * height;
+  const paper=tracePaperTone(pixels,width,height);
+  const paperLight=Math.max(...paper);
+  const automatic=Number(blackWidth)===0;
+  if(automatic)blackWidth=5;
   const dark = new Uint8Array(size), wall = new Uint8Array(size);
-  const colored = new Uint8Array(size), red = new Uint8Array(size), occupied = new Uint8Array(size);
+  const colored = new Uint8Array(size), faint = new Uint8Array(size), red = new Uint8Array(size), occupied = new Uint8Array(size);
+  let thinWall=null;
   for (let i = 0; i < size; i++) {
     const [r,g,b] = [pixels[4*i], pixels[4*i+1], pixels[4*i+2]];
     dark[i] = Math.max(r,g,b) < 155 && Math.max(r,g,b)-Math.min(r,g,b) < 48;
     red[i] = r-g > 22 && r-b > 18 && g-b < (r-g)*0.65;
     colored[i] = Math.max(r,g,b)-Math.min(r,g,b) > 17 && Math.min(r,g,b)>90;
+    // Weak tint is measured relative to paper, not absolute RGB saturation.
+    // Bits record pastel, neutral shading and (below) solid 3x3 shading.
+    const chroma=Math.max(r-paper[0],g-paper[1],b-paper[2])-Math.min(r-paper[0],g-paper[1],b-paper[2]);
+    faint[i]=chroma>7&&chroma<=30&&Math.min(r,g,b)>140&&Math.max(r,g,b)<246?1:0;
+    if(chroma<=18&&Math.min(r,g,b)>140&&Math.max(r,g,b)<paperLight-30)faint[i]|=2;
     // White interiors and black boundaries both belong to existing 5310.
     // Previously white mask pixels increased a region's "suggested" score,
     // which offered precisely the polygons that should have been excluded.
@@ -320,11 +346,17 @@ function traceLandUses(pixels, forest, width, height, blackWidth, tolerance=2.5)
       if(n>=0&&n<size&&!printed[n]&&bright(n)){printed[n]=1;work[end++]=n;}
     }
   }
+  // Printed-band discovery is finished; reuse its buffer for the fine walls.
+  if(automatic){thinWall=printed;thinWall.fill(0);}
   for (let y=1; y<height-1; y++) for(let x=1; x<width-1; x++) {
     const i=y*width+x;
-    let count=0;
-    for(let dy=-1;dy<=1;dy++) for(let dx=-1;dx<=1;dx++) count+=dark[i+dy*width+dx];
+    let count=0,solid=0;
+    for(let dy=-1;dy<=1;dy++) for(let dx=-1;dx<=1;dx++){
+      const n=i+dy*width+dx;count+=dark[n];solid+=(faint[n]&2)?1:0;
+    }
+    if(solid===9)faint[i]|=4;
     wall[i]=red[i] || (dark[i] && count>=blackWidth) || (forest[i*4+3] && forest[i*4]<64);
+    if(thinWall)thinWall[i]=wall[i] || (dark[i]&&count>=3);
   }
   // Heal one- or two-pixel breaks in a pen divider only when both ends
   // have an aligned run of original red ink. Added pixels never seed a join.
@@ -340,13 +372,14 @@ function traceLandUses(pixels, forest, width, height, blackWidth, tolerance=2.5)
       if(gap===2)wall[i+2*step]=1;
     }
   }
+  if(thinWall)for(let i=0;i<size;i++)thinWall[i] ||= wall[i];
   // Label enclosed regions; short annotations inside a region do not split it.
   const labels=new Int32Array(size), queue=new Int32Array(size);
   const regions=[null], stride=width+1;
   for(let start=0;start<size;start++){
     if(labels[start] || wall[start] || occupied[start])continue;
     const id=regions.length;
-    let tail=1,edge=false,tint=0,ink=0;
+    let tail=1,edge=false,tint=0,pastel=0,shade=0,solid=0,ink=0;
     let sumR=0,sumG=0,sumB=0,minX=width,minY=height,maxX=0,maxY=0;
     labels[start]=id;queue[0]=start;
     for(let head=0;head<tail;head++){
@@ -356,31 +389,92 @@ function traceLandUses(pixels, forest, width, height, blackWidth, tolerance=2.5)
       minY=Math.min(minY,y);maxY=Math.max(maxY,y);
       sumR+=pixels[4*i];sumG+=pixels[4*i+1];sumB+=pixels[4*i+2];
       tint+=colored[i];
+      pastel+=faint[i]&1;shade+=(faint[i]&2)?1:0;solid+=(faint[i]&4)?1:0;
       for(const n of [x?i-1:-1,x+1<width?i+1:-1,i-width,i+width]){
         if(n<0||n>=size)continue;
         ink+=red[n];
         if(!labels[n]&&!wall[n]&&!occupied[n]){labels[n]=id;queue[tail++]=n;}
       }
     }
-    regions.push({area:tail,ink,minX,minY,maxX,maxY,color:[sumR/tail,sumG/tail,sumB/tail],speck:!edge && tail<36, valid:!edge && tail>=36, suggested:tint>tail*.22||ink>=5});
+    regions.push({area:tail,ink,minX,minY,maxX,maxY,color:[sumR/tail,sumG/tail,sumB/tail],edge,speck:!edge && tail<36,
+      shaded:shade>tail*.65&&solid>=8,valid:!edge && tail>=36,suggested:tint>tail*.22||pastel>tail*.45||ink>=5});
+  }
+  function extendLabels(freezeCoarse=false){
+    let tail=0;
+    for(let i=width+1;i<size-width-1;i++)if(labels[i] &&
+      (!freezeCoarse||regions[labels[i]].edge||regions[labels[i]].recovered) &&
+      (!labels[i-1]||!labels[i+1]||!labels[i-width]||!labels[i+width]))queue[tail++]=i;
+    for(let head=0;head<tail;head++){
+      const i=queue[head];
+      for(const n of [i-1,i+1,i-width,i+width])
+        if(n>=0&&n<size&&!labels[n]&&!occupied[n]){labels[n]=labels[i];queue[tail++]=n;}
+    }
+  }
+  if(thinWall){
+    // Freeze the coarse ink-centre partition first. Finer enclosures can use
+    // only its background, never steal pixels from an already enclosed field.
+    for(let i=0;i<size;i++)if(labels[i]&&regions[labels[i]].speck)labels[i]=0;
+    extendLabels();
+    // The coarse partition is authoritative. Search a finer partition only
+    // inside regions that leaked to the image edge; a thin printed parcel line
+    // may recover a missing enclosure, but cannot split an existing field.
+    // Dark pixels are no longer needed after the wall masks were built.
+    const visited=dark;visited.fill(0);
+    for(let start=0;start<size;start++){
+      const coarse=labels[start];
+      if(!coarse||!regions[coarse].edge||visited[start]||thinWall[start]||occupied[start])continue;
+      let tail=1,edge=false,tint=0,pastel=0,shade=0,solid=0,ink=0;
+      let sumR=0,sumG=0,sumB=0,minX=width,minY=height,maxX=0,maxY=0;
+      visited[start]=1;queue[0]=start;
+      for(let head=0;head<tail;head++){
+        const i=queue[head],x=i%width,y=Math.floor(i/width);
+        edge ||= x===0||y===0||x===width-1||y===height-1;
+        minX=Math.min(minX,x);maxX=Math.max(maxX,x);
+        minY=Math.min(minY,y);maxY=Math.max(maxY,y);
+        sumR+=pixels[4*i];sumG+=pixels[4*i+1];sumB+=pixels[4*i+2];
+        tint+=colored[i];pastel+=faint[i]&1;shade+=(faint[i]&2)?1:0;solid+=(faint[i]&4)?1:0;
+        for(const n of [x?i-1:-1,x+1<width?i+1:-1,i-width,i+width]){
+          if(n<0||n>=size)continue;
+          ink+=red[n];
+          if(!visited[n]&&labels[n]===coarse&&!thinWall[n]&&!occupied[n]){visited[n]=1;queue[tail++]=n;}
+        }
+      }
+      if(edge)continue;
+      const id=regions.length;
+      // Keep unmarked fine regions in the partition too: otherwise their ink
+      // and printed counters would become false background holes in a field.
+      regions.push({area:tail,ink,minX,minY,maxX,maxY,color:[sumR/tail,sumG/tail,sumB/tail],edge:false,
+        recovered:true,speck:tail<36,valid:tail>=36,shaded:shade>tail*.65&&solid>=8,suggested:tint>tail*.22||pastel>tail*.45});
+      for(let i=0;i<tail;i++)labels[queue[i]]=id;
+    }
+    for(let i=0;i<size;i++)if(regions[labels[i]]?.edge&&thinWall[i])labels[i]=0;
   }
   // Tiny islands inside printed letters and numbers belong to the surrounding field.
   for(let i=0;i<size;i++)if(labels[i] && regions[labels[i]].speck)labels[i]=0;
   // Extend adjacent interiors to the centre of ink strokes for a shared boundary.
-  let tail=0;
-  for(let i=width+1;i<size-width-1;i++)if(labels[i] &&
-    (!labels[i-1]||!labels[i+1]||!labels[i-width]||!labels[i+width]))queue[tail++]=i;
-  for(let head=0;head<tail;head++){
-    const i=queue[head];
-    for(const n of [i-1,i+1,i-width,i+width])
-      if(n>=0&&n<size&&!labels[n]&&!occupied[n]){labels[n]=labels[i];queue[tail++]=n;}
-  }
+  // On the second pass only recovery/background labels may grow.
+  extendLabels(automatic);
   // A closed loop in lettering (e.g. 0 or 8) can exceed the speck threshold
   // at high zoom. Adjacent counters may also touch across a narrow stroke.
   const neighbor=new Int32Array(regions.length),protectedInk=new Uint8Array(regions.length);
   const runnerUp=new Int32Array(regions.length);
+  const shadeSamples=new Uint32Array(regions.length),shadeContrast=new Uint32Array(regions.length);
   function note(id,other,i,j){
     if(!id||!other||id===other)return;
+    // A neutral fill must differ locally from its surroundings as well as
+    // from paper white. Uniform grey paper and gradual scan shadows do not
+    // turn every printed parcel into a forestry proposal.
+    if(regions[id].shaded&&regions[id].valid){
+      const step=j-i,a=i-2*step,b=j+2*step;
+      if(a>=0&&b>=0&&a<size&&b<size&&labels[a]===id&&labels[b]!==id&&
+         (Math.abs(step)!==1||Math.floor(a/width)===Math.floor(b/width))){
+        const p=[pixels[4*a],pixels[4*a+1],pixels[4*a+2]],q=[pixels[4*b],pixels[4*b+1],pixels[4*b+2]];
+        if(Math.min(...p)>140&&Math.min(...q)>140){
+          shadeSamples[id]++;
+          if((q[0]+q[1]+q[2]-p[0]-p[1]-p[2])/3>15)shadeContrast[id]++;
+        }
+      }
+    }
     const first=neighbor[id];
     if(other!==first){
       if(!first || regions[other].area>regions[first].area){
@@ -395,10 +489,14 @@ function traceLandUses(pixels, forest, width, height, blackWidth, tolerance=2.5)
     if(id!==labels[i+1]){note(id,labels[i+1],i,i+1);note(labels[i+1],id,i+1,i);}
     if(id!==labels[i+width]){note(id,labels[i+width],i,i+width);note(labels[i+width],id,i+width,i);}
   }
+  for(let id=1;id<regions.length;id++)if(shadeContrast[id]>=8&&shadeContrast[id]>=shadeSamples[id]*.25)
+    regions[id].suggested=true;
   const owner=new Int32Array(regions.length);
   for(let id=1;id<regions.length;id++){
     const outer=regions[neighbor[id]],inner=regions[id];
     if(inner.valid && outer?.valid && inner.area<=outer.area*.08 &&
+       (!outer.recovered||inner.recovered) &&
+       !(inner.suggested&&!outer.suggested) &&
        inner.minX>outer.minX && inner.maxX<outer.maxX && inner.minY>outer.minY && inner.maxY<outer.maxY &&
        (!runnerUp[id] || regions[runnerUp[id]].area<=outer.area*.08) &&
        !inner.ink && !protectedInk[id] &&
@@ -422,7 +520,7 @@ function traceLandUses(pixels, forest, width, height, blackWidth, tolerance=2.5)
   }
   const shapes=new Map(),outlines=[],perimeters=[],chainCache=new Map();
   for(const [id,links] of borders){
-    if(!regions[id].valid)continue;
+    if(!regions[id].valid||(regions[id].recovered&&!regions[id].suggested))continue;
     const start=links.keys().next().value,ring=[];
     let v=start;
     do{
@@ -653,7 +751,7 @@ function openRasterTracing(item, view) {
   panel.innerHTML=`
     <div class="trace-map-heading"><strong>Auto Wkreślanie · 5310</strong>
       <button type="button" class="select-close trace-close" title="Zakończ wkreślanie (Esc)" aria-label="Zakończ wkreślanie">×</button></div>
-    <div class="trace-map-options"><label>Kontury <select><option value="5">Grubsze</option><option value="3">Także cienkie</option><option value="7">Tylko bardzo grube</option></select></label>
+    <div class="trace-map-options"><label title="Automatyczne zachowuje pola z grubszymi konturami i szuka brakujących zamkniętych pól przy cieńszych liniach">Kontury <select><option value="0">Automatyczne</option><option value="5">Grubsze</option><option value="3">Także cienkie</option><option value="7">Tylko bardzo grube</option></select></label>
       <label><input type="checkbox" class="trace-magnet"> Magnes</label>
       <label title="Nowe wydzielenie z tym samym A1 scala się z istniejącym, nawet gdy leży daleko"><input type="checkbox" class="trace-merge-a1" checked> Scalaj po A1</label>
       <button type="button" class="button ghost trace-fit">Pokaż cały raster</button></div>

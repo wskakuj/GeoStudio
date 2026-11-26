@@ -17,7 +17,7 @@ Zmiana **Kontury**, **Analiza** lub **Prostowanie** ponownie analizuje obraz i u
 Przycisk **Wkreśl całą mapę (test)** przygotowuje wspólny podgląd wszystkich rozpoznanych propozycji. Nie trzeba klikać każdego pola, żeby otrzymać jego obrys i odczyt A1. Przycisk **Pokaż cały raster** służy wyłącznie do ustawienia widoku; nie uruchamia wkreślania.
 
 1. Po skalibrowaniu rastra otwórz **Auto Wkreślanie** i wybierz **Wkreśl całą mapę (test)**.
-2. Program wybierze **Pełny obraz (test)** i wykorzysta do 14 mln pikseli przygotowanego obrazu. Zachowa ustawienia **Kontury** i **Prostowanie**, również przy ponownym uruchomieniu. Początkowe ustawienia to **Grubsze** i **Proste boki**.
+2. Program wybierze **Pełny obraz (test)** i wykorzysta do 14 mln pikseli przygotowanego obrazu. Zachowa ustawienia **Kontury** i **Prostowanie**, również przy ponownym uruchomieniu. Początkowe ustawienia od wersji 2.0.108 to **Automatyczne** i **Proste boki**.
 3. Poczekaj na rozpoznanie pól, odczyt A1 i wspólne dopasowanie do granic. Obrysy pojawią się razem na mapie, a panel pokaże listę numerów oraz liczbę propozycji wymagających kontroli. Dopasowanie 5216 jest obliczane w tle, aby można było anulować długą analizę.
 4. Sprawdź obrysy i A1. Kliknięcie pola na mapie wskazuje pozycję na liście. Przycisk z numerem `#` na liście przybliża odpowiedni obrys. Numer `#` oznacza identyfikator propozycji, a nie A1.
 5. Popraw numery i zaznacz pola, które chcesz przyjąć. **Zapisz zaznaczone** tworzy wybrane 5310 wraz z A1 w jednej operacji. **Ctrl+Z** cofa całą zapisaną partię.
@@ -64,9 +64,13 @@ To tryb próbny: nie obiecuje kompletnego rozpoznania każdego wydzielenia. Niec
 
 ### Cienkie linie podkładu i niepotrzebne podziały
 
-Od wersji 2.0.107 przycisk całej mapy nie przełącza sam konturów na **Także cienkie** i nie resetuje prostowania. Cienka drukowana linia działki wewnątrz jednego wydzielenia mogła wcześniej rozdzielić je na kilka propozycji, mimo innego ustawienia wybranego przed analizą. Domyślne **Grubsze** pomijają bardzo cienki czarny druk. Cienkie czerwone granice zaznaczone na skanie nadal mogą rozdzielać wydzielenia.
+Od wersji 2.0.107 przycisk całej mapy zachowuje wybrane kontury i prostowanie. Cienka drukowana linia działki wewnątrz jednego wydzielenia mogła wcześniej rozdzielić je na kilka propozycji, mimo innego ustawienia wybranego przed analizą.
 
-Jeżeli program rozbija pole po napisach lub cienkiej sieci działek, porównaj podgląd przy **Grubsze**, a w razie potrzeby **Tylko bardzo grube**. Jeżeli pomija rzeczywistą cienką czarną granicę, wybierz **Także cienkie**. Każda z tych zmian ponownie analizuje raster, więc sprawdź również sąsiednie pola. Mocniejsze **Prostowanie** ogranicza drobne załamania rozpoznanego boku, ale nie usuwa błędnego podziału na osobne pola.
+Od wersji 2.0.108 domyślne **Automatyczne** najpierw rozpoznają pola przy grubszych konturach. Następnie szukają dodatkowych zamkniętych pól przy cieńszych liniach w miejscach, które pozostały połączone z tłem obrazu. Cieńsza sieć nie dzieli ponownie już zamkniętego pola. Dodatkowa propozycja musi mieć rozpoznane wypełnienie; samo dotknięcie czerwonej kreski nie wystarcza, żeby uznać białą działkę za brakujące wydzielenie. Cienkie czerwone granice nadal mogą rozdzielać pola.
+
+Rozpoznawanie uwzględnia również blade wypełnienia, porównując ich barwę z papierem skanu. Szare pole wymaga przewagi ciemniejszego wnętrza i lokalnie jaśniejszego otoczenia. Pomaga to odzyskać słabo zabarwione wydzielenia bez traktowania jednolicie kremowego papieru jako wypełnienia. Wąskie pasy przy nadruku oraz nierówne cienie skanu nadal mogą wymagać ręcznej oceny.
+
+Jeżeli program rozbija pole po napisach lub cienkiej sieci działek, porównaj podgląd przy **Grubsze**, a w razie potrzeby **Tylko bardzo grube**. Jeżeli pomija rzeczywistą cienką czarną granicę, szczególnie wokół białego pola, wybierz **Także cienkie**. Każda z tych zmian ponownie analizuje raster, więc sprawdź również sąsiednie pola. Mocniejsze **Prostowanie** ogranicza drobne załamania rozpoznanego boku, ale nie usuwa błędnego podziału na osobne pola.
 
 Sama bliskość 5216 ani brak A1 nie wystarczają do automatycznego scalenia propozycji: prawdziwy podział może również leżeć na granicy działki. Plik MAP zawiera zapisane obrysy, ale nie zachowuje koloru i grubości kreski z obrazu. Do sprawdzenia przyczyn pominiętych lub nadmiernie podzielonych pól potrzebny jest również raster i jego kalibracja.
 
@@ -89,6 +93,13 @@ Dopasowanie korzysta z granic 5216 całego obszaru rastra, także gdy ich warstw
 Sąsiadujące pola uzgadniają wspólne narożniki i boki. Jeżeli dopasowanie nadmiernie zmienia wąski fragment albo daje niepoprawny obrys, wspólna granica pozostaje spójna po obu stronach. Zaznaczenie kilku pól łączy ich uzgodnione obrysy, bez ponownego niezależnego dopasowania granicy z pikseli.
 
 Od wersji 2.0.107 małe załamanie kreski w jednym z sąsiednich pól nie musi od razu cofać poprawnego dopasowania drugiego pola. Program najpierw próbuje wspólnego położenia węzła potwierdzonego przez dopasowany bok sąsiada. Punkt musi mieścić się w wybranym zasięgu, a oba obrysy ponownie przechodzą kontrolę kształtu. Sprzeczne propozycje, ręcznie zablokowane węzły, zanik wąskiego fragmentu lub odwrócenie krótkiego boku nadal zatrzymują taką zmianę. Nie jest to scalanie wydzieleń ani usuwanie ich wewnętrznych granic.
+
+Od wersji 2.0.108 dwa sąsiednie obrysy mogą uzgodnić wspólny punkt również wtedy,
+gdy wskazują nieco inne położenia wzdłuż tej samej prostej 5216. Program wybiera
+najbliższy rzut oryginalnego węzła na tę linię, po potwierdzeniu ciągłości
+rzeczywistych odcinków odniesienia. Przerwa w 5216 albo propozycje na różnych
+liniach nadal blokują takie uzgodnienie. Obowiązują wybrany zasięg, ochrona
+ręcznych węzłów i kontrola całego wspólnego boku.
 
 Krótkie współliniowe fragmenty są rozpatrywane jako część całego boku. Małe ścięcia narożników pozostawione przez grubą kreskę mogą przejść przez rzeczywisty węzeł 5216, gdy potwierdzają go oba sąsiednie boki. Samo pobliskie przecięcie obcych linii nie jest wystarczającą podstawą do zmiany kształtu.
 

@@ -7,6 +7,10 @@ import pytest
 
 
 CASES = [
+    "automatic_recovers_thin_enclosures_without_splitting_the_primary_field",
+    "recovered_paper_parcel_is_not_suggested_from_one_red_edge",
+    "pale_fill_is_relative_to_the_paper_and_is_not_a_letter_counter",
+    "neutral_fill_needs_local_contrast_not_paper_or_a_scan_shadow",
     "occupied_5310_mask_never_becomes_a_proposal",
     "waves_become_supported_straight_sides",
     "genuine_bend_and_concavity_are_retained",

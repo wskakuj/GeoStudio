@@ -46,7 +46,7 @@ function createUI(featureLoads = [], options = {}) {
       querySelector(selector) {
         if (!controls.has(selector)) {
           const control = element();
-          if (selector === 'select') control.value = '5';
+          if (selector === 'select') control.value = '0';
           if (selector === '.trace-tolerance') control.value = '2.5';
           if (selector === '.trace-quality') control.value = '12000000';
           if (selector === '.trace-merge-a1') control.checked = true;
