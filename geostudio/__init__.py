@@ -1,2 +1,2 @@
 """GeoStudio: experimental geodetic map editor."""
-__version__ = '2.0.105'
+__version__ = '2.0.106'

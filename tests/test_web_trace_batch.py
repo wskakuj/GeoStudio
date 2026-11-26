@@ -461,3 +461,176 @@ def test_http_batch_limits_body_and_rejects_bad_snap_distance():
         response = client.post("/api/underlay/raster/batch/preview", headers=headers,
                                content=b"x" * (4 * 1024 * 1024 + 1))
         assert response.status_code == 413
+
+
+def test_explicit_unnumbered_batch_saves_separate_native_polygons_with_one_undo():
+    workspace, source = workspace_with()
+    fitted = fit(workspace, [proposal("a", rectangle(102, 0, 98, 50), ""),
+                             proposal("b", rectangle(102, 50, 98, 50), "  ")])
+    assert all(item["status"] == "needsA1" for item in fitted["items"])
+    items = [{key: item[key] for key in ("id", "points", "a1")} for item in fitted["items"]]
+    assert not preview(workspace, items)["canApply"], "Ordinary save still requires A1"
+    report = workspace.preview_trace_batch(items, without_a1=True, **context(workspace))
+    assert report["canApply"] and report["withoutA1"] is True
+    assert report["stats"]["ready"] == 2 and report["stats"]["needsA1"] == 0
+    saved = apply(workspace, report)
+    assert saved["withoutA1"] is True and saved["createdCount"] == 2
+    assert saved["mergedSameA1"] == 0 and len(workspace._doc.objects) == 3
+    assert b"".join(workspace._doc.lines).startswith(source)
+    exported = workspace.export_copy(saved["documentToken"])[1]
+    reopened = GeoMap(exported)
+    for uid, item in zip(saved["createdUids"], items):
+        obj = reopened.by_id[uid]
+        assert obj.code == "5310" and geometry_of(obj).equals(Polygon(item["points"]))
+        assert "A1" not in obj.fields and "A2" not in obj.fields
+        records = reopened.lines[obj.start:obj.end]
+        assert not any(line.startswith((b":A1[", b":A2[", b"L ")) for line in records)
+    assert workspace._styles[TOPOLOGY_STACK_KEY]["uids"] == saved["createdUids"]
+    workspace.step_history("undo", **context(workspace))
+    assert workspace.export_copy(saved["documentToken"])[1] == source
+    assert not workspace.editing_status()["canUndo"]
+    workspace.step_history("redo", **context(workspace))
+    assert workspace.export_copy(saved["documentToken"])[1] == exported
+
+
+@pytest.mark.parametrize("field,value", [("A1", "17"), ("A2", "LsV")])
+def test_number_added_after_unnumbered_trace_has_native_labels_and_undo(field, value):
+    workspace, _ = workspace_with()
+    report = workspace.preview_trace_batch([proposal("blank", a1="")],
+                                           without_a1=True, **context(workspace))
+    saved = apply(workspace, report)
+    uid, fid = saved["createdUids"][0], saved["createdIds"][0]
+    before = workspace.export_copy(saved["documentToken"])[1]
+    before_points = geometry_of(workspace._doc.by_id[uid])
+    assert field in workspace.details(fid)["editableFields"]
+    changed = workspace.edit_fields(fid, {field: value}, **context(workspace))
+    assert changed["changed"] and changed["revision"] == saved["revision"] + 1
+    after = workspace.export_copy(saved["documentToken"])[1]
+    reopened = GeoMap(after)
+    obj = reopened.by_id[uid]
+    assert obj.fields[field] == value and geometry_of(obj).equals(before_points)
+    native = [line for line in reopened.lines[obj.start:obj.end] if line.startswith(b"L ")]
+    assert {line.split()[1] for line in native} == {b"1", b"2", b"3"}
+    # A later edit preserves the existing placement descriptors verbatim.
+    workspace.edit_fields(fid, {field: value + "a"}, **context(workspace))
+    current = workspace._doc.by_id[uid]
+    assert [line for line in workspace._doc.lines[current.start:current.end]
+            if line.startswith(b"L ")] == native
+    workspace.step_history("undo", **context(workspace))
+    assert workspace.export_copy(saved["documentToken"])[1] == after
+    workspace.step_history("undo", **context(workspace))
+    assert workspace.export_copy(saved["documentToken"])[1] == before
+
+
+def test_unnumbered_mode_rejects_nonempty_a1_instead_of_silently_erasing_it():
+    workspace, source = workspace_with()
+    report = workspace.preview_trace_batch([proposal("blank", a1=""),
+        proposal("numbered", rectangle(150, 10), "17")], without_a1=True, **context(workspace))
+    assert not report["canApply"] and report["previewKey"] == ""
+    assert [item["status"] for item in report["items"]] == ["ready", "rejected"]
+    assert "pustych numerów" in report["items"][1]["reason"]
+    with pytest.raises(RuntimeError, match="świeży podgląd"):
+        apply(workspace, report)
+    assert workspace.export_copy(report["documentToken"])[1] == source
+
+
+def test_later_a1_edit_preserves_manually_positioned_native_label_records():
+    workspace, _ = workspace_with()
+    report = workspace.preview_trace_batch([proposal("blank", a1="")],
+                                           without_a1=True, **context(workspace))
+    saved = apply(workspace, report)
+    uid = saved["createdUids"][0]
+    workspace.edit_fields(saved["createdIds"][0], {"A1": "17"}, **context(workspace))
+    native = GeoMap(workspace.export_copy(saved["documentToken"])[1])
+    assert native.set_label_offset(uid, 2, 13.125, -21.5) == 1
+    manually_placed = native.to_bytes()
+    reopened = PreviewWorkspace()
+    reopened.load_map(manually_placed, "manual-label.MAP")
+    obj = reopened._doc.by_id[uid]
+    fid = reopened._object_id[id(obj)]
+    before = [line for line in reopened._doc.lines[obj.start:obj.end] if line.startswith(b"L ")]
+    reopened.edit_fields(fid, {"A1": "18", "A2": "LsV"}, **context(reopened))
+    changed = reopened._doc.by_id[uid]
+    assert [line for line in reopened._doc.lines[changed.start:changed.end]
+            if line.startswith(b"L ")] == before
+    reopened.step_history("undo", **context(reopened))
+    assert reopened.export_copy(reopened.editing_status()["documentToken"])[1] == manually_placed
+
+
+@pytest.mark.parametrize("items", [
+    [proposal("occupied", rectangle(95, 10), "")],
+    [proposal("a", rectangle(150, 10), ""), proposal("b", rectangle(160, 10), "")],
+    [proposal("bad", [[200, 10], [200, 10], [200, 10]], "")],
+])
+def test_unnumbered_mode_preserves_geometry_and_overlap_rejections(items):
+    workspace, source = workspace_with()
+    report = workspace.preview_trace_batch(items, without_a1=True, **context(workspace))
+    assert not report["canApply"] and report["previewKey"] == ""
+    assert all(item["status"] == "rejected" for item in report["items"])
+    with pytest.raises(RuntimeError, match="świeży podgląd"):
+        apply(workspace, report)
+    assert workspace.export_copy(report["documentToken"])[1] == source
+
+
+def test_switching_back_to_numbered_preview_invalidates_blank_approval():
+    workspace, source = workspace_with()
+    items = [proposal("a", a1="")]
+    accepted = workspace.preview_trace_batch(items, without_a1=True, **context(workspace))
+    assert accepted["canApply"]
+    rejected = preview(workspace, items)
+    assert not rejected["canApply"] and rejected["withoutA1"] is False
+    with pytest.raises(RuntimeError, match="świeży podgląd"):
+        apply(workspace, accepted)
+    assert workspace.export_copy(accepted["documentToken"])[1] == source
+
+
+def test_unnumbered_batch_is_bound_to_its_document_and_revision():
+    workspace, source = workspace_with()
+    report = workspace.preview_trace_batch([proposal("a", a1="")],
+                                           without_a1=True, **context(workspace))
+    old = context(workspace)
+    workspace.edit_fields("f0", {"A1": "changed"}, **old)
+    with pytest.raises(RuntimeError, match="Mapa zmieniła się"):
+        workspace.apply_trace_batch(preview_key=report["previewKey"], **old)
+    workspace.load_map(source, "new.MAP")
+    with pytest.raises(RuntimeError, match="Mapa zmieniła się"):
+        workspace.apply_trace_batch(preview_key=report["previewKey"], **old)
+    assert workspace.export_copy(workspace.editing_status()["documentToken"])[1] == source
+
+
+@pytest.mark.parametrize("value", [None, 0, 1, "true", "false", [], {}])
+def test_http_unnumbered_mode_requires_a_strict_boolean(value):
+    workspace, source = workspace_with()
+    app = create_app(workspace)
+    status = workspace.editing_status()
+    args = {"documentToken": status["documentToken"], "revision": status["revision"],
+            "items": [proposal("a", a1="")], "withoutA1": value}
+    with TestClient(app) as client:
+        response = client.post("/api/underlay/raster/batch/preview", json=args,
+                               headers={"X-GeoStudio-Token": app.state.api_token})
+    assert response.status_code == 400 and "wartość logiczną" in response.json()["detail"]
+    assert workspace.export_copy(status["documentToken"])[1] == source
+
+
+def test_http_unnumbered_mode_can_only_be_selected_during_preview():
+    workspace, source = workspace_with()
+    app = create_app(workspace)
+    headers = {"X-GeoStudio-Token": app.state.api_token}
+    status = workspace.editing_status()
+    args = {"documentToken": status["documentToken"], "revision": status["revision"]}
+    base = "/api/underlay/raster/batch/"
+    with TestClient(app) as client:
+        blank = {**args, "items": [proposal("a", a1="")]}
+        ordinary = client.post(base + "preview", json=blank, headers=headers).json()
+        assert not ordinary["canApply"] and ordinary["withoutA1"] is False
+        response = client.post(base + "preview", json={**blank, "withoutA1": True}, headers=headers)
+        assert response.status_code == 200 and response.json()["canApply"]
+        approved = {**args, "previewKey": response.json()["previewKey"]}
+        # Neither false nor true can alter the mode already approved for this key.
+        for override in (False, True):
+            response = client.post(base + "apply", json={**approved, "withoutA1": override}, headers=headers)
+            assert response.status_code == 400
+            assert workspace.export_copy(status["documentToken"])[1] == source
+        response = client.post(base + "apply", json=approved, headers=headers)
+        assert response.status_code == 200
+        assert response.json()["withoutA1"] is True and response.json()["createdCount"] == 1

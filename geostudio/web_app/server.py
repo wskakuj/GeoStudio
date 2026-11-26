@@ -721,7 +721,8 @@ def create_app(workspace: PreviewWorkspace | None = None, *,
         payload = await edit_payload(request, MAX_BATCH_BODY_BYTES)
         try:
             return await run_in_threadpool(state.preview_trace_batch, payload.get("items"),
-                document_token=payload.get("documentToken"), revision=payload.get("revision"))
+                document_token=payload.get("documentToken"), revision=payload.get("revision"),
+                without_a1=payload.get("withoutA1", False))
         except RuntimeError as exc:
             raise HTTPException(409, str(exc)) from exc
         except (ValueError, KeyError, TypeError) as exc:
@@ -731,6 +732,8 @@ def create_app(workspace: PreviewWorkspace | None = None, *,
     async def apply_trace_batch(request: Request):
         payload = await edit_payload(request)
         try:
+            if "withoutA1" in payload:
+                raise ValueError("Tryb zapisu A1 jest ustalany w podglądzie partii.")
             return await run_in_threadpool(state.apply_trace_batch,
                 preview_key=payload.get("previewKey"), document_token=payload.get("documentToken"),
                 revision=payload.get("revision"))

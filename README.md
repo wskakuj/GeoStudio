@@ -64,6 +64,10 @@ Przy niejednoznacznym A1 można wybrać rozpoznany wariant jednym kliknięciem p
 sprawdzeniu kółka i wysięgnika. Wybór jest zachowany tak samo jak numer wpisany
 ręcznie, zarówno przy pojedynczym poligonie, jak i na liście całej mapy.
 
+Przycisk **Wkreśl wszystkie bez A1** zapisuje wszystkie poprawne propozycje
+z listy całej mapy z pustym A1, bez wpisywania numerów ani zaznaczania każdego
+wiersza. Numery można uzupełnić później; całą partię cofa jedno **Ctrl+Z**.
+
 ### Wygodna kalibracja i oznaczenia
 
 Okno kalibracji rastra można przesuwać, rozciągać i powiększać; obraz obsługuje

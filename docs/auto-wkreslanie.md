@@ -37,6 +37,18 @@ poprawka. Nie uruchamia zapisu; w trybie całej mapy zaznacza poprawioną propoz
 do późniejszego zbiorczego zatwierdzenia. Niepoprawny lub kolidujący obrys nadal
 pozostaje zablokowany. Warianty są dostępne również w trybie pojedynczym.
 
+Od wersji 2.0.106 przycisk **Wkreśl wszystkie bez A1** zapisuje jednym kliknięciem
+wszystkie poprawne propozycje z aktualnej listy z pustym A1. Obejmuje również
+wiersze bez odczytanego numeru i odznaczone kratki. Rozpoznane lub wpisane numery
+nie są używane przez ten przycisk. Licznik pokazuje, ile poligonów zostanie
+zapisanych. Odrzucone obrysy są pomijane; nadal obowiązują sprawdzenie kolizji,
+dopasowanie wspólnych granic i wybrany filtr obszaru działek 5216.
+
+Cały zapis można cofnąć jednym **Ctrl+Z**. Numery można uzupełnić później
+w atrybutach poligonów. Przycisk **Zapisz zaznaczone** nadal zapisuje wybrane
+wiersze z podanymi numerami A1. Nieudany zapis bez A1 zachowuje listę i wpisane
+wartości do dalszej pracy.
+
 Odczyt sprawdza również cyfry częściowo zasłonięte drukowaną linią. Zgodne wyniki
 kilku wycinków mogą uzupełnić brakujący początek numeru, ale pozostają oznaczone
 do sprawdzenia. Podobnie wyróżnione są propozycje uzyskane z kierunku wysięgnika

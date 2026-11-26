@@ -676,9 +676,10 @@ function openRasterTracing(item, view) {
     <div class="trace-batch" hidden>
       <label title="Pomija pola poza obszarem działek, np. kolorowe prostokąty legendy"><input type="checkbox" class="trace-batch-parcels" checked> Tylko obszar działek 5216</label>
       <p class="trace-batch-summary" aria-live="polite"></p>
-      <p class="trace-batch-help">Zielony: odczytany A1. Pomarańczowy: sprawdź lub wpisz A1. Czerwony: problem obrysu. Zaznacz kratkę, aby przyjąć propozycję. Kliknięcie pola na mapie otwiera jego numer na liście.</p>
+      <p class="trace-batch-help">Zielony: odczytany A1. Pomarańczowy: sprawdź lub wpisz A1. Czerwony: problem obrysu. Zaznacz kratkę, aby przyjąć propozycję. Kliknięcie pola na mapie otwiera jego numer na liście. „Wkreśl wszystkie bez A1” zapisuje wszystkie poprawne obrysy z listy z pustym A1, niezależnie od zaznaczenia i odczytanych lub wpisanych numerów.</p>
       <div class="trace-batch-list" aria-label="Propozycje wydzieleń 5310"></div>
       <div class="trace-map-options trace-batch-actions"><button type="button" class="button primary trace-batch-save">Zapisz zaznaczone</button>
+        <button type="button" class="button ghost trace-batch-save-empty" title="Wkreśl wszystkie poprawne obrysy z listy z pustym A1, niezależnie od zaznaczenia i numerów">Wkreśl wszystkie bez A1</button>
         <button type="button" class="button ghost trace-batch-cancel">Wróć do pojedynczego</button></div>
     </div>
     <span role="status"></span>`;
@@ -700,6 +701,7 @@ function openRasterTracing(item, view) {
   const batchStart=panel.querySelector(".trace-batch-start"),batchPanel=panel.querySelector(".trace-batch");
   const batchList=panel.querySelector(".trace-batch-list"),batchSummary=panel.querySelector(".trace-batch-summary");
   const batchSave=panel.querySelector(".trace-batch-save"),batchCancel=panel.querySelector(".trace-batch-cancel");
+  const batchSaveEmpty=panel.querySelector(".trace-batch-save-empty");
   const batchParcels=panel.querySelector(".trace-batch-parcels");
   batchParcels.checked=true;
   let batchActive=false,batchPending=false,batchWaiting=false,batchVersion=0,batchController=null;
@@ -1143,6 +1145,10 @@ function openRasterTracing(item, view) {
     batchVersion++;stopParcelWorker();batchController?.abort();batchController=null;batchPending=false;
   }
   function batchCounts(){return globalThis.GeoStudioRasterTraceBatch.counts(batchItems);}
+  function savableBatchItems(withoutA1=false){
+    return batchItems.filter(entry=>entry.status!=="rejected"&&
+      (withoutA1?["ready","needsA1"].includes(entry.status):entry.chosen&&entry.a1.trim()));
+  }
   function updateBatchSummary(){
     const counts=batchCounts();
     batchSummary.textContent=batchMessage||"Propozycje: "+counts.total+" · pewne A1: "+counts.confident+
@@ -1151,6 +1157,9 @@ function openRasterTracing(item, view) {
       (batchSelectionStats?.outside?" Poza obszarem działek pominięto: "+batchSelectionStats.outside+".":"");
     batchSave.textContent="Zapisz zaznaczone ("+counts.selected+")";
     batchSave.disabled=busy||batchPending||batchWaiting||!counts.selected;
+    const withoutA1Count=savableBatchItems(true).length;
+    batchSaveEmpty.textContent="Wkreśl wszystkie bez A1 ("+withoutA1Count+")";
+    batchSaveEmpty.disabled=busy||batchPending||batchWaiting||!withoutA1Count;
     batchCancel.disabled=busy;
     batchParcels.disabled=busy||batchPending;
     for(const entry of batchItems)if(entry.controls){
@@ -1282,26 +1291,30 @@ function openRasterTracing(item, view) {
     panel.querySelector("select").value="3";tolerance.value="2.5";
     quality.value="14000000";quality.onchange();view.fit(bounds);draw();
   };
-  batchSave.onclick=async()=>{
+  async function saveBatch(withoutA1=false){
     if(disposed||busy||!batchActive||batchPending||batchWaiting)return;
-    const chosen=batchItems.filter(entry=>entry.chosen&&entry.status!=="rejected"&&entry.a1.trim());
+    const chosen=savableBatchItems(withoutA1);
     if(!chosen.length)return;
-    busy=true;let saved=false;batchMessage="Sprawdzam i zapisuję "+chosen.length+" wydzieleń…";draw();
+    const description=withoutA1?" bez A1":" z A1";
+    busy=true;let saved=false;batchMessage="Sprawdzam i zapisuję "+chosen.length+" wydzieleń"+description+"…";draw();
     try{
-      await view.addBatch(chosen.map(({id,points,a1})=>({id,points,a1:a1.trim()})));
+      const items=chosen.map(({id,points,a1})=>({id,points,a1:withoutA1?"":a1.trim()}));
+      if(withoutA1)await view.addBatch(items,{withoutA1:true});else await view.addBatch(items);
       saved=true;
       for(const entry of chosen)completed.push(entry.pixelPoints);
       busy=false;cancelBatch();busy=true;draw();
       await view.refresh();
       busy=false;
       await prepare();
-      selectionMessage="Dodano "+chosen.length+" wydzieleń 5310 z A1. Całą partię możesz cofnąć jednym Ctrl+Z.";
+      selectionMessage="Dodano "+chosen.length+" wydzieleń 5310"+description+". Całą partię możesz cofnąć jednym Ctrl+Z.";
     }catch(error){
       if(saved)selectionMessage="Zapisano "+chosen.length+" wydzieleń. Nie udało się odświeżyć podglądu: "+error.message;
       else batchMessage=error.message||"Nie udało się zapisać partii.";
     }
     finally{busy=false;draw();}
-  };
+  }
+  batchSave.onclick=()=>saveBatch();
+  batchSaveEmpty.onclick=()=>saveBatch(true);
   function draw(rect=rectEnd){
     if(disposed)return;
     ctx.resetTransform();ctx.clearRect(0,0,canvas.width,canvas.height);
@@ -1386,7 +1399,7 @@ function openRasterTracing(item, view) {
     parcelDistance.disabled=busy;
     save.disabled=busy||batchActive||fitError||!trace||!outline?.length||!a1.value.trim();
     if(batchActive){updateBatchSummary();status.textContent=batchPending||batchWaiting?batchMessage:
-      "Przegląd całej mapy. Zapis obejmie tylko zaznaczone propozycje z A1.";}
+      "Przegląd całej mapy. Zapisz zaznaczone z A1 lub wkreśl wszystkie poprawne obrysy bez A1.";}
   }
   function analyze(){
     if(disposed||!worker)return;
