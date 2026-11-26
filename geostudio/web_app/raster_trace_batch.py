@@ -70,8 +70,8 @@ def validate_snap_distance(value):
         raise ValueError("Zasięg dopasowania musi mieścić się w zakresie 0–20 m.")
 
 
-def item_result(item, *, points=None, clipped=False, snapped=False, error=""):
-    missing = not item["a1"]
+def item_result(item, *, points=None, clipped=False, snapped=False, error="", without_a1=False):
+    missing = not item["a1"] and not without_a1
     return {"id": item["id"], "status": "rejected" if error else "needsA1" if missing else "ready",
             "points": [list(p) for p in (points or [])], "a1": item["a1"],
             "clipped": bool(clipped), "snapped": bool(snapped),
@@ -298,6 +298,6 @@ def encode_batch(items):
     for item in items:
         temporary = GeoMap(b"")
         created.append(temporary.append_polygon([tuple(p) for p in item["points"]], code="5310",
-                                                fields={"A1": item["a1"]}))
+                                                fields={"A1": item["a1"]} if item["a1"] else {}))
         records.extend(temporary.lines)
     return records, created

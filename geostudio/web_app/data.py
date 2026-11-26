@@ -1471,6 +1471,13 @@ class PreviewWorkspace:
                 for (uid, field), value in edits.items():
                     if field not in entry.obj.fields:
                         self._doc.update_field(uid, field, value)
+                # Unnumbered traced 5310 have no native label descriptors.
+                # Add missing descriptors when the user later supplies A1/A2;
+                # existing manually placed L records remain byte-for-byte intact.
+                if entry.obj.code == "5310" and any(
+                        field in ("A1", "A2") and value.strip()
+                        for (_, field), value in edits.items()):
+                    self._doc.ensure_native_label_records(entry.obj.uid)
             self._reindex(self._doc, self._doc.filename)
             self._revision += 1
             return {**self._editing_status(), "changed": True, "object": self.details(fid)}
@@ -2152,45 +2159,51 @@ class PreviewWorkspace:
             report = fit_batch(batch_items(items), fit, snap_distance)
             return {**report, **self._editing_status()}
 
-    def _trace_batch_plan(self, items, *, document_token, revision):
+    def _trace_batch_plan(self, items, *, document_token, revision, without_a1=False):
         """Validate the exact chosen rings; final preview never silently clips."""
         from shapely.errors import GEOSException
         from .raster_trace_batch import (batch_items, item_result, batch_report,
                                          mark_conflicts, overlap_pairs)
 
         self._trace_batch_context(document_token, revision)
+        if type(without_a1) is not bool:
+            raise ValueError("Opcja zapisu bez A1 musi mieć wartość logiczną.")
         results = []
         for item in batch_items(items):
             try:
                 if item.get("error"):
                     raise ValueError(item["error"])
+                if without_a1 and item["a1"]:
+                    raise ValueError("Zapis bez A1 wymaga pustych numerów A1.")
                 plan = self._object_operation_plan(
                     {"action": "create", "code": "5310", "points": item["points"],
-                     "fields": {"A1": item["a1"]}},
+                     "fields": {"A1": item["a1"]} if item["a1"] else {}},
                     document_token=document_token, revision=revision)
-                results.append(item_result(item, points=plan["coords"]))
+                results.append(item_result(item, points=plan["coords"], without_a1=without_a1))
             except (ValueError, GEOSException) as exc:
-                results.append(item_result(item, error=str(exc)))
+                results.append(item_result(item, error=str(exc), without_a1=without_a1))
         mark_conflicts(results, overlap_pairs(results))
         can_apply = all(item["status"] == "ready" for item in results)
         canonical = [{"id": item["id"], "points": item["points"], "a1": item["a1"]}
                      for item in results]
         key = sha256(json.dumps({"items": canonical, "documentToken": document_token,
-                                "revision": revision}, sort_keys=True, ensure_ascii=False,
+                                "revision": revision, "withoutA1": without_a1},
+                               sort_keys=True, ensure_ascii=False,
                                separators=(",", ":")).encode("utf-8")).hexdigest() if can_apply else ""
         return canonical, batch_report(results, previewKey=key, canApply=can_apply,
+                                       withoutA1=without_a1,
                                        **self._editing_status())
 
-    def preview_trace_batch(self, items, *, document_token, revision):
+    def preview_trace_batch(self, items, *, document_token, revision, without_a1=False):
         with self._lock:
             self._trace_batch_context(document_token, revision)
             self._trace_batch_preview = None
             canonical, report = self._trace_batch_plan(items, document_token=document_token,
-                                                     revision=revision)
+                                                     revision=revision, without_a1=without_a1)
             if report["canApply"]:
                 self._trace_batch_preview = {"items": deepcopy(canonical),
                     "previewKey": report["previewKey"], "documentToken": document_token,
-                    "revision": revision}
+                    "revision": revision, "withoutA1": without_a1}
             return report
 
     def apply_trace_batch(self, *, preview_key, document_token, revision):
@@ -2205,7 +2218,8 @@ class PreviewWorkspace:
                     document_token != preview["documentToken"] or revision != preview["revision"]):
                 raise RuntimeError("Przed zapisaniem partii wykonaj świeży podgląd wybranych propozycji.")
             canonical, report = self._trace_batch_plan(preview["items"],
-                document_token=document_token, revision=revision)
+                document_token=document_token, revision=revision,
+                without_a1=preview["withoutA1"])
             if not report["canApply"] or report["previewKey"] != preview_key:
                 raise RuntimeError("Propozycje zmieniły się. Wykonaj świeży podgląd partii.")
             # The existing encoder produces native 5310 labels and MAP P
@@ -2216,7 +2230,8 @@ class PreviewWorkspace:
                     any(uid in self._doc.by_id for uid in created)):
                 raise ValueError("Nie można nadać unikatowych identyfikatorów nowym poligonom.")
             before = b"".join(self._doc.lines)
-            with self._history.begin("Auto wkreślanie całego rastra") as transaction:
+            title = "Auto wkreślanie całego rastra" + (" bez A1" if preview["withoutA1"] else "")
+            with self._history.begin(title) as transaction:
                 if self._doc.lines and not self._doc.lines[-1].endswith((b"\r", b"\n")):
                     self._doc.lines[-1] += b"\r\n"
                 self._doc.lines.extend(records)
@@ -2233,6 +2248,7 @@ class PreviewWorkspace:
             self._move_preview_key = ""
             self._bulk_preview_key = ""
             return {**self._editing_status(), "changed": True, "action": "create",
+                    "withoutA1": preview["withoutA1"],
                     "createdCount": len(created), "createdUids": created,
                     "createdIds": [self._object_id[id(self._doc.by_id[uid])] for uid in created],
                     "proposalIds": [item["id"] for item in canonical], "mergedSameA1": 0}

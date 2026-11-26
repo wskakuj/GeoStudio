@@ -133,13 +133,13 @@ function createUI(featureLoads = [], options = {}) {
   };
   const a1Requests=[];
   if(options.a1Load)view.recognizeA1=signal=>{a1Requests.push(signal);return options.a1Loads?.[a1Requests.length-1]||options.a1Load;};
-  const batchFitCalls=[],batchAddCalls=[],batchFitOptions=[];
+  const batchFitCalls=[],batchAddCalls=[],batchFitOptions=[],batchAddOptions=[];
   view.fitBatch=async(items,settings)=>{
     batchFitCalls.push(items);batchFitOptions.push(settings);
     return options.batchFits?.[batchFitCalls.length-1]||{items:items.map(item=>({...item,
       status:item.a1?'ready':'needsA1',clipped:false,snapped:false,reason:''}))};
   };
-  view.addBatch=async(items)=>{batchAddCalls.push(items);return options.batchAddResult;};
+  view.addBatch=async(items,settings)=>{batchAddCalls.push(items);batchAddOptions.push(settings);return options.batchAddResult;};
   const api = sandbox.openRasterTracing({
     id: 1, image: { width: options.width || 160, height: options.height || 120 },
     sourceWidth: options.sourceWidth, sourceHeight: options.sourceHeight,
@@ -155,7 +155,7 @@ function createUI(featureLoads = [], options = {}) {
   };
   return {
     api, workers, parcelWorkers, controls, draws, click, fitCalls, fitOptions, addCalls, snapCalls, snapOptions, imageCaptures, a1Requests, timers, parcelOptions,
-    batchFitCalls,batchAddCalls,batchFitOptions,
+    batchFitCalls,batchAddCalls,batchFitOptions,batchAddOptions,
     canvas: () => canvas,
     status: () => controls.get('[role=status]').textContent,
     panel: () => panel,

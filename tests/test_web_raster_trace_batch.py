@@ -30,6 +30,9 @@ import pytest
     "source_mesh_work_guard_includes_unselected_shapes_before_creating_a_worker",
     "rejected_and_missing_a1_cannot_enter_the_saved_selection",
     "a_batch_save_submits_exact_fitted_points_once_and_disables_mutation",
+    "save_all_without_a1_uses_every_valid_outline_and_no_numbers",
+    "failed_no_a1_save_preserves_drafts_and_normal_selected_save",
+    "no_a1_save_cannot_use_pending_cancelled_or_rejected_geometry",
     "cancelling_a_pending_fit_aborts_it_and_ignores_its_late_result",
     "cancelling_or_closing_while_ocr_waits_never_starts_a_late_batch",
     "reanalysis_ignores_old_fit_and_old_worker_deliveries",
@@ -43,6 +46,10 @@ import pytest
     "actual_map_save_rechecks_context_after_asynchronous_preview",
     "actual_map_late_apply_cannot_replace_the_state_of_another_document",
     "actual_map_preview_must_preserve_the_approved_a1_numbers",
+    "actual_map_no_a1_save_binds_the_mode_to_the_exact_preview",
+    "actual_map_no_a1_save_rejects_preview_inserting_a_number",
+    "actual_map_no_a1_save_rejects_a_stale_document_or_revision",
+    "actual_map_save_requires_the_preview_to_keep_the_requested_a1_mode",
 ])
 def test_raster_trace_batch_lifecycle(scenario):
     node = shutil.which("node")

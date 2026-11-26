@@ -3386,15 +3386,19 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
           throw Error("Mapa została zmieniona. Otwórz Auto Wkreślanie ponownie.");
         return result;
       },
-      async addBatch(items){
+      async addBatch(items,options={}){
         if(state.editBusy||state.edit.documentToken!==documentToken||state.edit.revision!==revision)
           throw Error("Mapa została zmieniona. Otwórz Auto Wkreślanie ponownie.");
+        const withoutA1=options.withoutA1===true;
         const post=(path,data)=>api(path,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(data)});
         state.editBusy=true;state.editBusySince=Date.now();updateEditState(state.edit);
         try{
-          const preview=await post("/api/underlay/raster/batch/preview",{documentToken,revision,items});
+          const preview=await post("/api/underlay/raster/batch/preview",{
+            documentToken,revision,items,...(withoutA1?{withoutA1:true}:{})});
           if(state.edit.documentToken!==documentToken||state.edit.revision!==revision)
             throw Error("Mapa została zmieniona. Otwórz Auto Wkreślanie ponownie.");
+          if((preview.withoutA1===true)!==withoutA1)
+            throw Error("Zmieniono sposób zapisu A1. Uruchom zapis partii ponownie.");
           if(!preview.canApply){
             const problems=(preview.items||[]).filter(item=>item.status!=="ready");
             throw Error("Nie zapisano partii. "+problems.slice(0,3).map(item=>"Pole #"+item.id+": "+item.reason).join(" "));
@@ -3429,7 +3433,7 @@ saved.visualPath+"\nZachowaj obok MAP.":""));
             inform("Scalono z "+result.mergedSameA1+" wydzieleniem o tym samym A1.");
         }finally{state.editBusy=false;updateEditState(state.edit);}
       },
-      refresh:()=>refreshEditedDocument(null)
+      refresh:()=>refreshEditedDocument(null,{documentToken,revision})
     });
     $("tool-trace-5310").classList.add("active");
     $("tool-trace-5310").setAttribute("aria-pressed","true");

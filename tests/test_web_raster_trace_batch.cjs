@@ -17,6 +17,16 @@ function numbered(trace = adjacentTrace(), numbers = ['17', '18']) {
     { text: numbers[index], status: 'ok', assignmentStatus: 'ok' }]));
   return trace;
 }
+function sixFields(){
+  const labels=new Int32Array(160*120),shapes=new Map();
+  for(let id=1;id<=6;id++){
+    const left=10+(id-1)*23,right=left+23;
+    for(let y=20;y<100;y++)for(let x=left;x<right;x++)labels[y*160+x]=id;
+    shapes.set(id,{points:[[left,20],[right,20],[right,100],[left,100]],
+      bounds:[left,20,right,100],suggested:true});
+  }
+  return numbered({labels,shapes,tolerance:2.5},['17','18','','','19','20']);
+}
 function recognized() {
   return { width: 160, height: 120, annotations: [
     { text: '17', status: 'ok', confidence: .99, anchor: [40, 50], source: 'inside', hasLeader: false },
@@ -46,6 +56,11 @@ function selectedItems() {
 }
 function approved(items = selectedItems()) {
   return { canApply: true, previewKey: 'reviewed-batch', ...report(items) };
+}
+function approvedWithoutA1(items){
+  const preview=approved(items);preview.withoutA1=true;
+  for(const item of preview.items)item.status='ready';
+  return preview;
 }
 const saved = { documentToken: 'fixture-map', revision: 8, changed: true, createdCount: 2 };
 function label(hints) {
@@ -509,6 +524,82 @@ const cases = {
     ui.api.close();
   },
 
+  async save_all_without_a1_uses_every_valid_outline_and_no_numbers(){
+    const trace=sixFields(),fitting=deferred(),saving=deferred();
+    trace.a1Suggestions.set(2,{text:'18',status:'uncertain',assignmentStatus:'ok'});
+    trace.a1Suggestions.delete(3);
+    trace.a1Suggestions.set(4,{text:'',status:'conflict',assignmentStatus:'ok',
+      alternatives:[{text:'40'},{text:'41'}]});
+    const ui=createUI([],{batchFits:[fitting.promise],batchAddResult:saving.promise});
+    await start(ui,trace);
+    const fitted=report(ui.batchFitCalls[0]);
+    Object.assign(fitted.items[5],{status:'rejected',reason:'Existing 5310 conflict'});
+    fitting.resolve(fitted);await tick();
+    const before=rows(ui);before[0].check.checked=false;before[0].check.onchange();
+    setNumber(before[4],'305');before[4].check.checked=false;before[4].check.onchange();
+    assert.equal(before[1].check.checked,false);assert.equal(before[2].input.value,'');
+    assert.equal(before[3].input.value,'');assert.equal(button(ui,'save-empty').disabled,false);
+    assert.match(button(ui,'save-empty').textContent,/Wkreśl wszystkie bez A1 \(5\)/);
+    const savingAll=button(ui,'save-empty').onclick();
+    await button(ui,'save-empty').onclick();await button(ui,'save').onclick();
+    assert.equal(ui.batchAddCalls.length,1,'Both save actions share the same committing guard');
+    assert.deepEqual(plain(ui.batchAddCalls[0]),plain(fitted.items.slice(0,5).map(({id,points})=>({id,points,a1:''}))));
+    assert.deepEqual(plain(ui.batchAddOptions[0]),{withoutA1:true});
+    assert.deepEqual(rows(ui).map(row=>row.input.value),['17','18','','','305','20'],
+      'Preparing the blank payload must not modify the editable A1 drafts');
+    assert.equal(button(ui,'save').disabled,true);assert.equal(button(ui,'save-empty').disabled,true);
+    assert.equal(button(ui,'cancel').disabled,true);assert.equal(ui.api.close(),false);
+    assert.ok(rows(ui).every(row=>row.input.disabled&&row.check.disabled));
+    saving.resolve({changed:true});await savingAll;
+    assert.equal(rows(ui).length,0);assert.match(ui.status(),/Dodano 5 wydzieleń 5310 bez A1/);
+    assert.equal(ui.addCalls.length,0);ui.api.close();
+  },
+
+  async failed_no_a1_save_preserves_drafts_and_normal_selected_save(){
+    const failure=deferred(),options={batchAddResult:failure.promise},ui=createUI([],options);
+    await start(ui);
+    rows(ui)[0].check.checked=false;rows(ui)[0].check.onchange();setNumber(rows(ui)[1],'902');
+    const original=rows(ui).map(row=>({value:row.input.value,chosen:row.check.checked}));
+    const savingAll=button(ui,'save-empty').onclick();failure.reject(Error('Synthetic save failure'));
+    await savingAll;
+    assert.deepEqual(rows(ui).map(row=>({value:row.input.value,chosen:row.check.checked})),original);
+    assert.match(button(ui,'summary').textContent,/Synthetic save failure/);
+    assert.equal(button(ui,'save-empty').disabled,false);assert.equal(button(ui,'save').disabled,false);
+    options.batchAddResult=Promise.resolve({changed:true});await button(ui,'save').onclick();
+    assert.deepEqual(plain(ui.batchAddCalls[0].map(({id,a1})=>[id,a1])),[[1,''],[2,'']]);
+    assert.deepEqual(plain(ui.batchAddCalls[1].map(({id,a1})=>[id,a1])),[[2,'902']]);
+    assert.equal(ui.batchAddOptions[1],undefined,'Ordinary selected saving must not enable blank A1');
+    assert.match(ui.status(),/Dodano 1 wydzieleń 5310 z A1/);ui.api.close();
+  },
+
+  async no_a1_save_cannot_use_pending_cancelled_or_rejected_geometry(){
+    for(const action of ['cancel','close','reject','unknown']){
+      const fitting=deferred(),ui=createUI([],{batchFits:[null,fitting.promise]});
+      await start(ui);
+      ui.controls.get('.trace-parcel-distance').value='5';ui.controls.get('.trace-parcel-distance').onchange();
+      assert.equal(button(ui,'save-empty').disabled,true);await button(ui,'save-empty').onclick();
+      assert.equal(ui.batchAddCalls.length,0);
+      const response=report(ui.batchFitCalls[1]);
+      if(action==='cancel')button(ui,'cancel').onclick();else if(action==='close')ui.api.close();
+      else if(action==='reject')for(const item of response.items)Object.assign(item,{status:'rejected',reason:'Overlap'});
+      else {delete response.items[0].status;response.items[1].status='not-ready';}
+      fitting.resolve(response);await tick();
+      await button(ui,'save-empty').onclick();assert.equal(ui.batchAddCalls.length,0);
+      if(action==='reject'||action==='unknown'){
+        assert.equal(button(ui,'save-empty').disabled,true);
+        assert.match(button(ui,'save-empty').textContent,/\(0\)/);
+      }
+      ui.api.close();
+    }
+    const ocr=deferred(),ui=createUI([],{a1Load:ocr.promise});await start(ui,adjacentTrace());
+    assert.equal(button(ui,'save-empty').disabled,true);await button(ui,'save-empty').onclick();
+    assert.equal(ui.batchAddCalls.length,0);
+    ocr.reject(Error('OCR is unavailable'));await tick();await tick();
+    assert.equal(button(ui,'save').disabled,true);assert.equal(button(ui,'save-empty').disabled,false);
+    await button(ui,'save-empty').onclick();
+    assert.deepEqual(plain(ui.batchAddCalls[0].map(item=>item.a1)),['','']);ui.api.close();
+  },
+
   async cancelling_a_pending_fit_aborts_it_and_ignores_its_late_result() {
     for (const action of ['cancel', 'close']) {
       const fitting = deferred(), ui = createUI([], { batchFits: [fitting.promise] });
@@ -693,6 +784,43 @@ const cases = {
     const map = mapTracingView([response, saved]);
     await assert.rejects(map.view.addBatch(items), /ponownego|zmieni|A1|Numer/);
     assert.equal(map.apiCalls.length, 1, 'a preview changing a reviewed A1 must not be applied');
+  },
+
+  async actual_map_no_a1_save_binds_the_mode_to_the_exact_preview(){
+    const items=selectedItems().map(item=>({...item,a1:''})),preview=approvedWithoutA1(items);
+    const map=mapTracingView([preview,saved]);await map.view.addBatch(items,{withoutA1:true});
+    assert.deepEqual(JSON.parse(map.apiCalls[0].options.body),{documentToken:'fixture-map',revision:7,items,withoutA1:true});
+    assert.deepEqual(JSON.parse(map.apiCalls[1].options.body),{documentToken:'fixture-map',revision:7,previewKey:'reviewed-batch'});
+    assert.equal(map.apiCalls.length,2);assert.equal(map.state.edit.revision,8);
+  },
+
+  async actual_map_no_a1_save_rejects_preview_inserting_a_number(){
+    const items=selectedItems().map(item=>({...item,a1:''})),preview=approvedWithoutA1(items);
+    preview.items[1].a1='999';
+    const map=mapTracingView([preview,saved]);
+    await assert.rejects(map.view.addBatch(items,{withoutA1:true}),/ponownego|zmieni|A1|Numer/);
+    assert.equal(map.apiCalls.length,1);
+  },
+
+  async actual_map_no_a1_save_rejects_a_stale_document_or_revision(){
+    for(const change of [{documentToken:'another-map',revision:0},{documentToken:'fixture-map',revision:8}]){
+      const pending=deferred(),items=selectedItems().map(item=>({...item,a1:''})),preview=approvedWithoutA1(items);
+      const map=mapTracingView([pending.promise,saved]),saving=map.view.addBatch(items,{withoutA1:true});
+      await tick();map.state.edit=change;pending.resolve(preview);
+      await assert.rejects(saving,/Mapa została zmieniona|zmieniła/);
+      assert.equal(map.apiCalls.length,1);assert.deepEqual(map.state.edit,change);
+    }
+  },
+
+  async actual_map_save_requires_the_preview_to_keep_the_requested_a1_mode(){
+    for(const withoutA1 of [false,true]){
+      const items=selectedItems().map(item=>({...item,a1:withoutA1?'':item.a1}));
+      const preview=withoutA1?approvedWithoutA1(items):approved(items);
+      preview.withoutA1=!withoutA1;
+      const map=mapTracingView([preview,saved]);
+      await assert.rejects(map.view.addBatch(items,{withoutA1}),/tryb|A1|ponownie/i);
+      assert.equal(map.apiCalls.length,1,'An opposite preview mode must not reach apply');
+    }
   },
 };
 
