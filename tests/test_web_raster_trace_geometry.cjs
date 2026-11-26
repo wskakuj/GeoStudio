@@ -68,7 +68,92 @@ function raster(){
   for(let y=20;y<=120;y++){put(20,y,[30,30,30]);put(160,y,[30,30,30]);put(90+Math.round(2*Math.sin((y-20)*Math.PI/20)),y,[180,35,40],0);}
   return {pixels,forest,width,height};
 }
+function scanFixture(width=300,height=240,paper=[255,255,255]){
+  const pixels=new Uint8ClampedArray(width*height*4),forest=new Uint8ClampedArray(pixels.length);
+  const put=(x,y,color)=>pixels.set([...color,255],4*(y*width+x));
+  for(let y=0;y<height;y++)for(let x=0;x<width;x++)put(x,y,paper);
+  function stroke(a,b,color=[25,25,25],radius=0){
+    const steps=Math.max(Math.abs(a[0]-b[0]),Math.abs(a[1]-b[1]));
+    for(let i=0;i<=steps;i++)for(let dy=-radius;dy<=radius;dy++)for(let dx=-radius;dx<=radius;dx++)
+      put(Math.round(a[0]+(b[0]-a[0])*i/steps)+dx,Math.round(a[1]+(b[1]-a[1])*i/steps)+dy,color);
+  }
+  function box(left,top,right,bottom,fill=paper,radius=0){
+    for(let y=top;y<=bottom;y++)for(let x=left;x<=right;x++)put(x,y,fill);
+    for(const [a,b] of [[[left,top],[right,top]],[[right,top],[right,bottom]],
+      [[right,bottom],[left,bottom]],[[left,bottom],[left,top]]])stroke(a,b,[25,25,25],radius);
+  }
+  return {pixels,forest,width,height,put,stroke,box,trace:(threshold=0)=>
+    traceLandUses(pixels,forest,width,height,threshold,2.5)};
+}
 const cases={
+  automatic_recovers_thin_enclosures_without_splitting_the_primary_field(){
+    const f=scanFixture();
+    f.box(20,20,120,120,[205,225,180],1);
+    f.stroke([60,20],[60,120]);f.stroke([90,20],[90,120]);
+    // A separate fine outline and a letter counter in its tinted interior.
+    f.box(170,20,240,120,[205,225,180]);
+    f.box(190,50,200,64,[205,225,180]);
+    // This fine, unmarked neighbour must remain separate from the recovery.
+    f.box(240,20,275,120);
+    const coarse=f.trace(5),automatic=f.trace(0),thin=f.trace(3);
+    assert.equal(coarse.shapes.size,1);assert.equal(automatic.shapes.size,2);
+    assert.ok(thin.shapes.size>automatic.shapes.size,'Explicit thin mode may split the printed grid');
+    const primaryId=Array.from(coarse.shapes.keys())[0];
+    assert.equal(pointSet(automatic.shapes.get(primaryId).points),pointSet(coarse.shapes.get(primaryId).points));
+    for(let i=0;i<coarse.labels.length;i++)if(coarse.labels[i]===primaryId)
+      assert.equal(automatic.labels[i],primaryId,'Recovery may not take primary field pixels');
+    const recovered=Array.from(automatic.shapes.values()).find(s=>inside([210,85],s.points));
+    assert.ok(recovered);assert.equal(inside([255,85],recovered.points),false);
+    assert.ok(inside([195,57],recovered.points),'Letter counters remain part of the recovered field');
+    assert.equal(recovered.points.length,4);
+    const occupied=f.forest;
+    for(let y=18;y<=122;y++)for(let x=168;x<=242;x++)occupied.set([255,255,255,255],4*(y*f.width+x));
+    const masked=f.trace(0);
+    assert.equal(masked.shapes.size,1,'Fine recovery must respect existing 5310 masks');
+  },
+  recovered_paper_parcel_is_not_suggested_from_one_red_edge(){
+    const f=scanFixture();
+    f.box(30,30,170,190);
+    f.stroke([31,40],[31,180],[180,35,40]);
+    // Fine printed parcel enclosure beside red ownership ink has no fill.
+    assert.equal(f.trace(3).shapes.size,1,'The fine enclosure really exists');
+    assert.equal(f.trace(0).shapes.size,0,'Touching red ink alone cannot qualify recovered blank paper');
+  },
+  pale_fill_is_relative_to_the_paper_and_is_not_a_letter_counter(){
+    const paper=[242,237,228],f=scanFixture(300,240,paper);
+    f.box(20,20,280,220,paper,1);
+    for(const x of [70,120,170,220])f.stroke([x,20],[x,220]);
+    for(const threshold of [0,5])assert.equal(Array.from(f.trace(threshold).shapes.values()).filter(s=>s.suggested).length,0,
+      'Uniform cream paper enclosed by a map frame is not a coloured field');
+    // Under8% of the frame: the old printed-counter heuristic swallowed it.
+    f.box(35,50,65,90,[240,235,236],1);
+    for(const threshold of [0,5]){
+      const shapes=Array.from(f.trace(threshold).shapes.values()).filter(s=>s.suggested);
+      assert.equal(shapes.length,1);assert.ok(inside([50,70],shapes[0].points));
+      assert.equal(inside([180,100],shapes[0].points),false);
+    }
+  },
+  neutral_fill_needs_local_contrast_not_paper_or_a_scan_shadow(){
+    const f=scanFixture();
+    f.box(30,30,120,120,[215,215,215],1);
+    // A grey antialiasing strip has no two-dimensional patch of fill.
+    f.box(180,30,185,130,[215,215,215],1);
+    for(const threshold of [0,5]){
+      const shapes=Array.from(f.trace(threshold).shapes.values()).filter(s=>s.suggested);
+      assert.equal(shapes.length,1);assert.ok(inside([60,60],shapes[0].points));
+    }
+    const grey=scanFixture(300,240,[215,215,215]);
+    grey.box(30,30,270,210,[215,215,215],1);
+    assert.equal(Array.from(grey.trace().shapes.values()).filter(s=>s.suggested).length,0);
+    const shadow=scanFixture();
+    for(let y=0;y<shadow.height;y++)for(let x=0;x<shadow.width;x++){
+      const light=Math.round(252-65*x/(shadow.width-1));shadow.put(x,y,[light,light,light]);
+    }
+    for(const [a,b] of [[[160,30],[270,30]],[[270,30],[270,210]],[[270,210],[160,210]],[[160,210],[160,30]]])
+      shadow.stroke(a,b,[25,25,25],1);
+    assert.equal(Array.from(shadow.trace().shapes.values()).filter(s=>s.suggested).length,0,
+      'Gradual darkening has no locally contrasting field edge');
+  },
   occupied_5310_mask_never_becomes_a_proposal(){
     const {pixels,forest,width,height}=raster();
     // Existing left-hand field, including its black stroke. Interior alpha

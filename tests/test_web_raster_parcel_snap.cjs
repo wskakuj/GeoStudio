@@ -258,22 +258,69 @@ const cases={
     close(result[0].points,left);close(result[1].points,right);
     assert.equal(result.diagnostics.movedVertices,0);
   },
-  conflicting_supported_shared_projections_remain_unresolved(){
-    const left=[[-20,-5],[2,0],[2,10],[-20,10]];
-    const right=[[2,0],[20,0],[20,10],[2,10]];
-    const index=buildIndex([line([[0,-20],[0,30]])]);
+  same_track_shared_projections_use_one_nearest_point(){
+    // Different exterior raster tangents create different intersections with
+    // the same straight cadastral track. Pick its closest shared position,
+    // retaining the complete native path and every original source index.
+    for(const depth of [-5,-.2])for(const [dx,dy] of [[0,0],[5500000,7500000]]){
+      const left=shift([[-20,depth],[2,0],[2,10],[-20,10]],dx,dy);
+      const right=shift([[2,0],[20,0],[20,10],[2,10]],dx,dy);
+      const index=buildIndex([line(shift([[0,-20],[0,5]],dx,dy)),line(shift([[0,5],[0,30]],dx,dy))]);
+      const independent=[left,right].map(ring=>snapRing(ring,index,{distance:3}));
+      assert.equal(independent[0].snappedEdges,1);assert.equal(independent[1].snappedEdges,1);
+      const leftTarget=independent[0].points[independent[0].sourceIndices.indexOf(1)];
+      const rightTarget=independent[1].points[independent[1].sourceIndices.indexOf(0)];
+      assert.ok(Math.abs(leftTarget[1]-rightTarget[1])>.01);
+      const result=snapRings([left,right],index,{distance:3});
+      close(result[0].points,shift([[-20,depth],[0,0],[0,5],[0,10],[-20,10]],dx,dy));
+      close(result[1].points,shift([[0,0],[20,0],[20,10],[0,10],[0,5]],dx,dy));
+      assert.deepEqual(plain(result[0].points.slice(1,4)),
+        plain([result[1].points[0],...result[1].points.slice(3).reverse()]));
+      assert.equal(result.diagnostics.matchedSides,2);
+      assert.ok(result.diagnostics.maxDisplacement<=3);
+      const reverse=snapRings([right.slice().reverse(),left.slice().reverse()],index,{distance:3});
+      assert.equal(set(reverse[0].points),set(result[1].points));
+      assert.equal(set(reverse[1].points),set(result[0].points));
+      for(const options of [{distance:1.5},{distance:3,locked:[left[1]]}]){
+        const fixed=snapRings([left,right],index,options);
+        close(fixed[0].points,left);close(fixed[1].points,right);
+      }
+    }
+  },
+  distinct_shared_projection_tracks_remain_unresolved(){
+    const rings=[[[0,0],[50,0],[50,50],[0,50]],[[0,0],[-50,0],[-50,-50],[0,-50]]];
+    const index=buildIndex([line([[-60,1],[0,1]]),line([[0,-1],[60,-1]])]);
+    const independent=rings.map(ring=>snapRing(ring,index,{distance:3}));
+    assert.deepEqual(plain(independent.map(result=>result.points[0])),[[0,-1],[0,1]]);
+    const result=snapRings(rings,index,{distance:3});
+    result.forEach((item,i)=>close(item.points,rings[i]));
+    const reverse=snapRings(rings.slice().reverse().map(ring=>ring.slice().reverse()),index,{distance:3});
+    reverse.forEach((item,i)=>assert.equal(set(item.points),set(rings[1-i])));
+  },
+  shared_projection_never_bridges_a_gap_in_reference_coverage(){
+    const rings=[[[-20,20],[0,0],[0,30],[-20,30]],[[0,0],[20,20],[20,-30],[0,-30]]];
+    const index=buildIndex([line([[-1,.5],[-1,40]]),line([[-1,-40],[-1,-.5]])]);
+    const independent=rings.map(ring=>snapRing(ring,index,{distance:3}));
+    assert.deepEqual(plain([independent[0].points[1],independent[1].points[0]]),[[-1,1],[-1,-1]]);
+    // Collinearity alone is insufficient: [-1,0] has no native support.
+    const result=snapRings(rings,index,{distance:3});
+    result.forEach((item,i)=>close(item.points,rings[i]));
+    const reverse=snapRings(rings.slice().reverse().map(ring=>ring.slice().reverse()),index,{distance:3});
+    reverse.forEach((item,i)=>assert.equal(set(item.points),set(rings[1-i])));
+  },
+  dense_shared_junction_does_not_expand_projection_work(){
+    const left=[[-20,-5],[2,0],[2,10],[-20,10]],right=[[2,0],[20,0],[20,10],[2,10]];
+    // Diagonal clutter is harmless to the vertical side match, but would
+    // otherwise become a quadratic search when reconciling the junction.
+    const clutter=Array.from({length:600},(_,i)=>{
+      const d=i/1000;return line([[1+d,.3],[1.1+d,.4]]);
+    });
+    const index=buildIndex([line([[0,-20],[0,30]]),...clutter]);
     const independent=[left,right].map(ring=>snapRing(ring,index,{distance:3}));
-    assert.equal(independent[0].snappedEdges,1);assert.equal(independent[1].snappedEdges,1);
-    const leftTarget=independent[0].points[independent[0].sourceIndices.indexOf(1)];
-    const rightTarget=independent[1].points[independent[1].sourceIndices.indexOf(0)];
-    assert.equal(leftTarget[0],0);assert.equal(rightTarget[0],0);
-    assert.ok(Math.abs(leftTarget[1]-rightTarget[1])>.1,
-      'The same source vertex has two genuinely different supported projections');
+    assert.ok(independent.every(item=>item.snappedEdges===1));
     const result=snapRings([left,right],index,{distance:3});
     close(result[0].points,left);close(result[1].points,right);
     assert.ok(result.diagnostics.reasons['shared-veto']>0);
-    const reverse=snapRings([right.slice().reverse(),left.slice().reverse()],index,{distance:3});
-    assert.equal(set(reverse[0].points),set(right));assert.equal(set(reverse[1].points),set(left));
   },
   a_fit_cannot_reverse_a_short_unreferenced_connector(){
     // A narrow spur remains a simple ring with a small area change. Moving

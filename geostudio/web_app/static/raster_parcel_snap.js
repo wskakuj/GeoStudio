@@ -300,6 +300,38 @@
       lineDistance(p,result[i-1],result[i+1])>EPS||
       query(index,bounds(p,p,EPS)).some(edge=>distance(p,edge.a)<=EPS||distance(p,edge.b)<=EPS));
   }
+  // Two incident raster tangents can place their common junction at different
+  // points along the same straight cadastral boundary. These are not competing
+  // tracks: agree on the closest point of that proven continuous track before
+  // the shared-node veto freezes it. Use a native edge's tangent, rather than a
+  // line between almost coincident projections at large map coordinates.
+  function commonProjection(p,choices,index,radius){
+    const nearby=query(index,bounds(p,p,radius));
+    // Side searches can reject dense off-angle clutter before graph creation.
+    // Keep this junction-level fallback bounded for that same input too.
+    if(nearby.length*(nearby.length+choices.length)>MAX_GRAPH_WORK)return null;
+    nearby.sort((a,b)=>distance(b.a,b.b)-distance(a.a,a.b)||a.id-b.id);
+    for(const edge of nearby){
+      if(choices.some(q=>lineDistance(q,edge.a,edge.b)>EPS))continue;
+      const target=projection(p,edge.a,edge.b,false);
+      if(distance(p,target)>radius+EPS)continue;
+      const size=distance(edge.a,edge.b),dx=(edge.b[0]-edge.a[0])/size,dy=(edge.b[1]-edge.a[1])/size;
+      const along=q=>(q[0]-edge.a[0])*dx+(q[1]-edge.a[1])*dy;
+      const locations=[target,...choices].map(along),lo=Math.min(...locations),hi=Math.max(...locations);
+      const intervals=nearby.filter(other=>lineDistance(other.a,edge.a,edge.b)<=EPS&&
+        lineDistance(other.b,edge.a,edge.b)<=EPS).map(other=>{
+          const a=along(other.a),b=along(other.b);return [Math.min(a,b),Math.max(a,b)];
+        }).sort((a,b)=>a[0]-b[0]||a[1]-b[1]);
+      let covered=lo;
+      for(const [a,b] of intervals){
+        if(b<covered-EPS)continue;
+        if(a>covered+EPS)break;
+        covered=Math.max(covered,b);
+        if(covered>=hi-EPS)return target;
+      }
+    }
+    return null;
+  }
   function referenceCorner(p,before,after,index,radius){
     if(!before||!after||before.cornerBridge||after.cornerBridge)return null;
     radius=Math.min(radius,Math.max(before.searchDistance||radius,after.searchDistance||radius));
@@ -590,7 +622,9 @@
     // a complete parcel side. Try that single supported position on both
     // fields before freezing their shared border. Every recipient still runs
     // the ordinary displacement, area, narrow-arm and path safety checks.
-    // Competing moved positions and explicit manual locks remain unresolved.
+    // Different tracks and explicit manual locks remain unresolved. Different
+    // projections along one straight track can share its nearest
+    // point without choosing either neighbour's raster tangent arbitrarily.
     function propagateSharedTargets(results){
       const geometry=results.map((result,i)=>paths(result,source[i].length));
       let changed=false;
@@ -608,8 +642,11 @@
             distance(path[j-1],q)>EPS&&supportedPiece(path[j-1],q,index))))continue;
           choices.set(key(position),position);
         }
-        if(choices.size!==1)continue;
-        sharedProjections.set(id,choices.values().next().value.slice());changed=true;
+        const positions=[...choices.values()];
+        const target=positions.length===1?positions[0]:positions.length>1?
+          commonProjection(items.map(item=>item.p).sort(compare)[0],positions,index,Number(options.distance)):null;
+        if(!target)continue;
+        sharedProjections.set(id,target.slice());changed=true;
       }
       if(changed)cached.length=0;
       return changed;
