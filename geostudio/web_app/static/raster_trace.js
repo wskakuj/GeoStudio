@@ -1288,7 +1288,8 @@ function openRasterTracing(item, view) {
   batchStart.onclick=()=>{
     if(disposed||busy||batchPending)return;
     batchActive=true;batchWaiting=true;batchItems=[];batchFocus=null;batchMessage="Analizuję cały przygotowany obraz…";
-    panel.querySelector("select").value="3";tolerance.value="2.5";
+    // Keep the chosen contour and straightening settings. Forcing thin
+    // contours here turned printed parcel lines and lettering into dividers.
     quality.value="14000000";quality.onchange();view.fit(bounds);draw();
   };
   async function saveBatch(withoutA1=false){

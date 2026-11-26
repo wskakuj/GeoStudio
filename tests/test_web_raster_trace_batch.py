@@ -8,6 +8,7 @@ import pytest
 
 @pytest.mark.parametrize("scenario", [
     "one_click_prepares_all_fields_and_uses_the_batch_callback",
+    "whole_map_defaults_ignore_thin_print_but_preserve_red_dividers_and_explicit_choices",
     "reliable_competing_uncertain_number_requires_review",
     "unreliable_competing_assignment_does_not_replace_a_confirmed_number",
     "matching_uncertain_number_does_not_erase_independent_confirmation",

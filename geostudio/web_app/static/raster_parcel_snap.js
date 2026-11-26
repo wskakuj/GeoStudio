@@ -356,6 +356,15 @@
   }
   function safe(original,paths,result,radius,matches,targets){
     if(!simple(result))return false;
+    // Moving a supported junction past the next raster vertex can reverse
+    // an otherwise unmatched short connector. That creates a folded spur
+    // into the adjacent field even when this ring remains simple and its
+    // area changes only slightly. Keep every side's forward progression.
+    for(let i=0;i<paths.length;i++){
+      const a=original[i],b=original[(i+1)%original.length],path=paths[i];
+      const u=path[0],v=path.at(-1);
+      if((v[0]-u[0])*(b[0]-a[0])+(v[1]-u[1])*(b[1]-a[1])<=EPS*distance(a,b))return false;
+    }
     const before=area(original),after=area(result);
     if(before*after<=0)return false;
     // A thick stroke shrinks the detected white interior on every side of a
@@ -453,7 +462,7 @@
       !locks.has(key(original[i]))&&!locks.has(key(original[(i+1)%n])))
       matches[i]=bridgeShortSide(original[i],original[(i+1)%n],direct[(i+n-1)%n],direct[(i+1)%n],index,radius);
     matches.forEach((match,i)=>{if(match)observations[i].candidate=true;});
-    const targets=new Map(options._targets||[]);
+    const targets=new Map(options._targets||[]),sharedProjections=new Map(options._sharedProjections||[]);
     original.forEach((p,i)=>{
       if(locks.has(key(p)))return;
       const target=referenceCorner(p,matches[(i+n-1)%n],matches[i],index,radius);
@@ -467,7 +476,7 @@
       let changed=false;corners=original.map(p=>p.slice());
       for(let i=0;i<n;i++){
         const previous=(i+n-1)%n,before=matches[previous],after=matches[i],p=original[i];
-        const anchor=locks.has(key(p))?p:targets.get(key(p));
+        const anchor=locks.has(key(p))?p:targets.get(key(p))||sharedProjections.get(key(p));
         const cornerRadius=targets.has(key(p))?Math.SQRT2*radius:radius;
         if(anchor&&distance(p,anchor)<=cornerRadius+EPS)corners[i]=anchor.slice();
         if(!before&&!after)continue;
@@ -540,7 +549,7 @@
     });
     const sharedVertices=[...vertices.entries()].filter(([,items])=>new Set(items.map(item=>item.r)).size>1);
     const sharedEdges=[...edges.entries()].filter(([,items])=>new Set(items.map(item=>item.r)).size>1);
-    const locks=new Map(),blocked=new Set(),cached=[],proposals=new Map(),targets=new Map();
+    const locks=new Map(),blocked=new Set(),cached=[],proposals=new Map(),targets=new Map(),sharedProjections=new Map();
     if(Array.isArray(options.locked))for(const p of options.locked)if(point(p))locks.set(key(p),p);
     // A node can be a genuine corner in two neighbouring fields while appearing
     // almost straight in the third. Share the independently supported native
@@ -559,7 +568,7 @@
         const signature=localLocks.map(key).join(";")+"/"+localEdges.join(";");
         if(cached[i]?.signature===signature)return cached[i].result;
         const result=snapRing(ring,index,{distance:options.distance,precisionDistance:options.precisionDistance,
-          locked:localLocks,blockedEdges:blocked,_targets:targets});
+          locked:localLocks,blockedEdges:blocked,_targets:targets,_sharedProjections:sharedProjections});
         cached[i]={signature,result};return result;
       });
     }
@@ -575,6 +584,35 @@
         paths.push(path);
       }
       return {offsets,paths};
+    }
+    // A raster bevel on one field can prevent its local corner intersection,
+    // although the neighbouring field already supports the shared vertex on
+    // a complete parcel side. Try that single supported position on both
+    // fields before freezing their shared border. Every recipient still runs
+    // the ordinary displacement, area, narrow-arm and path safety checks.
+    // Competing moved positions and explicit manual locks remain unresolved.
+    function propagateSharedTargets(results){
+      const geometry=results.map((result,i)=>paths(result,source[i].length));
+      let changed=false;
+      for(const [id,items] of sharedVertices){
+        if(locks.has(id)||targets.has(id)||sharedProjections.has(id))continue;
+        const choices=new Map();
+        for(const {r,i,p} of items){
+          const position=results[r].points[geometry[r].offsets[i]];
+          if(!point(position)||distance(position,p)<=EPS)continue;
+          // Only reuse an ordinary in-range projection. Native bend anchors
+          // with the diagonal allowance were already shared above.
+          if(distance(position,p)>Number(options.distance)+EPS)continue;
+          const incident=[geometry[r].paths[i],geometry[r].paths[(i+source[r].length-1)%source[r].length]];
+          if(!incident.some(path=>path.length>1&&path.every((q,j)=>!j||
+            distance(path[j-1],q)>EPS&&supportedPiece(path[j-1],q,index))))continue;
+          choices.set(key(position),position);
+        }
+        if(choices.size!==1)continue;
+        sharedProjections.set(id,choices.values().next().value.slice());changed=true;
+      }
+      if(changed)cached.length=0;
+      return changed;
     }
     function conflicts(results){
       const geometry=results.map((result,i)=>paths(result,source[i].length));
@@ -599,7 +637,9 @@
     const limit=Number.isFinite(requested)?Math.max(1,Math.min(bound,Math.floor(requested))):Math.min(bound,16);
     let results,stable=false;
     for(let iteration=0;iteration<limit;iteration++){
-      results=run();if(!conflicts(results)){stable=true;break;}
+      results=run();
+      if(propagateSharedTargets(results))results=run();
+      if(!conflicts(results)){stable=true;break;}
     }
     if(!stable){
       // Emergency bound for a pathological cascade. Shared geometry stays

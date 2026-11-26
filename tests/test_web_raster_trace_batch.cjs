@@ -69,6 +69,31 @@ function label(hints) {
   vm.runInContext(fs.readFileSync(path.join(__dirname, '../geostudio/web_app/static/raster_trace_batch.js'), 'utf8'), context);
   return context.GeoStudioRasterTraceBatch.label(hints);
 }
+function printedParcelFixture() {
+  // Synthetic scan: two tinted forestry fields, a real thin red divider,
+  // two thin printed parcel lines and one-pixel printed digit counters.
+  const width=360,height=200,pixels=new Uint8ClampedArray(width*height*4);
+  pixels.fill(255);
+  const put=(x,y,color)=>pixels.set([...color,255],4*(y*width+x));
+  for(let y=20;y<=180;y++)for(let x=20;x<=340;x++)put(x,y,[210,230,180]);
+  const black=[25,25,25];
+  function stroke(a,b,color,radius=0){
+    const steps=Math.max(Math.abs(b[0]-a[0]),Math.abs(b[1]-a[1]));
+    for(let i=0;i<=steps;i++)for(let dy=-radius;dy<=radius;dy++)for(let dx=-radius;dx<=radius;dx++)
+      put(Math.round(a[0]+(b[0]-a[0])*i/steps)+dx,Math.round(a[1]+(b[1]-a[1])*i/steps)+dy,color);
+  }
+  for(const [a,b] of [[[20,20],[340,20]],[[340,20],[340,180]],[[340,180],[20,180]],[[20,180],[20,20]]])
+    stroke(a,b,black,1);
+  stroke([180,20],[180,180],[175,30,35]);
+  for(const x of [100,260])stroke([x,20],[x,180],black);
+  for(const [x,y] of [[60,70],[220,90]])for(const [a,b] of [
+    [[x,y],[x+8,y]],[[x+8,y],[x+8,y+14]],[[x+8,y+14],[x,y+14]],[[x,y+14],[x,y]],
+  ])stroke(a,b,black);
+  const context={};vm.createContext(context);
+  vm.runInContext(fs.readFileSync(path.join(__dirname,'../geostudio/web_app/static/raster_trace.js'),'utf8'),context);
+  return {width,height,analyze:settings=>context.traceLandUses(pixels,
+    new Uint8ClampedArray(pixels.length),width,height,settings.threshold,settings.tolerance)};
+}
 
 const cases = {
   async one_click_prepares_all_fields_and_uses_the_batch_callback() {
@@ -77,8 +102,10 @@ const cases = {
     ui.controls.get('.trace-tolerance').value = '4';
     await start(ui);
     assert.equal(ui.controls.get('.trace-quality').value, '14000000');
-    assert.equal(ui.workers[1].messages.at(-1).threshold, 3);
-    assert.equal(ui.workers[1].messages.at(-1).tolerance, 2.5);
+    assert.equal(ui.workers[1].messages.at(-1).threshold, 7,
+      'whole-map analysis must retain the chosen contour width');
+    assert.equal(ui.workers[1].messages.at(-1).tolerance, 4,
+      'whole-map analysis must retain the chosen straightening tolerance');
     assert.equal(ui.workers.length, 2);
     assert.equal(ui.workers[0].terminated, true, 'the prior analysis worker must release its image buffers');
     assert.equal(ui.batchFitCalls.length, 1);
@@ -91,6 +118,36 @@ const cases = {
     assert.equal(button(ui, 'save').disabled, false);
     assert.equal(ui.controls.get('.trace-save').disabled, true);
     assert.match(button(ui, 'summary').textContent, /pewne A1: 2/);
+    ui.api.close();
+  },
+
+  async whole_map_defaults_ignore_thin_print_but_preserve_red_dividers_and_explicit_choices() {
+    const fixture=printedParcelFixture(),ui=createUI([],{width:fixture.width,height:fixture.height});
+    await tick();
+    async function analyze(){
+      button(ui,'start').onclick();await tick();
+      const worker=ui.workers.find(item=>!item.terminated),settings=worker.messages.at(-1);
+      const trace=fixture.analyze(settings);worker.result(trace);await tick();
+      return {settings,trace};
+    }
+    const initial=await analyze();
+    assert.equal(initial.settings.threshold,5);
+    assert.equal(initial.settings.tolerance,2.5);
+    assert.equal(rows(ui).length,2,
+      'default whole-map tracing must ignore thin printed parcel lines and digits');
+    assert.ok([...initial.trace.shapes.values()].every(shape=>
+      shape.points.every(([x])=>x<=181)||shape.points.every(([x])=>x>=179)),
+    'a real thin red boundary still separates the two forestry fields');
+    ui.controls.get('select').value='3';ui.controls.get('.trace-tolerance').value='4';
+    const thin=await analyze();
+    assert.equal(thin.settings.threshold,3);
+    assert.equal(thin.settings.tolerance,4);
+    assert.equal(rows(ui).length,4,'explicit thin-contour mode must remain available');
+    ui.controls.get('select').value='7';ui.controls.get('.trace-tolerance').value='1';
+    const coarse=await analyze();
+    assert.equal(coarse.settings.threshold,7);
+    assert.equal(coarse.settings.tolerance,1);
+    assert.equal(rows(ui).length,2,'repeated whole-map analysis must retain both changed controls');
     ui.api.close();
   },
 

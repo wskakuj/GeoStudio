@@ -17,7 +17,7 @@ Zmiana **Kontury**, **Analiza** lub **Prostowanie** ponownie analizuje obraz i u
 Przycisk **Wkreśl całą mapę (test)** przygotowuje wspólny podgląd wszystkich rozpoznanych propozycji. Nie trzeba klikać każdego pola, żeby otrzymać jego obrys i odczyt A1. Przycisk **Pokaż cały raster** służy wyłącznie do ustawienia widoku; nie uruchamia wkreślania.
 
 1. Po skalibrowaniu rastra otwórz **Auto Wkreślanie** i wybierz **Wkreśl całą mapę (test)**.
-2. Program wybierze **Pełny obraz (test)**, kontury **Także cienkie** i prostowanie **Proste boki**. Analiza wykorzystuje do 14 mln pikseli przygotowanego obrazu. Uwzględnianie cienkich konturów ogranicza łączenie sąsiednich pól przez pominiętą cienką granicę.
+2. Program wybierze **Pełny obraz (test)** i wykorzysta do 14 mln pikseli przygotowanego obrazu. Zachowa ustawienia **Kontury** i **Prostowanie**, również przy ponownym uruchomieniu. Początkowe ustawienia to **Grubsze** i **Proste boki**.
 3. Poczekaj na rozpoznanie pól, odczyt A1 i wspólne dopasowanie do granic. Obrysy pojawią się razem na mapie, a panel pokaże listę numerów oraz liczbę propozycji wymagających kontroli. Dopasowanie 5216 jest obliczane w tle, aby można było anulować długą analizę.
 4. Sprawdź obrysy i A1. Kliknięcie pola na mapie wskazuje pozycję na liście. Przycisk z numerem `#` na liście przybliża odpowiedni obrys. Numer `#` oznacza identyfikator propozycji, a nie A1.
 5. Popraw numery i zaznacz pola, które chcesz przyjąć. **Zapisz zaznaczone** tworzy wybrane 5310 wraz z A1 w jednej operacji. **Ctrl+Z** cofa całą zapisaną partię.
@@ -62,6 +62,14 @@ Do zestawu trafiają pola wyróżnione kolorem lub granicą oraz pola z rozpozna
 
 To tryb próbny: nie obiecuje kompletnego rozpoznania każdego wydzielenia. Nieczytelny numer, urwany kontur, kilka numerów w jednym wykrytym polu lub nieustalony wysięgnik mogą wymagać korekty. Pola wymagające poprawienia geometrii pomiń przy zapisie, a następnie skorzystaj z **Wróć do pojedynczego**. Przycisk ten odrzuca niezapisany zestaw propozycji.
 
+### Cienkie linie podkładu i niepotrzebne podziały
+
+Od wersji 2.0.107 przycisk całej mapy nie przełącza sam konturów na **Także cienkie** i nie resetuje prostowania. Cienka drukowana linia działki wewnątrz jednego wydzielenia mogła wcześniej rozdzielić je na kilka propozycji, mimo innego ustawienia wybranego przed analizą. Domyślne **Grubsze** pomijają bardzo cienki czarny druk. Cienkie czerwone granice zaznaczone na skanie nadal mogą rozdzielać wydzielenia.
+
+Jeżeli program rozbija pole po napisach lub cienkiej sieci działek, porównaj podgląd przy **Grubsze**, a w razie potrzeby **Tylko bardzo grube**. Jeżeli pomija rzeczywistą cienką czarną granicę, wybierz **Także cienkie**. Każda z tych zmian ponownie analizuje raster, więc sprawdź również sąsiednie pola. Mocniejsze **Prostowanie** ogranicza drobne załamania rozpoznanego boku, ale nie usuwa błędnego podziału na osobne pola.
+
+Sama bliskość 5216 ani brak A1 nie wystarczają do automatycznego scalenia propozycji: prawdziwy podział może również leżeć na granicy działki. Plik MAP zawiera zapisane obrysy, ale nie zachowuje koloru i grubości kreski z obrazu. Do sprawdzenia przyczyn pominiętych lub nadmiernie podzielonych pól potrzebny jest również raster i jego kalibracja.
+
 Jedna partia obejmuje do **1000 propozycji**, **50 000 węzłów łącznie** i **500 węzłów jednego obrysu**. Przed dopasowaniem kontrolowana jest także złożoność całej sieci rozpoznanych granic. Przekroczenie limitu daje komunikat, zamiast pomijać część mapy bez informacji. Przy zbyt szczegółowym obrazie wybierz grubsze kontury lub mocniejsze prostowanie.
 
 ## Dopasowanie do granic działek 5216
@@ -79,6 +87,8 @@ Status w panelu podaje liczbę odcinków odniesienia 5216, dopasowanych boków i
 Dopasowanie korzysta z granic 5216 całego obszaru rastra, także gdy ich warstwa jest ukryta. Geometria działek pozostaje bez zmian; dopasowywany jest nowy obrys 5310. Program nie dzieli automatycznie wydzielenia wzdłuż wszystkich działek — korzysta z tych granic, wzdłuż których przebiega rozpoznany obrys.
 
 Sąsiadujące pola uzgadniają wspólne narożniki i boki. Jeżeli dopasowanie nadmiernie zmienia wąski fragment albo daje niepoprawny obrys, wspólna granica pozostaje spójna po obu stronach. Zaznaczenie kilku pól łączy ich uzgodnione obrysy, bez ponownego niezależnego dopasowania granicy z pikseli.
+
+Od wersji 2.0.107 małe załamanie kreski w jednym z sąsiednich pól nie musi od razu cofać poprawnego dopasowania drugiego pola. Program najpierw próbuje wspólnego położenia węzła potwierdzonego przez dopasowany bok sąsiada. Punkt musi mieścić się w wybranym zasięgu, a oba obrysy ponownie przechodzą kontrolę kształtu. Sprzeczne propozycje, ręcznie zablokowane węzły, zanik wąskiego fragmentu lub odwrócenie krótkiego boku nadal zatrzymują taką zmianę. Nie jest to scalanie wydzieleń ani usuwanie ich wewnętrznych granic.
 
 Krótkie współliniowe fragmenty są rozpatrywane jako część całego boku. Małe ścięcia narożników pozostawione przez grubą kreskę mogą przejść przez rzeczywisty węzeł 5216, gdy potwierdzają go oba sąsiednie boki. Samo pobliskie przecięcie obcych linii nie jest wystarczającą podstawą do zmiany kształtu.
 
