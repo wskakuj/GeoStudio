@@ -3,7 +3,7 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "test": "firebase emulators:exec --only firestore --project demo-geostudio --config firebase.json \"node --test rules.test.mjs\""
+    "test": "cd .. && firebase emulators:exec --only firestore --project demo-geostudio --config firebase.json \"node --test rules-test/rules.test.mjs\""
   },
   "devDependencies": {
     "firebase": "12.16.0",
