@@ -54,3 +54,11 @@ i można go ominąć zmodyfikowanym klientem/starszą wersją. Nie jest DRM.
 
 Reguły wymagają sprawdzenia w emulatorze lub Rules Playground i testu
 na oddzielnym koncie, zanim włączysz limit dla kont produkcyjnych.
+
+## Opcjonalny tryb offline
+
+Panel pozwala wybrać "Zezwól na 72 h pracy offline", ale opcja wymaga
+limitu komputerów i wdrożonej usługi podpisującej. Domyślnie wyłączona.
+Przeczytaj [FIREBASE_OFFLINE.md](FIREBASE_OFFLINE.md) przed jej użyciem.
+Identyfikator wyświetlany w menu konta GeoStudio to pierwsze 12 znaków
+skrótu, dzięki czemu można dopasować go do pełnego ID w panelu.

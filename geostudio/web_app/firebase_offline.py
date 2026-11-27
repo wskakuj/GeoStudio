@@ -53,7 +53,7 @@ def verify_permit(token, public_key, project, device, now, last_seen=0):
         issued, expires = data["iat"], data["exp"]
         cap, count = data["deviceLimit"], data["deviceCount"]
         account = data["accountExp"]
-        if (data["v"] != 1 or data["project"] != project or data["device"] != device
+        if (type(data["v"]) is not int or data["v"] != 1 or data["project"] != project or data["device"] != device
                 or not re.fullmatch(r"[a-f0-9]{64}", device or "")
                 or not isinstance(uid, str) or not 1 <= len(uid) <= 128
                 or not isinstance(email, str) or len(email) > 320

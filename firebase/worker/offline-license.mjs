@@ -20,9 +20,21 @@ export async function issuePermit(request, env, fetcher=fetch, now=Math.floor(Da
   let c, device;
   try {
     c = claims(authorization.slice(7));
-    const input = await request.text();
-    if (input.length > 512) return json({error:"body"},400);
-    device = JSON.parse(input).deviceId;
+    if (!request.body) return json({error:"body"},400);
+    const reader = request.body.getReader();
+    const parts = [];
+    let size = 0;
+    for (;;) {
+      const {done,value} = await reader.read();
+      if (done) break;
+      size += value.byteLength;
+      if (size > 512) { await reader.cancel(); return json({error:"body"},400); }
+      parts.push(value);
+    }
+    const input = new Uint8Array(size);
+    let offset = 0;
+    for (const part of parts) { input.set(part,offset); offset += part.byteLength; }
+    device = JSON.parse(new TextDecoder().decode(input)).deviceId;
     if (typeof c.sub !== "string" || !/^[^/\x00-\x1f]{1,128}$/.test(c.sub)
         || c.sub === "." || c.sub === ".."
         || c.aud !== env.PROJECT_ID || c.iss !== "https://securetoken.google.com/"+env.PROJECT_ID

@@ -383,8 +383,8 @@ RESTRICTED_MESSAGE = "Brak aktywnego dostępu. Zapisz otwarte mapy i uruchom pro
 class AccessGate:
     """Process-local session; recheck every 15 min and fail into save-only mode.
 
-    The gate is created only after an online authorization. A monotonic lease
-    prevents a dead monitor from extending access indefinitely.
+    The gate is created after online authorization or a verified, signed
+    offline permit. A monotonic lease never extends the signed expiry.
     """
 
     def __init__(self, client, grant, vault=None, remember=False, clock=time.monotonic,
@@ -460,6 +460,7 @@ class AccessGate:
                     "expiresAt": self._expires_at.isoformat() if self._expires_at else None,
                     "deviceLimit": self._device_limit,
                     "deviceCount": self._device_count,
+                    "deviceId": getattr(self._client, "_device_id", "")[:12],
                     "offline": offline and active,
                     "offlineUntil": until.isoformat() if until else None}
 

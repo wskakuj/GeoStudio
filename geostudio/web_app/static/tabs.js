@@ -255,7 +255,8 @@
         ? (data.expiresAt?"Ważność do: "+new Date(data.expiresAt).toLocaleString("pl-PL"):"Dostęp bezterminowy")
         : "Dostęp nieaktywny";
       $("auth-devices").textContent=data.active
-        ? (data.deviceLimit?"Komputery: "+data.deviceCount+" / "+data.deviceLimit:"Komputery: bez limitu")
+        ? ((data.deviceLimit?"Komputery: "+data.deviceCount+" / "+data.deviceLimit:"Komputery: bez limitu")
+           +(data.deviceId?" · ID: "+data.deviceId:""))
         : "";
       $("app-version").disabled=!!data.updatesDisabled;
       $("auth-offline").textContent=data.offlineUntil

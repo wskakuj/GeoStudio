@@ -109,3 +109,12 @@ konfiguracji i są diagnostyczne. Artefakt publicznego repo może pobrać
 zalogowany użytkownik GitHuba; Web API Key i Project ID są dostępne w EXE,
 więc nie stanowią sekretu ani mechanizmu autoryzacji.
 Nie publikujemy Release, nie nadpisujemy istniejącej instalacji.
+
+## Rozszerzenia na gałęzi logowania
+
+Nowsze commity dodają menu konta, limit komputerów i opcjonalne podpisane
+licencje offline. Domyślna polityka istniejących kont nadal wymaga internetu
+oraz nie ogranicza komputerów. Szczegóły konfiguracji:
+
+- [Panel administratora i urządzenia](FIREBASE_ADMIN.md)
+- [Opcjonalna licencja offline i podpisująca usługa](FIREBASE_OFFLINE.md)

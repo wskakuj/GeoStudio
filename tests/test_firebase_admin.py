@@ -31,3 +31,11 @@ def test_reducing_device_limit_requires_removing_slots():
         policy({"devices": ["a"*64, "b"*64]}, limit=1)
     assert policy({"devices": ["a"*64, "b"*64]}, limit=1,
                   removed=["a"*64])["devices"] == ["b"*64]
+
+
+def test_offline_policy_requires_device_limit():
+    kwargs = dict(email="tester@example.invalid",name="Test",notes="",active=True,
+                  expires=None,removed=(),offline=True)
+    with pytest.raises(ValueError):
+        policy_changes({},limit=0,**kwargs)
+    assert policy_changes({},limit=2,**kwargs)["offlineHours"] == 72
