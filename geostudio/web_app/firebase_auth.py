@@ -5,6 +5,7 @@ Firebase Security Rules, not editable client fields, authorize the account.
 """
 from __future__ import annotations
 
+import base64
 import json
 import os
 import re
@@ -103,6 +104,21 @@ class Credentials:
     id_token: str
     refresh_token: str
     ttl: int
+    email: str = ""
+
+
+def _display_email(response, identity):
+    # Display only: the token comes from Firebase over TLS, and Firestore
+    # verifies it before granting access. Never authorize from decoded claims.
+    try:
+        payload = identity.split(".")[1]
+        claims = json.loads(base64.urlsafe_b64decode(payload + "=" * (-len(payload) % 4)))
+        email = claims.get("email", "")
+    except (IndexError, ValueError, TypeError, AttributeError):
+        email = response.get("email", "")
+    if not isinstance(email, str) or len(email) > 320:
+        return ""
+    return "".join(ch for ch in email if ch.isprintable())
 
 
 @dataclass(frozen=True, repr=False)
@@ -136,7 +152,7 @@ class FirebaseClient:
                     or any(not isinstance(value, str) or not 1 <= len(value) <= 16384
                            for value in (identity, token))):
                 raise ValueError
-            return Credentials(uid, identity, token, ttl)
+            return Credentials(uid, identity, token, ttl, _display_email(response, identity))
         except (KeyError, TypeError, ValueError, OverflowError):
             raise AuthDenied("Nieprawidłowa odpowiedź usługi logowania.") from None
 
@@ -252,6 +268,8 @@ class AccessGate:
             lease = min(lease, max(0.0, (
                 grant.expires_at - datetime.now(timezone.utc)).total_seconds()))
         self._grant = grant
+        self._email = grant.credentials.email
+        self._expires_at = grant.expires_at
         self._deadline = now + lease
         self._next_check = now + max(1.0, lease - min(20.0, lease / 4))
         self._reason = ""
@@ -264,7 +282,9 @@ class AccessGate:
             reason = "" if active else (self._reason or RESTRICTED_MESSAGE)
             return {"enabled": True, "active": active, "message": reason,
                     "storageWarning": self._storage_warning,
-                    "loggedOut": self._logged_out, "updatesDisabled": True}
+                    "loggedOut": self._logged_out, "updatesDisabled": True,
+                    "email": self._email,
+                    "expiresAt": self._expires_at.isoformat() if self._expires_at else None}
 
     def allows_http(self, method, path):
         return self.status()["active"] or (method == "GET" and path in RECOVERY_HTTP)
@@ -287,6 +307,8 @@ class AccessGate:
             with self._lock:
                 if generation == self._generation:
                     self._grant = None
+                    self._email = ""
+                    self._expires_at = None
                     self._reason = RESTRICTED_MESSAGE
                     self._remember = False
                     self._save()
@@ -310,6 +332,8 @@ class AccessGate:
         with self._lock:
             self._generation += 1
             self._logged_out = True
+            self._email = ""
+            self._expires_at = None
             self._grant = None
             self._remember = False
             self._reason = "Wylogowano. Zapisz otwarte mapy i uruchom program ponownie."

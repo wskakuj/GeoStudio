@@ -10,9 +10,10 @@ from .firebase_auth import AccessGate, AuthDenied, AuthError, FirebaseClient, lo
 from .firebase_vault import WindowsSessionVault
 
 
-def run_login():
+def run_login(force_prompt=False):
     import tkinter as tk
     from tkinter import messagebox, ttk
+    from .updater import current_version
 
     root = tk.Tk()
     root.withdraw()
@@ -28,8 +29,8 @@ def run_login():
     root.configure(background="#101720")
     root.resizable(False, False)
     # Size to the controls after layout, including Windows display scaling.
-    root.minsize(440, 460)
-    panel = tk.Frame(root, background="#101720", padx=36, pady=25)
+    root.minsize(440, 400)
+    panel = tk.Frame(root, background="#101720", padx=30, pady=20)
     panel.pack(fill="both", expand=True)
     try:
         icon = tk.PhotoImage(file=str(Path(__file__).parent / "static" / "geostudio-icon.png"))
@@ -42,29 +43,56 @@ def run_login():
              fg="#e9eff7", bg="#101720").pack(pady=(0, 3))
     tk.Label(panel, text="Zaloguj się, aby otworzyć edytor map", font=("Segoe UI", 10),
              fg="#a5b2c4", bg="#101720").pack(pady=(0, 18))
+    form = tk.Frame(panel, bg="#172230", padx=17, pady=15,
+                    highlightthickness=1, highlightbackground="#35485e")
+    form.pack(fill="x")
     email = tk.StringVar()
     password = tk.StringVar()
     remember = tk.BooleanVar(value=False)
 
     def field(label, var, show=None):
-        tk.Label(panel, text=label, fg="#e9eff7", bg="#101720").pack(anchor="w")
-        entry = ttk.Entry(panel, textvariable=var, show=show or "")
-        entry.pack(fill="x", ipady=5, pady=(3, 10))
-        return entry
+        tk.Label(form, text=label, fg="#e9eff7", bg="#172230",
+                 font=("Segoe UI", 10)).pack(anchor="w")
+        line = tk.Frame(form, bg="#0e1824", highlightthickness=1,
+                        highlightbackground="#35485e")
+        line.pack(fill="x", pady=(3, 10))
+        entry = tk.Entry(line, textvariable=var, show=show or "", width=27,
+                         font=("Segoe UI", 11), bg="#0e1824", fg="#e9eff7",
+                         insertbackground="#e9eff7", disabledbackground="#0e1824",
+                         disabledforeground="#a5b2c4", bd=0, relief="flat")
+        entry.pack(side="left", fill="x", expand=True, ipady=7, padx=(10, 4))
+        entry.bind("<FocusIn>", lambda _: line.configure(highlightbackground="#3978e5"))
+        entry.bind("<FocusOut>", lambda _: line.configure(highlightbackground="#35485e"))
+        return entry, line
 
-    email_entry = field("Adres e-mail", email)
-    password_entry = field("Hasło", password, "•")
-    keep = tk.Checkbutton(panel, text="Zapamiętaj mnie na tym komputerze",
-                          variable=remember, bg="#101720", fg="#e9eff7",
-                          activebackground="#101720", activeforeground="#e9eff7",
+    email_entry, _ = field("Adres e-mail", email)
+    password_entry, password_line = field("Hasło", password, "•")
+    revealed = False
+
+    def toggle_password():
+        nonlocal revealed
+        revealed = not revealed
+        password_entry.configure(show="" if revealed else "•")
+        eye.configure(text="Ukryj" if revealed else "👁 Pokaż")
+        password_entry.focus_set()
+
+    eye = tk.Button(password_line, text="👁 Pokaż", command=toggle_password,
+                    font=("Segoe UI", 9), fg="#9cbfff", bg="#0e1824",
+                    activebackground="#35485e", activeforeground="white",
+                    relief="flat", padx=6, bd=0)
+    eye.pack(side="right", padx=(0, 4))
+    keep = tk.Checkbutton(form, text="Zapamiętaj mnie na tym komputerze",
+                          variable=remember, bg="#172230", fg="#e9eff7",
+                          activebackground="#172230", activeforeground="#e9eff7",
                           selectcolor="#25364b", anchor="w")
     keep.pack(fill="x")
     if vault is None:
         keep.configure(state="disabled")
     message = tk.StringVar()
-    tk.Label(panel, textvariable=message, fg="#f0c482", bg="#101720",
-             justify="left", anchor="nw", wraplength=355,
-             height=4).pack(fill="x", pady=(8, 6))
+    tk.Label(form, textvariable=message, fg="#f0c482", bg="#172230",
+             justify="left", anchor="nw", wraplength=345,
+             height=2, font=("Segoe UI", 9)).pack(fill="x", pady=(5, 4))
+    progress = ttk.Progressbar(form, mode="indeterminate", length=300)
 
     pending = queue.Queue()
     result = []
@@ -77,10 +105,12 @@ def run_login():
         busy = True
         email_entry.configure(state="disabled")
         password_entry.configure(state="disabled")
+        eye.configure(state="disabled")
         submit.configure(state="disabled")
         reset.configure(state="disabled")
         keep.configure(state="disabled")
         message.set("Łączenie z Firebase…")
+        progress.start(12)
 
         def worker():
             try:
@@ -99,6 +129,7 @@ def run_login():
             root.after(100, poll)
             return
         busy = False
+        progress.stop()
         if action in ("login", "restore") and error is None:
             gate = AccessGate(client, grant, vault, keep_session)
             if not gate.status()["active"]:
@@ -116,6 +147,7 @@ def run_login():
                 pass
         email_entry.configure(state="normal")
         password_entry.configure(state="normal")
+        eye.configure(state="normal")
         submit.configure(state="normal")
         reset.configure(state="normal")
         keep.configure(state="normal" if vault else "disabled")
@@ -126,21 +158,26 @@ def run_login():
     def submit_login():
         address, secret, keep_session = email.get(), password.get(), remember.get()
         password.set("")
+        if revealed:
+            toggle_password()
         launch("login", lambda: client.login(address, secret), keep_session)
 
     def reset_password():
         address = email.get()
         launch("reset", lambda: client.reset_password(address))
 
-    submit = tk.Button(panel, text="Zaloguj się", command=submit_login,
+    submit = tk.Button(form, text="Zaloguj się", command=submit_login,
                        bg="#3978e5", fg="white", activebackground="#2864cf",
                        activeforeground="white", relief="flat", padx=16, pady=8,
                        font=("Segoe UI", 11, "bold"))
     submit.pack(fill="x")
-    reset = tk.Button(panel, text="Nie pamiętasz hasła?", command=reset_password,
-                      fg="#8bb5ff", bg="#101720", activebackground="#101720",
+    reset = tk.Button(form, text="Nie pamiętasz hasła?", command=reset_password,
+                      fg="#8bb5ff", bg="#172230", activebackground="#172230",
                       activeforeground="white", relief="flat")
-    reset.pack(pady=(7, 0))
+    reset.pack(pady=(5, 0))
+    progress.pack(fill="x", pady=(6, 0))
+    tk.Label(panel, text="GeoStudio " + current_version() + "  ·  Dostęp dla uprawnionych",
+             fg="#a5b2c4", bg="#101720", font=("Segoe UI", 9)).pack(pady=(10, 0))
     root.update_idletasks()
     width = max(440, root.winfo_reqwidth())
     height = max(460, root.winfo_reqheight())
@@ -151,7 +188,7 @@ def run_login():
     root.bind("<Return>", lambda _event: submit_login() if not busy else None)
     root.protocol("WM_DELETE_WINDOW", root.destroy)
     email_entry.focus_set()
-    if vault is not None:
+    if vault is not None and not force_prompt:
         try:
             token = vault.load()
             if token:

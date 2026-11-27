@@ -66,3 +66,17 @@ button:focus-visible{outline:2px solid var(--primary);outline-offset:-2px}
 #auth-message{flex:1;min-width:220px}
 #auth-save-copy{flex:none;padding:6px 12px;border:1px solid var(--primary);border-radius:6px;background:var(--active);color:var(--ink)}
 #auth-logout:disabled{opacity:.5;cursor:default}
+
+#auth-account{position:relative;flex:none;z-index:11;max-width:210px}
+#auth-account summary{cursor:pointer;list-style:none;padding:5px 8px;border:1px solid var(--edge);border-radius:7px;display:flex;align-items:center;gap:6px;color:var(--ink);font-size:12px;background:var(--card)}
+#auth-account summary::-webkit-details-marker{display:none}
+#auth-account summary::before{content:"";width:8px;height:8px;border-radius:50%;background:#76aaff;flex:none}
+#auth-account summary::after{content:"▾";color:var(--muted)}
+#auth-account-label{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:170px}
+.auth-menu{position:absolute;top:calc(100% + 6px);right:0;width:min(300px,85vw);background:var(--card);border:1px solid var(--edge);box-shadow:0 12px 30px #0005;border-radius:10px;padding:12px;display:grid;gap:8px;font-size:12px}
+#auth-email{overflow-wrap:anywhere}
+#auth-expiry{color:var(--muted)}
+.auth-menu button{display:block;width:100%;text-align:left;background:var(--bg);border:1px solid var(--edge);border-radius:6px;padding:7px 9px;color:var(--ink)}
+.auth-menu button:hover:not(:disabled){background:var(--active)}
+.auth-menu button:disabled{opacity:.5;cursor:default}
+@media(max-width:850px){#auth-account-label{max-width:90px}}

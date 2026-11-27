@@ -168,3 +168,21 @@ def test_build_config_validation_and_no_secret_repr():
         render_config("", CONFIG.api_key)
     with pytest.raises(auth.AuthError):
         render_config(CONFIG.project_id, "not-valid")
+
+
+def test_account_email_and_expiry_are_safe_status_fields():
+    import base64
+    email = "tester@example.invalid"
+    payload = base64.urlsafe_b64encode(json.dumps({"email": email}).encode()).decode().rstrip("=")
+    identity = "header." + payload + ".signature"
+    data = response()
+    data["idToken"] = identity
+    credential = auth.FirebaseClient._credentials(data)
+    expiry = datetime.now(timezone.utc) + timedelta(days=1)
+    gate = auth.AccessGate(None, auth.Grant(credential, expiry))
+    status = gate.status()
+    assert status["email"] == email
+    assert status["expiresAt"] == expiry.isoformat()
+    assert identity not in json.dumps(status)
+    assert credential.refresh_token not in json.dumps(status)
+    assert gate.logout()["email"] == ""

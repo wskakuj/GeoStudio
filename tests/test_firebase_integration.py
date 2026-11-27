@@ -98,3 +98,20 @@ def test_diagnostic_server_cannot_open_or_read_maps():
         assert client.get("/api/documents", headers=headers).status_code == 403
         assert client.post("/api/documents", headers=headers).status_code == 403
         assert not client.get("/auth/status", headers=headers).json()["active"]
+
+
+def test_change_account_never_closes_existing_workspace(monkeypatch):
+    from geostudio.web_app import documents
+    from geostudio.web_app.firebase_auth import AccessGate, Credentials, Grant
+    gate = AccessGate(None, Grant(Credentials("tester", "id", "refresh", 3600), None))
+    app = create_app(multi_document=True, access_gate=gate)
+    registry = app.state.documents
+    bridge = DocumentNativeBridge(registry, access_gate=gate)
+    calls = []
+    monkeypatch.setattr(documents.subprocess, "Popen", lambda *a, **k: calls.append((a, k)))
+    assert not bridge.change_account()["started"]
+    assert calls == []
+    gate.logout()
+    assert bridge.change_account()["started"]
+    assert calls[0][0][0][-1] == "--login"
+    assert registry.get(registry.initial_id) is not None

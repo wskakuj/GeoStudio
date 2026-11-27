@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import os
+import subprocess
+import sys
 import threading
 
 from dataclasses import dataclass, field
@@ -83,6 +85,21 @@ class DocumentNativeBridge:
             if self._access_gate is not None and not self._access_gate.allows_native(operation):
                 raise PermissionError("Brak aktywnego dostępu. Zapisz otwarte mapy.")
             return getattr(session.native, operation)(*args)
+
+    def change_account(self) -> dict:
+        """Open a fresh login without killing this potentially dirty workspace."""
+        if self._access_gate is None or not self._access_gate.status().get("loggedOut"):
+            return {"started": False, "reason": "Najpierw wyloguj bieżące konto."}
+        if getattr(sys, "frozen", False):
+            args = [sys.executable, "--login"]
+        else:
+            args = [sys.executable, "-m", "geostudio.web_app", "--login"]
+        env = dict(os.environ, PYINSTALLER_RESET_ENVIRONMENT="1")
+        try:
+            subprocess.Popen(args, env=env)
+        except OSError:
+            return {"started": False, "reason": "Uruchom GeoStudio ponownie z opcją --login."}
+        return {"started": True}
 
     # Sprawdzanie i instalacja aktualizacji nie zależą od konkretnej mapy,
     # więc muszą być dostępne także z paska zakładek (bez document_id).

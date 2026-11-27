@@ -226,6 +226,8 @@ def main(argv=None):
                         help="Sprawdź start bez konsoli (używane przez pakowanie)")
     parser.add_argument("--no-update-check", action="store_true",
                         help="Nie sprawdzaj aktualizacji przy starcie")
+    parser.add_argument("--login", action="store_true",
+                        help="Pomiń zapamiętaną sesję i pokaż okno logowania")
     args = parser.parse_args(argv)
 
     if args.selftest:
@@ -233,7 +235,7 @@ def main(argv=None):
         return _selftest(PreviewWorkspace())
 
     from .firebase_login import run_login
-    gate = run_login()
+    gate = run_login(force_prompt=args.login)
     if gate is None:
         return 0
     workspace = PreviewWorkspace()

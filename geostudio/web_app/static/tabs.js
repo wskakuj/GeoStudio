@@ -246,8 +246,14 @@
       const data=await request("/auth/status");
       if(!data.enabled)return;
       accessActive=!!data.active;
-      $("auth-logout").hidden=false;
+      $("auth-account").hidden=false;
       $("auth-logout").disabled=!!data.loggedOut;
+      $("auth-account-label").textContent=data.email||"Konto";
+      $("auth-account-label").title=data.email||"Konto";
+      $("auth-email").textContent=data.email||"Brak zalogowanego konta";
+      $("auth-expiry").textContent=data.active
+        ? (data.expiresAt?"Ważność do: "+new Date(data.expiresAt).toLocaleString("pl-PL"):"Dostęp bezterminowy")
+        : "Dostęp nieaktywny";
       $("app-version").disabled=!!data.updatesDisabled;
       const notice=$("auth-notice");
       notice.hidden=accessActive&&!data.storageWarning;
@@ -265,6 +271,22 @@
     const editor=tab.frame.contentWindow.GeoStudioDocument;
     if(!editor?.saveCopy){error("Edytor nie jest gotowy do zapisu.");return;}
     try{await editor.saveCopy();}catch(e){error(e.message);}
+  });
+  $("auth-change").addEventListener("click",async()=>{
+    if(!window.confirm("Zmienić konto? Bieżące okno pozostanie otwarte do zapisania map. Nowe konto otworzy osobne okno."))return;
+    $("auth-change").disabled=true;
+    try{
+      await request("/auth/logout",{method:"POST"});await syncAccess();
+      const bridge=await waitForBridge(1500);
+      if(!bridge?.change_account){
+        error("Uruchom nowy proces GeoStudio z opcją --login.");
+        return;
+      }
+      const result=await bridge.change_account();
+      if(!result.started)throw Error(result.reason||"Nie udało się otworzyć logowania.");
+      $("auth-account").open=false;
+    }catch(e){error(e.message);}
+    finally{$("auth-change").disabled=false;}
   });
   $("auth-logout").addEventListener("click",async()=>{
     if(!window.confirm("Wylogować? Zapisz otwarte mapy przed zamknięciem programu."))return;
