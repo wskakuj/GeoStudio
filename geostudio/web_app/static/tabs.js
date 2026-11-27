@@ -262,13 +262,15 @@
            +(data.deviceId?" · ID: "+data.deviceId:""))
         : "";
       $("app-version").disabled=!!data.updatesDisabled;
-      $("auth-offline").textContent=data.offlineUntil
-        ? ((data.offline?"Tryb offline do: ":"Licencja offline do: ")+new Date(data.offlineUntil).toLocaleString("pl-PL"))
-        : "Praca offline niedostępna";
+      $("auth-offline").textContent=data.offlineUnlimited
+        ? (data.offline?"Tryb offline: bezterminowo":"Licencja offline: bezterminowo")
+        : data.offlineUntil
+          ? ((data.offline?"Tryb offline do: ":"Licencja offline do: ")+new Date(data.offlineUntil).toLocaleString("pl-PL"))
+          : "Praca offline niedostępna";
       const notice=$("auth-notice");
       notice.hidden=accessActive&&!data.storageWarning&&!data.offline;
       $("auth-message").textContent=accessActive?(data.offline
-        ? ("Tryb offline · dostęp do "+new Date(data.offlineUntil).toLocaleString("pl-PL")+". "+(data.storageWarning||""))
+        ? ("Tryb offline · "+(data.offlineUnlimited?"dostęp bezterminowy":"dostęp do "+new Date(data.offlineUntil).toLocaleString("pl-PL"))+". "+(data.storageWarning||""))
         : (data.storageWarning||"")):
         ((data.message||"Brak aktywnego dostępu.")+" Zapisz kopie otwartych map. Dalsza edycja jest zablokowana."
          +(data.storageWarning?" "+data.storageWarning:""));

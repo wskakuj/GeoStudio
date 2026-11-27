@@ -79,7 +79,14 @@
             <label class="admin-check"><input id="admin-active" type="checkbox"> Aktywny dostęp</label>
             <label class="admin-check"><input id="admin-unlimited" type="checkbox"> Bezterminowo</label>
             <label class="admin-wide">Ważny do (czas lokalny)<input id="admin-expiry" type="datetime-local"></label>
-            <label class="admin-check admin-wide"><input id="admin-offline" type="checkbox"> Zezwól na 72 h pracy offline</label>
+            <label class="admin-wide">Praca offline
+              <select id="admin-offline">
+                <option value="0">Wyłączona — wymagany internet</option>
+                <option value="72">72 godziny od ostatniej weryfikacji online</option>
+                <option value="-1">Bezterminowo (do daty ważności konta, jeśli ustawiona)</option>
+              </select>
+            </label>
+            <p class="admin-muted admin-wide" id="admin-offline-warning" hidden>Uwaga: licencji bezterminowej nie można zdalnie unieważnić na komputerze, który nie połączy się ponownie z internetem. Nadaj ją wyłącznie zaufanym użytkownikom.</p>
             <label class="admin-check admin-wide" id="admin-enable-auth-row" hidden><input id="admin-enable-auth" type="checkbox"> Włącz również wyłączone konto Firebase Authentication</label>
           </div>
           <h4>Komputery</h4>
@@ -92,7 +99,7 @@
         <div id="admin-history"></div>
         <section id="admin-delete-section" class="admin-danger">
           <h4>Usuń konto</h4>
-          <p class="admin-muted">Trwale usuwa konto Firebase, uprawnienia i historię. Istniejąca licencja offline może działać do końca ważności.</p>
+          <p class="admin-muted">Trwale usuwa konto Firebase, uprawnienia i historię. Istniejąca licencja offline może działać do końca ważności lub bezterminowo, jeśli nie ma terminu i komputer pozostaje offline.</p>
           <label>Wpisz dokładny e-mail konta<input id="admin-confirm-email" type="email" autocomplete="off"></label>
           <button type="button" class="admin-button danger" id="admin-delete">Usuń trwale</button>
         </section>

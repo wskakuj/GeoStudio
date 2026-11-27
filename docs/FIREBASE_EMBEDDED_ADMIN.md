@@ -1,6 +1,7 @@
 # Wbudowana administracja GeoStudio (preview)
 
-Panel jest opcjonalny. Nie zmieniaj działającego Workera offline. Bez nowego adresu
+Panel jest opcjonalny. Przy aktualizacji polityki offline zaktualizuj oba Workery
+zgodnie z FIREBASE_OFFLINE.md, bez zmiany sekretów. Bez nowego adresu
 ADMIN_URL w EXE logowanie i licencje offline nadal działają jak wcześniej.
 Nie publikować release przed testami z dwoma kontami.
 
@@ -63,7 +64,8 @@ są niezależne.
   Własne hasło startowe (12–128 znaków) lub losowe niewyświetlane; opcja
   wysłania resetu przez Firebase. Hasło jest przesyłane HTTPS, nie jest
   przechowywane przez GeoStudio. Operacje e-mail podlegają limitom Firebase.
-- Edycja aktywności, terminu, notatek, nazwy, limitu i 72 h offline.
+- Edycja aktywności, terminu, notatek, nazwy, limitu i trybu offline
+  (wyłączony, 72 h lub bezterminowy; niezależnie od limitu komputerów).
   Ochrona współbieżności updateTime zapobiega nadpisaniu nowych rejestracji.
   Blokada dostępu zmienia entitlement GeoStudio; nie wyłącza automatycznie
   Authentication, aby nadal można było resetować hasło. Można jawnie
@@ -86,7 +88,7 @@ są niezależne.
   następnie dokument dostępu i historii. Auth i Firestore nie stanowią
   jednej transakcji: częściowe błędy są jawnie raportowane; przy osieroconym
   dokumencie wyczyść go w konsoli Firebase. Odwołana licencja offline może
-  działać do końca podpisanego terminu.
+  działać do końca podpisanego terminu lub bezterminowo, jeśli go nie ma.
 - Lista/statystyki: do 500 wyników na każdą kolekcję; ostrzeżenie przy
   niepełnych wynikach. "Połączenie ≤ 20 min" oznacza ostatni kontakt,
   nie gwarantuje obecności online. Darmowe plany mają limity, kontroluj zużycie.

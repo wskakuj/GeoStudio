@@ -30,8 +30,13 @@ def policy_changes(old, *, email, name, notes, active, expires, limit, removed, 
         raise ValueError("Limit komputerów musi wynosić 0–20.")
     if expires is not None and expires.tzinfo is None:
         raise ValueError("Termin musi mieć strefę czasową.")
-    if type(offline) is not bool or (offline and not limit):
-        raise ValueError("Tryb offline wymaga włączonego limitu komputerów.")
+    # Accept legacy boolean arguments as well as the three explicit policies.
+    if type(offline) is bool:
+        offline_hours = 72 if offline else 0
+    elif type(offline) is int and offline in (0, 72, -1):
+        offline_hours = offline
+    else:
+        raise ValueError("Praca offline: wyłączona, 72 godziny lub bezterminowo.")
     existing = old.get("devices", [])
     if (not isinstance(existing, list)
             or any(not isinstance(item, str) or not re.fullmatch(r"[a-f0-9]{64}", item)
@@ -43,7 +48,7 @@ def policy_changes(old, *, email, name, notes, active, expires, limit, removed, 
         raise ValueError("Usuń zbędne komputery przed obniżeniem limitu.")
     return {"email": email, "name": name.strip()[:160], "notes": notes.strip()[:500],
             "active": active, "expiresAt": expires, "deviceLimit": limit,
-            "devices": devices, "offlineHours": 72 if offline else 0}
+            "devices": devices, "offlineHours": offline_hours}
 
 
 class AdminStore:
@@ -249,7 +254,9 @@ def run_panel(project_id):
         expires = tk.StringVar(value=expiry.isoformat() if expiry else "")
         active = tk.BooleanVar(value=p.get("active", False))
         limit = tk.StringVar(value=str(p.get("deviceLimit", 0)))
-        offline = tk.BooleanVar(value=p.get("offlineHours") == 72)
+        offline_modes = {"Wyłączona": 0, "72 godziny": 72, "Bezterminowo": -1}
+        offline = tk.StringVar(value=next(
+            (label for label, hours in offline_modes.items() if hours == p.get("offlineHours")), "Wyłączona"))
         def field(label, var):
             ttk.Label(content, text=label).pack(anchor="w")
             ttk.Entry(content, textvariable=var, width=56).pack(fill="x", pady=(2, 8))
@@ -258,8 +265,12 @@ def run_panel(project_id):
         ttk.Checkbutton(content, text="Aktywny dostęp do GeoStudio", variable=active).pack(anchor="w", pady=6)
         field("Ważność ISO ze strefą (puste = bezterminowo)", expires)
         field("Limit komputerów (0 = bez limitu; 1–20)", limit)
-        ttk.Checkbutton(content, text="Zezwól na 72 h pracy offline (wymaga podpisującej usługi)",
-                        variable=offline).pack(anchor="w", pady=6)
+        ttk.Label(content, text="Praca offline (wymaga podpisującej usługi)").pack(anchor="w")
+        ttk.Combobox(content, textvariable=offline, values=list(offline_modes),
+                     state="readonly").pack(fill="x", pady=(2, 6))
+        ttk.Label(content, text="Bezterminowa licencja jest ograniczona ważnością konta. "
+                  "Blokada wymaga ponownego połączenia z internetem.",
+                  wraplength=420).pack(anchor="w", pady=(0, 6))
         ttk.Label(content, text="Komputery — zaznacz te, które chcesz usunąć").pack(anchor="w")
         devices = list(p.get("devices", []))
         listing = tk.Listbox(content, selectmode="extended", height=min(6, max(2, len(devices))), width=64)
@@ -275,11 +286,16 @@ def run_panel(project_id):
                 date = parse_expiry(expires.get())
                 removed = tuple(devices[i] for i in listing.curselection())
                 values = dict(name=name.get(), notes=notes.get(), active=active.get(),
-                              expires=date, limit=cap, removed=removed, offline=offline.get())
+                              expires=date, limit=cap, removed=removed, offline=offline_modes[offline.get()])
                 policy_changes(p, email=row["email"], **values)
             except ValueError as exc:
                 messagebox.showerror("Nieprawidłowe ustawienia", str(exc), parent=win)
                 return
+            if values["offline"] == -1 and (p.get("offlineHours") != -1 or (expiry and date is None)):
+                if not messagebox.askyesno("Bezterminowy offline",
+                        "Nadać dostęp offline bez limitu czasu? Cofnięcie dostępu wymaga ponownego połączenia.",
+                        parent=win):
+                    return
             if removed and not messagebox.askyesno("Komputery", "Usunąć zaznaczone rejestracje?", parent=win):
                 return
             win.destroy()

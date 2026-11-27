@@ -67,7 +67,7 @@ function readPolicy(doc) {
   require(Object.hasOwn(f.expiresAt||{},"nullValue") ||
     (typeof expiresAt==="string"&&Number.isFinite(Date.parse(expiresAt))),"invalid_policy",409);
   return {active:f.active?.booleanValue===true,expiresAt,deviceLimit:limit,devices,
-    offlineHours:Number(f.offlineHours?.integerValue)===72?72:0,
+    offlineHours:[72,-1].includes(Number(f.offlineHours?.integerValue))?Number(f.offlineHours.integerValue):0,
     name:f.name?.stringValue||"",notes:f.notes?.stringValue||"",
     version:doc.updateTime||""};
 }
@@ -78,7 +78,7 @@ function makePolicy(old,input,email,isOwner=false) {
   const name=cleanText(input.name,160), notes=cleanText(input.notes,500);
   const limit=input.deviceLimit, offline=input.offlineHours, expires=input.expiresAt;
   require(typeof input.active==="boolean"&&Number.isInteger(limit)&&limit>=0&&limit<=20
-    &&(offline===0||offline===72)&&(!offline||limit>0));
+    &&[0,72,-1].includes(offline));
   require(expires===null||(typeof expires==="string"&&expires.length<=40
     &&/^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(?:\.\d{1,3})?Z$/.test(expires)
     &&Number.isFinite(Date.parse(expires))));

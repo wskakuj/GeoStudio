@@ -84,7 +84,7 @@
       td.append(pick);tr.append(td);
       const status=r.policyError?"Błędne dane":r.authDisabled?"Auth wyłączone":r.active?"Aktywne":r.policy?"Nieaktywne":"Brak dostępu";
       const s=node("td");s.append(node("span",status,"admin-status "+(r.active?"good":"bad")));tr.append(s);
-      tr.append(node("td",r.policy?.deviceLimit?(r.policy.devices.length+"/"+r.policy.deviceLimit):"—"));
+      tr.append(node("td",r.policy?(r.policy.deviceLimit?(r.policy.devices.length+"/"+r.policy.deviceLimit):"Bez limitu"):"—"));
       tr.append(node("td",displayDate(r.lastActive)));root.append(tr);
     }
   }
@@ -118,7 +118,8 @@
     $("admin-limit").value=p.deviceLimit;$("admin-unlimited").checked=r.owner||!p.expiresAt;
     $("admin-unlimited").disabled=!!r.owner;$("admin-expiry").value=localInput(p.expiresAt);
     $("admin-expiry").disabled=$("admin-unlimited").checked;
-    $("admin-offline").checked=p.offlineHours===72;
+    $("admin-offline").value=String(p.offlineHours);
+    $("admin-offline-warning").hidden=p.offlineHours!==-1;
     $("admin-enable-auth-row").hidden=!r.authDisabled;$("admin-enable-auth").checked=false;
     $("admin-delete-section").hidden=!!r.owner;$("admin-confirm-email").value="";
     const list=$("admin-devices");list.replaceChildren();
@@ -181,6 +182,9 @@
     return {text:"Lista odświeżona."};
   }));
   $("admin-search").addEventListener("input",drawRows);$("admin-filter").addEventListener("change",drawRows);
+  $("admin-offline").addEventListener("change",()=>{
+    $("admin-offline-warning").hidden=$("admin-offline").value!=="-1";
+  });
   $("admin-unlimited").addEventListener("change",()=>{
     $("admin-expiry").disabled=$("admin-unlimited").checked;
   });
@@ -199,9 +203,9 @@
   $("admin-edit-form").addEventListener("submit",event=>{
     event.preventDefault();if(!current)return;
     const p=current.policy;
-    const limit=Number($("admin-limit").value),offline=$("admin-offline").checked;
-    if(!Number.isInteger(limit)||limit<0||limit>20||(offline&&!limit)){
-      notice("Limit: 0–20. Offline wymaga limitu co najmniej 1.",true);return;
+    const limit=Number($("admin-limit").value),offline=Number($("admin-offline").value);
+    if(!Number.isInteger(limit)||limit<0||limit>20||![0,72,-1].includes(offline)){
+      notice("Limit: 0–20 (0 = bez limitu). Wybierz poprawny tryb offline.",true);return;
     }
     let expiresAt=null;
     if(!$("admin-unlimited").checked){
@@ -212,8 +216,10 @@
     const removeDevices=[...$("admin-devices").querySelectorAll("[data-remove-device]:checked")].map(x=>x.dataset.removeDevice);
     const uid=current.uid;
     const payload={uid,version:p?.version||"",name:$("admin-name").value,notes:$("admin-notes").value,
-      active:$("admin-active").checked,expiresAt,deviceLimit:limit,offlineHours:offline?72:0,
+      active:$("admin-active").checked,expiresAt,deviceLimit:limit,offlineHours:offline,
       removeDevices,enableAuth:$("admin-enable-auth").checked};
+    if(offline===-1&&(p?.offlineHours!==-1||(p?.expiresAt&&!expiresAt))&&!window.confirm(
+      "Nadać dostęp offline bez limitu czasu? Będzie ograniczony wyłącznie ważnością konta. Licencji nie można cofnąć zdalnie, dopóki komputer nie połączy się z internetem."))return;
     if((removeDevices.length||!payload.active)&&!window.confirm("Zapisać zmianę dostępu lub usunąć zaznaczone rejestracje?"))return;
     run(async live=>{
       const r=await rpc("save",payload);

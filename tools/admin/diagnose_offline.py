@@ -103,11 +103,12 @@ def main():
             return 1
         fields = response.json()["fields"]
         cap, devices = client._device_policy(fields)
-        enabled = fields.get("offlineHours", {}).get("integerValue") in ("72", 72)
-        print("POLICY_OFFLINE_72:", "YES" if enabled else "NO")
-        print("DEVICE_REGISTERED:", "YES" if device in devices else "NO")
-        print("DEVICE_COUNT:", str(len(devices)) + "/" + str(cap))
-        if not (enabled and cap and device in devices):
+        hours = fields.get("offlineHours", {}).get("integerValue")
+        enabled = hours in ("72", 72, "-1", -1)
+        print("POLICY_OFFLINE:", "UNLIMITED" if hours in ("-1", -1) else "72H" if enabled else "DISABLED")
+        print("DEVICE_REGISTERED:", ("YES" if device in devices else "NO") if cap else "NOT_REQUIRED")
+        print("DEVICE_COUNT:", str(len(devices)) + "/" + str(cap) if cap else "UNLIMITED")
+        if not (enabled and (not cap or device in devices)):
             return 1
         response = requests.post(args.url, json={"deviceId": device}, headers=headers,
                                  timeout=15, allow_redirects=False)
@@ -123,6 +124,7 @@ def main():
             print("SIGNATURE_OR_PERMIT: ERROR")
             return 1
         print("SIGNATURE_OR_PERMIT: OK")
+        print("PERMIT_EXPIRY:", "UNLIMITED" if permit.unlimited else permit.expires)
         print("RESULT: VALID_OFFLINE_PERMIT")
         return 0
     except requests.RequestException as exc:

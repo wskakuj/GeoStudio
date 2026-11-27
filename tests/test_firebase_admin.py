@@ -33,9 +33,16 @@ def test_reducing_device_limit_requires_removing_slots():
                   removed=["a"*64])["devices"] == ["b"*64]
 
 
-def test_offline_policy_requires_device_limit():
+@pytest.mark.parametrize("limit", [0, 2, 20])
+@pytest.mark.parametrize("offline,hours", [(False,0),(True,72),(0,0),(72,72),(-1,-1)])
+def test_offline_policy_independent_of_device_limit(limit, offline, hours):
     kwargs = dict(email="tester@example.invalid",name="Test",notes="",active=True,
-                  expires=None,removed=(),offline=True)
+                  expires=None,removed=(),offline=offline)
+    assert policy_changes({},limit=limit,**kwargs)["offlineHours"] == hours
+
+
+@pytest.mark.parametrize("bad", ["-1", -2, 99, None, 72.0])
+def test_invalid_offline_policy(bad):
     with pytest.raises(ValueError):
-        policy_changes({},limit=0,**kwargs)
-    assert policy_changes({},limit=2,**kwargs)["offlineHours"] == 72
+        policy_changes({},email="tester@example.invalid",name="",notes="",active=True,
+                       expires=None,removed=(),offline=bad,limit=0)

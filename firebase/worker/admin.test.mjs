@@ -119,7 +119,7 @@ test("edits use preconditions and enforce owner protection and offline/device li
   assert.equal(r.status,200);
   assert.equal(m.writes[0].url.searchParams.get("currentDocument.updateTime"),edit.version);
   assert.deepEqual(m.writes[0].fields.devices.arrayValue.values,[]);
-  for(const body of [{...edit,uid:owner,active:false},{...edit,uid:owner},{...edit,deviceLimit:0},
+  for(const body of [{...edit,uid:owner,active:false},{...edit,uid:owner},{...edit,deviceLimit:-1},
     {...edit,version:"stale"},{...edit,offlineHours:99}]){
     r=await m.run(body);
     assert.ok([400,403,409].includes(r.status));
@@ -177,4 +177,23 @@ test("admin password reset and device aliases target only specified real account
   assert.equal((await m.run({action:"rename_device",uid:target,deviceId:b,alias:"x"})).status,404);
   assert.equal((await m.run({action:"rename_device",uid:target,deviceId:a,alias:"Biuro"})).status,200);
   assert.equal(JSON.parse(m.writes[0].fields.data.stringValue).devices[0].alias,"Biuro");
+});
+
+test("device cap and offline policy are independent, including perpetual",async()=>{
+  for(const cap of [0,2]){
+    for(const hours of [0,72,-1]){
+      const m=mock();
+      const r=await m.run({...edit,deviceLimit:cap,offlineHours:hours,removeDevices:[]});
+      assert.equal(r.status,200);
+      const result=await r.json();
+      assert.equal(result.policy.offlineHours,hours);
+      assert.equal(result.policy.deviceLimit,cap);
+      assert.equal(m.writes[0].fields.offlineHours.integerValue,String(hours));
+      assert.equal(m.writes[0].fields.deviceLimit.integerValue,String(cap));
+    }
+  }
+  const m=mock({ownFields:{...fields,deviceLimit:{integerValue:"0"},offlineHours:{integerValue:"-1"}}});
+  assert.equal((await m.run({action:"list"})).status,200);
+  assert.equal((await m.run({...edit,uid:owner,deviceLimit:0,offlineHours:-1,removeDevices:[]})).status,200);
+  assert.equal((await m.run({...edit,offlineHours:"-1"})).status,400);
 });

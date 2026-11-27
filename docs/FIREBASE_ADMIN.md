@@ -57,8 +57,10 @@ na oddzielnym koncie, zanim włączysz limit dla kont produkcyjnych.
 
 ## Opcjonalny tryb offline
 
-Panel pozwala wybrać "Zezwól na 72 h pracy offline", ale opcja wymaga
-limitu komputerów i wdrożonej usługi podpisującej. Domyślnie wyłączona.
+Panel pozwala wybrać pracę offline: wyłączona (domyślnie), 72 godziny lub
+bezterminowo, niezależnie od limitu komputerów. Wymaga aktualnej usługi
+podpisującej i klienta. Bezterminowy offline jest ograniczony tylko ważnością
+konta; jeśli komputer nie wraca do internetu, zdalna blokada jest niemożliwa.
 Przeczytaj [FIREBASE_OFFLINE.md](FIREBASE_OFFLINE.md) przed jej użyciem.
 Identyfikator wyświetlany w menu konta GeoStudio to pierwsze 12 znaków
 skrótu, dzięki czemu można dopasować go do pełnego ID w panelu.
