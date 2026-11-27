@@ -167,6 +167,14 @@ def create_app(workspace: PreviewWorkspace | None = None, *,
     async def tab_javascript():
         return FileResponse(ROOT / "tabs.js", media_type="text/javascript")
 
+    @app.get("/admin.js")
+    async def admin_javascript():
+        return FileResponse(ROOT / "admin.js", media_type="text/javascript")
+
+    @app.get("/admin.css")
+    async def admin_styles():
+        return FileResponse(ROOT / "admin.css", media_type="text/css")
+
     @app.get("/api/documents")
     async def list_documents():
         if registry is None:
@@ -216,6 +224,48 @@ def create_app(workspace: PreviewWorkspace | None = None, *,
         if access_gate is None:
             raise HTTPException(404, "Logowanie niedostępne.")
         return await run_in_threadpool(access_gate.logout)
+
+    @app.post("/auth/refresh")
+    async def auth_refresh(request: Request):
+        if not secrets.compare_digest(request.headers.get("x-geostudio-token", ""), token):
+            raise HTTPException(403, "Brak dostępu.")
+        if access_gate is None or not hasattr(access_gate, "refresh_now"):
+            raise HTTPException(403, "Nie ma aktywnej sesji.")
+        return await run_in_threadpool(access_gate.refresh_now)
+
+    @app.post("/auth/admin")
+    async def auth_admin(request: Request):
+        from .firebase_auth import AuthDenied, AuthError
+        from .firebase_admin_client import AdminAPIError
+        if not secrets.compare_digest(request.headers.get("x-geostudio-token", ""), token):
+            raise HTTPException(403, "Brak dostępu.")
+        if (access_gate is None or not access_gate.status().get("admin")
+                or not hasattr(access_gate, "admin_request")):
+            raise HTTPException(403, "Panel dostępny wyłącznie online dla administratora.")
+        if "application/json" not in request.headers.get("content-type", "").lower():
+            raise HTTPException(400, "Nieprawidłowe żądanie.")
+        body = bytearray()
+        async for chunk in request.stream():
+            body.extend(chunk)
+            if len(body) > 16384:
+                raise HTTPException(413, "Żądanie jest za duże.")
+        try:
+            payload = json.loads(body)
+            if not isinstance(payload, dict) or payload.get("action") not in {
+                "status", "list", "details", "create", "save", "rename_device", "reset", "delete"
+            }:
+                raise ValueError
+        except (ValueError, UnicodeError):
+            raise HTTPException(400, "Nieprawidłowe żądanie.") from None
+        try:
+            data = await run_in_threadpool(access_gate.admin_request, payload)
+        except AdminAPIError as exc:
+            raise HTTPException(exc.status, str(exc)) from None
+        except AuthDenied as exc:
+            raise HTTPException(403, str(exc)) from None
+        except AuthError as exc:
+            raise HTTPException(503, str(exc)) from None
+        return JSONResponse(data, headers={"Cache-Control": "no-store"})
 
     @app.get("/version")
     async def app_version():

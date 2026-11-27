@@ -174,7 +174,7 @@ function gateway(env,fetcher,token) {
     let next="", all=[];
     for (let i=0;i<5;i++) {
       const q=new URLSearchParams({[sizeParam]:"100"});
-      if(next) q.set("pageToken",next);
+      if(next) q.set(sizeParam==="maxResults"?"nextPageToken":"pageToken",next);
       const data=await google(fetcher,url+"?"+q,token);
       all.push(...(data[key]||[]));
       next=data.nextPageToken||"";
@@ -290,6 +290,10 @@ async function adminAction(gw,env,claims,body,now) {
     require((policy?.version||"")===(body.version||""),"conflict",409);
     const fields=makePolicy(policy,body,target.email||"",owner);
     const updated=await gw.save("geostudio_access",uid,fields,doc);
+    if(target.disabled && body.active===true && body.enableAuth===true) {
+      try { await gw.auth(":update","POST",{localId:uid,disableUser:false}); }
+      catch { return {ok:true,partial:"auth_still_disabled",policy:readPolicy(updated)}; }
+    }
     return {ok:true,policy:readPolicy(updated)};
   }
   if(action==="rename_device"){

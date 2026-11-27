@@ -193,6 +193,11 @@ def run_login(force_prompt=False):
                       fg="#8bb5ff", bg="#172230", activebackground="#172230",
                       activeforeground="white", relief="flat")
     reset.pack(pady=(5, 0))
+    if client.config.admin_url:
+        tk.Label(panel, text="Usługa zapisuje czas udanych połączeń, ID i nazwę komputera. "
+                 "Nie przesyła map ani ścieżek plików.", wraplength=355,
+                 justify="center", fg="#a5b2c4", bg="#101720",
+                 font=("Segoe UI", 9)).pack(pady=(8, 0))
     tk.Label(panel, text="GeoStudio " + current_version() + "  ·  Dostęp dla uprawnionych",
              fg="#a5b2c4", bg="#101720", font=("Segoe UI", 9)).pack(pady=(10, 0))
     root.update_idletasks()

@@ -1,6 +1,5 @@
 """Grant/revoke the sole GeoStudio administrator claim via trusted local ADC."""
 import argparse
-import getpass
 import re
 import firebase_admin
 from firebase_admin import auth

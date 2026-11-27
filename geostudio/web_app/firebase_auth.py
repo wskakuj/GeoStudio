@@ -54,6 +54,7 @@ class FirebaseConfig:
     api_key: str
     offline_url: str = ""
     offline_public_key: str = ""
+    admin_url: str = ""
 
     def __post_init__(self):
         if not (re.fullmatch(r"[a-z][a-z0-9-]{4,28}[a-z0-9]", self.project_id)
@@ -69,18 +70,32 @@ class FirebaseConfig:
             except ValueError:
                 raise AuthError("Nieprawidłowa konfiguracja licencji offline.") from None
 
+        if self.admin_url:
+            try:
+                url = urllib.parse.urlsplit(self.admin_url)
+                if (url.scheme != "https" or not url.hostname
+                        or not url.hostname.endswith(".workers.dev")
+                        or url.port not in (None, 443) or url.username
+                        or url.password or url.query or url.fragment
+                        or url.path not in ("", "/")):
+                    raise ValueError
+            except ValueError:
+                raise AuthError("Nieprawidłowy adres usługi administracyjnej.") from None
+
 
 def load_config() -> FirebaseConfig:
     project = firebase_settings.PROJECT_ID
     key = firebase_settings.WEB_API_KEY
     url = firebase_settings.OFFLINE_URL
     public_key = firebase_settings.OFFLINE_PUBLIC_KEY
+    admin_url = firebase_settings.ADMIN_URL
     if not getattr(sys, "frozen", False):
         project = os.environ.get("GEOSTUDIO_FIREBASE_PROJECT_ID", project)
         key = os.environ.get("GEOSTUDIO_FIREBASE_WEB_API_KEY", key)
         url = os.environ.get("GEOSTUDIO_OFFLINE_URL", url)
         public_key = os.environ.get("GEOSTUDIO_OFFLINE_PUBLIC_KEY", public_key)
-    return FirebaseConfig(project.strip(), key.strip(), url.strip(), public_key.strip())
+        admin_url = os.environ.get("GEOSTUDIO_ADMIN_URL", admin_url)
+    return FirebaseConfig(project.strip(), key.strip(), url.strip(), public_key.strip(), admin_url.strip())
 
 
 class _NoRedirect(urllib.request.HTTPRedirectHandler):
@@ -326,9 +341,27 @@ class FirebaseClient:
                      permit.device_count, lease,
                      datetime.fromtimestamp(permit.expires, timezone.utc), True)
 
+    def _report_activity(self, grant, kind):
+        # Best effort; telemetry can never block login or the editor.
+        if not self.config.admin_url or not self._device_id or grant.offline:
+            return
+        from .firebase_admin_client import call_admin
+        name = os.environ.get("COMPUTERNAME", "")
+        name = "".join(c for c in name if c.isprintable())[:80]
+
+        def send():
+            try:
+                call_admin(self.config.admin_url, grant.credentials.id_token,
+                           {"action": "activity", "deviceId": self._device_id,
+                            "name": name, "kind": kind})
+            except AuthError:
+                pass
+
+        threading.Thread(target=send, daemon=True, name="GeoStudioActivity").start()
+
     def restore(self, state):
         try:
-            return self.refresh(state["refreshToken"])
+            return self.refresh(state["refreshToken"], activity_kind="start")
         except AuthNetwork:
             return self.offline_grant(state["refreshToken"], state.get("offlineLease", ""),
                                       state.get("lastSeen", 0))
@@ -341,13 +374,15 @@ class FirebaseClient:
         })
         credentials = self._credentials(result)
         try:
-            return self._authorize(credentials)
+            grant = self._authorize(credentials)
+            self._report_activity(grant, "login")
+            return grant
         except DeviceDenied:
             raise
         except AuthDenied:
             raise AuthDenied("Logowanie poprawne, ale konto nie ma aktywnego dostępu do GeoStudio.") from None
 
-    def refresh(self, refresh_token):
+    def refresh(self, refresh_token, *, activity_kind="heartbeat"):
         url = ("https://securetoken.googleapis.com/v1/token?"
                + urllib.parse.urlencode({"key": self.config.api_key}))
         body = urllib.parse.urlencode({
@@ -356,7 +391,9 @@ class FirebaseClient:
         result = self._transport("POST", url, body, {
             "Content-Type": "application/x-www-form-urlencoded", "Accept": "application/json",
         })
-        return self._authorize(self._credentials(result, refresh=True))
+        grant = self._authorize(self._credentials(result, refresh=True))
+        self._report_activity(grant, activity_kind)
+        return grant
 
     def reset_password(self, email):
         if not isinstance(email, str) or not email.strip() or "@" not in email:
@@ -398,6 +435,7 @@ class AccessGate:
         self._wall_clock = wall_clock
         self._last_seen = max(last_seen, wall_clock()) if grant.offline else wall_clock()
         self._lock = threading.RLock()
+        self._refresh_lock = threading.Lock()
         self._generation = 0
         self._logged_out = False
         self._grant = None
@@ -445,6 +483,38 @@ class AccessGate:
         self._reason = ""
         self._save()
 
+    def _admin_hint(self):
+        # Presentation only. The Worker authenticates and checks the owner UID
+        # and current admin claim independently for every privileged request.
+        if self._grant is None or self._grant.offline:
+            return False
+        config = getattr(self._client, "config", None)
+        if not getattr(config, "admin_url", ""):
+            return False
+        try:
+            claims = json.loads(b64decode(self._grant.credentials.id_token.split(".")[1]))
+            return claims.get("admin") is True
+        except (ValueError, IndexError, AttributeError, TypeError):
+            return False
+
+    def admin_request(self, payload):
+        from .firebase_admin_client import call_admin
+        with self._lock:
+            if not self.status()["admin"]:
+                raise AuthDenied("Panel administratora jest dostępny wyłącznie online dla administratora.")
+            generation = self._generation
+            identity = self._grant.credentials.id_token
+            url = self._client.config.admin_url
+        result = call_admin(url, identity, payload)
+        with self._lock:
+            if generation != self._generation or not self.status()["admin"]:
+                raise AuthDenied("Sesja administratora zakończyła się.")
+        return result
+
+    def refresh_now(self):
+        self.tick(force=True)
+        return self.status()
+
     def status(self):
         with self._lock:
             active = (self._grant is not None and not self._reason
@@ -464,6 +534,8 @@ class AccessGate:
                     "deviceCount": self._device_count,
                     "deviceId": getattr(self._client, "_device_id", "")[:12],
                     "offline": offline and active,
+                    "admin": active and not offline and self._admin_hint(),
+                    "canRefresh": self._grant is not None and not self._logged_out,
                     "offlineUntil": until.isoformat() if until else None}
 
     def allows_http(self, method, path):
@@ -472,9 +544,17 @@ class AccessGate:
     def allows_native(self, operation):
         return self.status()["active"] or operation in RECOVERY_NATIVE
 
-    def tick(self):
+    def tick(self, force=False):
+        if not self._refresh_lock.acquire(blocking=False):
+            return
+        try:
+            self._tick(force)
+        finally:
+            self._refresh_lock.release()
+
+    def _tick(self, force=False):
         with self._lock:
-            if self._grant is None or self._clock() < self._next_check:
+            if self._grant is None or (not force and self._clock() < self._next_check):
                 return
             previous_grant = self._grant
             previous = previous_grant.credentials

@@ -36,6 +36,7 @@ jobs:
           GEOSTUDIO_FIREBASE_WEB_API_KEY: ${{ secrets.GEOSTUDIO_FIREBASE_WEB_API_KEY }}
           GEOSTUDIO_OFFLINE_URL: ${{ secrets.GEOSTUDIO_OFFLINE_URL }}
           GEOSTUDIO_OFFLINE_PUBLIC_KEY: ${{ secrets.GEOSTUDIO_OFFLINE_PUBLIC_KEY }}
+          GEOSTUDIO_ADMIN_URL: ${{ secrets.GEOSTUDIO_ADMIN_URL }}
         shell: pwsh
         run: ./tools/windows/build.ps1 -SkipInstaller -RequireFirebaseConfig
       - name: Build locked diagnostic preview (no Firebase configuration)
