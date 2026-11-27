@@ -258,9 +258,14 @@
         ? (data.deviceLimit?"Komputery: "+data.deviceCount+" / "+data.deviceLimit:"Komputery: bez limitu")
         : "";
       $("app-version").disabled=!!data.updatesDisabled;
+      $("auth-offline").textContent=data.offlineUntil
+        ? ((data.offline?"Tryb offline do: ":"Licencja offline do: ")+new Date(data.offlineUntil).toLocaleString("pl-PL"))
+        : "Praca offline niedostępna";
       const notice=$("auth-notice");
-      notice.hidden=accessActive&&!data.storageWarning;
-      $("auth-message").textContent=accessActive?(data.storageWarning||""):
+      notice.hidden=accessActive&&!data.storageWarning&&!data.offline;
+      $("auth-message").textContent=accessActive?(data.offline
+        ? ("Tryb offline · dostęp do "+new Date(data.offlineUntil).toLocaleString("pl-PL")+". "+(data.storageWarning||""))
+        : (data.storageWarning||"")):
         ((data.message||"Brak aktywnego dostępu.")+" Zapisz kopie otwartych map. Dalsza edycja jest zablokowana."
          +(data.storageWarning?" "+data.storageWarning:""));
       $("auth-save-copy").hidden=accessActive;

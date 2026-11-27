@@ -7,3 +7,5 @@ never accepts environment overrides.
 """
 PROJECT_ID = ""
 WEB_API_KEY = ""
+OFFLINE_URL = ""
+OFFLINE_PUBLIC_KEY = ""

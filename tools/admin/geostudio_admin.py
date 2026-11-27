@@ -24,12 +24,14 @@ def parse_expiry(value):
     return date.astimezone(timezone.utc)
 
 
-def policy_changes(old, *, email, name, notes, active, expires, limit, removed):
+def policy_changes(old, *, email, name, notes, active, expires, limit, removed, offline=False):
     """Pure policy validation; applied transactionally to the current document."""
     if type(active) is not bool or type(limit) is not int or not 0 <= limit <= 20:
         raise ValueError("Limit komputerów musi wynosić 0–20.")
     if expires is not None and expires.tzinfo is None:
         raise ValueError("Termin musi mieć strefę czasową.")
+    if type(offline) is not bool or (offline and not limit):
+        raise ValueError("Tryb offline wymaga włączonego limitu komputerów.")
     existing = old.get("devices", [])
     if (not isinstance(existing, list)
             or any(not isinstance(item, str) or not re.fullmatch(r"[a-f0-9]{64}", item)
@@ -41,7 +43,7 @@ def policy_changes(old, *, email, name, notes, active, expires, limit, removed):
         raise ValueError("Usuń zbędne komputery przed obniżeniem limitu.")
     return {"email": email, "name": name.strip()[:160], "notes": notes.strip()[:500],
             "active": active, "expiresAt": expires, "deviceLimit": limit,
-            "devices": devices}
+            "devices": devices, "offlineHours": 72 if offline else 0}
 
 
 class AdminStore:
@@ -52,7 +54,8 @@ class AdminStore:
         self.auth = auth
         self.firestore = firestore
         self.app = firebase_admin.initialize_app(options={"projectId": project_id})
-        self.collection = firestore.client(app=self.app).collection("geostudio_access")
+        self.db = firestore.client(app=self.app)
+        self.collection = self.db.collection("geostudio_access")
 
     def accounts(self):
         policies = {snap.id: snap.to_dict() or {} for snap in self.collection.stream()}
@@ -64,7 +67,7 @@ class AdminStore:
                          "policy": policy})
         return sorted(rows, key=lambda row: row["email"].casefold())
 
-    def save(self, uid, *, name, notes, active, expires, limit, removed=()):
+    def save(self, uid, *, name, notes, active, expires, limit, removed=(), offline=False):
         user = self.auth.get_user(uid, app=self.app)
         ref = self.collection.document(uid)
 
@@ -73,10 +76,10 @@ class AdminStore:
             current = ref.get(transaction=transaction).to_dict() or {}
             data = policy_changes(current, email=user.email or "", name=name,
                                   notes=notes, active=active, expires=expires,
-                                  limit=limit, removed=removed)
+                                  limit=limit, removed=removed, offline=offline)
             transaction.set(ref, data, merge=True)
 
-        apply(self.collection._client.transaction())
+        apply(self.db.transaction())
 
     def create(self, email):
         # Never choose or display a permanent password for another person.
@@ -246,6 +249,7 @@ def run_panel(project_id):
         expires = tk.StringVar(value=expiry.isoformat() if expiry else "")
         active = tk.BooleanVar(value=p.get("active", False))
         limit = tk.StringVar(value=str(p.get("deviceLimit", 0)))
+        offline = tk.BooleanVar(value=p.get("offlineHours") == 72)
         def field(label, var):
             ttk.Label(content, text=label).pack(anchor="w")
             ttk.Entry(content, textvariable=var, width=56).pack(fill="x", pady=(2, 8))
@@ -254,6 +258,8 @@ def run_panel(project_id):
         ttk.Checkbutton(content, text="Aktywny dostęp do GeoStudio", variable=active).pack(anchor="w", pady=6)
         field("Ważność ISO ze strefą (puste = bezterminowo)", expires)
         field("Limit komputerów (0 = bez limitu; 1–20)", limit)
+        ttk.Checkbutton(content, text="Zezwól na 72 h pracy offline (wymaga podpisującej usługi)",
+                        variable=offline).pack(anchor="w", pady=6)
         ttk.Label(content, text="Komputery — zaznacz te, które chcesz usunąć").pack(anchor="w")
         devices = list(p.get("devices", []))
         listing = tk.Listbox(content, selectmode="extended", height=min(6, max(2, len(devices))), width=64)
@@ -269,7 +275,7 @@ def run_panel(project_id):
                 date = parse_expiry(expires.get())
                 removed = tuple(devices[i] for i in listing.curselection())
                 values = dict(name=name.get(), notes=notes.get(), active=active.get(),
-                              expires=date, limit=cap, removed=removed)
+                              expires=date, limit=cap, removed=removed, offline=offline.get())
                 policy_changes(p, email=row["email"], **values)
             except ValueError as exc:
                 messagebox.showerror("Nieprawidłowe ustawienia", str(exc), parent=win)

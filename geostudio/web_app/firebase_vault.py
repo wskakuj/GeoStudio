@@ -1,4 +1,4 @@
-"""Remember only the Firebase refresh token, encrypted by Windows DPAPI."""
+"""Remember the Firebase refresh token and optional signed permit with DPAPI."""
 from __future__ import annotations
 
 import ctypes
@@ -48,7 +48,7 @@ class WindowsSessionVault:
                      / "GeoStudio2" / "firebase-session.bin")
         self._crypt = crypt
 
-    def load(self):
+    def load_state(self):
         try:
             with self.path.open("rb") as stream:
                 raw = stream.read(65537)
@@ -62,11 +62,22 @@ class WindowsSessionVault:
         token = payload.get("refreshToken")
         if not isinstance(token, str) or not 1 <= len(token) <= 16384:
             raise ValueError("invalid refresh token")
-        return token
+        lease = payload.get("offlineLease", "")
+        seen = payload.get("lastSeen", 0)
+        if not isinstance(lease, str) or len(lease) > 8192:
+            raise ValueError("invalid offline permit")
+        if type(seen) not in (int, float) or not 0 <= seen < 1e11:
+            raise ValueError("invalid last seen")
+        return {"refreshToken": token, "offlineLease": lease, "lastSeen": seen}
 
-    def save(self, refresh_token):
+    def load(self):
+        state = self.load_state()
+        return state["refreshToken"] if state else None
+
+    def save(self, refresh_token, offline_lease="", last_seen=0):
         protected = self._crypt(json.dumps({
             "project": self.project_id, "refreshToken": refresh_token,
+            "offlineLease": offline_lease, "lastSeen": last_seen,
         }).encode("utf-8"), False)
         self.path.parent.mkdir(parents=True, exist_ok=True)
         fd, name = tempfile.mkstemp(prefix=".firebase-", dir=self.path.parent)

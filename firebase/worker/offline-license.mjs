@@ -1,0 +1,67 @@
+// GeoStudio offline permit signer. Store SIGNING_KEY_JWK as a Worker secret.
+// No Firebase service account is needed: the caller's Firebase ID token is
+// used solely to read the caller's entitlement under Firestore rules.
+const enc = new TextEncoder();
+const json = (body, status = 200) => Response.json(body, {
+  status, headers: {"Cache-Control":"no-store", "X-Content-Type-Options":"nosniff"}
+});
+const b64 = bytes => btoa(String.fromCharCode(...bytes)).replace(/\+/g,"-").replace(/\//g,"_").replace(/=+$/g,"");
+function claims(token) {
+  const part = token.split(".")[1];
+  if (!part || !/^[A-Za-z0-9_-]+$/.test(part)) throw Error("token");
+  const raw = atob(part.replace(/-/g,"+").replace(/_/g,"/") + "=".repeat((4-part.length%4)%4));
+  return JSON.parse(new TextDecoder().decode(Uint8Array.from(raw,c=>c.charCodeAt(0))));
+}
+
+export async function issuePermit(request, env, fetcher=fetch, now=Math.floor(Date.now()/1000)) {
+  if (request.method !== "POST") return json({error:"method"},405);
+  const authorization = request.headers.get("Authorization") || "";
+  if (!/^Bearer [A-Za-z0-9_.-]{1,16384}$/.test(authorization)) return json({error:"auth"},401);
+  let c, device;
+  try {
+    c = claims(authorization.slice(7));
+    const input = await request.text();
+    if (input.length > 512) return json({error:"body"},400);
+    device = JSON.parse(input).deviceId;
+    if (typeof c.sub !== "string" || !/^[^/\x00-\x1f]{1,128}$/.test(c.sub)
+        || c.sub === "." || c.sub === ".."
+        || c.aud !== env.PROJECT_ID || c.iss !== "https://securetoken.google.com/"+env.PROJECT_ID
+        || !Number.isInteger(c.exp) || c.exp <= now
+        || typeof device !== "string" || !/^[a-f0-9]{64}$/.test(device)) throw Error("invalid");
+  } catch { return json({error:"auth"},401); }
+  try {
+    // Firestore validates the token (including signature and project) and
+    // enforces active entitlement + expiry. Decoded claims alone grant nothing.
+    const url = "https://firestore.googleapis.com/v1/projects/"+encodeURIComponent(env.PROJECT_ID)
+      +"/databases/(default)/documents/geostudio_access/"+encodeURIComponent(c.sub);
+    const response = await fetcher(url, {headers:{Authorization:authorization,Accept:"application/json"},
+      redirect:"error"});
+    if (response.status === 401 || response.status === 403 || response.status === 404)
+      return json({error:"denied"},403);
+    if (!response.ok) return json({error:"upstream"},503);
+    const f = (await response.json()).fields;
+    const cap = Number(f.deviceLimit?.integerValue);
+    const devices = (f.devices?.arrayValue?.values || []).map(x=>x.stringValue);
+    if (f.active?.booleanValue !== true || Number(f.offlineHours?.integerValue) !== 72
+        || !Number.isInteger(cap) || cap < 1 || cap > 20 || devices.length > cap
+        || new Set(devices).size !== devices.length || !devices.includes(device)
+        || devices.some(d=>typeof d!=="string"||!/^[a-f0-9]{64}$/.test(d))) return json({error:"denied"},403);
+    let accountExp = null;
+    if (!Object.hasOwn(f.expiresAt || {}, "nullValue")) {
+      accountExp = Math.floor(Date.parse(f.expiresAt?.timestampValue)/1000);
+      if (!Number.isInteger(accountExp) || accountExp <= now) return json({error:"expired"},403);
+    }
+    const exp = Math.min(now+72*3600, accountExp ?? Infinity);
+    const payload = enc.encode(JSON.stringify({
+      v:1,project:env.PROJECT_ID,uid:c.sub,device,
+      email:typeof c.email==="string"?c.email.slice(0,320):"",
+      iat:now,exp,accountExp,deviceLimit:cap,deviceCount:devices.length
+    }));
+    const key = await crypto.subtle.importKey("jwk",JSON.parse(env.SIGNING_KEY_JWK),
+      {name:"ECDSA",namedCurve:"P-256"},false,["sign"]);
+    const signature = new Uint8Array(await crypto.subtle.sign({name:"ECDSA",hash:"SHA-256"},key,payload));
+    if (signature.length !== 64) return json({error:"signer"},503);
+    return json({lease:b64(payload)+"."+b64(signature)});
+  } catch { return json({error:"unavailable"},503); }
+}
+export default {fetch: (request, env) => issuePermit(request, env)};

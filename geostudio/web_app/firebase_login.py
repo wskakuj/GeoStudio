@@ -131,7 +131,8 @@ def run_login(force_prompt=False):
         busy = False
         progress.stop()
         if action in ("login", "restore") and error is None:
-            gate = AccessGate(client, grant, vault, keep_session)
+            gate = AccessGate(client, grant, vault, keep_session,
+                              last_seen=restored_state.get("lastSeen", 0) if action == "restore" else 0)
             if not gate.status()["active"]:
                 error = AuthDenied("Sesja wygasła. Zaloguj się ponownie.")
             else:
@@ -188,12 +189,13 @@ def run_login(force_prompt=False):
     root.bind("<Return>", lambda _event: submit_login() if not busy else None)
     root.protocol("WM_DELETE_WINDOW", root.destroy)
     email_entry.focus_set()
+    restored_state = {}
     if vault is not None and not force_prompt:
         try:
-            token = vault.load()
-            if token:
+            restored_state = vault.load_state() or {}
+            if restored_state:
                 remember.set(True)
-                launch("restore", lambda: client.refresh(token), True)
+                launch("restore", lambda: client.restore(restored_state), True)
         except (OSError, ValueError):
             message.set("Nie udało się odczytać zapamiętanej sesji. Zaloguj się ponownie.")
     root.after(100, poll)

@@ -21,6 +21,7 @@ from datetime import datetime, timezone
 
 from . import firebase_settings
 from .firebase_devices import device_id
+from .firebase_offline import b64decode, verify_permit, CLOCK_TOLERANCE
 
 
 class AuthError(Exception):
@@ -35,6 +36,10 @@ class AuthUnavailable(AuthError):
     pass
 
 
+class AuthNetwork(AuthUnavailable):
+    """Transport failure, not rejected authentication or a bad server config."""
+
+
 class DeviceDenied(AuthDenied):
     pass
 
@@ -47,20 +52,35 @@ class AuthConflict(AuthUnavailable):
 class FirebaseConfig:
     project_id: str
     api_key: str
+    offline_url: str = ""
+    offline_public_key: str = ""
 
     def __post_init__(self):
         if not (re.fullmatch(r"[a-z][a-z0-9-]{4,28}[a-z0-9]", self.project_id)
                 and re.fullmatch(r"[A-Za-z0-9_-]{20,128}", self.api_key)):
             raise AuthError("Nie skonfigurowano projektu Firebase dla GeoStudio.")
+        if self.offline_url or self.offline_public_key:
+            try:
+                url = urllib.parse.urlsplit(self.offline_url)
+                key = b64decode(self.offline_public_key)
+                if (url.scheme != "https" or not url.hostname or url.username
+                        or url.password or url.query or url.fragment or len(key) != 65 or key[0] != 4):
+                    raise ValueError
+            except ValueError:
+                raise AuthError("Nieprawidłowa konfiguracja licencji offline.") from None
 
 
 def load_config() -> FirebaseConfig:
     project = firebase_settings.PROJECT_ID
     key = firebase_settings.WEB_API_KEY
+    url = firebase_settings.OFFLINE_URL
+    public_key = firebase_settings.OFFLINE_PUBLIC_KEY
     if not getattr(sys, "frozen", False):
         project = os.environ.get("GEOSTUDIO_FIREBASE_PROJECT_ID", project)
         key = os.environ.get("GEOSTUDIO_FIREBASE_WEB_API_KEY", key)
-    return FirebaseConfig(project.strip(), key.strip())
+        url = os.environ.get("GEOSTUDIO_OFFLINE_URL", url)
+        public_key = os.environ.get("GEOSTUDIO_OFFLINE_PUBLIC_KEY", public_key)
+    return FirebaseConfig(project.strip(), key.strip(), url.strip(), public_key.strip())
 
 
 class _NoRedirect(urllib.request.HTTPRedirectHandler):
@@ -108,8 +128,16 @@ def _transport(method, url, body, headers):
         if error.code in (400, 401, 403, 404):
             raise AuthDenied("Nieprawidłowe dane lub brak aktywnego dostępu.") from None
         raise AuthUnavailable("Usługa logowania jest chwilowo niedostępna.") from None
-    except (OSError, ValueError, UnicodeError):
-        raise AuthUnavailable("Nie udało się połączyć z usługą logowania.") from None
+    except urllib.error.URLError as error:
+        if isinstance(error.reason, ssl.SSLError):
+            raise AuthUnavailable("Nie udało się zweryfikować bezpiecznego połączenia.") from None
+        raise AuthNetwork("Brak połączenia z usługą logowania.") from None
+    except ssl.SSLError:
+        raise AuthUnavailable("Nie udało się zweryfikować bezpiecznego połączenia.") from None
+    except OSError:
+        raise AuthNetwork("Brak połączenia z usługą logowania.") from None
+    except (ValueError, UnicodeError):
+        raise AuthUnavailable("Nieprawidłowa odpowiedź usługi logowania.") from None
 
 
 @dataclass(frozen=True, repr=False)
@@ -141,6 +169,9 @@ class Grant:
     expires_at: datetime | None
     device_limit: int = 0
     device_count: int = 0
+    offline_lease: str = ""
+    offline_until: datetime | None = None
+    offline: bool = False
 
 
 class FirebaseClient:
@@ -254,7 +285,51 @@ class FirebaseClient:
                     })
                 except AuthDenied:
                     raise DeviceDenied("Nie można zarejestrować komputera. Sprawdź limit i reguły Firestore.") from None
-        return Grant(credentials, expires, limit, len(devices))
+        grant = Grant(credentials, expires, limit, len(devices))
+        if (limit and self.config.offline_url
+                and fields.get("offlineHours", {}).get("integerValue") in ("72", 72)):
+            grant = self._issue_offline(grant)
+        return grant
+
+    def _issue_offline(self, grant):
+        # A missing signer must never disable valid ONLINE access.
+        from dataclasses import replace
+        try:
+            response = self._transport("POST", self.config.offline_url,
+                json.dumps({"deviceId": self._device_id}).encode("utf-8"), {
+                    "Authorization": "Bearer " + grant.credentials.id_token,
+                    "Content-Type": "application/json", "Accept": "application/json",
+                })
+            token = response["lease"]
+            permit = verify_permit(token, self.config.offline_public_key,
+                                   self.config.project_id, self._device_id, time.time())
+            if permit.uid != grant.credentials.uid:
+                raise ValueError
+            return replace(grant, offline_lease=token,
+                           offline_until=datetime.fromtimestamp(permit.expires, timezone.utc))
+        except (AuthError, ValueError, KeyError, TypeError):
+            return grant
+
+    def offline_grant(self, refresh_token, lease, last_seen=0, now=None):
+        if not self.config.offline_public_key:
+            raise AuthNetwork("Praca offline nie jest włączona.")
+        try:
+            permit = verify_permit(lease, self.config.offline_public_key,
+                                   self.config.project_id, self._device_id,
+                                   time.time() if now is None else now, last_seen)
+        except ValueError:
+            raise AuthNetwork("Brak ważnej licencji offline. Połącz się z internetem.") from None
+        credentials = Credentials(permit.uid, "", refresh_token, 3600, permit.email)
+        return Grant(credentials, permit.account_expires, permit.device_limit,
+                     permit.device_count, lease,
+                     datetime.fromtimestamp(permit.expires, timezone.utc), True)
+
+    def restore(self, state):
+        try:
+            return self.refresh(state["refreshToken"])
+        except AuthNetwork:
+            return self.offline_grant(state["refreshToken"], state.get("offlineLease", ""),
+                                      state.get("lastSeen", 0))
 
     def login(self, email, password):
         if not isinstance(email, str) or not isinstance(password, str) or not email.strip() or not password:
@@ -312,11 +387,14 @@ class AccessGate:
     prevents a dead monitor from extending access indefinitely.
     """
 
-    def __init__(self, client, grant, vault=None, remember=False, clock=time.monotonic):
+    def __init__(self, client, grant, vault=None, remember=False, clock=time.monotonic,
+                 wall_clock=time.time, last_seen=0):
         self._client = client
         self._vault = vault
         self._remember = remember
         self._clock = clock
+        self._wall_clock = wall_clock
+        self._last_seen = max(last_seen, wall_clock()) if grant.offline else wall_clock()
         self._lock = threading.RLock()
         self._generation = 0
         self._logged_out = False
@@ -332,7 +410,9 @@ class AccessGate:
             return
         try:
             if self._remember and self._grant is not None:
-                self._vault.save(self._grant.credentials.refresh_token)
+                self._vault.save(self._grant.credentials.refresh_token,
+                                 offline_lease=self._grant.offline_lease,
+                                 last_seen=self._last_seen)
             else:
                 self._vault.clear()
             self._storage_warning = ""
@@ -341,17 +421,25 @@ class AccessGate:
 
     def _activate(self, grant):
         now = self._clock()
-        lease = min(900.0, max(0.0, grant.credentials.ttl - 5.0))
+        wall = self._wall_clock()
+        if grant.offline and grant.offline_until is not None:
+            lease = max(0.0, grant.offline_until.timestamp() - wall)
+            if self._grant is not None and self._grant.offline:
+                lease = min(lease, max(0.0, self._deadline - now))
+            self._last_seen = max(self._last_seen, wall)
+        else:
+            lease = min(900.0, max(0.0, grant.credentials.ttl - 5.0))
+            self._last_seen = wall
         if grant.expires_at is not None:
-            lease = min(lease, max(0.0, (
-                grant.expires_at - datetime.now(timezone.utc)).total_seconds()))
+            lease = min(lease, max(0.0, grant.expires_at.timestamp() - wall))
         self._grant = grant
         self._email = grant.credentials.email
         self._expires_at = grant.expires_at
         self._device_limit = grant.device_limit
         self._device_count = grant.device_count
         self._deadline = now + lease
-        self._next_check = now + max(1.0, lease - min(20.0, lease / 4))
+        self._next_check = now + (min(30.0, max(1.0, lease)) if grant.offline
+                                  else max(1.0, lease - min(20.0, lease / 4)))
         self._reason = ""
         self._save()
 
@@ -359,6 +447,11 @@ class AccessGate:
         with self._lock:
             active = (self._grant is not None and not self._reason
                       and self._clock() < self._deadline)
+            offline = bool(self._grant and self._grant.offline)
+            until = self._grant.offline_until if self._grant else None
+            if offline and (until is None or self._wall_clock() >= until.timestamp()
+                            or self._wall_clock() < self._last_seen - CLOCK_TOLERANCE):
+                active = False
             reason = "" if active else (self._reason or RESTRICTED_MESSAGE)
             return {"enabled": True, "active": active, "message": reason,
                     "storageWarning": self._storage_warning,
@@ -366,7 +459,9 @@ class AccessGate:
                     "email": self._email,
                     "expiresAt": self._expires_at.isoformat() if self._expires_at else None,
                     "deviceLimit": self._device_limit,
-                    "deviceCount": self._device_count}
+                    "deviceCount": self._device_count,
+                    "offline": offline and active,
+                    "offlineUntil": until.isoformat() if until else None}
 
     def allows_http(self, method, path):
         return self.status()["active"] or (method == "GET" and path in RECOVERY_HTTP)
@@ -378,7 +473,8 @@ class AccessGate:
         with self._lock:
             if self._grant is None or self._clock() < self._next_check:
                 return
-            previous = self._grant.credentials
+            previous_grant = self._grant
+            previous = previous_grant.credentials
             generation = self._generation
             self._next_check = float("inf")
         try:
@@ -394,6 +490,23 @@ class AccessGate:
                     self._reason = str(error) + " Zapisz otwarte mapy i uruchom program ponownie."
                     self._remember = False
                     self._save()
+            return
+        except AuthNetwork:
+            with self._lock:
+                if generation != self._generation:
+                    return
+                try:
+                    grant = self._client.offline_grant(
+                        previous.refresh_token, previous_grant.offline_lease,
+                        self._last_seen, self._wall_clock())
+                    if grant.credentials.uid != previous.uid:
+                        raise AuthNetwork("Licencja nie należy do konta.")
+                except AuthNetwork:
+                    self._reason = ("Brak połączenia i ważnej licencji offline. "
+                                    "Zapisz otwarte mapy; ponawiamy sprawdzenie.")
+                    self._next_check = self._clock() + 30
+                    return
+                self._activate(grant)
             return
         except AuthUnavailable:
             with self._lock:
