@@ -128,3 +128,14 @@ test("perpetual policy is explicit and never exceeds finite account expiry",asyn
     ...fields,offlineHours:{integerValue:"-1"}}}),now);
   assert.equal(denied.status,403);
 });
+
+test("absent legacy cap can be unlimited but malformed explicit cap is never bypassed",async()=>{
+  for(const invalid of [{doubleValue:0},{nullValue:null},{integerValue:""},{integerValue:" "},{integerValue:false},null]){
+    const r=await issuePermit(req(),env,async()=>Response.json({fields:{...fields,deviceLimit:invalid}}),now);
+    assert.equal(r.status,403);
+  }
+  const {deviceLimit,...legacy}=fields;
+  const r=await issuePermit(req(),env,async()=>Response.json({fields:legacy}),now);
+  assert.equal(r.status,200);
+  assert.equal(JSON.parse(Buffer.from((await r.json()).lease.split(".")[0],"base64url")).deviceLimit,0);
+});

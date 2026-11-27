@@ -61,8 +61,14 @@ export async function issuePermit(request, env, fetcher=(url,options)=>fetch(url
     if (!response.ok) return json({error:"upstream"},503);
     stage = "firestore_response";
     const f = (await response.json()).fields;
-    const cap = Number(f.deviceLimit?.integerValue ?? 0);
-    const hours = Number(f.offlineHours?.integerValue);
+    // A genuinely absent deviceLimit is a legacy unlimited account.
+    // Malformed or wrongly typed limits must not silently become unlimited.
+    const rawCap = Object.hasOwn(f,"deviceLimit") ? f.deviceLimit?.integerValue : 0;
+    const rawHours = f.offlineHours?.integerValue;
+    const cap = (typeof rawCap==="number" || (typeof rawCap==="string" && /^\d+$/.test(rawCap)))
+      ? Number(rawCap) : NaN;
+    const hours = (typeof rawHours==="number" || (typeof rawHours==="string" && /^-?\d+$/.test(rawHours)))
+      ? Number(rawHours) : NaN;
     const devices = (f.devices?.arrayValue?.values || []).map(x=>x.stringValue);
     if (f.active?.booleanValue !== true || ![72,-1].includes(hours)
         || !Number.isInteger(cap) || cap < 0 || cap > 20
