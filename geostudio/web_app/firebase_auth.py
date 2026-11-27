@@ -512,8 +512,8 @@ class AccessGate:
         return result
 
     def refresh_now(self):
-        self.tick(force=True)
-        return self.status()
+        checked = self.tick(force=True)
+        return {**self.status(), "refreshBusy": not checked}
 
     def status(self):
         with self._lock:
@@ -546,9 +546,10 @@ class AccessGate:
 
     def tick(self, force=False):
         if not self._refresh_lock.acquire(blocking=False):
-            return
+            return False
         try:
             self._tick(force)
+            return True
         finally:
             self._refresh_lock.release()
 

@@ -196,6 +196,8 @@ def _selftest(workspace) -> int:
             "/raster_trace_metrics.js": b"GeoStudioRasterTraceMetrics",
             "/raster_a1.js": b"GeoStudioRasterA1",
             "/floating_dialog.js": b"GeoStudioFloatingDialog",
+            "/admin.js": b"GeoStudioAdmin",
+            "/admin.css": b"#admin-dialog",
         }
         for path, marker in assets.items():
             with urllib.request.urlopen(

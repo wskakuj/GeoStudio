@@ -255,7 +255,7 @@ def create_app(workspace: PreviewWorkspace | None = None, *,
                 "status", "list", "details", "create", "save", "rename_device", "reset", "delete"
             }:
                 raise ValueError
-        except (ValueError, UnicodeError):
+        except (ValueError, UnicodeError, TypeError):
             raise HTTPException(400, "Nieprawidłowe żądanie.") from None
         try:
             data = await run_in_threadpool(access_gate.admin_request, payload)

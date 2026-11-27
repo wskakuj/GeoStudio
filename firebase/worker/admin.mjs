@@ -275,6 +275,7 @@ async function adminAction(gw,env,claims,body,now) {
     }
     return {ok:true,uid:result.localId};
   }
+  require(["details","save","rename_device","reset","delete"].includes(action),"invalid_action");
   const uid=body.uid;
   require(validUid(uid));
   const target=await gw.user(uid);

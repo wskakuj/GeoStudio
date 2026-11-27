@@ -18,8 +18,12 @@ jobs:
       - run: python -m compileall -q geostudio
       - name: Validate offline Canvas JavaScript syntax
         run: node --check geostudio/web_app/static/map.js
-      - name: Test offline permit signer
-        run: node --test firebase/worker/offline-license.test.mjs
+      - name: Validate administrator UI JavaScript
+        run: |
+          node --check geostudio/web_app/static/admin.js
+          node --check geostudio/web_app/static/tabs.js
+      - name: Test offline permit signer and administrator gateway
+        run: node --test firebase/worker/*.test.mjs
       - run: python -m pytest -q
       - run: python -m pytest -q tests/test_gui.py
         env:

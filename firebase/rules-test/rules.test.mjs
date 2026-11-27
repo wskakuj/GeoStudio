@@ -57,3 +57,18 @@ test("cannot modify grants, expiry, cap, offline policy or create an entitlement
   await assertFails(setDoc(own("unknown"),{active:true,expiresAt:null}));
   await assertFails(deleteDoc(ref));
 });
+
+test("activity data cannot be read or changed by any client, even a claimed admin",async()=>{
+  await env.withSecurityRulesDisabled(async context=>{
+    await setDoc(doc(context.firestore(),"geostudio_activity","alice"),{data:"{}"});
+  });
+  for(const [uid,claims] of [["alice",{}],["bob",{}],["owner",{admin:true}]]){
+    const db=env.authenticatedContext(uid,claims).firestore();
+    const ref=doc(db,"geostudio_activity","alice");
+    await assertFails(getDoc(ref));
+    await assertFails(updateDoc(ref,{data:"fake"}));
+    await assertFails(deleteDoc(ref));
+    await assertFails(setDoc(doc(db,"geostudio_activity",uid),{data:"fake"}));
+    await assertFails(getDocs(collection(db,"geostudio_activity")));
+  }
+});

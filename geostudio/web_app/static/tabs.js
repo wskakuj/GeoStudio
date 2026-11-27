@@ -276,6 +276,7 @@
       updateControls();
     }catch(_){}
   }
+  window.addEventListener("geostudio-admin-denied",event=>error(event.detail));
   $("auth-admin").addEventListener("click",()=>{
     $("auth-account").open=false;
     window.GeoStudioAdmin?.open();
@@ -285,7 +286,8 @@
     try{
       const data=await request("/auth/refresh",{method:"POST"});
       await syncAccess();
-      if(!data.active)error(data.message||"Nie udało się potwierdzić dostępu.");
+      if(data.refreshBusy)error("Sprawdzanie uprawnień jest już w toku.");
+      else if(!data.active)error(data.message||"Nie udało się potwierdzić dostępu.");
       else if(data.offline)error("Nadal działasz w trybie offline.");
       else error("Uprawnienia są aktualne.");
     }catch(e){error(e.message);}

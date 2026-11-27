@@ -1,6 +1,10 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
+    // Activity is server-written/read through the trusted Worker only.
+    match /geostudio_activity/{uid} {
+      allow read, write: if false;
+    }
     match /geostudio_access/{uid} {
       function canAccess() {
         return request.auth != null && request.auth.uid == uid

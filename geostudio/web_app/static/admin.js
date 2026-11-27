@@ -32,7 +32,11 @@
     const body=await res.json().catch(()=>({}));
     if(!res.ok){
       // A stale local claim cannot keep the panel open after a server denial.
-      if(res.status===401||res.status===403){clear();if(dialog.open)dialog.close();allowed=false;}
+      if(res.status===401||res.status===403){
+        const detail=typeof body.detail==="string"?body.detail:"Brak uprawnień administratora.";
+        clear();if(dialog.open)dialog.close();allowed=false;
+        window.dispatchEvent(new CustomEvent("geostudio-admin-denied",{detail}));
+      }
       throw Error(typeof body.detail==="string"?body.detail:"Nie udało się wykonać operacji.");
     }
     return body;
