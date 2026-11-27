@@ -338,7 +338,7 @@ async function invitationAdmin(gw,body,now) {
   }
   fail("invalid_action");
 }
-async function registrationUser(request,env,fetcher,now){
+async function registrationUser(request,env,fetcher,now,requireVerified=true){
   const header=request.headers.get("Authorization")||"";
   require(/^Bearer [A-Za-z0-9_.-]{1,16384}$/.test(header),"auth",401);
   const token=header.slice(7),c=decodeClaims(token);
@@ -360,7 +360,7 @@ async function registrationUser(request,env,fetcher,now){
   try{u=(await r.json()).users?.find(x=>x.localId===c.sub);}catch{fail("upstream",503);}
   require(u&&!u.disabled&&Number.isFinite(Number(u.validSince??0))
     &&c.auth_time>=Number(u.validSince??0),"auth",401);
-  require(u.emailVerified===true&&c.email_verified===true,"email_unverified",403);
+  if(requireVerified)require(u.emailVerified===true&&c.email_verified===true,"email_unverified",403);
   const email=invitationEmail(u.email);
   require(typeof c.email==="string"&&c.email.toLowerCase()===email,"auth",401);
   return {uid:c.sub,email,displayName:typeof u.displayName==="string"?u.displayName.slice(0,160):""};
@@ -372,8 +372,8 @@ function validateInvitation(doc,now,email){
 }
 async function registration(request,env,fetcher,now,getToken){
   const body=await bodyOf(request);
-  require(["invite_check","invite_redeem"].includes(body.action),"invalid_action");
-  const raw=normalizeCode(body.code);
+  require(["invite_check","invite_redeem","invite_status"].includes(body.action),"invalid_action");
+  const raw=body.action==="invite_status"?"":normalizeCode(body.code);
   // Optional edge rate-limiting binding. No IP or rate-limit counters are
   // written to Firestore. Entropy prevents practical brute-force guessing
   // even without the optional binding; it does not prevent quota abuse.
@@ -382,10 +382,14 @@ async function registration(request,env,fetcher,now,getToken){
     const {success}=await env.REGISTRATION_RATE_LIMITER.limit({key:"registration:"+ip});
     require(success,"quota",429);
   }
-  const user=body.action==="invite_redeem"?await registrationUser(request,env,fetcher,now):null;
+  const user=body.action!=="invite_check"?await registrationUser(request,env,fetcher,now,body.action==="invite_redeem"):null;
   const email=user?user.email:invitationEmail(body.email);
-  const id=await inviteHash(raw);
   const gw=gateway(env,fetcher,await getToken(env,fetcher,now));
+  if(body.action==="invite_status"){
+    const doc=await gw.get("geostudio_access",user.uid);
+    return {pending:doc?.fields?.pendingApproval?.booleanValue===true,unregistered:!doc};
+  }
+  const id=await inviteHash(raw);
   if(!user){
     const settings=await registrationSettings(gw);
     require(settings.enabled,"registration_closed",403);
@@ -408,7 +412,8 @@ async function registration(request,env,fetcher,now,getToken){
     const doc=await gw.get("geostudio_invites",id);
     const inv=validateInvitation(doc,now,email);
     const expiry=inv.accountDays?iso(now+inv.accountDays*86400000):null;
-    const fields=makePolicy(null,{name:user.displayName,notes:"",active:!inv.approval,
+    const safeName=user.displayName.replace(/[\x00-\x1f]/g,"").slice(0,160);
+    const fields=makePolicy(null,{name:safeName,notes:"",active:!inv.approval,
       expiresAt:expiry,deviceLimit:inv.deviceLimit,offlineHours:inv.offlineHours},email);
     fields.pendingApproval=booleanValue(inv.approval);
     fields.inviteId=stringValue(id);

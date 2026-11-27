@@ -252,7 +252,8 @@ def create_app(workspace: PreviewWorkspace | None = None, *,
         try:
             payload = json.loads(body)
             if not isinstance(payload, dict) or payload.get("action") not in {
-                "status", "list", "details", "create", "save", "rename_device", "reset", "delete"
+                "status", "list", "details", "create", "save", "rename_device", "reset", "delete",
+                "invites_list", "invite_create", "invite_revoke", "invite_history", "invite_settings"
             }:
                 raise ValueError
         except (ValueError, UnicodeError, TypeError):

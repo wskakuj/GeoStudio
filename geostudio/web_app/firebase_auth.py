@@ -371,6 +371,64 @@ class FirebaseClient:
             return self.offline_grant(state["refreshToken"], state.get("offlineLease", ""),
                                       state.get("lastSeen", 0))
 
+    def _registration_call(self, action, *, code="", email="", identity=""):
+        if not self.config.admin_url:
+            raise AuthDenied("Rejestracja nie jest dostępna w tej wersji.")
+        from .firebase_admin_client import call_admin
+        payload = {"action": action}
+        if action != "invite_status":
+            payload["code"] = code
+        if action == "invite_check":
+            payload["email"] = email
+        return call_admin(self.config.admin_url.rstrip("/") + "/registration", identity, payload)
+
+    @staticmethod
+    def _registration_input(email, password, code):
+        if (not isinstance(email, str) or not re.fullmatch(r"[^\s@]+@[^\s@]+\.[^\s@]+", email.strip())
+                or len(email.strip()) > 254 or not isinstance(password, str)
+                or not 12 <= len(password) <= 128 or not isinstance(code, str)
+                or not 1 <= len(code.strip()) <= 80):
+            raise AuthDenied("Wpisz poprawny e-mail, hasło (12–128 znaków) i kod zaproszenia.")
+
+    def begin_registration(self, email, password, code):
+        self._registration_input(email, password, code)
+        email = email.strip()
+        self._registration_call("invite_check", code=code, email=email)
+        try:
+            result = self._post("signUp", {
+                "email": email, "password": password, "returnSecureToken": True,
+            })
+            credentials = self._credentials(result)
+        except AuthDenied:
+            raise AuthDenied("Nie udało się utworzyć konta. Jeśli już je założyłeś, "
+                             "użyj ponownego wysłania linku lub zakończ rejestrację.") from None
+        try:
+            self._post("sendOobCode", {"requestType": "VERIFY_EMAIL",
+                                      "idToken": credentials.id_token})
+        except AuthError:
+            raise AuthUnavailable("Konto utworzono, ale nie potwierdzono wysłania e-maila. "
+                                  "Użyj przycisku Wyślij link ponownie.") from None
+        return {"ok": True}
+
+    def resend_registration(self, email, password, code):
+        self._registration_input(email, password, code)
+        self._registration_call("invite_check", code=code, email=email.strip())
+        credentials = self._credentials(self._post("signInWithPassword", {
+            "email": email.strip(), "password": password, "returnSecureToken": True,
+        }))
+        self._post("sendOobCode", {"requestType": "VERIFY_EMAIL", "idToken": credentials.id_token})
+        return {"ok": True}
+
+    def finish_registration(self, email, password, code):
+        self._registration_input(email, password, code)
+        credentials = self._credentials(self._post("signInWithPassword", {
+            "email": email.strip(), "password": password, "returnSecureToken": True,
+        }))
+        # The Worker checks the actual identity and verified email using Google,
+        # consumes the invitation and creates access atomically. No local grant.
+        return self._registration_call("invite_redeem", code=code,
+                                       identity=credentials.id_token)
+
     def login(self, email, password):
         if not isinstance(email, str) or not isinstance(password, str) or not email.strip() or not password:
             raise AuthDenied("Wpisz adres e-mail i hasło.")
@@ -385,6 +443,16 @@ class FirebaseClient:
         except DeviceDenied:
             raise
         except AuthDenied:
+            if self.config.admin_url:
+                try:
+                    state = self._registration_call("invite_status", identity=credentials.id_token)
+                except AuthError:
+                    state = {}
+                if state.get("pending"):
+                    raise AuthDenied("Konto oczekuje na akceptację administratora.") from None
+                if state.get("unregistered"):
+                    raise AuthDenied("Brak dostępu. Jeśli rozpocząłeś rejestrację, "
+                                     "potwierdź e-mail i zakończ ją kodem zaproszenia.") from None
             raise AuthDenied("Logowanie poprawne, ale konto nie ma aktywnego dostępu do GeoStudio.") from None
 
     def refresh(self, refresh_token, *, activity_kind="heartbeat"):

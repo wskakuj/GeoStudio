@@ -124,6 +124,7 @@ def run_login(force_prompt=False):
         eye.configure(state="disabled")
         submit.configure(state="disabled")
         reset.configure(state="disabled")
+        register.configure(state="disabled")
         keep.configure(state="disabled")
         message.set("Łączenie z Firebase…")
         progress.pack(fill="x", pady=(6, 0))
@@ -168,6 +169,7 @@ def run_login(force_prompt=False):
         eye.configure(state="normal")
         submit.configure(state="normal")
         reset.configure(state="normal")
+        register.configure(state="normal" if client.config.admin_url else "disabled")
         keep.configure(state="normal" if vault else "disabled")
         message.set(str(error) if error else
                     "Jeżeli konto istnieje, otrzymasz e-mail z instrukcją zmiany hasła.")
@@ -193,6 +195,24 @@ def run_login(force_prompt=False):
                       fg="#8bb5ff", bg="#172230", activebackground="#172230",
                       activeforeground="white", relief="flat")
     reset.pack(pady=(5, 0))
+
+    def show_registration():
+        if busy:
+            return
+        from .firebase_registration import open_registration
+        address = open_registration(root, client, initial_email=email.get())
+        if address:
+            email.set(address)
+            password_entry.focus_set()
+
+    register = tk.Button(form, text="Utwórz konto z kodem zaproszenia",
+                         command=show_registration, fg="#e9eff7", bg="#25364b",
+                         activebackground="#35485e", activeforeground="white",
+                         relief="flat", padx=8, pady=7, font=("Segoe UI", 10))
+    if client.config.admin_url:
+        register.pack(fill="x", pady=(8, 0))
+    else:
+        register.configure(state="disabled")
     if client.config.admin_url:
         tk.Label(panel, text="Usługa zapisuje czas udanych połączeń, ID i nazwę komputera. "
                  "Nie przesyła map ani ścieżek plików.", wraplength=355,

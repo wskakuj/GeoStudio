@@ -10,6 +10,10 @@ from .firebase_auth import AuthError, _NoRedirect
 
 MESSAGES = {
     "auth": "Sesja wygasła. Odśwież uprawnienia lub zaloguj się ponownie.",
+    "invite_invalid": "Kod zaproszenia jest nieprawidłowy, wykorzystany, wygasł lub nie pasuje do adresu e-mail.",
+    "registration_closed": "Rejestracja z zaproszeniem jest obecnie wyłączona.",
+    "email_unverified": "Potwierdź adres e-mail przez link z wiadomości, a następnie zakończ rejestrację.",
+    "already_registered": "Konto ma już przypisane uprawnienia. Zaproszenie nie zmienia istniejącego dostępu.",
     "denied": "Brak uprawnień administratora lub aktywnego dostępu.",
     "admin_config": "Sprawdź konfigurację administracyjnego Workera i IAM.",
     "invalid_input": "Nieprawidłowe dane. Sprawdź formularz.",
@@ -30,6 +34,7 @@ MESSAGES = {
 
 class AdminAPIError(AuthError):
     def __init__(self, code="unavailable", status=503):
+        self.code = code
         self.status = status if status in {400, 401, 403, 404, 409, 413, 429, 503} else 503
         super().__init__(MESSAGES.get(code, MESSAGES["unavailable"]))
 
@@ -48,7 +53,7 @@ def call_admin(url, id_token, payload):
         if len(body) > 16384:
             raise AdminAPIError("invalid_input", 413)
         request = urllib.request.Request(url, data=body, method="POST", headers={
-            "Authorization": "Bearer " + id_token,
+            **({"Authorization": "Bearer " + id_token} if id_token else {}),
             "Content-Type": "application/json", "Accept": "application/json",
             "User-Agent": "GeoStudio-Admin/1.0",
         })
