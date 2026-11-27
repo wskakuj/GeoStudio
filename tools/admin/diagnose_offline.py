@@ -26,7 +26,8 @@ from geostudio.web_app.firebase_offline import verify_permit
 
 WORKER_ERRORS = {
     "method", "auth", "body", "denied", "upstream", "expired",
-    "signer", "unavailable",
+    "signer", "unavailable", "firestore_response",
+    "key_missing", "key_json", "key_import", "key_sign",
 }
 
 

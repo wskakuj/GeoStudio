@@ -13,7 +13,7 @@ function claims(token) {
   return JSON.parse(new TextDecoder().decode(Uint8Array.from(raw,c=>c.charCodeAt(0))));
 }
 
-export async function issuePermit(request, env, fetcher=fetch, now=Math.floor(Date.now()/1000)) {
+export async function issuePermit(request, env, fetcher=(url,options)=>fetch(url,options), now=Math.floor(Date.now()/1000)) {
   if (request.method !== "POST") return json({error:"method"},405);
   const authorization = request.headers.get("Authorization") || "";
   if (!/^Bearer [A-Za-z0-9_.-]{1,16384}$/.test(authorization)) return json({error:"auth"},401);
@@ -41,6 +41,9 @@ export async function issuePermit(request, env, fetcher=fetch, now=Math.floor(Da
         || !Number.isInteger(c.exp) || c.exp <= now
         || typeof device !== "string" || !/^[a-f0-9]{64}$/.test(device)) throw Error("invalid");
   } catch { return json({error:"auth"},401); }
+  // Only fixed stage names leave the Worker; never expose exception messages,
+  // Firebase credentials, the JWK, response bodies or a signed permit on error.
+  let stage = "upstream";
   try {
     // Firestore validates the token (including signature and project) and
     // enforces active entitlement + expiry. Decoded claims alone grant nothing.
@@ -51,6 +54,7 @@ export async function issuePermit(request, env, fetcher=fetch, now=Math.floor(Da
     if (response.status === 401 || response.status === 403 || response.status === 404)
       return json({error:"denied"},403);
     if (!response.ok) return json({error:"upstream"},503);
+    stage = "firestore_response";
     const f = (await response.json()).fields;
     const cap = Number(f.deviceLimit?.integerValue);
     const devices = (f.devices?.arrayValue?.values || []).map(x=>x.stringValue);
@@ -69,11 +73,17 @@ export async function issuePermit(request, env, fetcher=fetch, now=Math.floor(Da
       email:typeof c.email==="string"?c.email.slice(0,320):"",
       iat:now,exp,accountExp,deviceLimit:cap,deviceCount:devices.length
     }));
-    const key = await crypto.subtle.importKey("jwk",JSON.parse(env.SIGNING_KEY_JWK),
+    if (typeof env.SIGNING_KEY_JWK !== "string" || !env.SIGNING_KEY_JWK.trim())
+      return json({error:"key_missing"},503);
+    stage = "key_json";
+    const jwk = JSON.parse(env.SIGNING_KEY_JWK.trim());
+    stage = "key_import";
+    const key = await crypto.subtle.importKey("jwk",jwk,
       {name:"ECDSA",namedCurve:"P-256"},false,["sign"]);
+    stage = "key_sign";
     const signature = new Uint8Array(await crypto.subtle.sign({name:"ECDSA",hash:"SHA-256"},key,payload));
     if (signature.length !== 64) return json({error:"signer"},503);
     return json({lease:b64(payload)+"."+b64(signature)});
-  } catch { return json({error:"unavailable"},503); }
+  } catch { return json({error:stage},503); }
 }
 export default {fetch: (request, env) => issuePermit(request, env)};
