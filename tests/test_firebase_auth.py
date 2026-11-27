@@ -137,3 +137,21 @@ def test_password_reset_does_not_expose_unknown_email():
     transport = Transport()
     transport.failure = auth.AuthDenied("not found")
     auth.FirebaseClient(CONFIG, transport).reset_password("a@b")
+
+
+def test_diagnostic_gate_denies_all_api_and_native_access():
+    gate = auth.DiagnosticGate()
+    assert not gate.allows_http("GET", "/api/documents")
+    assert not gate.allows_http("GET", "/api/export/map")
+    assert not gate.allows_http("POST", "/api/map")
+    assert not gate.allows_native("save_map")
+
+
+@pytest.mark.skipif(auth.os.name != "nt", reason="Requires native Windows DPAPI")
+def test_real_dpapi_roundtrip(tmp_path):
+    vault = WindowsSessionVault(CONFIG.project_id, tmp_path / "session.bin")
+    vault.save("synthetic-token")
+    assert vault.load() == "synthetic-token"
+    assert b"synthetic-token" not in vault.path.read_bytes()
+    vault.clear()
+    assert not vault.path.exists()

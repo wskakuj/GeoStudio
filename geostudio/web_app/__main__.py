@@ -119,7 +119,23 @@ def _selftest(workspace) -> int:
         from .raster_a1 import selftest_raster_a1
         if not selftest_raster_a1():
             return 1
-        app = create_app(workspace, multi_document=True)
+        from .firebase_auth import DiagnosticGate
+        # Exercise the actual DPAPI binding on Windows, with synthetic data
+        # in a temporary directory, never a user session.
+        if os.name == "nt":
+            from tempfile import TemporaryDirectory
+            from .firebase_vault import WindowsSessionVault
+            with TemporaryDirectory() as directory:
+                vault = WindowsSessionVault("diagnostic", Path(directory) / "session.bin")
+                vault.save("test-token-not-a-real-credential")
+                if vault.load() != "test-token-not-a-real-credential":
+                    return 1
+                if b"test-token-not-a-real-credential" in vault.path.read_bytes():
+                    return 1
+                vault.clear()
+                if vault.path.exists():
+                    return 1
+        app = create_app(workspace, multi_document=True, access_gate=DiagnosticGate())
         config = uvicorn.Config(
             app=app, log_level="warning", access_log=False, server_header=False,
             log_config=_uvicorn_log_config())
@@ -157,6 +173,15 @@ def _selftest(workspace) -> int:
                 body = response.read()
                 if response.status != 200 or marker not in body:
                     return 1
+        request = urllib.request.Request(
+            f"http://127.0.0.1:{port}/api/documents",
+            headers={"X-GeoStudio-Token": app.state.api_token})
+        try:
+            with urllib.request.urlopen(request, timeout=10):
+                return 1  # diagnostic process must never serve editor APIs
+        except urllib.error.HTTPError as error:
+            if error.code != 403:
+                return 1
         return 0
     except BaseException:
         return 1
@@ -262,6 +287,7 @@ def main(argv=None):
     try:
         import webview
     except ImportError as exc:
+        stop_auth.set()
         sock.close()
         raise SystemExit(
             'Brakuje pywebview. Uruchom: py -m pip install -e ".[web]" '

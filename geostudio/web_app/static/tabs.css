@@ -61,3 +61,8 @@ button:focus-visible{outline:2px solid var(--primary);outline-offset:-2px}
 
 #auth-notice{padding:10px 16px;background:var(--card);border-bottom:1px solid #efa32d;color:var(--ink);font-size:13px}
 #auth-logout{font-size:12px;color:var(--accent);border:1px solid var(--edge);border-radius:6px;padding:4px 8px}
+
+#auth-notice{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+#auth-message{flex:1;min-width:220px}
+#auth-save-copy{flex:none;padding:6px 12px;border:1px solid var(--primary);border-radius:6px;background:var(--active);color:var(--ink)}
+#auth-logout:disabled{opacity:.5;cursor:default}

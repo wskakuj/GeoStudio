@@ -246,15 +246,26 @@
       const data=await request("/auth/status");
       if(!data.enabled)return;
       accessActive=!!data.active;
-      $("auth-logout").hidden=!accessActive;
+      $("auth-logout").hidden=false;
+      $("auth-logout").disabled=!!data.loggedOut;
       $("app-version").disabled=!!data.updatesDisabled;
       const notice=$("auth-notice");
       notice.hidden=accessActive&&!data.storageWarning;
-      notice.textContent=accessActive?(data.storageWarning||""):
-        ((data.message||"Brak aktywnego dostępu.")+" Zapisz kopie otwartych map. Dalsza edycja jest zablokowana.");
+      $("auth-message").textContent=accessActive?(data.storageWarning||""):
+        ((data.message||"Brak aktywnego dostępu.")+" Zapisz kopie otwartych map. Dalsza edycja jest zablokowana."
+         +(data.storageWarning?" "+data.storageWarning:""));
+      $("auth-save-copy").hidden=accessActive;
       updateControls();
     }catch(_){}
   }
+  $("auth-save-copy").addEventListener("click",async()=>{
+    const tab=tabs.get(active);
+    if(!tab||!getStatus(tab).loaded){error("Wybierz zakładkę z otwartą mapą.");return;}
+    if(getStatus(tab).busy){error("Poczekaj na zakończenie trwającej operacji.");return;}
+    const editor=tab.frame.contentWindow.GeoStudioDocument;
+    if(!editor?.saveCopy){error("Edytor nie jest gotowy do zapisu.");return;}
+    try{await editor.saveCopy();}catch(e){error(e.message);}
+  });
   $("auth-logout").addEventListener("click",async()=>{
     if(!window.confirm("Wylogować? Zapisz otwarte mapy przed zamknięciem programu."))return;
     try{await request("/auth/logout",{method:"POST"});await syncAccess();}

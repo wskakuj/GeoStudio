@@ -33,7 +33,7 @@ class AuthUnavailable(AuthError):
     pass
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, repr=False)
 class FirebaseConfig:
     project_id: str
     api_key: str
@@ -79,6 +79,17 @@ def _transport(method, url, body, headers):
     except urllib.error.HTTPError as error:
         # Firebase uses 400 for invalid credentials and revoked refresh tokens;
         # Firestore uses 403/404 for denied or absent entitlements.
+        try:
+            failure = json.loads(error.read(65536))
+            code = failure.get("error", {}).get("message", "").split(" : ", 1)[0]
+        except (OSError, ValueError, AttributeError, TypeError):
+            code = ""
+        if code in {"OPERATION_NOT_ALLOWED", "API_KEY_INVALID",
+                    "API_KEY_SERVICE_BLOCKED", "PROJECT_NOT_FOUND",
+                    "CONFIGURATION_NOT_FOUND", "API_KEY_HTTP_REFERRER_BLOCKED"}:
+            raise AuthUnavailable("Konfiguracja Firebase wymaga sprawdzenia przez administratora.") from None
+        if code == "TOO_MANY_ATTEMPTS_TRY_LATER" or error.code == 429:
+            raise AuthUnavailable("Za dużo prób logowania. Spróbuj ponownie później.") from None
         if error.code in (400, 401, 403, 404):
             raise AuthDenied("Nieprawidłowe dane lub brak aktywnego dostępu.") from None
         raise AuthUnavailable("Usługa logowania jest chwilowo niedostępna.") from None
@@ -159,7 +170,11 @@ class FirebaseClient:
         result = self._post("signInWithPassword", {
             "email": email.strip(), "password": password, "returnSecureToken": True,
         })
-        return self._authorize(self._credentials(result))
+        credentials = self._credentials(result)
+        try:
+            return self._authorize(credentials)
+        except AuthDenied:
+            raise AuthDenied("Logowanie poprawne, ale konto nie ma aktywnego dostępu do GeoStudio.") from None
 
     def refresh(self, refresh_token):
         url = ("https://securetoken.googleapis.com/v1/token?"
@@ -210,6 +225,7 @@ class AccessGate:
         self._clock = clock
         self._lock = threading.RLock()
         self._generation = 0
+        self._logged_out = False
         self._grant = None
         self._reason = ""
         self._storage_warning = ""
@@ -248,7 +264,7 @@ class AccessGate:
             reason = "" if active else (self._reason or RESTRICTED_MESSAGE)
             return {"enabled": True, "active": active, "message": reason,
                     "storageWarning": self._storage_warning,
-                    "updatesDisabled": True}
+                    "loggedOut": self._logged_out, "updatesDisabled": True}
 
     def allows_http(self, method, path):
         return self.status()["active"] or (method == "GET" and path in RECOVERY_HTTP)
@@ -293,8 +309,26 @@ class AccessGate:
     def logout(self):
         with self._lock:
             self._generation += 1
+            self._logged_out = True
             self._grant = None
             self._remember = False
             self._reason = "Wylogowano. Zapisz otwarte mapy i uruchom program ponownie."
             self._save()
             return self.status()
+
+
+class DiagnosticGate:
+    """Only for the short-lived packaged smoke test; never grants MAP access."""
+
+    def status(self):
+        return {"enabled": True, "active": False, "message": "Test diagnostyczny.",
+                "updatesDisabled": True}
+
+    def allows_http(self, method, path):
+        return False
+
+    def allows_native(self, operation):
+        return False
+
+    def logout(self):
+        return self.status()

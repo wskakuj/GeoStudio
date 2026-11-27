@@ -18,7 +18,10 @@
   <button id="add-tab" type="button" title="Nowa zakładka mapy" aria-label="Nowa zakładka mapy">+</button>
   <span id="tab-count" class="tab-count"></span>
 </header>
-<div id="auth-notice" role="status" hidden></div>
+<div id="auth-notice" hidden>
+  <span id="auth-message" role="status"></span>
+  <button type="button" id="auth-save-copy" hidden>Zapisz kopię aktywnej mapy</button>
+</div>
 <main id="editors" aria-label="Obszar roboczy"></main>
 <div id="tab-error" role="alert" hidden></div>
 </body>

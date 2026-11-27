@@ -27,11 +27,8 @@ def run_login():
     root.title("GeoStudio 2.0 — Logowanie")
     root.configure(background="#101720")
     root.resizable(False, False)
-    root.geometry("440x460")
-    root.update_idletasks()
-    root.geometry("+%d+%d" % (max(0, (root.winfo_screenwidth()-440)//2),
-                              max(0, (root.winfo_screenheight()-460)//2)))
-    root.deiconify()
+    # Size to the controls after layout, including Windows display scaling.
+    root.minsize(440, 460)
     panel = tk.Frame(root, background="#101720", padx=36, pady=25)
     panel.pack(fill="both", expand=True)
     try:
@@ -66,7 +63,8 @@ def run_login():
         keep.configure(state="disabled")
     message = tk.StringVar()
     tk.Label(panel, textvariable=message, fg="#f0c482", bg="#101720",
-             justify="left", wraplength=355).pack(fill="x", pady=(8, 6))
+             justify="left", anchor="nw", wraplength=355,
+             height=4).pack(fill="x", pady=(8, 6))
 
     pending = queue.Queue()
     result = []
@@ -143,6 +141,13 @@ def run_login():
                       fg="#8bb5ff", bg="#101720", activebackground="#101720",
                       activeforeground="white", relief="flat")
     reset.pack(pady=(7, 0))
+    root.update_idletasks()
+    width = max(440, root.winfo_reqwidth())
+    height = max(460, root.winfo_reqheight())
+    root.geometry("%dx%d+%d+%d" % (width, height,
+                  max(0, (root.winfo_screenwidth()-width)//2),
+                  max(0, (root.winfo_screenheight()-height)//2)))
+    root.deiconify()
     root.bind("<Return>", lambda _event: submit_login() if not busy else None)
     root.protocol("WM_DELETE_WINDOW", root.destroy)
     email_entry.focus_set()

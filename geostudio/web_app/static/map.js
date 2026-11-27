@@ -8532,7 +8532,7 @@ inform("Klikaj mapę, aby wstawiać kolejne oznaczenia. Naciśnij Esc lub wybier
 
   if(documentId){
     window.GeoStudioDocument={
-      status:editorStatus,openPicker:chooseMapHere,
+      status:editorStatus,openPicker:chooseMapHere,saveCopy:downloadMapCopy,
       openFile:async(file,style)=>{
         if(state.meta)throw Error("Zakładka ma już otwartą mapę.");
         const ok=await openMap(file,true);
