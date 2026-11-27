@@ -49,8 +49,13 @@ export async function issuePermit(request, env, fetcher=(url,options)=>fetch(url
     // enforces active entitlement + expiry. Decoded claims alone grant nothing.
     const url = "https://firestore.googleapis.com/v1/projects/"+encodeURIComponent(env.PROJECT_ID)
       +"/databases/(default)/documents/geostudio_access/"+encodeURIComponent(c.sub);
+    // Cloudflare Workers does not implement redirect:"error". Use manual
+    // and reject every redirect, so the Firebase bearer token is never
+    // forwarded to a redirect destination.
     const response = await fetcher(url, {headers:{Authorization:authorization,Accept:"application/json"},
-      redirect:"error"});
+      redirect:"manual"});
+    if (response.status >= 300 && response.status < 400)
+      return json({error:"upstream"},503);
     if (response.status === 401 || response.status === 403 || response.status === 404)
       return json({error:"denied"},403);
     if (!response.ok) return json({error:"upstream"},503);
