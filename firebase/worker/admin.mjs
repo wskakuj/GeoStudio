@@ -68,6 +68,7 @@ function readPolicy(doc) {
     (typeof expiresAt==="string"&&Number.isFinite(Date.parse(expiresAt))),"invalid_policy",409);
   return {active:f.active?.booleanValue===true,expiresAt,deviceLimit:limit,devices,
     offlineHours:[72,-1].includes(Number(f.offlineHours?.integerValue))?Number(f.offlineHours.integerValue):0,
+    pendingApproval:f.pendingApproval?.booleanValue===true,
     name:f.name?.stringValue||"",notes:f.notes?.stringValue||"",
     version:doc.updateTime||""};
 }
@@ -110,7 +111,7 @@ async function google(fetcher,url,token,method="GET",payload,allowMissing=false)
       // Only fixed codes leave this service. Do not return Google's response.
       let error={};
       try { error=(await r.json()).error||{}; } catch {}
-      if (error.status==="FAILED_PRECONDITION"||error.status==="ABORTED") fail("conflict",409);
+      if (["FAILED_PRECONDITION","ABORTED","ALREADY_EXISTS"].includes(error.status)) fail("conflict",409);
       if (error.message==="EMAIL_EXISTS") fail("email_exists",409);
       if (error.message==="USER_NOT_FOUND") fail("not_found",404);
       fail("invalid_google_request",400);
@@ -188,7 +189,13 @@ function gateway(env,fetcher,token) {
       {delete:prefix+"geostudio_access/"+uid},{delete:prefix+"geostudio_activity/"+uid}
     ]});
   }
-  return {get,save,user,pages,deleteDocs,auth:(suffix,method,payload,query="")=>
+  const prefix="projects/"+env.PROJECT_ID+"/databases/(default)/documents/";
+  const commit=writes=>google(fetcher,root+":commit",token,"POST",{writes});
+  const write=(path,fields,old)=>({
+    update:{name:prefix+path,fields},updateMask:{fieldPaths:Object.keys(fields)},
+    currentDocument:old?{updateTime:old.updateTime}:{exists:false}
+  });
+  return {get,save,user,pages,deleteDocs,commit,write,auth:(suffix,method,payload,query="")=>
     google(fetcher,authRoot+suffix+query,token,method,payload),
     root,authRoot};
 }
@@ -236,9 +243,198 @@ async function recordActivity(gw,uid,policy,body,now) {
     } catch(e) { if(e.code!=="conflict"||attempt===2)throw e; }
   }
 }
+
+// Invitations: 128-bit random codes, SHA-256 document IDs. Raw codes are
+// returned once to the owner, never stored or accepted as admin privileges.
+const inviteIdOk=x=>typeof x==="string"&&/^[a-f0-9]{64}$/.test(x);
+const booleanValue=x=>({booleanValue:x});
+const timestampValue=x=>({timestampValue:iso(x)});
+const nullableTimestamp=x=>x===null?{nullValue:null}:timestampValue(x);
+const intIn=(x,min,max)=>Number.isInteger(x)&&x>=min&&x<=max;
+const invitationEmail=x=>emailOf(x).toLowerCase();
+function normalizeCode(raw) {
+  require(typeof raw==="string"&&raw.length<=80,"invite_invalid",400);
+  const c=raw.trim().toUpperCase().replace(/^GS-?/,"").replace(/[\s-]/g,"");
+  require(/^[0-9A-F]{32}$/.test(c),"invite_invalid",400);
+  return c;
+}
+async function inviteHash(code){
+  const digest=new Uint8Array(await crypto.subtle.digest("SHA-256",enc.encode(code)));
+  return Array.from(digest,x=>x.toString(16).padStart(2,"0")).join("");
+}
+function randomCode(){
+  const raw=Array.from(crypto.getRandomValues(new Uint8Array(16)),b=>b.toString(16).padStart(2,"0")).join("").toUpperCase();
+  return {raw,code:"GS-"+raw.match(/.{4}/g).join("-")};
+}
+function inviteData(doc,now) {
+  if(!doc)return null;
+  const f=doc.fields||{},id=doc.name?.split("/").pop();
+  const maxUses=Number(f.maxUses?.integerValue),used=Number(f.used?.integerValue),
+    deviceLimit=Number(f.deviceLimit?.integerValue),offlineHours=Number(f.offlineHours?.integerValue),
+    accountDays=Number(f.accountDays?.integerValue);
+  const expiresAt=f.expiresAt?.timestampValue??null,createdAt=f.createdAt?.timestampValue;
+  require(inviteIdOk(id)&&intIn(maxUses,0,100000)&&Number.isSafeInteger(used)&&used>=0
+    &&(!maxUses||used<=maxUses)&&intIn(deviceLimit,0,20)&&[0,72,-1].includes(offlineHours)
+    &&intIn(accountDays,0,3650)&&typeof f.revoked?.booleanValue==="boolean"
+    &&typeof f.approval?.booleanValue==="boolean"&&Number.isFinite(Date.parse(createdAt))
+    &&(Object.hasOwn(f.expiresAt||{},"nullValue")||Number.isFinite(Date.parse(expiresAt))),
+    "invite_invalid",400);
+  const revoked=f.revoked.booleanValue;
+  return {id,label:f.label?.stringValue||"",hint:f.hint?.stringValue||"",
+    email:f.email?.stringValue||"",createdAt,expiresAt,maxUses,used,deviceLimit,offlineHours,
+    accountDays,approval:f.approval.booleanValue,revoked,
+    status:revoked?"revoked":expiresAt!==null&&Date.parse(expiresAt)<=now?"expired":
+      maxUses>0&&used>=maxUses?"used":"active"};
+}
+async function registrationSettings(gw) {
+  const doc=await gw.get("geostudio_settings","registration");
+  return {doc,enabled:doc?.fields?.enabled?.booleanValue===true};
+}
+async function invitationAdmin(gw,body,now) {
+  const action=body.action;
+  if(action==="invites_list"){
+    const settings=await registrationSettings(gw);
+    const all=await gw.pages(gw.root+"/geostudio_invites","documents","pageSize");
+    const rows=[];
+    for(const doc of all.rows){try{rows.push(inviteData(doc,now));}catch{/* corrupt record excluded */}}
+    rows.sort((a,b)=>Date.parse(b.createdAt)-Date.parse(a.createdAt));
+    return {enabled:settings.enabled,rows,truncated:all.truncated};
+  }
+  if(action==="invite_settings"){
+    require(typeof body.enabled==="boolean");
+    const old=(await registrationSettings(gw)).doc;
+    await gw.save("geostudio_settings","registration",{enabled:booleanValue(body.enabled)},old);
+    return {ok:true,enabled:body.enabled};
+  }
+  if(action==="invite_create"){
+    const label=cleanText(body.label,100), email=body.email?invitationEmail(body.email):"";
+    const {maxUses,validDays,accountDays,deviceLimit,offlineHours,approval}=body;
+    require(intIn(maxUses,0,100000)&&intIn(validDays,0,3650)&&intIn(accountDays,0,3650)
+      &&intIn(deviceLimit,0,20)&&[0,72,-1].includes(offlineHours)&&typeof approval==="boolean");
+    // A named recipient can use the code just once.
+    require(!email||maxUses===1,"invalid_input");
+    const {raw,code}=randomCode(),id=await inviteHash(raw);
+    const fields={label:stringValue(label),email:stringValue(email),hint:stringValue(raw.slice(-8)),
+      createdAt:timestampValue(now),expiresAt:nullableTimestamp(validDays?now+validDays*86400000:null),
+      maxUses:integerValue(maxUses),used:integerValue(0),accountDays:integerValue(accountDays),
+      deviceLimit:integerValue(deviceLimit),offlineHours:integerValue(offlineHours),
+      approval:booleanValue(approval),revoked:booleanValue(false)};
+    await gw.save("geostudio_invites",id,fields,null);
+    return {ok:true,code,id};
+  }
+  require(inviteIdOk(body.id),"invalid_input");
+  const doc=await gw.get("geostudio_invites",body.id);
+  require(doc,"not_found",404);
+  if(action==="invite_revoke"){
+    await gw.save("geostudio_invites",body.id,{revoked:booleanValue(true)},doc);
+    return {ok:true};
+  }
+  if(action==="invite_history"){
+    const all=await gw.pages(gw.root+"/geostudio_invites/"+body.id+"/redemptions","documents","pageSize");
+    const rows=all.rows.map(d=>({uid:d.name.split("/").pop(),at:d.fields?.at?.timestampValue,
+      approval:d.fields?.approval?.booleanValue===true})).filter(r=>validUid(r.uid)&&Number.isFinite(Date.parse(r.at)));
+    rows.sort((a,b)=>Date.parse(b.at)-Date.parse(a.at));
+    return {rows,truncated:all.truncated};
+  }
+  fail("invalid_action");
+}
+async function registrationUser(request,env,fetcher,now){
+  const header=request.headers.get("Authorization")||"";
+  require(/^Bearer [A-Za-z0-9_.-]{1,16384}$/.test(header),"auth",401);
+  const token=header.slice(7),c=decodeClaims(token);
+  require(validUid(c.sub)&&c.aud===env.PROJECT_ID&&c.iss==="https://securetoken.google.com/"+env.PROJECT_ID
+    &&Number.isInteger(c.exp)&&c.exp>now/1000&&Number.isInteger(c.auth_time)
+    &&c.auth_time<=now/1000+120,"auth",401);
+  require(typeof env.FIREBASE_WEB_API_KEY==="string"&&/^[A-Za-z0-9_-]{20,128}$/.test(env.FIREBASE_WEB_API_KEY),"admin_config",503);
+  // Never rely on decoded claims alone. Google validates the end-user ID token.
+  let r;
+  try{
+    r=await fetcher("https://identitytoolkit.googleapis.com/v1/accounts:lookup?key="+encodeURIComponent(env.FIREBASE_WEB_API_KEY),
+      {method:"POST",redirect:"manual",headers:{"Content-Type":"application/json",Accept:"application/json"},
+       body:JSON.stringify({idToken:token})});
+  }catch{fail("upstream",503);}
+  if([400,401,403,404].includes(r.status))fail("auth",401);
+  if(r.status===429)fail("quota",429);
+  require(r.ok,"upstream",503);
+  let u;
+  try{u=(await r.json()).users?.find(x=>x.localId===c.sub);}catch{fail("upstream",503);}
+  require(u&&!u.disabled&&Number.isFinite(Number(u.validSince??0))
+    &&c.auth_time>=Number(u.validSince??0),"auth",401);
+  require(u.emailVerified===true&&c.email_verified===true,"email_unverified",403);
+  const email=invitationEmail(u.email);
+  require(typeof c.email==="string"&&c.email.toLowerCase()===email,"auth",401);
+  return {uid:c.sub,email,displayName:typeof u.displayName==="string"?u.displayName.slice(0,160):""};
+}
+function validateInvitation(doc,now,email){
+  const invite=inviteData(doc,now);
+  require(invite&&invite.status==="active"&&(!invite.email||invite.email===email),"invite_invalid",400);
+  return invite;
+}
+async function registration(request,env,fetcher,now,getToken){
+  const body=await bodyOf(request);
+  require(["invite_check","invite_redeem"].includes(body.action),"invalid_action");
+  const raw=normalizeCode(body.code);
+  // Optional edge rate-limiting binding. No IP or rate-limit counters are
+  // written to Firestore. Entropy prevents practical brute-force guessing
+  // even without the optional binding; it does not prevent quota abuse.
+  if(env.REGISTRATION_RATE_LIMITER){
+    const ip=request.headers.get("CF-Connecting-IP")||"unknown";
+    const {success}=await env.REGISTRATION_RATE_LIMITER.limit({key:"registration:"+ip});
+    require(success,"quota",429);
+  }
+  const user=body.action==="invite_redeem"?await registrationUser(request,env,fetcher,now):null;
+  const email=user?user.email:invitationEmail(body.email);
+  const id=await inviteHash(raw);
+  const gw=gateway(env,fetcher,await getToken(env,fetcher,now));
+  if(!user){
+    const settings=await registrationSettings(gw);
+    require(settings.enabled,"registration_closed",403);
+    validateInvitation(await gw.get("geostudio_invites",id),now,email);
+    return {ok:true};
+  }
+  // Existing access is never replaced/reactivated by an invitation. A retry
+  // after a lost response returns the committed result without consuming again.
+  for(let attempt=0;attempt<3;attempt++){
+    const current=await gw.get("geostudio_access",user.uid);
+    if(current){
+      if(current.fields?.inviteId?.stringValue===id){
+        return {ok:true,pending:current.fields?.pendingApproval?.booleanValue===true,
+          active:active(readPolicy(current),now),already:true};
+      }
+      fail("already_registered",409);
+    }
+    const settings=await registrationSettings(gw);
+    require(settings.enabled,"registration_closed",403);
+    const doc=await gw.get("geostudio_invites",id);
+    const inv=validateInvitation(doc,now,email);
+    const expiry=inv.accountDays?iso(now+inv.accountDays*86400000):null;
+    const fields=makePolicy(null,{name:user.displayName,notes:"",active:!inv.approval,
+      expiresAt:expiry,deviceLimit:inv.deviceLimit,offlineHours:inv.offlineHours},email);
+    fields.pendingApproval=booleanValue(inv.approval);
+    fields.inviteId=stringValue(id);
+    fields.registrationSource=stringValue("invitation");
+    fields.registeredAt=timestampValue(now);
+    // Compare-and-swap all three data changes plus registration state in
+    // one atomic Firestore commit. Revocation/disable and concurrent users
+    // cannot consume a stale or exhausted code. No raw code is stored.
+    try{
+      await gw.commit([
+        gw.write("geostudio_settings/registration",{enabled:booleanValue(true)},settings.doc),
+        gw.write("geostudio_invites/"+id,{used:integerValue(inv.used+1)},doc),
+        gw.write("geostudio_access/"+user.uid,fields,null),
+        gw.write("geostudio_invites/"+id+"/redemptions/"+user.uid,
+          {at:timestampValue(now),approval:booleanValue(inv.approval)},null)
+      ]);
+      return {ok:true,pending:inv.approval,active:!inv.approval};
+    }catch(e){if(e.code!=="conflict"||attempt===2)throw e;}
+  }
+}
+
 async function adminAction(gw,env,claims,body,now) {
   const action=body.action;
   if (action==="status") return {ok:true};
+  if (["invites_list","invite_create","invite_revoke","invite_history","invite_settings"].includes(action))
+    return invitationAdmin(gw,body,now);
   if (action==="list") {
     const users=await gw.pages(gw.authRoot+":batchGet","users","maxResults");
     const policies=await gw.pages(gw.root+"/geostudio_access","documents","pageSize");
@@ -290,6 +486,8 @@ async function adminAction(gw,env,claims,body,now) {
     const policy=readPolicy(doc);
     require((policy?.version||"")===(body.version||""),"conflict",409);
     const fields=makePolicy(policy,body,target.email||"",owner);
+    // A manual approval clears the pending marker; later blocking is not pending.
+    if(body.active===true)fields.pendingApproval={booleanValue:false};
     const updated=await gw.save("geostudio_access",uid,fields,doc);
     if(target.disabled && body.active===true && body.enableAuth===true) {
       try { await gw.auth(":update","POST",{localId:uid,disableUser:false}); }
@@ -335,6 +533,8 @@ export async function handleAdmin(request,env,{fetcher=(url,options)=>fetch(url,
   if(request.method!=="POST")return response({error:"method"},405);
   try{
     require(/^[a-z][a-z0-9-]{4,28}[a-z0-9]$/.test(env.PROJECT_ID||"")&&validUid(env.ADMIN_UID),"admin_config",503);
+    if(new URL(request.url).pathname==="/registration")
+      return response(await registration(request,env,fetcher,now,getToken));
     const header=request.headers.get("Authorization")||"";
     require(/^Bearer [A-Za-z0-9_.-]{1,16384}$/.test(header),"auth",401);
     const token=header.slice(7), c=decodeClaims(token);
