@@ -35,11 +35,23 @@ i plan aktualizacji nie zostaną zaakceptowane.**
    `$env:GEOSTUDIO_FIREBASE_PROJECT_ID = "twoj-project-id"` oraz
    `$env:GEOSTUDIO_FIREBASE_WEB_API_KEY = "twoj-web-api-key"`.
    Uruchom `python -m geostudio.web_app` (lub istniejący start_web_ui.bat).
-   W spakowanym EXE wartości muszą pochodzić z modułu firebase_settings.py
-   przygotowanego **lokalnie przed budowaniem**, a nie ze zmiennych użytkownika.
-   Zapisz rzeczywiste wartości w tym module w roboczej kopii, zbuduj EXE,
-   przywróć pusty szablon i nie commituj klucza. Automatyczne wstrzykiwanie
-   konfiguracji w CI jest osobnym zadaniem przed pierwszym chronionym wydaniem.
+   W spakowanym EXE wartości pochodzą z modułu firebase_settings.py
+   wygenerowanego na czas budowania. Po ustawieniu tych dwóch zmiennych
+   uruchom w PowerShell:
+
+   ```powershell
+   ./tools/windows/build.ps1 -SkipInstaller -RequireFirebaseConfig
+   ```
+
+   Skrypt sprawdza konfigurację, umieszcza ją w EXE i automatycznie
+   przywraca pusty szablon źródłowy, również po błędzie. Nie przyjmuje
+   konfiguracji ze zmiennych środowiska już zainstalowanego EXE.
+   Testuj przenośne `dist/GeoStudio2/GeoStudio2.exe` w oddzielnym katalogu:
+   instalator nadal używa identyfikatora istniejącego GeoStudio, więc
+   mógłby nadpisać Twoją zwykłą instalację. Nie buduj publicznego wydania.
+   Bez obu zmiennych zwykły build podglądowy pozostaje zablokowany;
+   build z `-RequireFirebaseConfig` odmawia pakowania.
+   Skrypt odrzuca budowanie z RELEASE_TAG na tej gałęzi.
 6. Zablokuj konto zmieniając active na false (lub usuń dokument), ewentualnie
    wyłącz konto w Authentication. Nowe uruchomienie wymaga poprawnej sesji i
    aktualnego uprawnienia. Testuj także termin ważności i reset hasła.
@@ -83,3 +95,17 @@ Dokumentacja:
 - https://firebase.google.com/docs/firestore/use-rest-api
 - https://firebase.google.com/docs/firestore/security/rules-conditions
 - https://firebase.google.com/pricing
+
+## GitHub Actions — ręczny test Windows
+
+W Settings / Secrets and variables / Actions dodaj dwa repository secrets:
+GEOSTUDIO_FIREBASE_PROJECT_ID oraz GEOSTUDIO_FIREBASE_WEB_API_KEY.
+To konfiguracja klienta, nie dane administratora. Nie dodawaj hasła
+użytkownika, klucza konta serwisowego ani tokenu odświeżania.
+W Actions wybierz "Windows GeoStudio2 preview installer", Run workflow,
+gałąź ai2/feat-firebase-auth. Ręczne uruchomienie na tej gałęzi tworzy
+wyłącznie przenośny artefakt z konfiguracją. Uruchomienia PR nie otrzymują
+konfiguracji i są diagnostyczne. Artefakt publicznego repo może pobrać
+zalogowany użytkownik GitHuba; Web API Key i Project ID są dostępne w EXE,
+więc nie stanowią sekretu ani mechanizmu autoryzacji.
+Nie publikujemy Release, nie nadpisujemy istniejącej instalacji.

@@ -155,3 +155,16 @@ def test_real_dpapi_roundtrip(tmp_path):
     assert b"synthetic-token" not in vault.path.read_bytes()
     vault.clear()
     assert not vault.path.exists()
+
+
+def test_build_config_validation_and_no_secret_repr():
+    from tools.windows.configure_firebase import render_config
+    namespace = {}
+    exec(render_config(CONFIG.project_id, CONFIG.api_key), namespace)
+    assert namespace["PROJECT_ID"] == CONFIG.project_id
+    assert namespace["WEB_API_KEY"] == CONFIG.api_key
+    assert CONFIG.api_key not in repr(CONFIG)
+    with pytest.raises(auth.AuthError):
+        render_config("", CONFIG.api_key)
+    with pytest.raises(auth.AuthError):
+        render_config(CONFIG.project_id, "not-valid")
