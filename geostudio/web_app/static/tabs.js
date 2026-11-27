@@ -248,6 +248,9 @@
       accessActive=!!data.active;
       $("auth-account").hidden=false;
       $("auth-logout").disabled=!!data.loggedOut;
+      $("auth-admin").hidden=!data.admin;
+      $("auth-refresh").disabled=!data.canRefresh;
+      window.GeoStudioAdmin?.syncAccess(data);
       $("auth-account-label").textContent=data.email||"Konto";
       $("auth-account-label").title=data.email||"Konto";
       $("auth-email").textContent=data.email||"Brak zalogowanego konta";
@@ -273,6 +276,21 @@
       updateControls();
     }catch(_){}
   }
+  $("auth-admin").addEventListener("click",()=>{
+    $("auth-account").open=false;
+    window.GeoStudioAdmin?.open();
+  });
+  $("auth-refresh").addEventListener("click",async()=>{
+    $("auth-refresh").disabled=true;
+    try{
+      const data=await request("/auth/refresh",{method:"POST"});
+      await syncAccess();
+      if(!data.active)error(data.message||"Nie udało się potwierdzić dostępu.");
+      else if(data.offline)error("Nadal działasz w trybie offline.");
+      else error("Uprawnienia są aktualne.");
+    }catch(e){error(e.message);}
+    finally{await syncAccess();}
+  });
   $("auth-save-copy").addEventListener("click",async()=>{
     const tab=tabs.get(active);
     if(!tab||!getStatus(tab).loaded){error("Wybierz zakładkę z otwartą mapą.");return;}
