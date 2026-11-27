@@ -90,3 +90,22 @@ def test_manual_refresh_does_not_wait_for_schedule():
     assert g._grant.credentials.refresh_token == "refresh-new"
     g.logout()
     assert not g.refresh_now()["active"]
+
+
+def test_local_admin_route_accepts_invite_management_but_not_public_redemption(monkeypatch):
+    from geostudio.web_app import firebase_admin_client
+    calls = []
+    def remote(url, identity, payload):
+        calls.append(payload)
+        return {"ok": True}
+    monkeypatch.setattr(firebase_admin_client, "call_admin", remote)
+    g = gate()
+    app = create_app(multi_document=True, access_gate=g)
+    headers = {"X-GeoStudio-Token": app.state.api_token}
+    with TestClient(app) as c:
+        for action in ("invites_list", "invite_create", "invite_revoke", "invite_history", "invite_settings"):
+            assert c.post("/auth/admin", headers=headers, json={"action": action}).status_code == 200
+        assert c.post("/auth/admin", headers=headers, json={"action": "invite_redeem"}).status_code == 400
+        g.logout()
+        assert c.post("/auth/admin", headers=headers, json={"action": "invites_list"}).status_code == 403
+        assert len(calls) == 5

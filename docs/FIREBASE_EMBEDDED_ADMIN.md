@@ -106,3 +106,7 @@ są niezależne.
    narzędziem i zaloguj się ponownie.
 5. Zachowanie starych map po zmianie konta, ponowna walidacja online,
    limit drugiego/trzeciego komputera i wygaśnięcie licencji.
+
+## Rejestracja z zaproszeniem
+
+Zobacz [FIREBASE_INVITATIONS.md](FIREBASE_INVITATIONS.md). Ręczne tworzenie kont pozostaje dostępne; samodzielna aktywacja wymaga kodu i zweryfikowanego e-maila.

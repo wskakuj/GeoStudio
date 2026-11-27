@@ -72,3 +72,22 @@ test("activity data cannot be read or changed by any client, even a claimed admi
     await assertFails(getDocs(collection(db,"geostudio_activity")));
   }
 });
+
+test("invitation metadata, redemption history and settings are never client-accessible",async()=>{
+  const id="a".repeat(64);
+  await env.withSecurityRulesDisabled(async context=>{
+    const db=context.firestore();
+    await setDoc(doc(db,"geostudio_invites",id),{used:0});
+    await setDoc(doc(db,"geostudio_invites",id,"redemptions","alice"),{used:true});
+    await setDoc(doc(db,"geostudio_settings","registration"),{enabled:true});
+  });
+  for(const [uid,claims] of [["alice",{}],["owner",{admin:true}]]){
+    const db=env.authenticatedContext(uid,claims).firestore();
+    for(const ref of [doc(db,"geostudio_invites",id),
+      doc(db,"geostudio_invites",id,"redemptions","alice"),
+      doc(db,"geostudio_settings","registration")]){
+      await assertFails(getDoc(ref));await assertFails(setDoc(ref,{enabled:true}));await assertFails(deleteDoc(ref));
+    }
+    await assertFails(getDocs(collection(db,"geostudio_invites")));
+  }
+});
