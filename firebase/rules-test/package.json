@@ -1,0 +1,13 @@
+{
+  "name": "geostudio-firestore-rules-tests",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "firebase emulators:exec --only firestore --project demo-geostudio --config firebase.json \"node --test rules.test.mjs\""
+  },
+  "devDependencies": {
+    "firebase": "12.16.0",
+    "@firebase/rules-unit-testing": "5.0.0",
+    "firebase-tools": "15.32.1"
+  }
+}
