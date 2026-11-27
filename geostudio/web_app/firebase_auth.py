@@ -21,7 +21,7 @@ from datetime import datetime, timezone
 
 from . import firebase_settings
 from .firebase_devices import device_id
-from .firebase_offline import b64decode, verify_permit, CLOCK_TOLERANCE
+from .firebase_offline import b64decode, verify_permit, CLOCK_TOLERANCE, OFFLINE_UNLIMITED
 
 
 class AuthError(Exception):
@@ -187,6 +187,7 @@ class Grant:
     offline_lease: str = ""
     offline_until: datetime | None = None
     offline: bool = False
+    offline_unlimited: bool = False
 
 
 class FirebaseClient:
@@ -301,8 +302,8 @@ class FirebaseClient:
                 except AuthDenied:
                     raise DeviceDenied("Nie można zarejestrować komputera. Sprawdź limit i reguły Firestore.") from None
         grant = Grant(credentials, expires, limit, len(devices))
-        if (limit and self.config.offline_url
-                and fields.get("offlineHours", {}).get("integerValue") in ("72", 72)):
+        if (self.config.offline_url and re.fullmatch(r"[a-f0-9]{64}", self._device_id or "")
+                and fields.get("offlineHours", {}).get("integerValue") in ("72", 72, "-1", OFFLINE_UNLIMITED)):
             grant = self._issue_offline(grant)
         return grant
 
@@ -323,7 +324,9 @@ class FirebaseClient:
             if permit.uid != grant.credentials.uid:
                 raise ValueError
             return replace(grant, offline_lease=token,
-                           offline_until=datetime.fromtimestamp(permit.expires, timezone.utc))
+                           offline_until=datetime.fromtimestamp(permit.expires, timezone.utc)
+                           if permit.expires is not None else None,
+                           offline_unlimited=permit.unlimited)
         except (AuthError, ValueError, KeyError, TypeError):
             return grant
 
@@ -339,7 +342,9 @@ class FirebaseClient:
         credentials = Credentials(permit.uid, "", refresh_token, 3600, permit.email)
         return Grant(credentials, permit.account_expires, permit.device_limit,
                      permit.device_count, lease,
-                     datetime.fromtimestamp(permit.expires, timezone.utc), True)
+                     datetime.fromtimestamp(permit.expires, timezone.utc)
+                     if permit.expires is not None else None,
+                     True, permit.unlimited)
 
     def _report_activity(self, grant, kind):
         # Best effort; telemetry can never block login or the editor.
@@ -462,8 +467,10 @@ class AccessGate:
     def _activate(self, grant):
         now = self._clock()
         wall = self._wall_clock()
-        if grant.offline and grant.offline_until is not None:
-            lease = max(0.0, grant.offline_until.timestamp() - wall)
+        if grant.offline:
+            lease = (float("inf") if grant.offline_unlimited and grant.offline_until is None
+                     else max(0.0, grant.offline_until.timestamp() - wall)
+                     if grant.offline_until is not None else 0.0)
             if self._grant is not None and self._grant.offline:
                 lease = min(lease, max(0.0, self._deadline - now))
             self._last_seen = max(self._last_seen, wall)
@@ -521,7 +528,9 @@ class AccessGate:
                       and self._clock() < self._deadline)
             offline = bool(self._grant and self._grant.offline)
             until = self._grant.offline_until if self._grant else None
-            if offline and (until is None or self._wall_clock() >= until.timestamp()
+            unlimited = bool(self._grant and self._grant.offline_unlimited)
+            if offline and ((until is None and not unlimited)
+                            or (until is not None and self._wall_clock() >= until.timestamp())
                             or self._wall_clock() < self._last_seen - CLOCK_TOLERANCE):
                 active = False
             reason = "" if active else (self._reason or RESTRICTED_MESSAGE)
@@ -536,6 +545,7 @@ class AccessGate:
                     "offline": offline and active,
                     "admin": active and not offline and self._admin_hint(),
                     "canRefresh": self._grant is not None and not self._logged_out,
+                    "offlineUnlimited": active and unlimited,
                     "offlineUntil": until.isoformat() if until else None}
 
     def allows_http(self, method, path):

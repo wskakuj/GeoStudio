@@ -61,22 +61,28 @@ export async function issuePermit(request, env, fetcher=(url,options)=>fetch(url
     if (!response.ok) return json({error:"upstream"},503);
     stage = "firestore_response";
     const f = (await response.json()).fields;
-    const cap = Number(f.deviceLimit?.integerValue);
+    const cap = Number(f.deviceLimit?.integerValue ?? 0);
+    const hours = Number(f.offlineHours?.integerValue);
     const devices = (f.devices?.arrayValue?.values || []).map(x=>x.stringValue);
-    if (f.active?.booleanValue !== true || Number(f.offlineHours?.integerValue) !== 72
-        || !Number.isInteger(cap) || cap < 1 || cap > 20 || devices.length > cap
-        || new Set(devices).size !== devices.length || !devices.includes(device)
-        || devices.some(d=>typeof d!=="string"||!/^[a-f0-9]{64}$/.test(d))) return json({error:"denied"},403);
+    if (f.active?.booleanValue !== true || ![72,-1].includes(hours)
+        || !Number.isInteger(cap) || cap < 0 || cap > 20
+        || (cap>0 && (devices.length > cap || new Set(devices).size !== devices.length
+          || !devices.includes(device) || devices.some(d=>typeof d!=="string"||!/^[a-f0-9]{64}$/.test(d)))))
+      return json({error:"denied"},403);
     let accountExp = null;
     if (!Object.hasOwn(f.expiresAt || {}, "nullValue")) {
       accountExp = Math.floor(Date.parse(f.expiresAt?.timestampValue)/1000);
       if (!Number.isInteger(accountExp) || accountExp <= now) return json({error:"expired"},403);
     }
-    const exp = Math.min(now+72*3600, accountExp ?? Infinity);
+    const exp = hours===72 ? Math.min(now+72*3600, accountExp ?? Infinity) : accountExp;
+    // Keep original capped 72 h permits byte-compatible for previous clients.
+    // Other policies require a V2-aware client; old clients fail closed.
+    const version = hours===72 && cap>0 ? 1 : 2;
     const payload = enc.encode(JSON.stringify({
-      v:1,project:env.PROJECT_ID,uid:c.sub,device,
+      v:version,project:env.PROJECT_ID,uid:c.sub,device,
       email:typeof c.email==="string"?c.email.slice(0,320):"",
-      iat:now,exp,accountExp,deviceLimit:cap,deviceCount:devices.length
+      iat:now,exp,accountExp,deviceLimit:cap,deviceCount:cap>0?devices.length:0,
+      ...(version===2?{offlineHours:hours}:{})
     }));
     if (typeof env.SIGNING_KEY_JWK !== "string" || !env.SIGNING_KEY_JWK.trim())
       return json({error:"key_missing"},503);

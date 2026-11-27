@@ -91,3 +91,40 @@ test("Cloudflare-compatible fetch uses manual redirects and never follows them",
     assert.deepEqual(await response.json(),{error:"upstream"});
   }
 });
+
+test("72h offline with no device cap still binds the signed permit to this computer",async()=>{
+  const result=await issuePermit(req("b".repeat(64)),env,async()=>Response.json({fields:{
+    ...fields,deviceLimit:{integerValue:"0"},devices:{arrayValue:{values:[]}}}}),now);
+  assert.equal(result.status,200);
+  const [p,s]=(await result.json()).lease.split(".");
+  const raw=Buffer.from(p,"base64url"),payload=JSON.parse(raw);
+  assert.equal(await crypto.subtle.verify({name:"ECDSA",hash:"SHA-256"},key.publicKey,Buffer.from(s,"base64url"),raw),true);
+  assert.equal(payload.v,2);
+  assert.equal(payload.device,"b".repeat(64));
+  assert.equal(payload.exp,now+72*3600);
+  assert.equal(payload.deviceLimit,0);
+  assert.equal(payload.deviceCount,0);
+  assert.equal(payload.offlineHours,72);
+});
+test("perpetual policy is explicit and never exceeds finite account expiry",async()=>{
+  for(const cap of [0,2]){
+    for(const accountExp of [null,now+365*86400]){
+      const result=await issuePermit(req(),env,async()=>Response.json({fields:{
+        ...fields,deviceLimit:{integerValue:String(cap)},offlineHours:{integerValue:"-1"},
+        expiresAt:accountExp===null?{nullValue:null}:{timestampValue:new Date(accountExp*1000).toISOString()}
+      }}),now);
+      assert.equal(result.status,200);
+      const [p,s]=(await result.json()).lease.split(".");
+      const raw=Buffer.from(p,"base64url"),payload=JSON.parse(raw);
+      assert.equal(await crypto.subtle.verify({name:"ECDSA",hash:"SHA-256"},key.publicKey,Buffer.from(s,"base64url"),raw),true);
+      assert.equal(payload.v,2);
+      assert.equal(payload.exp,accountExp);
+      assert.equal(payload.accountExp,accountExp);
+      assert.equal(payload.offlineHours,-1);
+      assert.equal(payload.deviceLimit,cap);
+    }
+  }
+  const denied=await issuePermit(req("b".repeat(64)),env,async()=>Response.json({fields:{
+    ...fields,offlineHours:{integerValue:"-1"}}}),now);
+  assert.equal(denied.status,403);
+});

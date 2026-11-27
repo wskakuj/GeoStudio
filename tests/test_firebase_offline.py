@@ -178,3 +178,110 @@ def test_vault_accepts_old_session_and_retains_new_fields(tmp_path):
     assert vault.load_state() == {"refreshToken":"refresh","offlineLease":"","lastSeen":0}
     vault.save("refresh",offline_lease="signed.permit",last_seen=1234)
     assert vault.load_state() == {"refreshToken":"refresh","offlineLease":"signed.permit","lastSeen":1234}
+
+
+@pytest.mark.parametrize("cap,count", [(0,0),(2,1)])
+def test_v2_unlimited_offline_and_account_expiry(signer, cap, count):
+    public, sign = signer
+    now = int(time.time())
+    settings = dict(v=2, offlineHours=-1, deviceLimit=cap, deviceCount=count, iat=now)
+    token = sign(**settings, exp=None)
+    permit = verify_permit(token, public, PROJECT, DEVICE, now+365*86400)
+    assert permit.unlimited and permit.expires is None
+    assert permit.device_limit == cap and permit.device_count == count
+    with pytest.raises(ValueError):
+        verify_permit(token, public, PROJECT, "b"*64, now)
+    bounded = sign(**settings, exp=now+864000, accountExp=now+864000)
+    assert verify_permit(bounded, public, PROJECT, DEVICE, now).expires == now+864000
+    with pytest.raises(ValueError):
+        verify_permit(bounded, public, PROJECT, DEVICE, now+864000)
+
+
+def test_v2_72h_without_device_cap_and_invalid_perpetual(signer):
+    public, sign = signer
+    now = int(time.time())
+    token = sign(v=2, offlineHours=72, deviceLimit=0, deviceCount=0, iat=now, exp=now+72*3600)
+    assert verify_permit(token, public, PROJECT, DEVICE, now).device_limit == 0
+    for changes in [
+        {"v":1,"exp":None},
+        {"v":1,"deviceLimit":0,"deviceCount":0},
+        {"v":2,"offlineHours":72,"exp":None},
+        {"v":2,"offlineHours":72,"exp":now+72*3600+1},
+        {"v":2,"offlineHours":-1,"exp":None,"accountExp":now+1000},
+        {"v":2,"offlineHours":-1,"exp":now+1000},
+        {"v":2,"offlineHours":-1,"exp":now+1001,"accountExp":now+1000},
+        {"v":2,"offlineHours":-1,"exp":None,"deviceLimit":0,"deviceCount":1},
+        {"v":2,"offlineHours":0,"exp":None},
+        {"v":2,"offlineHours":-1,"exp":None,"deviceCount":0},
+    ]:
+        with pytest.raises(ValueError):
+            verify_permit(sign(iat=now, **changes), public, PROJECT, DEVICE, now)
+
+
+@pytest.mark.parametrize("hours", [72, -1])
+def test_online_issuer_without_device_cap(signer, hours):
+    public, sign = signer
+    now = int(time.time())
+    lease = sign(v=2,offlineHours=hours,deviceLimit=0,deviceCount=0,iat=now,
+                 exp=None if hours==-1 else now+72*3600)
+    calls = []
+    def transport(method,url,body,headers):
+        calls.append(method)
+        if "signInWithPassword" in url:
+            return {"localId":"tester","idToken":"id-token","refreshToken":"refresh","expiresIn":"3600"}
+        if url.endswith("/lease"):
+            return {"lease":lease}
+        return {"fields":{"active":{"booleanValue":True},"expiresAt":{"nullValue":None},
+                          "deviceLimit":{"integerValue":"0"},
+                          "offlineHours":{"integerValue":str(hours)}}}
+    grant = make_client(public,transport).login("tester@example.invalid","password")
+    assert calls == ["POST","GET","POST"]
+    assert grant.offline_lease == lease and grant.offline_unlimited == (hours == -1)
+    assert (grant.offline_until is None) == (hours == -1)
+
+
+def test_perpetual_grant_stays_active_and_revokes_online(tmp_path, signer):
+    public, sign = signer
+    now = int(time.time())
+    wall, mono = [float(now)], [0.]
+    failure = [auth.AuthNetwork("offline")]
+    calls = []
+    def transport(*_):
+        calls.append(True)
+        raise failure[0]
+    client = make_client(public, transport)
+    lease = sign(v=2, offlineHours=-1, deviceLimit=0, deviceCount=0, iat=now, exp=None)
+    vault = WindowsSessionVault(PROJECT, tmp_path/"session.bin", crypt=lambda data,decrypt:data[::-1])
+    vault.save("refresh",lease,now)
+    grant = client.restore(vault.load_state())
+    gate = auth.AccessGate(client,grant,vault,True,clock=lambda:mono[0],wall_clock=lambda:wall[0])
+    assert gate.status()["offlineUnlimited"] and gate.status()["offline"]
+    assert not gate.status()["admin"]
+    mono[0] += 366*86400
+    wall[0] += 366*86400
+    assert gate.status()["active"]
+    gate.tick()
+    assert gate.status()["active"]
+    assert vault.load_state()["lastSeen"] == wall[0]
+    assert len(calls) == 2
+    failure[0] = auth.AuthDenied("blocked")
+    mono[0] += 30
+    wall[0] += 30
+    gate.tick()
+    assert not gate.status()["active"] and not gate.status()["offlineUnlimited"]
+    assert vault.load_state() is None
+
+
+def test_perpetual_policy_can_end_at_account_expiry(signer):
+    public, sign = signer
+    now = int(time.time())
+    wall, mono = [float(now)], [0.]
+    def transport(*_):
+        raise auth.AuthNetwork("offline")
+    client = make_client(public,transport)
+    lease = sign(v=2,offlineHours=-1,iat=now,exp=now+120,accountExp=now+120)
+    grant = client.offline_grant("refresh",lease,now=now)
+    gate = auth.AccessGate(client,grant,clock=lambda:mono[0],wall_clock=lambda:wall[0])
+    assert gate.status()["active"] and not gate.status()["offlineUnlimited"]
+    mono[0] += 121
+    assert not gate.status()["active"]
