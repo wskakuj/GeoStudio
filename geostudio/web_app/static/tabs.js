@@ -254,6 +254,9 @@
       $("auth-expiry").textContent=data.active
         ? (data.expiresAt?"Ważność do: "+new Date(data.expiresAt).toLocaleString("pl-PL"):"Dostęp bezterminowy")
         : "Dostęp nieaktywny";
+      $("auth-devices").textContent=data.active
+        ? (data.deviceLimit?"Komputery: "+data.deviceCount+" / "+data.deviceLimit:"Komputery: bez limitu")
+        : "";
       $("app-version").disabled=!!data.updatesDisabled;
       const notice=$("auth-notice");
       notice.hidden=accessActive&&!data.storageWarning;

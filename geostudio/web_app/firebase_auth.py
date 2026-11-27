@@ -20,6 +20,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 
 from . import firebase_settings
+from .firebase_devices import device_id
 
 
 class AuthError(Exception):
@@ -31,6 +32,14 @@ class AuthDenied(AuthError):
 
 
 class AuthUnavailable(AuthError):
+    pass
+
+
+class DeviceDenied(AuthDenied):
+    pass
+
+
+class AuthConflict(AuthUnavailable):
     pass
 
 
@@ -82,9 +91,14 @@ def _transport(method, url, body, headers):
         # Firestore uses 403/404 for denied or absent entitlements.
         try:
             failure = json.loads(error.read(65536))
-            code = failure.get("error", {}).get("message", "").split(" : ", 1)[0]
+            problem = failure.get("error", {})
+            code = problem.get("message", "").split(" : ", 1)[0]
+            status = problem.get("status", "")
         except (OSError, ValueError, AttributeError, TypeError):
             code = ""
+            status = ""
+        if method == "PATCH" and (error.code in (409, 412) or status in ("ABORTED", "FAILED_PRECONDITION")):
+            raise AuthConflict("Lista komputerów zmieniła się. Ponawiam sprawdzenie.") from None
         if code in {"OPERATION_NOT_ALLOWED", "API_KEY_INVALID",
                     "API_KEY_SERVICE_BLOCKED", "PROJECT_NOT_FOUND",
                     "CONFIGURATION_NOT_FOUND", "API_KEY_HTTP_REFERRER_BLOCKED"}:
@@ -125,12 +139,15 @@ def _display_email(response, identity):
 class Grant:
     credentials: Credentials
     expires_at: datetime | None
+    device_limit: int = 0
+    device_count: int = 0
 
 
 class FirebaseClient:
-    def __init__(self, config: FirebaseConfig, transport=_transport):
+    def __init__(self, config: FirebaseConfig, transport=_transport, machine_id=None):
         self.config = config
         self._transport = transport
+        self._device_id = device_id(config.project_id) if machine_id is None else machine_id
 
     def _post(self, operation, payload):
         url = ("https://identitytoolkit.googleapis.com/v1/accounts:"
@@ -156,7 +173,37 @@ class FirebaseClient:
         except (KeyError, TypeError, ValueError, OverflowError):
             raise AuthDenied("Nieprawidłowa odpowiedź usługi logowania.") from None
 
+    @staticmethod
+    def _device_policy(fields):
+        try:
+            if "deviceLimit" not in fields:
+                return 0, []
+            raw = fields["deviceLimit"]["integerValue"]
+            if not isinstance(raw, (str, int)) or isinstance(raw, bool):
+                raise ValueError
+            limit = int(raw)
+            if not 0 <= limit <= 20:
+                raise ValueError
+            if limit == 0:
+                return 0, []
+            values = fields["devices"]["arrayValue"].get("values", [])
+            devices = [value["stringValue"] for value in values]
+            if (len(devices) != len(set(devices)) or len(devices) > limit
+                    or any(not re.fullmatch(r"[a-f0-9]{64}", item) for item in devices)):
+                raise ValueError
+            return limit, devices
+        except (KeyError, TypeError, ValueError, AttributeError):
+            raise DeviceDenied("Nieprawidłowa konfiguracja limitu komputerów. Skontaktuj się z administratorem.") from None
+
     def _authorize(self, credentials):
+        for _ in range(3):
+            try:
+                return self._authorize_once(credentials)
+            except AuthConflict:
+                continue
+        raise AuthUnavailable("Nie udało się potwierdzić rejestracji komputera. Spróbuj ponownie.")
+
+    def _authorize_once(self, credentials):
         url = ("https://firestore.googleapis.com/v1/projects/"
                + self.config.project_id + "/databases/(default)/documents/geostudio_access/"
                + urllib.parse.quote(credentials.uid, safe=""))
@@ -178,7 +225,36 @@ class FirebaseClient:
                     raise ValueError
         except (KeyError, TypeError, ValueError, AttributeError):
             raise AuthDenied("Konto nie ma aktywnego dostępu do GeoStudio.") from None
-        return Grant(credentials, expires)
+        limit, devices = self._device_policy(fields)
+        if limit:
+            identifier = self._device_id
+            if not re.fullmatch(r"[a-f0-9]{64}", identifier or ""):
+                raise DeviceDenied("Nie udało się rozpoznać tego komputera.")
+            if identifier not in devices:
+                if len(devices) >= limit:
+                    raise DeviceDenied(f"Limit komputerów ({len(devices)}/{limit}) został osiągnięty. Skontaktuj się z administratorem.")
+                # Optimistic concurrency + rules: two simultaneous logins
+                # cannot overwrite each other's registrations or exceed cap.
+                update_time = data.get("updateTime")
+                if not isinstance(update_time, str) or not update_time:
+                    raise AuthUnavailable("Nie udało się odczytać wersji listy komputerów.")
+                devices = [*devices, identifier]
+                query = urllib.parse.urlencode({
+                    "updateMask.fieldPaths": "devices",
+                    "currentDocument.updateTime": update_time,
+                })
+                payload = {"fields": {"devices": {"arrayValue": {
+                    "values": [{"stringValue": item} for item in devices]}}}}
+                try:
+                    self._transport("PATCH", url + "?" + query,
+                                    json.dumps(payload).encode("utf-8"), {
+                        "Authorization": "Bearer " + credentials.id_token,
+                        "Content-Type": "application/json",
+                        "Accept": "application/json",
+                    })
+                except AuthDenied:
+                    raise DeviceDenied("Nie można zarejestrować komputera. Sprawdź limit i reguły Firestore.") from None
+        return Grant(credentials, expires, limit, len(devices))
 
     def login(self, email, password):
         if not isinstance(email, str) or not isinstance(password, str) or not email.strip() or not password:
@@ -189,6 +265,8 @@ class FirebaseClient:
         credentials = self._credentials(result)
         try:
             return self._authorize(credentials)
+        except DeviceDenied:
+            raise
         except AuthDenied:
             raise AuthDenied("Logowanie poprawne, ale konto nie ma aktywnego dostępu do GeoStudio.") from None
 
@@ -270,6 +348,8 @@ class AccessGate:
         self._grant = grant
         self._email = grant.credentials.email
         self._expires_at = grant.expires_at
+        self._device_limit = grant.device_limit
+        self._device_count = grant.device_count
         self._deadline = now + lease
         self._next_check = now + max(1.0, lease - min(20.0, lease / 4))
         self._reason = ""
@@ -284,7 +364,9 @@ class AccessGate:
                     "storageWarning": self._storage_warning,
                     "loggedOut": self._logged_out, "updatesDisabled": True,
                     "email": self._email,
-                    "expiresAt": self._expires_at.isoformat() if self._expires_at else None}
+                    "expiresAt": self._expires_at.isoformat() if self._expires_at else None,
+                    "deviceLimit": self._device_limit,
+                    "deviceCount": self._device_count}
 
     def allows_http(self, method, path):
         return self.status()["active"] or (method == "GET" and path in RECOVERY_HTTP)
@@ -303,13 +385,13 @@ class AccessGate:
             grant = self._client.refresh(previous.refresh_token)
             if grant.credentials.uid != previous.uid:
                 raise AuthDenied("Sesja nie należy do zalogowanego konta.")
-        except AuthDenied:
+        except AuthDenied as error:
             with self._lock:
                 if generation == self._generation:
                     self._grant = None
                     self._email = ""
                     self._expires_at = None
-                    self._reason = RESTRICTED_MESSAGE
+                    self._reason = str(error) + " Zapisz otwarte mapy i uruchom program ponownie."
                     self._remember = False
                     self._save()
             return

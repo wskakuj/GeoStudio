@@ -186,3 +186,59 @@ def test_account_email_and_expiry_are_safe_status_fields():
     assert identity not in json.dumps(status)
     assert credential.refresh_token not in json.dumps(status)
     assert gate.logout()["email"] == ""
+
+
+def _device_entitlement(limit, devices):
+    document = entitlement()
+    document["updateTime"] = "2026-01-01T10:00:00Z"
+    document["fields"].update({
+        "deviceLimit": {"integerValue": str(limit)},
+        "devices": {"arrayValue": {"values": [{"stringValue": d} for d in devices]}},
+    })
+    return document
+
+
+def test_devices_append_with_precondition_and_existing_id_no_write():
+    import urllib.parse
+    a, b = "a"*64, "b"*64
+    transport = Transport(_device_entitlement(2, [a]))
+    client = auth.FirebaseClient(CONFIG, transport, machine_id=b)
+    grant = client.login("tester@example.invalid", "test-password")
+    assert (grant.device_limit, grant.device_count) == (2, 2)
+    method, url, body, headers = transport.calls[-1]
+    assert method == "PATCH"
+    query = urllib.parse.parse_qs(urllib.parse.urlparse(url).query)
+    assert query["updateMask.fieldPaths"] == ["devices"]
+    assert query["currentDocument.updateTime"] == ["2026-01-01T10:00:00Z"]
+    assert json.loads(body)["fields"]["devices"]["arrayValue"]["values"] == [
+        {"stringValue": a}, {"stringValue": b}]
+    assert headers["Authorization"] == "Bearer id"
+    existing = Transport(_device_entitlement(2, [a, b]))
+    assert auth.FirebaseClient(CONFIG, existing, machine_id=b).login("a@b", "p").device_count == 2
+    assert not any(call[0] == "PATCH" for call in existing.calls)
+
+
+def test_device_limit_blocks_third_computer_and_bad_policy():
+    devices = ["a"*64, "b"*64]
+    transport = Transport(_device_entitlement(2, devices))
+    with pytest.raises(auth.DeviceDenied, match="Limit komputerów"):
+        auth.FirebaseClient(CONFIG, transport, machine_id="c"*64).login("a@b", "p")
+    assert not any(call[0] == "PATCH" for call in transport.calls)
+    bad = Transport(_device_entitlement(1, devices))
+    with pytest.raises(auth.DeviceDenied):
+        auth.FirebaseClient(CONFIG, bad, machine_id="a"*64).login("a@b", "p")
+
+
+def test_device_registration_rechecks_after_conflicting_write():
+    a, b, c = "a"*64, "b"*64, "c"*64
+
+    class RacingTransport(Transport):
+        def __call__(self, method, url, body, headers):
+            if method == "PATCH":
+                self.access = _device_entitlement(2, [a, c])
+                raise auth.AuthConflict("concurrent update")
+            return super().__call__(method, url, body, headers)
+
+    with pytest.raises(auth.DeviceDenied, match="Limit komputerów"):
+        auth.FirebaseClient(CONFIG, RacingTransport(_device_entitlement(2, [a])),
+                            machine_id=b).login("a@b", "p")

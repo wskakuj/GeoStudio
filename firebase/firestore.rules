@@ -1,15 +1,37 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    // Admin manages these documents in Firebase Console via IAM.
-    // A client may only read its own ACTIVE and non-expired entitlement.
     match /geostudio_access/{uid} {
-      allow get: if request.auth != null && request.auth.uid == uid
-        && resource.data.active == true
-        && (resource.data.expiresAt == null
-            || (resource.data.expiresAt is timestamp
-                && request.time < resource.data.expiresAt));
-      allow list, create, update, delete: if false;
+      function canAccess() {
+        return request.auth != null && request.auth.uid == uid
+          && resource.data.active == true
+          && (resource.data.expiresAt == null
+              || (resource.data.expiresAt is timestamp
+                  && request.time < resource.data.expiresAt));
+      }
+
+      // Existing accounts without deviceLimit remain unlimited. If admin
+      // enables the policy, a client can append exactly one new ID, never
+      // remove/replace registrations or change its own entitlement.
+      function registerOneDevice() {
+        let old = resource.data.devices;
+        let next = request.resource.data.devices;
+        let cap = resource.data.deviceLimit;
+        return request.resource.data.diff(resource.data).affectedKeys().hasOnly(['devices'])
+          && cap is int && cap >= 1 && cap <= 20
+          && old is list && next is list
+          && old.size() < cap
+          && next.size() == old.size() + 1
+          && next.toSet().size() == next.size()
+          && next.toSet().hasAll(old.toSet())
+          && next.removeAll(old).size() == 1
+          && next.removeAll(old)[0] is string
+          && next.removeAll(old)[0].matches('^[a-f0-9]{64}$');
+      }
+
+      allow get: if canAccess();
+      allow update: if canAccess() && registerOneDevice();
+      allow list, create, delete: if false;
     }
   }
 }
