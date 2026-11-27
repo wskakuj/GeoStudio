@@ -7,6 +7,7 @@
   if(!dialog)return;
   const token=document.querySelector('meta[name="api-token"]').content;
   let allowed=false,busy=false,epoch=0,rows=[],current=null;
+  let adminTab="users",inviteRows=[],selectedInvite=null;
   const PARTIAL={
     created_without_access:"Konto utworzone, lecz bez uprawnień. Wybierz je i zapisz dostęp.",
     reset_not_sent:"Konto utworzone. E-mail nie został wysłany; ponów reset hasła.",
@@ -48,7 +49,10 @@
     $("admin-add").disabled=busy;
     // inert stops changes while an operation is in progress, without changing
     // permanent owner protections or the expiry input's disabled state.
-    document.querySelector(".admin-body").inert=busy;
+    $("admin-users-body").inert=busy;
+    $("admin-invites-body").inert=busy;
+    $("admin-users-tab").disabled=busy;
+    $("admin-invites-tab").disabled=busy;
     $("admin-search").disabled=busy;$("admin-filter").disabled=busy;
     dialog.setAttribute("aria-busy",String(busy));
   }
@@ -61,7 +65,12 @@
     finally{busy=false;disabled();}
   }
   function clear(){
-    epoch++;rows=[];current=null;
+    epoch++;rows=[];current=null;inviteRows=[];selectedInvite=null;
+    $("invite-code").value="";$("invite-result").hidden=true;
+    $("invite-create-form").reset();$("invite-rows").replaceChildren();$("invite-history").replaceChildren();
+    $("invite-detail").hidden=true;$("invite-detail-title").textContent="";$("invite-detail-policy").textContent="";
+    $("invite-registration-enabled").checked=false;
+    switchTab("users");
     $("admin-new-password").value="";$("admin-confirm-email").value="";
     $("admin-rows").replaceChildren();$("admin-stats").replaceChildren();
     $("admin-devices").replaceChildren();$("admin-history").replaceChildren();
@@ -74,7 +83,8 @@
   }
   function drawRows(){
     const filter=$("admin-filter").value,q=$("admin-search").value.trim().toLocaleLowerCase("pl");
-    const list=rows.filter(r=>(filter==="all"||(filter==="active")===!!r.active)&&
+    const list=rows.filter(r=>(filter==="all"||(filter==="pending"?!!r.policy?.pendingApproval:
+      filter==="active"?!!r.active:!r.active&&!r.policy?.pendingApproval))&&
       ((r.email||"")+" "+(r.name||"")).toLocaleLowerCase("pl").includes(q));
     const root=$("admin-rows");root.replaceChildren();$("admin-empty").hidden=list.length>0;
     for(const r of list){
@@ -82,8 +92,8 @@
       const td=node("td"),pick=button(r.name||r.email||"Konto bez adresu",()=>choose(r.uid),"admin-user-link");
       pick.append(node("small",(r.name?r.email:"")+(r.owner?" · administrator":"")));
       td.append(pick);tr.append(td);
-      const status=r.policyError?"Błędne dane":r.authDisabled?"Auth wyłączone":r.active?"Aktywne":r.policy?"Nieaktywne":"Brak dostępu";
-      const s=node("td");s.append(node("span",status,"admin-status "+(r.active?"good":"bad")));tr.append(s);
+      const status=r.policyError?"Błędne dane":r.policy?.pendingApproval?"Oczekujące":r.authDisabled?"Auth wyłączone":r.active?"Aktywne":r.policy?"Nieaktywne":"Brak dostępu";
+      const s=node("td");s.append(node("span",status,"admin-status "+(r.active?"good":r.policy?.pendingApproval?"pending":"bad")));tr.append(s);
       tr.append(node("td",r.policy?(r.policy.deviceLimit?(r.policy.devices.length+"/"+r.policy.deviceLimit):"Bez limitu"):"—"));
       tr.append(node("td",displayDate(r.lastActive)));root.append(tr);
     }
@@ -91,7 +101,7 @@
   function drawStats(stats,truncated){
     const root=$("admin-stats");root.replaceChildren();
     for(const [label,value] of [["Konta",stats.total],["Aktywne",stats.active],["Nieaktywne",stats.blocked],
-      ["Rejestracje",stats.devices],["Połączenie ≤ 20 min",stats.recent]]){
+      ["Oczekujące",stats.pending??0],["Rejestracje",stats.devices],["Połączenie ≤ 20 min",stats.recent]]){
       const tile=node("div",undefined,"admin-stat");
       tile.append(node("small",label),node("strong",value??0));root.append(tile);
     }
@@ -113,6 +123,7 @@
     $("admin-account-email").textContent=(r.email||"")+(r.owner?" · Administrator (chronione konto)":"");
     $("admin-account-login").textContent="Ostatnie logowanie Firebase: "+displayDate(r.lastLogin)+" · Ostatnie połączenie: "+displayDate(r.lastActive);
     const p=r.policy||{name:"",notes:"",active:false,expiresAt:null,deviceLimit:2,devices:[],offlineHours:0,version:""};
+    $("admin-pending-approval").hidden=!p.pendingApproval;
     $("admin-name").value=p.name||r.name||"";$("admin-notes").value=p.notes||"";
     $("admin-active").checked=r.owner||!!p.active;$("admin-active").disabled=!!r.owner;
     $("admin-limit").value=p.deviceLimit;$("admin-unlimited").checked=r.owner||!p.expiresAt;
@@ -246,6 +257,139 @@
       return partial(r,"Konto usunięte.");
     });
   });
+
+  function switchTab(tab){
+    adminTab=tab;
+    const users=tab==="users";
+    for(const id of ["admin-stats","admin-users-toolbar","admin-users-body"])$(id).hidden=!users;
+    $("admin-invites-body").hidden=users;
+    $("admin-users-tab").classList.toggle("primary",users);
+    $("admin-invites-tab").classList.toggle("primary",!users);
+    $("admin-users-tab").setAttribute("aria-pressed",String(users));
+    $("admin-invites-tab").setAttribute("aria-pressed",String(!users));
+    if(users){$("invite-code").value="";$("invite-result").hidden=true;}
+  }
+  const inviteStatus={active:"Aktywny",revoked:"Unieważniony",expired:"Wygasły",used:"Wykorzystany"};
+  const offlineLabel={0:"Wyłączona",72:"72 godziny","-1":"Bezterminowo"};
+  function drawInvites(){
+    const root=$("invite-rows");root.replaceChildren();
+    $("invite-empty").hidden=inviteRows.length!==0;
+    for(const r of inviteRows){
+      const tr=node("tr");
+      if(selectedInvite?.id===r.id)tr.classList.add("selected");
+      const td=node("td"),pick=button(r.label||"Zaproszenie",()=>chooseInvite(r.id),"admin-user-link");
+      pick.append(node("small","…"+r.hint+(r.email?" · "+r.email:"")));
+      td.append(pick);tr.append(td);
+      const state=node("td");
+      state.append(node("span",inviteStatus[r.status]||"—","admin-status "+(r.status==="active"?"good":"bad")));
+      tr.append(state,node("td",r.used+" / "+(r.maxUses||"∞")),
+        node("td",r.expiresAt?displayDate(r.expiresAt):"Bezterminowo"));
+      root.append(tr);
+    }
+  }
+  async function loadInvites(live){
+    const data=await rpc("invites_list");
+    if(!live())return;
+    inviteRows=Array.isArray(data.rows)?data.rows:[];
+    $("invite-registration-enabled").checked=!!data.enabled;
+    $("invite-truncated").hidden=!data.truncated;
+    if(selectedInvite){
+      selectedInvite=inviteRows.find(r=>r.id===selectedInvite.id)||null;
+      if(!selectedInvite)$("invite-detail").hidden=true;
+      else $("invite-revoke").disabled=selectedInvite.status!=="active";
+    }
+    drawInvites();
+  }
+  async function loadInviteDetail(id,live){
+    const inv=inviteRows.find(r=>r.id===id);
+    if(!inv)return;
+    const hist=await rpc("invite_history",{id});
+    if(!live())return;
+    selectedInvite=inv;$("invite-detail").hidden=false;
+    $("invite-detail-title").textContent=inv.label||("Kod …"+inv.hint);
+    $("invite-detail-policy").textContent="Konto: "+(inv.accountDays?inv.accountDays+" dni":"bezterminowo")
+      +" · Komputery: "+(inv.deviceLimit||"bez limitu")+" · Offline: "+offlineLabel[inv.offlineHours]
+      +" · "+(inv.approval?"Wymaga akceptacji":"Automatyczny dostęp");
+    $("invite-revoke").disabled=inv.status!=="active";
+    const root=$("invite-history");root.replaceChildren();
+    const records=Array.isArray(hist.rows)?hist.rows:[];
+    if(!records.length)root.append(node("p","Kod nie został jeszcze wykorzystany.","admin-muted"));
+    for(const record of records){
+      const u=rows.find(x=>x.uid===record.uid);
+      const item=node("div",undefined,"invite-history-row");
+      item.append(node("strong",u?.email||"Konto "+record.uid),
+        node("small",displayDate(record.at)+(record.approval?" · wymagało akceptacji":"")));
+      root.append(item);
+    }
+    if(hist.truncated)root.append(node("p","Historia ograniczona do 500 wpisów.","admin-muted"));
+    drawInvites();
+  }
+  function chooseInvite(id){run(async live=>{await loadInviteDetail(id,live);});}
+  $("admin-users-tab").addEventListener("click",()=>{
+    if(busy)return;
+    switchTab("users");run(async live=>{await loadList(live);});
+  });
+  $("admin-invites-tab").addEventListener("click",()=>{
+    if(busy)return;
+    switchTab("invites");run(async live=>{await loadInvites(live);});
+  });
+  $("invite-refresh").addEventListener("click",()=>run(async live=>{
+    const id=selectedInvite?.id;await loadInvites(live);
+    if(live()&&id)await loadInviteDetail(id,live);
+    return {text:"Lista zaproszeń odświeżona."};
+  }));
+  $("invite-settings-save").addEventListener("click",()=>{
+    const enabled=$("invite-registration-enabled").checked;
+    run(async live=>{
+      await rpc("invite_settings",{enabled});
+      if(live())await loadInvites(live);
+      return {text:enabled?"Rejestracja włączona.":"Rejestracja wyłączona."};
+    });
+  });
+  $("invite-email").addEventListener("input",()=>{
+    if($("invite-email").value.trim())$("invite-max-uses").value="1";
+  });
+  $("invite-create-form").addEventListener("submit",event=>{
+    event.preventDefault();
+    const payload={label:$("invite-label").value,email:$("invite-email").value.trim(),
+      maxUses:Number($("invite-max-uses").value),validDays:Number($("invite-valid-days").value),
+      accountDays:Number($("invite-account-days").value),deviceLimit:Number($("invite-device-limit").value),
+      offlineHours:Number($("invite-offline").value),approval:$("invite-approval").checked};
+    if(payload.email&&payload.maxUses!==1){notice("Kod przypisany do e-maila musi być jednorazowy.",true);return;}
+    if((!payload.maxUses||payload.offlineHours===-1)&&!window.confirm(
+      "Kod ma nieograniczoną liczbę użyć lub umożliwia długotrwały offline. Utworzyć go?"))return;
+    if($("invite-code").value&&!window.confirm("Nowy kod zastąpi poprzedni na ekranie. Czy skopiowałeś poprzedni kod?"))return;
+    run(async live=>{
+      const r=await rpc("invite_create",payload);
+      if(live()){
+        $("invite-code").value=r.code||"";$("invite-result").hidden=false;
+        $("invite-code").focus();$("invite-code").select();
+        await loadInvites(live);
+      }
+      return {text:"Zaproszenie utworzone. Skopiuj pełny kod."};
+    });
+  });
+  $("invite-copy").addEventListener("click",async()=>{
+    const code=$("invite-code").value;
+    if(!code)return;
+    $("invite-code").select();
+    try{
+      if(navigator.clipboard)await navigator.clipboard.writeText(code);
+      else if(!document.execCommand("copy"))throw Error();
+      notice("Kod skopiowany. Przekaż go wyłącznie zaproszonej osobie.");
+    }catch{notice("Zaznaczyłem kod. Naciśnij Ctrl+C, aby go skopiować.");}
+  });
+  $("invite-revoke").addEventListener("click",()=>{
+    if(!selectedInvite||selectedInvite.status!=="active"||
+      !window.confirm("Unieważnić kod? Istniejące konta zachowają przyznane uprawnienia."))return;
+    const id=selectedInvite.id;
+    run(async live=>{
+      await rpc("invite_revoke",{id});
+      if(live()){await loadInvites(live);if(live())await loadInviteDetail(id,live);}
+      return {text:"Zaproszenie unieważnione."};
+    });
+  });
+
   $("admin-close").addEventListener("click",()=>{if(!busy)dialog.close();});
   dialog.addEventListener("cancel",e=>{if(busy)e.preventDefault();});
   dialog.addEventListener("close",clear);

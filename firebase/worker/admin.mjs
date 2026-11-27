@@ -453,7 +453,8 @@ async function adminAction(gw,env,claims,body,now) {
     }).sort((a,b)=>a.email.localeCompare(b.email));
     return {rows,truncated:users.truncated||policies.truncated||activity.truncated,
       stats:{total:rows.length,active:rows.filter(r=>r.active).length,
-        blocked:rows.filter(r=>!r.active).length,
+        blocked:rows.filter(r=>!r.active&&!r.policy?.pendingApproval).length,
+        pending:rows.filter(r=>r.policy?.pendingApproval).length,
         devices:rows.reduce((n,r)=>n+(r.policy?.devices.length||0),0),
         recent:rows.filter(r=>r.active&&Date.parse(r.lastActive)>=now-20*60000).length}};
   }
