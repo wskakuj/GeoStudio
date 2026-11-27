@@ -58,3 +58,6 @@ button:focus-visible{outline:2px solid var(--primary);outline-offset:-2px}
   border:1px solid #cfd8e3;background:#f6f8fb;color:#26313f}
 .update-actions button:hover{filter:brightness(.97)}
 .update-actions .update-install{border-color:#2664db;background:#2664db;color:#fff;font-weight:600}
+
+#auth-notice{padding:10px 16px;background:var(--card);border-bottom:1px solid #efa32d;color:var(--ink);font-size:13px}
+#auth-logout{font-size:12px;color:var(--accent);border:1px solid var(--edge);border-radius:6px;padding:4px 8px}

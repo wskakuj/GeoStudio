@@ -13,10 +13,12 @@
   <span class="brand-mark" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"><path d="m3 8 9-5 9 5-9 5ZM3 12l9 5 9-5M3 16l9 5 9-5"/></svg></span>
   <span class="brand">GeoStudio <small>2.0</small></span>
   <button type="button" id="app-version" class="version-badge" title="Kliknij, aby sprawdzić aktualizacje">v—</button>
+  <button type="button" id="auth-logout" hidden>Wyloguj</button>
   <div id="tab-list" class="tabs" role="tablist" aria-label="Otwarte mapy"></div>
   <button id="add-tab" type="button" title="Nowa zakładka mapy" aria-label="Nowa zakładka mapy">+</button>
   <span id="tab-count" class="tab-count"></span>
 </header>
+<div id="auth-notice" role="status" hidden></div>
 <main id="editors" aria-label="Obszar roboczy"></main>
 <div id="tab-error" role="alert" hidden></div>
 </body>

@@ -4,7 +4,7 @@
   const $=id=>document.getElementById(id);
   const token=document.querySelector('meta[name="api-token"]').content;
   const tabs=new Map();
-  let active=null, limit=10, creating=false, errorTimer=null, ready=false;
+  let active=null, limit=10, creating=false, errorTimer=null, ready=false, accessActive=true;
   async function request(path,options={}) {
     const response=await fetch(path,{...options,headers:{
       "X-GeoStudio-Token":token,...(options.headers||{})},cache:"no-store"});
@@ -29,7 +29,7 @@
     if(value==="light"||value==="dark")document.documentElement.dataset.theme=value;
   }
   function updateControls(){
-    $("add-tab").disabled=!ready||creating||tabs.size>=limit;
+    $("add-tab").disabled=!ready||!accessActive||creating||tabs.size>=limit;
     $("tab-count").textContent=tabs.size+" / "+limit;
   }
   function select(id){
@@ -95,6 +95,7 @@
     return tab;
   }
   async function newTab(openNative=false,file=null,style=null){
+    if(!accessActive){error("Brak aktywnego dostępu. Zapisz otwarte mapy.");return false;}
     if(creating){error("Trwa otwieranie nowej zakładki.");return false;}
     if(tabs.size>=limit){error("Limit: "+limit+" otwarte mapy. Zamknij jedną zakładkę.");return false;}
     creating=true;updateControls();
@@ -240,6 +241,25 @@
       event.preventDefault();event.returnValue="";
     }
   });
+  async function syncAccess(){
+    try{
+      const data=await request("/auth/status");
+      if(!data.enabled)return;
+      accessActive=!!data.active;
+      $("auth-logout").hidden=!accessActive;
+      $("app-version").disabled=!!data.updatesDisabled;
+      const notice=$("auth-notice");
+      notice.hidden=accessActive&&!data.storageWarning;
+      notice.textContent=accessActive?(data.storageWarning||""):
+        ((data.message||"Brak aktywnego dostępu.")+" Zapisz kopie otwartych map. Dalsza edycja jest zablokowana.");
+      updateControls();
+    }catch(_){}
+  }
+  $("auth-logout").addEventListener("click",async()=>{
+    if(!window.confirm("Wylogować? Zapisz otwarte mapy przed zamknięciem programu."))return;
+    try{await request("/auth/logout",{method:"POST"});await syncAccess();}
+    catch(e){error(e.message);}
+  });
   async function boot(){
     try{
       const result=await request("/api/documents");
@@ -247,6 +267,8 @@
       ready=true;
       // Token jest już znany, więc /version odpowie.
       initVersionBadge();
+      await syncAccess();
+      setInterval(syncAccess,3000);
       for(const id of result.documents)append(id);
       if(tabs.size)select([...tabs.keys()][0]);else await newTab();
       updateControls();

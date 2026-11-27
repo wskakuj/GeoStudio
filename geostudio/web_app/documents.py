@@ -71,19 +71,24 @@ class DocumentNativeBridge:
                           "save_base_map", "save_baked_map", "save_tiled_export",
                           "save_generated_export"})
 
-    def __init__(self, registry):
+    def __init__(self, registry, access_gate=None):
         self._registry = registry
+        self._access_gate = access_gate
 
     def document_call(self, document_id, operation, args):
         if operation not in self._ALLOWED or not isinstance(args, list):
             raise ValueError("Nieprawidłowa operacja natywna.")
         session = self._registry.get(document_id)
         with session.native_lock:
+            if self._access_gate is not None and not self._access_gate.allows_native(operation):
+                raise PermissionError("Brak aktywnego dostępu. Zapisz otwarte mapy.")
             return getattr(session.native, operation)(*args)
 
     # Sprawdzanie i instalacja aktualizacji nie zależą od konkretnej mapy,
     # więc muszą być dostępne także z paska zakładek (bez document_id).
     def check_update(self) -> dict:
+        if self._access_gate is not None:
+            return {"available": False, "reason": "Aktualizacje chronionej wersji są wyłączone."}
         from . import updater
         info = updater.check_for_update()
         if not info:
@@ -91,6 +96,8 @@ class DocumentNativeBridge:
         return {"available": True, **info}
 
     def install_update(self) -> dict:
+        if self._access_gate is not None:
+            return {"started": False, "reason": "Aktualizacje chronionej wersji są wyłączone."}
         from . import updater
         info = updater.check_for_update()
         if not info or not info.get("assetUrl"):

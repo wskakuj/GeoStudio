@@ -41,7 +41,7 @@ UPLOAD_CHUNK = 1024 * 1024
 
 
 def create_app(workspace: PreviewWorkspace | None = None, *,
-               multi_document: bool = False) -> FastAPI:
+               multi_document: bool = False, access_gate=None) -> FastAPI:
     raster_a1_cache = RasterA1Cache()
 
     @asynccontextmanager
@@ -79,6 +79,10 @@ def create_app(workspace: PreviewWorkspace | None = None, *,
                 request.headers.get("x-geostudio-token", ""), token
             ):
                 return JSONResponse({"detail": "Brak dostępu."}, status_code=403)
+        if access_gate is not None and request.url.path.startswith("/api/"):
+            if not access_gate.allows_http(request.method, request.url.path):
+                return JSONResponse({"detail": "Brak aktywnego dostępu. Zapisz otwarte mapy."},
+                                    status_code=403)
         scope = None
         if request.url.path.startswith("/api/"):
             key = request.headers.get("x-geostudio-document")
@@ -199,6 +203,20 @@ def create_app(workspace: PreviewWorkspace | None = None, *,
 
     # Poza /api/: w trybie zakładek każde /api/* wymaga nagłówka dokumentu,
     # a wersja programu jest wspólna dla wszystkich map.
+    @app.get("/auth/status")
+    async def auth_status(request: Request):
+        if not secrets.compare_digest(request.headers.get("x-geostudio-token", ""), token):
+            raise HTTPException(403, "Brak dostępu.")
+        return access_gate.status() if access_gate is not None else {"enabled": False, "active": True}
+
+    @app.post("/auth/logout")
+    async def auth_logout(request: Request):
+        if not secrets.compare_digest(request.headers.get("x-geostudio-token", ""), token):
+            raise HTTPException(403, "Brak dostępu.")
+        if access_gate is None:
+            raise HTTPException(404, "Logowanie niedostępne.")
+        return await run_in_threadpool(access_gate.logout)
+
     @app.get("/version")
     async def app_version():
         from . import updater

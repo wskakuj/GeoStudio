@@ -203,19 +203,24 @@ def main(argv=None):
                         help="Nie sprawdzaj aktualizacji przy starcie")
     args = parser.parse_args(argv)
 
+    if args.selftest:
+        # Diagnostic only: no user files, no native bridge or persistent server.
+        return _selftest(PreviewWorkspace())
+
+    from .firebase_login import run_login
+    gate = run_login()
+    if gate is None:
+        return 0
     workspace = PreviewWorkspace()
     if args.map is not None:
         workspace.load_map(args.map.read_bytes(), args.map.name)
 
-    if args.selftest:
-        return _selftest(workspace)
-
-    if not args.no_update_check:
-        # Pytanie i pobieranie idą w tle, żeby okno startowało od razu;
-        # przy zgodzie program kończy się sam (launch_installer -> os._exit).
-        threading.Thread(target=check_updates_on_start, daemon=True).start()
-
-    app = create_app(workspace, multi_document=True)
+    # The existing public updater must not install an unprotected release.
+    app = create_app(workspace, multi_document=True, access_gate=gate)
+    stop_auth = threading.Event()
+    auth_worker = threading.Thread(target=gate.run, args=(stop_auth,),
+                                   daemon=True, name="GeoStudioFirebase")
+    auth_worker.start()
     # Bind immediately to an ephemeral loopback port. Passing an already-bound
     # socket to uvicorn avoids races with other apps and never exposes the
     # user's map files to LAN clients.
@@ -250,6 +255,7 @@ def main(argv=None):
         try:
             server.run(sockets=[sock])
         finally:
+            stop_auth.set()
             sock.close()
         return
 
@@ -277,7 +283,7 @@ def main(argv=None):
         if not server.started:
             raise RuntimeError("Lokalny serwer nie wystartował.")
         from .documents import DocumentNativeBridge
-        native_picker = DocumentNativeBridge(app.state.documents)
+        native_picker = DocumentNativeBridge(app.state.documents, access_gate=gate)
         webview.create_window(
             "GeoStudio 2.0",
             address, width=1480, height=940, min_size=(960, 640),
@@ -287,6 +293,7 @@ def main(argv=None):
         # Window: dialogs open independently through Tk on the worker thread.
         webview.start()
     finally:
+        stop_auth.set()
         server.should_exit = True
         worker.join(timeout=4)
         sock.close()
