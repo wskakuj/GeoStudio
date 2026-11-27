@@ -81,6 +81,33 @@ def _uvicorn_log_config():
     }
 
 
+def _check_windows_runtime():
+    """Load the same .NET bridge as pywebview, without creating a window."""
+    if os.name == "nt":
+        import clr
+        clr.AddReference("System.Windows.Forms")
+
+
+def _is_pythonnet_loader_error(error):
+    return "Failed to resolve Python.Runtime.Loader.Initialize" in str(error)
+
+
+def _show_windows_runtime_error():
+    # Do not silently remove Internet-zone markings from downloaded files.
+    # Let the owner verify their archive and decide whether to unblock it.
+    import ctypes
+    ctypes.windll.user32.MessageBoxW(
+        None,
+        "Nie udało się uruchomić głównego okna GeoStudio (Python.NET).\n\n"
+        "Jeżeli korzystasz z zaufanego ZIP pobranego z własnego GitHub Actions, "
+        "sprawdź Właściwości archiwum: Odblokuj, następnie wypakuj je ponownie "
+        "do nowego katalogu. Zachowaj cały folder _internal.\n\n"
+        "Jeżeli problem nadal występuje, sprawdź kompletność archiwum "
+        "oraz instalację .NET Framework. Nie wyłączaj zabezpieczeń Windows.",
+        "GeoStudio — nie udało się wczytać biblioteki .NET", 0x10,
+    )
+
+
 def _selftest(workspace) -> int:
     """Start the server with no console streams, exactly like a windowed EXE.
 
@@ -97,6 +124,9 @@ def _selftest(workspace) -> int:
     worker = None
     sock = None
     try:
+        # The HTTP/OCR smoke test alone does not exercise Python.NET.
+        # Fail CI if the packaged managed assembly cannot initialize.
+        _check_windows_runtime()
         # Exercise the bundled PDFium DLL, not just Python imports.  A build
         # can launch its UI successfully while missing the native PDF decoder.
         # The complete fixture and PNG stay in memory; no user file is read.
@@ -287,7 +317,15 @@ def main(argv=None):
         return
 
     try:
+        _check_windows_runtime()
         import webview
+    except RuntimeError as exc:
+        stop_auth.set()
+        sock.close()
+        if os.name == "nt" and _is_pythonnet_loader_error(exc):
+            _show_windows_runtime_error()
+            return 1
+        raise
     except ImportError as exc:
         stop_auth.set()
         sock.close()
@@ -320,6 +358,11 @@ def main(argv=None):
         # Crucially, the JS bridge keeps NO reference to the pywebview
         # Window: dialogs open independently through Tk on the worker thread.
         webview.start()
+    except RuntimeError as exc:
+        if os.name == "nt" and _is_pythonnet_loader_error(exc):
+            _show_windows_runtime_error()
+            return 1
+        raise
     finally:
         stop_auth.set()
         server.should_exit = True

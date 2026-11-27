@@ -12,7 +12,7 @@ from .firebase_vault import WindowsSessionVault
 
 def run_login(force_prompt=False):
     import tkinter as tk
-    from tkinter import messagebox, ttk
+    from tkinter import messagebox
     from .updater import current_version
 
     root = tk.Tk()
@@ -92,7 +92,23 @@ def run_login(force_prompt=False):
     tk.Label(form, textvariable=message, fg="#f0c482", bg="#172230",
              justify="left", anchor="nw", wraplength=345,
              height=2, font=("Segoe UI", 9)).pack(fill="x", pady=(5, 4))
-    progress = ttk.Progressbar(form, mode="indeterminate", length=300)
+    # A progress indicator belongs only to a running request. Draw it on
+    # a native Tk canvas so Windows themes do not override the dark palette.
+    progress = tk.Canvas(form, height=5, background="#0e1824",
+                         highlightthickness=0, borderwidth=0)
+    progress_bar = progress.create_rectangle(0, 0, 0, 5, fill="#3978e5", width=0)
+    progress_step = 0
+
+    def animate_progress():
+        nonlocal progress_step
+        if not busy:
+            return
+        width = max(1, progress.winfo_width())
+        segment = max(24, width // 4)
+        start = (progress_step % (width + segment)) - segment
+        progress.coords(progress_bar, start, 0, start + segment, 5)
+        progress_step += 9
+        root.after(30, animate_progress)
 
     pending = queue.Queue()
     result = []
@@ -110,7 +126,8 @@ def run_login(force_prompt=False):
         reset.configure(state="disabled")
         keep.configure(state="disabled")
         message.set("Łączenie z Firebase…")
-        progress.start(12)
+        progress.pack(fill="x", pady=(6, 0))
+        animate_progress()
 
         def worker():
             try:
@@ -129,7 +146,7 @@ def run_login(force_prompt=False):
             root.after(100, poll)
             return
         busy = False
-        progress.stop()
+        progress.pack_forget()
         if action in ("login", "restore") and error is None:
             gate = AccessGate(client, grant, vault, keep_session,
                               last_seen=restored_state.get("lastSeen", 0) if action == "restore" else 0)
@@ -176,7 +193,6 @@ def run_login(force_prompt=False):
                       fg="#8bb5ff", bg="#172230", activebackground="#172230",
                       activeforeground="white", relief="flat")
     reset.pack(pady=(5, 0))
-    progress.pack(fill="x", pady=(6, 0))
     tk.Label(panel, text="GeoStudio " + current_version() + "  ·  Dostęp dla uprawnionych",
              fg="#a5b2c4", bg="#101720", font=("Segoe UI", 9)).pack(pady=(10, 0))
     root.update_idletasks()

@@ -118,3 +118,16 @@ oraz nie ogranicza komputerów. Szczegóły konfiguracji:
 
 - [Panel administratora i urządzenia](FIREBASE_ADMIN.md)
 - [Opcjonalna licencja offline i podpisująca usługa](FIREBASE_OFFLINE.md)
+
+
+## Diagnostyka przenośnego EXE Windows
+
+Jeśli po zalogowaniu pojawia się `Failed to resolve Python.Runtime.Loader.Initialize`,
+sprawdź, czy ZIP z zaufanego własnego GitHub Actions został oznaczony jako
+pobrany z internetu. Właściwości ZIP → Odblokuj (jeśli opcja jest dostępna)
+→ ponownie wypakuj cały ZIP do nowego folderu. Nie przenoś samego EXE
+bez katalogu _internal i nie wyłączaj ochrony Windows. Program nie usuwa
+oznaczeń bezpieczeństwa automatycznie. Jeśli błąd pozostaje, sprawdź
+kompletność DLL i .NET Framework. Test pakowania ładuje teraz CLR oraz
+System.Windows.Forms; nie symuluje oznaczeń pobranego archiwum ani nie
+otwiera rzeczywistego okna.
