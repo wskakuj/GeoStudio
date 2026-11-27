@@ -105,6 +105,7 @@ def test_online_issuer_is_optional_and_validates_the_signature(signer):
                     "expiresIn":"3600"}
         if url.endswith("/lease"):
             assert headers["Authorization"] == "Bearer id-token"
+            assert headers["User-Agent"] == "GeoStudio-Offline/1.0"
             assert json.loads(body) == {"deviceId":DEVICE}
             return {"lease":lease}
         return {"fields":{"active":{"booleanValue":True}, "expiresAt":{"nullValue":None},

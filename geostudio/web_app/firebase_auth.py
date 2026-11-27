@@ -299,6 +299,8 @@ class FirebaseClient:
                 json.dumps({"deviceId": self._device_id}).encode("utf-8"), {
                     "Authorization": "Bearer " + grant.credentials.id_token,
                     "Content-Type": "application/json", "Accept": "application/json",
+                    # workers.dev may reject the default Python urllib User-Agent.
+                    "User-Agent": "GeoStudio-Offline/1.0",
                 })
             token = response["lease"]
             permit = verify_permit(token, self.config.offline_public_key,
