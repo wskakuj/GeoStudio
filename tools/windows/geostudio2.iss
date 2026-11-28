@@ -1,5 +1,5 @@
 #define MyAppName "GeoStudio 2.0"
-#define MyAppVersion "2.0.108"
+#define MyAppVersion "2.0.109"
 #define MyAppExe "GeoStudio2.exe"
 
 [Setup]
@@ -10,12 +10,13 @@ AppVersion={#MyAppVersion}
 AppPublisher=GeoStudio
 DefaultDirName={localappdata}\Programs\GeoStudio2
 DefaultGroupName=GeoStudio 2.0
+UsePreviousAppDir=yes
 DisableProgramGroupPage=yes
 PrivilegesRequired=lowest
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
 OutputDir=..\..\dist\installer
-OutputBaseFilename=GeoStudio2-Setup-2.0.108-x64
+OutputBaseFilename=GeoStudio2-Setup-2.0.109-x64
 Compression=lzma2
 SolidCompression=yes
 WizardStyle=modern
@@ -23,7 +24,7 @@ UninstallDisplayIcon={app}\{#MyAppExe}
 SetupLogging=yes
 CloseApplications=yes
 RestartApplications=no
-VersionInfoVersion=2.0.108.0
+VersionInfoVersion=2.0.109.0
 
 [Files]
 Source: "..\..\dist\GeoStudio2\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs

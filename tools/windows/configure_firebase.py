@@ -5,13 +5,16 @@ Never log the key, accept executable text, or load a service account file.
 """
 from pathlib import Path
 import os
+import argparse
 
-from geostudio.web_app.firebase_auth import AuthError, FirebaseConfig
+from geostudio.web_app.firebase_auth import AuthError, FirebaseConfig, require_full_config
 
 
-def render_config(project_id, api_key, offline_url="", offline_public_key="", admin_url=""):
+def render_config(project_id, api_key, offline_url="", offline_public_key="", admin_url="", *, require_full=False):
     config = FirebaseConfig(project_id.strip(), api_key.strip(),
                             offline_url.strip(), offline_public_key.strip(), admin_url.strip())
+    if require_full:
+        require_full_config(config)
     return ("# Generated for this build only. Do not commit.\n"
             f"PROJECT_ID = {config.project_id!r}\n"
             f"WEB_API_KEY = {config.api_key!r}\n"
@@ -21,12 +24,16 @@ def render_config(project_id, api_key, offline_url="", offline_public_key="", ad
 
 
 def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--require-full", action="store_true")
+    args = parser.parse_args()
     try:
         text = render_config(os.environ.get("GEOSTUDIO_FIREBASE_PROJECT_ID", ""),
                              os.environ.get("GEOSTUDIO_FIREBASE_WEB_API_KEY", ""),
                              os.environ.get("GEOSTUDIO_OFFLINE_URL", ""),
                              os.environ.get("GEOSTUDIO_OFFLINE_PUBLIC_KEY", ""),
-                             os.environ.get("GEOSTUDIO_ADMIN_URL", ""))
+                             os.environ.get("GEOSTUDIO_ADMIN_URL", ""),
+                             require_full=args.require_full)
     except AuthError:
         return 1
     target = Path(__file__).resolve().parents[2] / "geostudio/web_app/firebase_settings.py"

@@ -83,6 +83,19 @@ class FirebaseConfig:
                 raise AuthError("Nieprawidłowy adres usługi administracyjnej.") from None
 
 
+def require_full_config(config: FirebaseConfig) -> FirebaseConfig:
+    """Official Windows builds require login, invitations and offline support."""
+    if not (config.admin_url and config.offline_url and config.offline_public_key):
+        raise AuthError("Brakuje konfiguracji rejestracji, administracji lub licencji offline.")
+    from cryptography.hazmat.primitives.asymmetric import ec
+    try:
+        ec.EllipticCurvePublicKey.from_encoded_point(
+            ec.SECP256R1(), b64decode(config.offline_public_key))
+    except ValueError:
+        raise AuthError("Nieprawidłowy klucz publiczny licencji offline.") from None
+    return config
+
+
 def load_config() -> FirebaseConfig:
     project = firebase_settings.PROJECT_ID
     key = firebase_settings.WEB_API_KEY

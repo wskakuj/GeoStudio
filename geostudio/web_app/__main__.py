@@ -230,6 +230,21 @@ def _selftest(workspace) -> int:
         sys.stdout, sys.stderr = saved
 
 
+def _selftest_release(expected_version: str) -> int:
+    """Offline diagnostic only; cannot grant access or open the editor."""
+    from .firebase_auth import load_config, require_full_config
+    from geostudio import __version__
+    try:
+        if not updater.is_frozen():
+            return 1
+        require_full_config(load_config())
+        if __version__ != expected_version or updater.current_version() != expected_version:
+            return 1
+        return 0
+    except Exception:
+        return 1
+
+
 def check_updates_on_start(interactive: bool = True) -> None:
     """Sprawdza GitHub i zapamiętuje wynik dla interfejsu.
 
@@ -259,11 +274,16 @@ def main(argv=None):
                         help="Opcjonalny lokalny plik MAP do wczytania przy starcie")
     parser.add_argument("--selftest", action="store_true",
                         help="Sprawdź start bez konsoli (używane przez pakowanie)")
+    parser.add_argument("--selftest-release", metavar="VERSION",
+                        help="Sprawdź wersję i pełną konfigurację spakowanego EXE bez logowania")
     parser.add_argument("--no-update-check", action="store_true",
                         help="Nie sprawdzaj aktualizacji przy starcie")
     parser.add_argument("--login", action="store_true",
                         help="Pomiń zapamiętaną sesję i pokaż okno logowania")
     args = parser.parse_args(argv)
+
+    if args.selftest_release is not None:
+        return _selftest_release(args.selftest_release)
 
     if args.selftest:
         # Diagnostic only: no user files, no native bridge or persistent server.
