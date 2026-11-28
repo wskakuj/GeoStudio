@@ -216,27 +216,34 @@ def test_large_dpi_can_scroll_and_reach_primary(root):
 
 
 
-def test_focus_and_typing_reuse_small_cached_surfaces(root, monkeypatch):
+def test_focus_and_typing_use_native_surfaces(root, monkeypatch):
     from geostudio.web_app import auth_ui
-    rendered=[]
-    original=auth_ui._round_image
-    def track(master,width,height,*args,**kwargs):
-        rendered.append((width,height))
-        return original(master,width,height,*args,**kwargs)
-    monkeypatch.setattr(auth_ui,"_round_image",track)
     login=LoginWindow(root,FakeClient(),None,force_prompt=True)
     root.update()
-    assert rendered and max(max(size) for size in rendered)<=login.shell.theme.dp(40)+1
-    rendered.clear()
+    assert isinstance(login.email_field.surface,auth_ui.Surface)
+    assert not hasattr(login.email_field.surface,"canvas")
+    assert not login.email.trace_info()
+    assert not login.password.trace_info()
+    assert login.shell.canvas.bind("<Configure>")==""
+    # Prime both small eye icons and then forbid new image allocation.
+    login.password_field.eye.invoke()
+    login.password_field.eye.invoke()
+    root.update()
+    def forbidden(*args,**kwargs):
+        pytest.fail("Typing/focus must not create bitmaps")
+    monkeypatch.setattr(auth_ui.ImageTk,"PhotoImage",forbidden)
     assert login.poll_id is None
+    size=login.shell._size
     for i in range(10):
-        login.email_field.surface.recolor(border=auth_ui.FOCUS)
-        login.email.set("test%d@example.invalid"%i)
-        login.email_field.surface.recolor(border=auth_ui.BORDER)
+        login.email_field.entry.event_generate("<FocusIn>")
+        login.email_field.entry.delete(0,"end")
+        login.email_field.entry.insert(0,"test%d@example.invalid"%i)
+        login.email_field.entry.event_generate("<FocusOut>")
+        login.password_field.entry.event_generate("<FocusIn>")
         login.password.set("synthetic-%d"%i)
         login.password_field.eye.invoke()
         root.update_idletasks()
-    assert not rendered, "Typing/focus must never allocate new rounded bitmaps"
+    assert login.shell._size==size
     assert login.poll_id is None
     assert login.progress.job is None
     login.close()
@@ -275,4 +282,21 @@ def test_layout_requests_are_coalesced_and_do_not_recenter(root,monkeypatch):
     assert not calls
     root.update_idletasks()
     assert len(calls)==1
+    login.close()
+
+
+
+def test_status_updates_do_not_enter_nested_event_loop(root,monkeypatch):
+    login=LoginWindow(root,FakeClient(),None,force_prompt=True)
+    root.update()
+    width=login.shell._width
+    def forbidden(*args,**kwargs):
+        pytest.fail("UI callbacks must not synchronously drain Tk events")
+    monkeypatch.setattr(root,"update_idletasks",forbidden)
+    for i in range(6):
+        login._notice("Błąd testowy. "*((i%3)+1),"error")
+        root.update()
+        login._notice("")
+        root.update()
+        assert login.shell._width==width
     login.close()

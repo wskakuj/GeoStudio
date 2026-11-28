@@ -12,7 +12,7 @@ class RegistrationWindow:
     def __init__(self, root, client, initial_email="", *, version=""):
         import tkinter as tk
         from tkinter import ttk
-        from .auth_ui import CARD, FIELD, BORDER, LINK, MUTED, Field, Notice, Progress, RoundedPanel, Shell
+        from .auth_ui import CARD, FIELD, BORDER, LINK, MUTED, Field, Notice, Progress, Surface, Shell
 
         self.client = client
         self.win = win = tk.Toplevel(root)
@@ -53,12 +53,10 @@ class RegistrationWindow:
         self.code_field.pack(fill="x",pady=(0,t.dp(18)))
         self.fields = (self.email_field,self.password_field,self.code_field)
 
-        illustration = RoundedPanel(self.verify,t,fill="#1C3454",border="#315780",
-                                    outer=CARD,radius=18,padx=15,pady=13)
+        illustration = Surface(self.verify,t,fill="#1C3454",border="#315780",padx=15,pady=13)
         illustration.pack(anchor="center",pady=(0,t.dp(18)))
         tk.Label(illustration.inner,image=t.icon("mail",36,LINK),bg="#1C3454",bd=0).pack()
-        recipient = RoundedPanel(self.verify,t,fill=FIELD,border=BORDER,outer=CARD,
-                                 radius=10,padx=13,pady=10)
+        recipient = Surface(self.verify,t,fill=FIELD,border=BORDER,padx=13,pady=10)
         recipient.pack(fill="x",pady=(0,t.dp(14)))
         t.label(recipient.inner,"Twój adres e-mail",size=9,fg=MUTED,bg=FIELD).pack(fill="x")
         t.label(recipient.inner,"",size=11,bold=True,bg=FIELD,wrap=319,

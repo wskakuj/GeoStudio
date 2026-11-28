@@ -1,7 +1,7 @@
-"""Shared native auth design system. Tk entries + keyboard-accessible ttk buttons.
+"""Lightweight native authentication UI.
 
-All artwork is drawn locally; no browser, network font, new dependency or Qt.
-Tk's DPI scaling is respected, and taller forms can scroll on small screens.
+Only small static icons use Pillow; surfaces and controls use native Tk/ttk.
+The viewport has a fixed width and a one-way content layout.
 """
 from __future__ import annotations
 
@@ -28,20 +28,6 @@ SUCCESS_BG, SUCCESS_EDGE, SUCCESS_INK = "#17352E", "#2B6653", "#A9E9CB"
 WARN_BG, WARN_EDGE, WARN_INK = "#362D22", "#735A33", "#FFE0A6"
 
 
-def _round_image(master, width, height, radius, fill, border=None, stroke=1):
-    """High-quality rounded surface; transparent corners, no platform font."""
-    width, height = max(1, int(width)), max(1, int(height))
-    aa = 3
-    im = Image.new("RGBA", (width * aa, height * aa))
-    draw = ImageDraw.Draw(im)
-    draw.rounded_rectangle((0, 0, width*aa-1, height*aa-1),
-                           radius=max(0, min(radius, width//2, height//2))*aa,
-                           fill=fill, outline=border,
-                           width=max(1, int(stroke))*aa)
-    return ImageTk.PhotoImage(im.resize((width, height), Image.Resampling.LANCZOS),
-                              master=master)
-
-
 class Theme:
     """One local image/style registry per Tk interpreter."""
     def __init__(self, root):
@@ -51,7 +37,6 @@ class Theme:
         self.style = ttk.Style(root)
         self.style.theme_use("clam")
         self.images = {}
-        self.panel_styles = {}
         self._button_styles()
         self._checkbox_style()
         self.style.configure("GS.Vertical.TScrollbar", background=BORDER,
@@ -70,33 +55,9 @@ class Theme:
                         fg=fg, bg=bg, wraplength=self.dp(wrap) if wrap else 0,
                         justify="left", anchor="w", borderwidth=0, **kwargs)
 
-    def _skin(self, key, fill, border, radius=9):
-        r = self.dp(radius)
-        size = 2*(r+self.dp(2))+1
-        self.images[key] = _round_image(self.root, size, size, r, fill, border,
-                                        self.dp(1))
-        return self.images[key]
-
-    def panel_style(self, fill, border, outer, radius):
-        """Cache tiny nine-slice surfaces; Tk stretches their flat centers.
-
-        No full-window RGBA allocation or resampling on focus, typing or resize.
-        All styles with the same radius have identical geometry.
-        """
-        key=(fill,border,outer,radius)
-        if key not in self.panel_styles:
-            name="GS.Panel%d"%len(self.panel_styles)
-            slice_size=self.dp(radius)+self.dp(2)
-            image=self._skin(name,fill,border,radius)
-            element=name+".surface"
-            self.style.element_create(element,"image",image,border=slice_size,sticky="nsew")
-            style_name=name+".TFrame"
-            self.style.layout(style_name,[(element,{"sticky":"nswe"})])
-            self.style.configure(style_name,background=outer,borderwidth=0)
-            self.panel_styles[key]=style_name
-        return self.panel_styles[key]
-
     def _button_styles(self):
+        # The standard clam TButton draws its own flat surface. Do not
+        # introduce stretched image elements or custom geometry managers.
         palettes = {
             "Primary": (BLUE, "#255BCB", "#417DF0", "#243953", "#5489F0", "#FFFFFF"),
             "Secondary": ("#1C2A3D", "#152235", "#273C55", "#1C2838", BORDER, INK),
@@ -104,31 +65,19 @@ class Theme:
             "Eye": (FIELD, "#23354C", "#1C2C40", FIELD, FIELD, LINK),
         }
         for kind, (fill, press, hover, disabled, edge, fg) in palettes.items():
-            name = "GS."+kind
-            normal = self._skin(name+".normal", fill, edge)
-            active = self._skin(name+".active", hover, edge)
-            down = self._skin(name+".pressed", press, edge)
-            off = self._skin(name+".disabled", disabled, disabled)
-            focus = self._skin(name+".focus", fill, FOCUS)
-            element = name+".surface"
-            radius = self.dp(9)+self.dp(2)
-            self.style.element_create(element, "image", normal,
-                                      ("disabled", off), ("pressed", down),
-                                      ("focus", focus), ("active", active),
-                                      border=radius, sticky="nsew")
-            style_name = name+".TButton"
-            self.style.layout(style_name, [(element, {"sticky":"nswe", "children":[
-                ("Button.padding", {"sticky":"nswe", "children":[
-                    ("Button.label", {"sticky":"nswe"})]})]})])
-            padding = (self.dp(14), self.dp(10)) if kind in ("Primary","Secondary") else (
-                self.dp(7), self.dp(5))
-            self.style.configure(style_name, background=fill, foreground=fg,
-                                 font=self.font(11 if kind in ("Primary","Secondary") else 9,
-                                                kind=="Primary"),
-                                 padding=padding, anchor="center", borderwidth=0)
-            self.style.map(style_name, foreground=[("disabled", DISABLED)],
-                           background=[("disabled", disabled), ("pressed", press),
-                                       ("active", hover)])
+            name="GS."+kind+".TButton"
+            padding=(self.dp(14),self.dp(10)) if kind in ("Primary","Secondary") else (
+                self.dp(7),self.dp(5))
+            self.style.configure(name,background=fill,foreground=fg,
+                bordercolor=edge,lightcolor=fill,darkcolor=fill,focuscolor=FOCUS,
+                relief="flat",borderwidth=1,anchor="center",padding=padding,
+                font=self.font(11 if kind in ("Primary","Secondary") else 9,kind=="Primary"))
+            self.style.map(name,foreground=[("disabled",DISABLED)],
+                background=[("disabled",disabled),("pressed",press),("active",hover)],
+                lightcolor=[("disabled",disabled),("pressed",press),("active",hover)],
+                darkcolor=[("disabled",disabled),("pressed",press),("active",hover)],
+                bordercolor=[("disabled",disabled),("focus",FOCUS),("active",edge)],
+                relief=[("pressed","flat"),("!pressed","flat")])
 
     def icon(self, name, size=18, color=MUTED):
         key = ("icon", name, size, color)
@@ -195,39 +144,16 @@ class Theme:
         return self.images[key]
 
     def _checkbox_style(self):
-        size = self.dp(18)
-        def mark(name, fill, border, checked=False):
-            aa=4
-            im=Image.new("RGBA",(size*aa,size*aa))
-            draw=ImageDraw.Draw(im)
-            draw.rounded_rectangle((aa//2,aa//2,size*aa-aa//2-1,size*aa-aa//2-1),
-                                    radius=self.dp(4)*aa,fill=fill,outline=border,
-                                    width=max(aa,self.dp(1)*aa))
-            if checked:
-                draw.line([(round(size*aa*x),round(size*aa*y))
-                           for x,y in [(0.23,.52),(.43,.71),(.77,.30)]],
-                          fill="#FFFFFF",width=max(aa,self.dp(2)*aa),joint="curve")
-            image=ImageTk.PhotoImage(im.resize((size,size),Image.Resampling.LANCZOS),
-                                     master=self.root)
-            self.images["check."+name]=image
-            return image
-        normal=mark("normal",FIELD,BORDER)
-        selected=mark("selected",BLUE,BLUE,True)
-        focus=mark("focus",FIELD,FOCUS)
-        selected_focus=mark("selected-focus",BLUE,FOCUS,True)
-        disabled=mark("disabled","#202B39","#3B495B")
-        disabled_selected=mark("disabled-selected","#344762","#465972",True)
-        self.style.element_create("GS.Check.indicator","image",normal,
-                                  ("disabled","selected",disabled_selected),
-                                  ("disabled",disabled),("focus","selected",selected_focus),
-                                  ("selected",selected),("focus",focus),sticky="w")
-        self.style.layout("GS.TCheckbutton",[("Checkbutton.padding",{"sticky":"nswe","children":[
-            ("GS.Check.indicator",{"side":"left","sticky":"w"}),
-            ("Checkbutton.label",{"side":"left","sticky":"w"})]})])
-        self.style.configure("GS.TCheckbutton",background=CARD,foreground=INK,
-                             font=self.font(9),padding=(self.dp(2),self.dp(4)))
-        self.style.map("GS.TCheckbutton",foreground=[("disabled",DISABLED)],
-                       background=[("active",CARD)])
+        # Retain native checkbox semantics, focus and keyboard navigation.
+        name="GS.TCheckbutton"
+        self.style.configure(name,background=CARD,foreground=INK,
+            font=self.font(9),padding=(self.dp(2),self.dp(4)),
+            indicatorbackground=FIELD,indicatorforeground=INK,
+            indicatorcolor=FIELD,focuscolor=FOCUS,bordercolor=BORDER)
+        self.style.map(name,foreground=[("disabled",DISABLED)],
+            background=[("active",CARD)],
+            indicatorbackground=[("disabled",CARD),("selected",BLUE)],
+            indicatorcolor=[("disabled",CARD),("selected",BLUE)])
 
     def button(self,parent,text,command,kind="Primary",**kwargs):
         return ttk.Button(parent,text=text,command=command,style="GS."+kind+".TButton",
@@ -247,40 +173,35 @@ def theme_for(window):
     return theme
 
 
-class RoundedPanel(ttk.Frame):
-    """Native children on a lightweight, cached nine-slice rounded frame."""
-    def __init__(self,parent,theme,*,fill=CARD,border=BORDER,outer=BG,
-                 radius=14,padx=22,pady=20):
+class Surface(tk.Frame):
+    """Flat native surface; changing focus changes a single border color."""
+    def __init__(self,parent,theme,*,fill=CARD,border=BORDER,padx=22,pady=20):
+        super().__init__(parent,bg=fill,bd=0,highlightthickness=theme.dp(1),
+                         highlightbackground=border,highlightcolor=border)
         self.theme=theme
-        self.fill,self.border,self.outer,self.radius=fill,border,outer,radius
-        style=theme.panel_style(fill,border,outer,radius)
-        super().__init__(parent,style=style,padding=(theme.dp(padx),theme.dp(pady)))
+        self.fill,self.border=fill,border
         self.inner=tk.Frame(self,bg=fill,bd=0,highlightthickness=0)
-        self.inner.pack(fill="both",expand=True)
+        self.inner.pack(fill="both",expand=True,padx=theme.dp(padx),pady=theme.dp(pady))
 
     def recolor(self,fill=None,border=None):
-        fill=self.fill if fill is None else fill
-        border=self.border if border is None else border
-        if (fill,border)==(self.fill,self.border):
-            return
-        if fill!=self.fill:
+        if fill is not None and fill!=self.fill:
+            self.fill=fill
+            self.configure(bg=fill)
             self.inner.configure(bg=fill)
-        self.fill,self.border=fill,border
-        self.configure(style=self.theme.panel_style(fill,border,self.outer,self.radius))
+        if border is not None and border!=self.border:
+            self.border=border
+            self.configure(highlightbackground=border,highlightcolor=border)
 
 
 class Field(tk.Frame):
-    """A real, editable Tk entry with icon, placeholder and rounded focus ring."""
+    """Native text entry and a cheap focus border, with no text-change callbacks."""
     def __init__(self,parent,theme,label,variable,*,icon,placeholder="",secret=False):
         super().__init__(parent,bg=CARD,bd=0)
         self.theme,self.variable,self.secret=theme,variable,secret
         self.revealed=False
         theme.label(self,label,size=10,bold=True).pack(fill="x",pady=(0,theme.dp(6)))
-        self.surface=RoundedPanel(self,theme,fill=FIELD,border=BORDER,outer=CARD,
-                                  radius=9,padx=11,pady=7)
+        self.surface=Surface(self,theme,fill=FIELD,border=BORDER,padx=11,pady=7)
         self.surface.pack(fill="x")
-        # Prime both focus states during construction, not on the first click.
-        theme.panel_style(FIELD,FOCUS,CARD,9)
         row=self.surface.inner
         tk.Label(row,image=theme.icon(icon,18),bg=FIELD,bd=0).pack(
             side="left",padx=(0,theme.dp(9)))
@@ -298,43 +219,13 @@ class Field(tk.Frame):
             self.eye.pack(side="right",padx=(theme.dp(4),0))
             self.eye.bind("<FocusIn>",self._focus,add="+")
             self.eye.bind("<FocusOut>",self._focus,add="+")
-        self.placeholder=theme.label(row,placeholder,size=10,fg=DISABLED,bg=FIELD,wrap=0)
-        self.placeholder.bind("<Button-1>",lambda _:self.entry.focus_set())
+        # Labels above each field identify it. Avoid an overlaid placeholder,
+        # variable traces and place/pack interaction during editing.
         self.entry.bind("<FocusIn>",self._focus,add="+")
         self.entry.bind("<FocusOut>",self._focus,add="+")
-        self._focus_job=None
-        self._placeholder_visible=False
-        self._trace=variable.trace_add("write",self._update_placeholder)
-        self.bind("<Destroy>",self._on_destroy,add="+")
-        self._update_placeholder()
-    def _on_destroy(self,event):
-        if event.widget is self:
-            if self._focus_job is not None:
-                self.after_cancel(self._focus_job)
-                self._focus_job=None
-            try:self.variable.trace_remove("write",self._trace)
-            except tk.TclError:pass
-    def _update_placeholder(self,*_args):
-        visible=not self.variable.get() and self.entry.focus_get() is not self.entry
-        if visible==self._placeholder_visible:
-            return
-        self._placeholder_visible=visible
-        if visible:
-            self.placeholder.place(in_=self.entry,relx=0,rely=.5,anchor="w")
-        else:
-            self.placeholder.place_forget()
-    def _focus(self,_event=None):
-        if self._focus_job is not None:
-            self.after_cancel(self._focus_job)
-        def update():
-            self._focus_job=None
-            if not self.winfo_exists():
-                return
-            focus=self.entry.focus_get()
-            focused=focus is not None and focus in (self.entry,self.eye)
-            self.surface.recolor(border=FOCUS if focused else BORDER)
-            self._update_placeholder()
-        self._focus_job=self.after_idle(update)
+    def _focus(self,event):
+        self.surface.recolor(border=FOCUS if event.type==tk.EventType.FocusIn else BORDER)
+
     def toggle(self):
         if not self.secret:return
         self.revealed=not self.revealed
@@ -351,16 +242,13 @@ class Field(tk.Frame):
         self.entry.focus_set()
 
 
-class Notice(RoundedPanel):
+class Notice(Surface):
     def __init__(self,parent,theme):
-        super().__init__(parent,theme,fill=INFO_BG,border=INFO_EDGE,outer=CARD,
-                         radius=9,padx=10,pady=9)
+        super().__init__(parent,theme,fill=INFO_BG,border=INFO_EDGE,padx=10,pady=9)
         self.icon_label=tk.Label(self.inner,bg=INFO_BG,bd=0)
         self.icon_label.pack(side="left",anchor="n",padx=(0,theme.dp(8)))
         self.text=theme.label(self.inner,fg=INFO_INK,bg=INFO_BG,wrap=316,size=9)
         self.text.pack(side="left",fill="x",expand=True)
-        for fill,edge in ((INFO_BG,INFO_EDGE),(ERROR_BG,ERROR_EDGE),(SUCCESS_BG,SUCCESS_EDGE),(WARN_BG,WARN_EDGE)):
-            theme.panel_style(fill,edge,CARD,9)
         self._notice_key=None
     def show(self,text,kind="info",*,before=None):
         key=(text,kind,before)
@@ -440,23 +328,35 @@ class Shell:
         self._fit_job=None
         self._size=None
         self._scrolling=False
-        self._canvas_width=None
         self._scrollregion=None
         self._titlebar_applied=False
-        self._fit_running=False
+        self._closed=False
         window.configure(bg=BG)
         window.resizable(False,False)
         self.viewport=tk.Frame(window,bg=BG)
         self.viewport.pack(fill="both",expand=True)
-        self.canvas=tk.Canvas(self.viewport,bg=BG,highlightthickness=0,bd=0)
-        self.scroll=ttk.Scrollbar(self.viewport,orient="vertical",style="GS.Vertical.TScrollbar",
-                                  command=self.canvas.yview)
+        # Set the content width once. Reserve a scrollbar gutter regardless of
+        # whether scrolling is needed. There is no canvas <Configure> binding
+        # that resizes its embedded frame in response to geometry changes.
+        self.scroll=ttk.Scrollbar(self.viewport,orient="vertical",style="GS.Vertical.TScrollbar")
+        gutter=max(t.dp(14),self.scroll.winfo_reqwidth())
+        screen_w=window.winfo_screenwidth()
+        self._width=min(t.dp(448)+gutter,max(200,screen_w-t.dp(30)))
+        content_width=max(1,self._width-gutter)
+        self.viewport.grid_columnconfigure(0,weight=1)
+        self.viewport.grid_columnconfigure(1,minsize=gutter)
+        self.viewport.grid_rowconfigure(0,weight=1)
+        self.canvas=tk.Canvas(self.viewport,width=content_width,height=1,bg=BG,
+                              highlightthickness=0,bd=0)
+        self.scroll.configure(command=self.canvas.yview)
         self.canvas.configure(yscrollcommand=self.scroll.set)
-        self.canvas.pack(side="left",fill="both",expand=True)
+        self.canvas.grid(row=0,column=0,sticky="nsew")
+        self.scroll.grid(row=0,column=1,sticky="ns")
+        self.scroll.grid_remove()
         self.body=tk.Frame(self.canvas,bg=BG,padx=t.dp(20),pady=t.dp(17))
-        self.body_id=self.canvas.create_window(0,0,window=self.body,anchor="nw")
+        self.body_id=self.canvas.create_window(0,0,window=self.body,anchor="nw",
+                                               width=content_width)
         self.body.bind("<Configure>",self._body_changed,add="+")
-        self.canvas.bind("<Configure>",self._canvas_changed,add="+")
         window.bind("<Map>",self._on_map,add="+")
         window.bind("<Destroy>",self._on_destroy,add="+")
         window.bind("<MouseWheel>",self._wheel,add="+")
@@ -474,7 +374,7 @@ class Shell:
         tk.Label(brand,image=t.icon("shield",20,LINK),bg=BG,bd=0).pack(side="right")
         try:window.iconphoto(True,self.brand_logo)
         except tk.TclError:pass
-        card=RoundedPanel(self.body,t,radius=16,padx=22,pady=21)
+        card=Surface(self.body,t,padx=22,pady=21)
         card.pack(fill="x")
         self.card=card.inner
         self.stage=tk.Frame(self.card,bg=CARD)
@@ -527,16 +427,15 @@ class Shell:
             if y<top:self.canvas.yview_moveto(max(0,y-self.theme.dp(12))/max(total,1))
             elif bottom>top+height:self.canvas.yview_moveto(max(0,bottom-height+self.theme.dp(12))/max(total,1))
         except tk.TclError:pass
-    def _body_changed(self,_event=None):
-        bounds=self.canvas.bbox("all")
+    def _body_changed(self,event):
+        # The embedded frame follows its children's natural height only.
+        # Update the scroll range without changing the frame's dimensions.
+        bounds=(0,0,event.width,event.height)
         if bounds!=self._scrollregion:
             self._scrollregion=bounds
             self.canvas.configure(scrollregion=bounds)
-
-    def _canvas_changed(self,event):
-        if event.width!=self._canvas_width:
-            self._canvas_width=event.width
-            self.canvas.itemconfigure(self.body_id,width=event.width)
+            if self._size is not None:
+                self.request_fit()
 
     def _on_map(self,event):
         if event.widget is self.window and not self._titlebar_applied:
@@ -544,54 +443,49 @@ class Shell:
             dark_titlebar(self.window)
 
     def _on_destroy(self,event):
-        if event.widget is self.window and self._fit_job is not None:
-            self.window.after_cancel(self._fit_job)
-            self._fit_job=None
+        if event.widget is self.window:
+            self._closed=True
+            if self._fit_job is not None:
+                self.window.after_cancel(self._fit_job)
+                self._fit_job=None
 
     def request_fit(self):
-        """Coalesce layout requests; event handlers can return immediately."""
-        if self._fit_job is None and not self._fit_running:
+        """One deferred layout measurement, never a nested Tk event loop."""
+        if not self._closed and self._fit_job is None:
             self._fit_job=self.window.after_idle(self._fit_requested)
 
     def _fit_requested(self):
         self._fit_job=None
-        self.fit()
+        if not self._closed:
+            self._fit()
 
     def fit(self):
-        """Fit initial content or a changed page, never a focus/typing event."""
-        if self._fit_running:
-            return
-        self._fit_running=True
-        try:
-            self._fit()
-        finally:
-            self._fit_running=False
+        # Called at initial construction, before the window is mapped.
+        # Do not call update/update_idletasks from subsequent UI callbacks.
+        if self._size is None:
+            self.window.update_idletasks()
+        self._fit()
 
     def _fit(self):
         w=self.window;t=self.theme
-        # Flush geometry once. No repaint-triggered nested fit or DWM calls.
-        w.update_idletasks()
         ideal_height=self.body.winfo_reqheight()
         screen_w,screen_h=w.winfo_screenwidth(),w.winfo_screenheight()
-        limit_h=max(t.dp(210),screen_h-t.dp(90))
-        limit_w=max(t.dp(240),screen_w-t.dp(30))
+        limit_h=max(150,screen_h-t.dp(90))
         has_scroll=ideal_height>limit_h
         if has_scroll!=self._scrolling:
             self._scrolling=has_scroll
             if has_scroll:
-                self.scroll.pack(side="right",fill="y",before=self.canvas)
+                self.scroll.grid()
             else:
-                self.scroll.pack_forget()
+                self.scroll.grid_remove()
                 self.canvas.yview_moveto(0)
-        # Keep the width stable when text, status, or password visibility changes.
-        width=min(limit_w,t.dp(448)+(self.scroll.winfo_reqwidth() if has_scroll else 0))
-        height=min(limit_h,ideal_height)
+        width=self._width
+        height=min(limit_h,max(t.dp(160),ideal_height))
         size=(width,height)
         if size!=self._size:
             if self._size is None:
                 x,y=max(0,(screen_w-width)//2),max(0,(screen_h-height)//2)
             else:
-                # Preserve the user's window position rather than recentering.
                 x=max(0,min(w.winfo_x(),screen_w-width))
                 y=max(0,min(w.winfo_y(),screen_h-height-t.dp(40)))
             self._size=size
