@@ -1,13 +1,203 @@
-"""Small native sign-in dialog, before starting the local editor server."""
+"""Modern native sign-in dialog, before starting the local editor server."""
 from __future__ import annotations
 
 import os
 import queue
 import threading
-from pathlib import Path
 
 from .firebase_auth import AccessGate, AuthDenied, AuthError, FirebaseClient, load_config
 from .firebase_vault import WindowsSessionVault
+
+
+class LoginWindow:
+    """UI only. A successful AccessGate is still required to open the editor."""
+    def __init__(self, root, client, vault, *, force_prompt=False, version=""):
+        import tkinter as tk
+        from tkinter import ttk
+        from .auth_ui import CARD, BORDER, MUTED, Field, Notice, Progress, Shell
+
+        self.root, self.client, self.vault = root, client, vault
+        self.version = version
+        self.result = None
+        self.restored_state = {}
+        self.busy = False
+        self.pending = queue.Queue()
+        self.poll_id = None
+        root.title("GeoStudio — Logowanie")
+        self.shell = Shell(root, version, privacy=bool(client.config.admin_url))
+        t = self.shell.theme
+        self.shell.heading("Zaloguj się", "Zaloguj się, aby otworzyć edytor map.")
+        form = self.shell.content
+        self.email = tk.StringVar(master=root)
+        self.password = tk.StringVar(master=root)
+        self.remember = tk.BooleanVar(master=root, value=False)
+        self.email_field = Field(form, t, "Adres e-mail", self.email,
+                                 icon="mail", placeholder="nazwa@domena.pl")
+        self.email_field.pack(fill="x", pady=(0, t.dp(14)))
+        self.password_field = Field(form, t, "Hasło", self.password,
+                                    icon="lock", placeholder="Wprowadź hasło", secret=True)
+        self.password_field.pack(fill="x", pady=(0, t.dp(9)))
+        options = tk.Frame(form, bg=CARD)
+        options.pack(fill="x", pady=(0, t.dp(16)))
+        self.keep = t.checkbox(options, "Zapamiętaj mnie", self.remember)
+        self.keep.pack(side="left", anchor="w")
+        self.reset = t.button(options, "Nie pamiętasz hasła?", self.reset_password, "Link")
+        self.reset.pack(side="right")
+        self.notice = Notice(form, t)
+        self.progress = Progress(form, t)
+        self.primary = t.button(form, "Zaloguj się", self.submit)
+        self.primary.pack(fill="x")
+        self.register = None
+        if client.config.admin_url:
+            tk.Frame(form, bg=BORDER, height=t.dp(1)).pack(fill="x", pady=(t.dp(18), t.dp(10)))
+            footer = tk.Frame(form, bg=CARD)
+            footer.pack(fill="x")
+            line = tk.Frame(footer, bg=CARD)
+            line.pack(anchor="center")
+            t.label(line, "Masz kod zaproszenia?", fg=MUTED, size=9, wrap=0).pack(side="left")
+            self.register = t.button(line, "Utwórz konto", self.show_registration, "Link")
+            self.register.pack(side="left", padx=(t.dp(3), 0))
+        self._set_busy(False)
+
+        def enter(event):
+            if isinstance(event.widget, ttk.Button) and event.widget is not self.primary:
+                event.widget.invoke()
+            else:
+                self.submit()
+            return "break"
+        root.bind("<Return>", enter)
+        root.bind("<Escape>", lambda _: self.close() or "break")
+        root.protocol("WM_DELETE_WINDOW", self.close)
+        self.shell.fit()
+        root.deiconify()
+        self.email_field.focus()
+        if vault is not None and not force_prompt:
+            try:
+                self.restored_state = vault.load_state() or {}
+                if self.restored_state:
+                    self.remember.set(True)
+                    self._launch("restore", lambda: client.restore(self.restored_state), True)
+            except (OSError, ValueError):
+                self._notice("Nie udało się odczytać zapamiętanej sesji. Zaloguj się ponownie.",
+                             "warning")
+        self.poll_id = root.after(100, self._poll)
+
+    def _notice(self, text="", kind="info"):
+        self.notice.show(text, kind, before=self.primary)
+        self.shell.fit()
+
+    def _set_busy(self, busy, action=""):
+        self.busy = busy
+        self.email_field.set_enabled(not busy)
+        self.password_field.set_enabled(not busy)
+        self.keep.configure(state="normal" if not busy and self.vault else "disabled")
+        self.reset.configure(state="disabled" if busy else "normal")
+        if self.register is not None:
+            self.register.configure(state="disabled" if busy else "normal")
+        labels = {"login": "Logowanie…", "restore": "Sprawdzanie sesji…",
+                  "reset": "Wysyłanie wiadomości…"}
+        self.primary.configure(state="disabled" if busy else "normal",
+                               text=labels.get(action, "Łączenie…") if busy else "Zaloguj się")
+        if busy:
+            self.notice.show("")
+            self.progress.start(before=self.primary)
+        else:
+            self.progress.stop()
+
+    def _launch(self, action, task, keep_session=False):
+        if self.busy:
+            return
+        self._set_busy(True, action)
+        self.shell.fit()
+
+        def worker():
+            try:
+                self.pending.put((action, task(), None, keep_session))
+            except AuthError as error:
+                self.pending.put((action, None, error, keep_session))
+            except Exception:
+                self.pending.put((action, None, AuthError("Nie udało się sprawdzić dostępu."), keep_session))
+        threading.Thread(target=worker, daemon=True, name="GeoStudioSignIn").start()
+
+    def _poll(self):
+        from tkinter import messagebox
+        self.poll_id = None
+        try:
+            action, grant, error, keep_session = self.pending.get_nowait()
+        except queue.Empty:
+            self.poll_id = self.root.after(100, self._poll)
+            return
+        self._set_busy(False)
+        if action in ("login", "restore") and error is None:
+            gate = AccessGate(self.client, grant, self.vault, keep_session,
+                              last_seen=self.restored_state.get("lastSeen", 0) if action == "restore" else 0)
+            status = gate.status()
+            if not status["active"]:
+                error = AuthDenied("Sesja wygasła. Zaloguj się ponownie.")
+            else:
+                if status["storageWarning"]:
+                    messagebox.showwarning("GeoStudio", status["storageWarning"], parent=self.root)
+                self.result = gate
+                self.close()
+                return
+        if action == "restore" and isinstance(error, AuthDenied) and self.vault is not None:
+            try:
+                self.vault.clear()
+            except OSError:
+                pass
+        self._notice(str(error) if error else
+                     "Jeżeli konto istnieje, otrzymasz e-mail z instrukcją zmiany hasła.",
+                     "error" if error else "info")
+        if action == "login":
+            self.password_field.focus()
+        elif action == "restore":
+            self.email_field.focus()
+        self.poll_id = self.root.after(100, self._poll)
+
+    def submit(self):
+        if self.busy:
+            return
+        address, secret, keep_session = self.email.get(), self.password.get(), self.remember.get()
+        if not address.strip() or not secret:
+            self._notice("Wpisz adres e-mail i hasło.", "error")
+            (self.email_field if not address.strip() else self.password_field).focus()
+            return
+        self.password.set("")
+        self.password_field.mask()
+        self._launch("login", lambda: self.client.login(address, secret), keep_session)
+
+    def reset_password(self):
+        if self.busy:
+            return
+        address = self.email.get()
+        if not address.strip() or "@" not in address:
+            self._notice("Wpisz adres e-mail, aby otrzymać link do zmiany hasła.", "info")
+            self.email_field.focus()
+            return
+        self._launch("reset", lambda: self.client.reset_password(address))
+
+    def show_registration(self):
+        if self.busy:
+            return
+        from .firebase_registration import open_registration
+        self.password.set("")
+        self.password_field.mask()
+        registration = open_registration(self.root, self.client, initial_email=self.email.get(),
+                                         version=self.version)
+        if registration:
+            address, notice = registration
+            self.email.set(address)
+            kind = "success" if notice.startswith("Konto gotowe") else "info"
+            self._notice(notice, kind)
+            self.password_field.focus()
+
+    def close(self):
+        self.password.set("")
+        self.progress.stop()
+        if self.poll_id is not None:
+            self.root.after_cancel(self.poll_id)
+            self.poll_id = None
+        self.root.destroy()
 
 
 def run_login(force_prompt=False):
@@ -23,227 +213,7 @@ def run_login(force_prompt=False):
         messagebox.showerror("GeoStudio — konfiguracja", str(error), parent=root)
         root.destroy()
         return None
-
     vault = WindowsSessionVault(client.config.project_id) if os.name == "nt" else None
-    root.title("GeoStudio 2.0 — Logowanie")
-    root.configure(background="#101720")
-    root.resizable(False, False)
-    # Size to the controls after layout, including Windows display scaling.
-    root.minsize(440, 400)
-    panel = tk.Frame(root, background="#101720", padx=30, pady=20)
-    panel.pack(fill="both", expand=True)
-    try:
-        icon = tk.PhotoImage(file=str(Path(__file__).parent / "static" / "geostudio-icon.png"))
-        icon = icon.subsample(max(1, icon.width() // 48))
-        root.iconphoto(True, icon)
-        tk.Label(panel, image=icon, background="#101720").pack()
-    except tk.TclError:
-        pass
-    tk.Label(panel, text="GeoStudio 2.0", font=("Segoe UI", 20, "bold"),
-             fg="#e9eff7", bg="#101720").pack(pady=(0, 3))
-    tk.Label(panel, text="Zaloguj się, aby otworzyć edytor map", font=("Segoe UI", 10),
-             fg="#a5b2c4", bg="#101720").pack(pady=(0, 18))
-    form = tk.Frame(panel, bg="#172230", padx=17, pady=15,
-                    highlightthickness=1, highlightbackground="#35485e")
-    form.pack(fill="x")
-    email = tk.StringVar()
-    password = tk.StringVar()
-    remember = tk.BooleanVar(value=False)
-
-    def field(label, var, show=None):
-        tk.Label(form, text=label, fg="#e9eff7", bg="#172230",
-                 font=("Segoe UI", 10)).pack(anchor="w")
-        line = tk.Frame(form, bg="#0e1824", highlightthickness=1,
-                        highlightbackground="#35485e")
-        line.pack(fill="x", pady=(3, 10))
-        entry = tk.Entry(line, textvariable=var, show=show or "", width=27,
-                         font=("Segoe UI", 11), bg="#0e1824", fg="#e9eff7",
-                         insertbackground="#e9eff7", disabledbackground="#0e1824",
-                         disabledforeground="#a5b2c4", bd=0, relief="flat")
-        entry.pack(side="left", fill="x", expand=True, ipady=7, padx=(10, 4))
-        entry.bind("<FocusIn>", lambda _: line.configure(highlightbackground="#3978e5"))
-        entry.bind("<FocusOut>", lambda _: line.configure(highlightbackground="#35485e"))
-        return entry, line
-
-    email_entry, _ = field("Adres e-mail", email)
-    password_entry, password_line = field("Hasło", password, "•")
-    revealed = False
-
-    def toggle_password():
-        nonlocal revealed
-        revealed = not revealed
-        password_entry.configure(show="" if revealed else "•")
-        eye.configure(text="Ukryj" if revealed else "👁 Pokaż")
-        password_entry.focus_set()
-
-    eye = tk.Button(password_line, text="👁 Pokaż", command=toggle_password,
-                    font=("Segoe UI", 9), fg="#9cbfff", bg="#0e1824",
-                    activebackground="#35485e", activeforeground="white",
-                    relief="flat", padx=6, bd=0)
-    eye.pack(side="right", padx=(0, 4))
-    keep = tk.Checkbutton(form, text="Zapamiętaj mnie na tym komputerze",
-                          variable=remember, bg="#172230", fg="#e9eff7",
-                          activebackground="#172230", activeforeground="#e9eff7",
-                          selectcolor="#25364b", anchor="w")
-    keep.pack(fill="x")
-    if vault is None:
-        keep.configure(state="disabled")
-    message = tk.StringVar()
-    tk.Label(form, textvariable=message, fg="#f0c482", bg="#172230",
-             justify="left", anchor="nw", wraplength=345,
-             height=2, font=("Segoe UI", 9)).pack(fill="x", pady=(5, 4))
-    # A progress indicator belongs only to a running request. Draw it on
-    # a native Tk canvas so Windows themes do not override the dark palette.
-    progress = tk.Canvas(form, height=5, background="#0e1824",
-                         highlightthickness=0, borderwidth=0)
-    progress_bar = progress.create_rectangle(0, 0, 0, 5, fill="#3978e5", width=0)
-    progress_step = 0
-
-    def animate_progress():
-        nonlocal progress_step
-        if not busy:
-            return
-        width = max(1, progress.winfo_width())
-        segment = max(24, width // 4)
-        start = (progress_step % (width + segment)) - segment
-        progress.coords(progress_bar, start, 0, start + segment, 5)
-        progress_step += 9
-        root.after(30, animate_progress)
-
-    pending = queue.Queue()
-    result = []
-    busy = False
-
-    def launch(action, task, keep_session=False):
-        nonlocal busy
-        if busy:
-            return
-        busy = True
-        email_entry.configure(state="disabled")
-        password_entry.configure(state="disabled")
-        eye.configure(state="disabled")
-        submit.configure(state="disabled")
-        reset.configure(state="disabled")
-        register.configure(state="disabled")
-        keep.configure(state="disabled")
-        message.set("Łączenie z Firebase…")
-        progress.pack(fill="x", pady=(6, 0))
-        animate_progress()
-
-        def worker():
-            try:
-                pending.put((action, task(), None, keep_session))
-            except AuthError as error:
-                pending.put((action, None, error, keep_session))
-            except Exception:
-                pending.put((action, None, AuthError("Nie udało się sprawdzić dostępu."), keep_session))
-        threading.Thread(target=worker, daemon=True).start()
-
-    def poll():
-        nonlocal busy
-        try:
-            action, grant, error, keep_session = pending.get_nowait()
-        except queue.Empty:
-            root.after(100, poll)
-            return
-        busy = False
-        progress.pack_forget()
-        if action in ("login", "restore") and error is None:
-            gate = AccessGate(client, grant, vault, keep_session,
-                              last_seen=restored_state.get("lastSeen", 0) if action == "restore" else 0)
-            if not gate.status()["active"]:
-                error = AuthDenied("Sesja wygasła. Zaloguj się ponownie.")
-            else:
-                if gate.status()["storageWarning"]:
-                    messagebox.showwarning("GeoStudio", gate.status()["storageWarning"], parent=root)
-                result.append(gate)
-                root.destroy()
-                return
-        if action == "restore" and isinstance(error, AuthDenied) and vault is not None:
-            try:
-                vault.clear()
-            except OSError:
-                pass
-        email_entry.configure(state="normal")
-        password_entry.configure(state="normal")
-        eye.configure(state="normal")
-        submit.configure(state="normal")
-        reset.configure(state="normal")
-        register.configure(state="normal" if client.config.admin_url else "disabled")
-        keep.configure(state="normal" if vault else "disabled")
-        message.set(str(error) if error else
-                    "Jeżeli konto istnieje, otrzymasz e-mail z instrukcją zmiany hasła.")
-        root.after(100, poll)
-
-    def submit_login():
-        address, secret, keep_session = email.get(), password.get(), remember.get()
-        password.set("")
-        if revealed:
-            toggle_password()
-        launch("login", lambda: client.login(address, secret), keep_session)
-
-    def reset_password():
-        address = email.get()
-        launch("reset", lambda: client.reset_password(address))
-
-    submit = tk.Button(form, text="Zaloguj się", command=submit_login,
-                       bg="#3978e5", fg="white", activebackground="#2864cf",
-                       activeforeground="white", relief="flat", padx=16, pady=8,
-                       font=("Segoe UI", 11, "bold"))
-    submit.pack(fill="x")
-    reset = tk.Button(form, text="Nie pamiętasz hasła?", command=reset_password,
-                      fg="#8bb5ff", bg="#172230", activebackground="#172230",
-                      activeforeground="white", relief="flat")
-    reset.pack(pady=(5, 0))
-
-    def show_registration():
-        if busy:
-            return
-        from .firebase_registration import open_registration
-        password.set("")
-        if revealed:
-            toggle_password()
-        registration = open_registration(root, client, initial_email=email.get())
-        if registration:
-            address, notice = registration
-            email.set(address)
-            message.set(notice)
-            password_entry.focus_set()
-
-    register = tk.Button(form, text="Utwórz konto",
-                         command=show_registration, fg="#e9eff7", bg="#25364b",
-                         activebackground="#35485e", activeforeground="white",
-                         relief="flat", padx=8, pady=7, font=("Segoe UI", 10))
-    if client.config.admin_url:
-        register.pack(fill="x", pady=(8, 0))
-    else:
-        register.configure(state="disabled")
-    if client.config.admin_url:
-        tk.Label(panel, text="Usługa zapisuje czas udanych połączeń, ID i nazwę komputera. "
-                 "Nie przesyła map ani ścieżek plików.", wraplength=355,
-                 justify="center", fg="#a5b2c4", bg="#101720",
-                 font=("Segoe UI", 9)).pack(pady=(8, 0))
-    tk.Label(panel, text="GeoStudio " + current_version() + "  ·  Dostęp dla uprawnionych",
-             fg="#a5b2c4", bg="#101720", font=("Segoe UI", 9)).pack(pady=(10, 0))
-    root.update_idletasks()
-    width = max(440, root.winfo_reqwidth())
-    height = max(460, root.winfo_reqheight())
-    root.geometry("%dx%d+%d+%d" % (width, height,
-                  max(0, (root.winfo_screenwidth()-width)//2),
-                  max(0, (root.winfo_screenheight()-height)//2)))
-    root.deiconify()
-    root.bind("<Return>", lambda _event: submit_login() if not busy else None)
-    root.protocol("WM_DELETE_WINDOW", root.destroy)
-    email_entry.focus_set()
-    restored_state = {}
-    if vault is not None and not force_prompt:
-        try:
-            restored_state = vault.load_state() or {}
-            if restored_state:
-                remember.set(True)
-                launch("restore", lambda: client.restore(restored_state), True)
-        except (OSError, ValueError):
-            message.set("Nie udało się odczytać zapamiętanej sesji. Zaloguj się ponownie.")
-    root.after(100, poll)
+    window = LoginWindow(root, client, vault, force_prompt=force_prompt, version=current_version())
     root.mainloop()
-    return result[0] if result else None
+    return window.result

@@ -1,4 +1,4 @@
-"""A compact two-step registration wizard. No passwords or tokens on disk."""
+"""Two-step registration wizard using the same design as the sign-in window."""
 from __future__ import annotations
 
 import queue
@@ -7,276 +7,220 @@ import time
 
 from .firebase_auth import AuthError
 
-BG = "#101720"
-PANEL = "#172230"
-FIELD = "#0e1824"
-INK = "#e9eff7"
-MUTED = "#a5b2c4"
-LINK = "#8bb5ff"
-PRIMARY = "#3978e5"
-BORDER = "#35485e"
 
+class RegistrationWindow:
+    def __init__(self, root, client, initial_email="", *, version=""):
+        import tkinter as tk
+        from tkinter import ttk
+        from .auth_ui import CARD, FIELD, BORDER, LINK, MUTED, Field, Notice, Progress, RoundedPanel, Shell
 
-def open_registration(root, client, initial_email=""):
-    import tkinter as tk
+        self.client = client
+        self.win = win = tk.Toplevel(root)
+        win.withdraw()
+        win.title("GeoStudio — Utwórz konto")
+        win.transient(root)
+        self.shell = Shell(win, version)
+        t = self.shell.theme
+        self.shell.heading("Utwórz konto", "Wprowadź dane i kod otrzymany od administratora.", 1)
+        self.email = tk.StringVar(master=win, value=initial_email)
+        self.password = tk.StringVar(master=win)
+        self.code = tk.StringVar(master=win)
+        self.recipient = tk.StringVar(master=win)
+        self.busy = False
+        self.page = "form"
+        self.session = None
+        self.result = None
+        self.sent_at = None
+        self.poll_id = None
+        self.pending = queue.Queue()
+        content = self.shell.content
+        self.pages = tk.Frame(content, bg=CARD)
+        self.pages.pack(fill="x")
+        self.form = tk.Frame(self.pages, bg=CARD)
+        self.form.pack(fill="x")
+        self.verify = tk.Frame(self.pages, bg=CARD)
+        self.email_field = Field(self.form,t,"Adres e-mail",self.email,
+                                 icon="mail",placeholder="nazwa@domena.pl")
+        self.email_field.pack(fill="x",pady=(0,t.dp(14)))
+        self.password_field = Field(self.form,t,"Hasło",self.password,
+                                    icon="lock",placeholder="Ustaw hasło",secret=True)
+        self.password_field.pack(fill="x",pady=(0,t.dp(4)))
+        t.label(self.form,"Co najmniej 12 znaków",size=9,fg=MUTED).pack(
+            fill="x",pady=(0,t.dp(13)))
+        self.code_field = Field(self.form,t,"Kod zaproszenia",self.code,
+                                icon="key",placeholder="Wklej otrzymany kod")
+        self.code_field.pack(fill="x",pady=(0,t.dp(18)))
+        self.fields = (self.email_field,self.password_field,self.code_field)
 
-    win = tk.Toplevel(root)
-    win.title("GeoStudio — Utwórz konto")
-    win.configure(bg=BG)
-    win.transient(root)
-    win.resizable(False, False)
-    win.grab_set()
-    panel = tk.Frame(win, bg=PANEL, padx=24, pady=20,
-                     highlightthickness=1, highlightbackground=BORDER)
-    panel.pack(fill="both", expand=True, padx=14, pady=14)
-    stage_label = tk.StringVar(value="KROK 1 Z 2")
-    title = tk.StringVar(value="Utwórz konto")
-    description = tk.StringVar(value="Wprowadź dane i kod otrzymany od administratora.")
-    tk.Label(panel, textvariable=stage_label, bg=PANEL, fg=LINK,
-             font=("Segoe UI", 9, "bold")).pack(anchor="w")
-    tk.Label(panel, textvariable=title, bg=PANEL, fg=INK,
-             font=("Segoe UI", 20, "bold")).pack(anchor="w", pady=(3, 5))
-    tk.Label(panel, textvariable=description, bg=PANEL, fg=MUTED,
-             font=("Segoe UI", 10), wraplength=342,
-             justify="left", anchor="w").pack(fill="x", pady=(0, 17))
+        illustration = RoundedPanel(self.verify,t,fill="#1C3454",border="#315780",
+                                    outer=CARD,radius=18,padx=15,pady=13)
+        illustration.pack(anchor="center",pady=(0,t.dp(18)))
+        tk.Label(illustration.inner,image=t.icon("mail",36,LINK),bg="#1C3454",bd=0).pack()
+        recipient = RoundedPanel(self.verify,t,fill=FIELD,border=BORDER,outer=CARD,
+                                 radius=10,padx=13,pady=10)
+        recipient.pack(fill="x",pady=(0,t.dp(14)))
+        t.label(recipient.inner,"Twój adres e-mail",size=9,fg=MUTED,bg=FIELD).pack(fill="x")
+        t.label(recipient.inner,"",size=11,bold=True,bg=FIELD,wrap=319,
+                textvariable=self.recipient).pack(fill="x",pady=(t.dp(3),0))
+        t.label(self.verify,"Kliknij link w wiadomości, a następnie wróć tutaj. "
+                "Sprawdź też folder spam.",fg=MUTED).pack(fill="x",pady=(0,t.dp(18)))
+        self.notice = Notice(content,t)
+        self.progress = Progress(content,t)
+        self.primary = t.button(content,"Utwórz konto",self.primary_action)
+        self.primary.pack(fill="x")
+        self.resend = t.button(content,"Nie dotarł e-mail? Wyślij ponownie",
+                               lambda:self.launch("resend"),"Link")
+        self.back = t.button(content,"Wróć do logowania",self.close,"Link")
+        self.back.pack(anchor="center",pady=(t.dp(9),0))
 
-    pages = tk.Frame(panel, bg=PANEL)
-    pages.pack(fill="x")
-    form = tk.Frame(pages, bg=PANEL)
-    verify = tk.Frame(pages, bg=PANEL)
-    form.pack(fill="x")
-    email, password, code = tk.StringVar(value=initial_email), tk.StringVar(), tk.StringVar()
-    message = tk.StringVar()
-    recipient = tk.StringVar()
-    entries = []
-    shown = False
-    busy = False
-    page = "form"
-    session = None
-    result = None
-    sent_at = None
-    poll_id = None
-    pending = queue.Queue()
+        def enter(event):
+            if isinstance(event.widget, ttk.Button) and event.widget is not self.primary:
+                event.widget.invoke()
+            else:
+                self.primary_action()
+            return "break"
+        win.bind("<Return>",enter)
+        win.bind("<Escape>",lambda _:self.close() or "break")
+        win.protocol("WM_DELETE_WINDOW",self.close)
+        self.shell.fit()
+        win.deiconify()
+        win.grab_set()
+        self.email_field.focus()
+        self.poll_id = win.after(150,self.poll)
 
-    def field(label, var, secret=False):
-        tk.Label(form, text=label, fg=INK, bg=PANEL,
-                 font=("Segoe UI", 10)).pack(anchor="w")
-        line = tk.Frame(form, bg=FIELD, highlightthickness=1,
-                        highlightbackground=BORDER)
-        line.pack(fill="x", pady=(4, 12))
-        entry = tk.Entry(line, textvariable=var, show="•" if secret else "",
-                         font=("Segoe UI", 11), bg=FIELD, fg=INK,
-                         disabledbackground=FIELD, disabledforeground=MUTED,
-                         insertbackground=INK, relief="flat", bd=0, width=30)
-        entry.pack(side="left", fill="x", expand=True, padx=(10, 5), ipady=7)
-        entry.bind("<FocusIn>", lambda _: line.configure(highlightbackground=PRIMARY))
-        entry.bind("<FocusOut>", lambda _: line.configure(highlightbackground=BORDER))
-        entries.append(entry)
-        return entry, line
+    def show_notice(self,text="",kind="info"):
+        self.notice.show(text,kind,before=self.primary)
+        self.shell.fit()
 
-    first, _ = field("Adres e-mail", email)
-    password_entry, password_line = field("Hasło", password, True)
+    def refresh_controls(self):
+        for field in self.fields:
+            field.set_enabled(not self.busy)
+        state="disabled" if self.busy else "normal"
+        self.primary.configure(state=state)
+        self.back.configure(state=state)
+        if self.page=="verify":
+            self.update_resend()
 
-    def toggle_password():
-        nonlocal shown
-        shown = not shown
-        password_entry.configure(show="" if shown else "•")
-        eye.configure(text="Ukryj" if shown else "Pokaż")
-        password_entry.focus_set()
+    def update_resend(self):
+        wait=0 if self.sent_at is None else max(0,30-int(time.monotonic()-self.sent_at))
+        can_resend=not self.busy and not wait and not (self.session and self.session.email_verified)
+        text=("Nie dotarł e-mail? Wyślij ponownie" if not wait else "Wyślij ponownie za %d s"%wait)
+        if self.resend.cget("text")!=text:self.resend.configure(text=text)
+        self.resend.configure(state="normal" if can_resend else "disabled")
 
-    eye = tk.Button(password_line, text="Pokaż", command=toggle_password,
-                    bg=FIELD, fg=LINK, disabledforeground=MUTED,
-                    activebackground=BORDER, activeforeground="white",
-                    font=("Segoe UI", 9), relief="flat", bd=0, padx=6)
-    eye.pack(side="right", padx=(0, 4))
-    tk.Label(form, text="Co najmniej 12 znaków", bg=PANEL, fg=MUTED,
-             font=("Segoe UI", 9)).pack(anchor="w", pady=(0, 9))
-    field("Kod zaproszenia", code)
-    tk.Label(verify, text="Wiadomość weryfikacyjna", bg=PANEL, fg=MUTED,
-             font=("Segoe UI", 10)).pack(anchor="w")
-    tk.Label(verify, textvariable=recipient, bg=FIELD, fg=INK, padx=12, pady=11,
-             wraplength=324, justify="left", anchor="w",
-             font=("Segoe UI", 11, "bold")).pack(fill="x", pady=(5, 14))
-    tk.Label(verify, text="Otwórz wiadomość i kliknij link potwierdzający. "
-             "Następnie wróć tutaj. Sprawdź również folder spam.",
-             bg=PANEL, fg=MUTED, wraplength=342, justify="left",
-             anchor="w", font=("Segoe UI", 10)).pack(fill="x")
+    def primary_action(self):
+        self.launch("begin" if self.page=="form" else "finish")
 
-    status = tk.Label(panel, textvariable=message, bg=PANEL, fg="#f0c482",
-                      wraplength=342, justify="left", anchor="nw",
-                      font=("Segoe UI", 9))
-    # Do not reserve a large blank error box before the first interaction.
-    def notice(text="", error=False):
-        message.set(text)
-        status.configure(fg="#f0c482" if error else MUTED)
-        if text:
-            status.pack(fill="x", pady=(3, 10), before=primary)
-        else:
-            status.pack_forget()
-
-    def center():
-        win.update_idletasks()
-        width = max(390, win.winfo_reqwidth())
-        height = win.winfo_reqheight()
-        win.geometry("%dx%d+%d+%d" % (width, height,
-                     max(0, (win.winfo_screenwidth()-width)//2),
-                     max(0, (win.winfo_screenheight()-height)//2)))
-
-    def close():
-        nonlocal result, session, poll_id
-        if busy:
+    def launch(self,action):
+        if self.busy:
             return
-        if session is not None:
-            if result is None:
-                result = (session.email, "Aby wznowić rejestrację, wybierz Utwórz konto.")
-            session.clear()
-            session = None
-        password.set("")
-        code.set("")
-        if poll_id is not None:
-            win.after_cancel(poll_id)
-            poll_id = None
-        win.destroy()
-
-    def refresh_controls():
-        state = "disabled" if busy else "normal"
-        for widget in entries + [eye, primary, back]:
-            widget.configure(state=state)
-        if page == "verify":
-            wait = 0 if sent_at is None else max(0, 30-int(time.monotonic()-sent_at))
-            can_resend = not busy and not wait and not (session and session.email_verified)
-            resend.configure(state="normal" if can_resend else "disabled",
-                             text=("Nie dotarł e-mail? Wyślij ponownie"
-                                   if not wait else "Wyślij ponownie za %d s" % wait))
-
-    def show_verification():
-        nonlocal page, sent_at
-        page = "verify"
-        form.pack_forget()
-        verify.pack(fill="x")
-        stage_label.set("KROK 2 Z 2")
-        title.set("Potwierdź e-mail")
-        description.set("Ostatni krok przed rozpoczęciem pracy w GeoStudio.")
-        recipient.set(session.email)
-        code.set("")
-        primary.configure(text="Potwierdziłem e-mail")
-        resend.pack(fill="x", pady=(5, 0), before=back)
-        if session.email_verified:
-            notice("Adres jest już potwierdzony. Kliknij, aby zakończyć rejestrację.")
-        elif session.email_sent:
-            sent_at = time.monotonic()
-            notice("Link został wysłany.")
-        else:
-            notice("Konto utworzono, ale wysyłka linku nie została potwierdzona. Wyślij go ponownie.", True)
-        refresh_controls()
-        primary.focus_set()
-        center()
-
-    def launch(action):
-        nonlocal busy
-        if busy:
-            return
-        if action == "begin":
-            address, secret, invitation = email.get(), password.get(), code.get()
+        if action=="begin":
+            address,secret,invitation=self.email.get(),self.password.get(),self.code.get()
             try:
-                client._registration_input(address, secret, invitation)
+                self.client._registration_input(address,secret,invitation)
             except AuthError as error:
-                notice(str(error), True)
-                center()
+                self.show_notice(str(error),"error")
                 return
-            password.set("")
-            if shown:
-                toggle_password()
-            task = lambda: client.begin_registration(address, secret, invitation)
+            self.password.set("")
+            self.password_field.mask()
+            task=lambda:self.client.begin_registration(address,secret,invitation)
         else:
-            if session is None:
+            if self.session is None:
                 return
-            task = (lambda: client.finish_registration(session)) if action == "finish" else (
-                lambda: client.resend_registration(session))
-        busy = True
-        refresh_controls()
-        notice("Łączenie z usługą…")
-        center()
+            task=(lambda:self.client.finish_registration(self.session)) if action=="finish" else (
+                lambda:self.client.resend_registration(self.session))
+        self.busy=True
+        self.notice.show("")
+        self.primary.configure(text={"begin":"Tworzenie konta…","finish":"Sprawdzanie e-maila…",
+                                     "resend":"Wysyłanie wiadomości…"}[action])
+        self.refresh_controls()
+        self.progress.start(before=self.primary)
+        self.shell.fit()
 
         def worker():
             try:
-                pending.put((action, task(), None))
+                self.pending.put((action,task(),None))
             except AuthError as error:
-                pending.put((action, None, str(error)))
+                self.pending.put((action,None,str(error)))
             except Exception:
-                pending.put((action, None, "Nie udało się wykonać operacji. Spróbuj ponownie."))
-        threading.Thread(target=worker, daemon=True, name="GeoStudioRegistration").start()
+                self.pending.put((action,None,"Nie udało się wykonać operacji. Spróbuj ponownie."))
+        threading.Thread(target=worker,daemon=True,name="GeoStudioRegistration").start()
 
-    def primary_action():
-        launch("begin" if page == "form" else "finish")
-
-    primary = tk.Button(panel, text="Utwórz konto", command=primary_action,
-                        bg=PRIMARY, fg="white", activebackground="#2864cf",
-                        activeforeground="white", disabledforeground=MUTED,
-                        relief="flat", padx=12, pady=9,
-                        font=("Segoe UI", 11, "bold"))
-    primary.pack(fill="x")
-    resend = tk.Button(panel, text="Nie dotarł e-mail? Wyślij ponownie",
-                       command=lambda: launch("resend"), bg=PANEL, fg=LINK,
-                       activebackground=PANEL, activeforeground="white",
-                       disabledforeground=MUTED, relief="flat", bd=0,
-                       font=("Segoe UI", 9))
-    back = tk.Button(panel, text="Wróć do logowania", command=close,
-                     bg=PANEL, fg=LINK, activebackground=PANEL,
-                     activeforeground="white", disabledforeground=MUTED,
-                     relief="flat", bd=0, font=("Segoe UI", 10))
-    back.pack(pady=(8, 0))
-
-    def poll():
-        nonlocal busy, session, result, sent_at, poll_id
-        poll_id = None
-        try:
-            action, data, error = pending.get_nowait()
-        except queue.Empty:
-            refresh_controls()
+    def show_verification(self):
+        self.page="verify"
+        self.form.pack_forget()
+        self.verify.pack(fill="x")
+        self.shell.heading("Potwierdź e-mail","Ostatni krok przed rozpoczęciem pracy w GeoStudio.",2)
+        self.recipient.set(self.session.email)
+        self.code.set("")
+        self.primary.configure(text="Potwierdziłem e-mail")
+        self.resend.pack(fill="x",pady=(self.shell.theme.dp(5),0),before=self.back)
+        if self.session.email_verified:
+            self.show_notice("Adres jest już potwierdzony. Kliknij, aby zakończyć rejestrację.","success")
+        elif self.session.email_sent:
+            self.sent_at=time.monotonic()
+            self.show_notice("Link został wysłany.","success")
         else:
-            busy = False
-            if error:
-                notice(error, True)
-                refresh_controls()
-                center()
-                if page == "form":
-                    password_entry.focus_set()
-            elif action == "begin":
-                session = data
-                show_verification()
-            elif action == "resend":
-                session = data
-                if session.email_verified:
-                    notice("Adres jest już potwierdzony. Kliknij, aby zakończyć.")
-                else:
-                    sent_at = time.monotonic()
-                    notice("Link wysłano ponownie.")
-                refresh_controls()
-                center()
-            elif action == "finish":
-                if data.get("pending"):
-                    info = "Konto oczekuje na akceptację administratora."
-                elif data.get("active"):
-                    info = "Konto gotowe! Zaloguj się."
-                else:
-                    info = "Konto nie ma aktywnego dostępu. Skontaktuj się z administratorem."
-                result = (session.email, info)
-                close()
-                return
-        poll_id = win.after(150, poll)
+            self.show_notice("Konto utworzono, ale wysyłka linku nie została potwierdzona. "
+                             "Wyślij go ponownie.","warning")
+        self.refresh_controls()
+        self.primary.focus_set()
 
-    win.protocol("WM_DELETE_WINDOW", close)
-    def enter(_event):
-        primary_action()
-        return "break"
-    def escape(_event):
-        close()
-        return "break"
-    win.bind("<Return>", enter)
-    win.bind("<Escape>", escape)
-    center()
-    first.focus_set()
-    poll_id = win.after(150, poll)
-    root.wait_window(win)
-    return result
+    def poll(self):
+        self.poll_id=None
+        try:
+            action,data,error=self.pending.get_nowait()
+        except queue.Empty:
+            if self.page=="verify":self.update_resend()
+        else:
+            self.busy=False
+            self.progress.stop()
+            self.primary.configure(text="Utwórz konto" if self.page=="form" else "Potwierdziłem e-mail")
+            if error:
+                self.refresh_controls()
+                self.show_notice(error,"error")
+                if self.page=="form":self.password_field.focus()
+            elif action=="begin":
+                self.session=data
+                self.show_verification()
+            elif action=="resend":
+                self.session=data
+                if self.session.email_verified:
+                    self.show_notice("Adres jest już potwierdzony. Kliknij, aby zakończyć.","success")
+                else:
+                    self.sent_at=time.monotonic()
+                    self.show_notice("Link wysłano ponownie.","success")
+                self.refresh_controls()
+            elif action=="finish":
+                if data.get("pending"):
+                    info="Konto oczekuje na akceptację administratora."
+                elif data.get("active"):
+                    info="Konto gotowe! Zaloguj się."
+                else:
+                    info="Konto nie ma aktywnego dostępu. Skontaktuj się z administratorem."
+                self.result=(self.session.email,info)
+                self.close()
+                return
+        self.poll_id=self.win.after(150,self.poll)
+
+    def close(self):
+        if self.busy:
+            return
+        if self.session is not None:
+            if self.result is None:
+                self.result=(self.session.email,"Aby wznowić rejestrację, wybierz Utwórz konto.")
+            self.session.clear()
+            self.session=None
+        self.password.set("")
+        self.code.set("")
+        self.progress.stop()
+        if self.poll_id is not None:
+            self.win.after_cancel(self.poll_id)
+            self.poll_id=None
+        self.win.destroy()
+
+
+def open_registration(root,client,initial_email="",*,version=""):
+    window=RegistrationWindow(root,client,initial_email,version=version)
+    root.wait_window(window.win)
+    return window.result
