@@ -5,8 +5,18 @@ $ErrorActionPreference = "Stop"
 $env:ORT_DISABLE_TELEMETRY = "1"
 $Repo = Split-Path (Split-Path $PSScriptRoot -Parent) -Parent
 Set-Location $Repo
-# This branch is an authentication preview, not a public release.
-if ($env:RELEASE_TAG) { throw "Authenticated preview: publishing a release is disabled." }
+# Official installers must carry every required authentication setting.
+# Diagnostic builds are portable only, never installable releases.
+if (-not $SkipInstaller -and -not $RequireFirebaseConfig) {
+    throw "Installer builds require -RequireFirebaseConfig."
+}
+if ($env:RELEASE_TAG) {
+    if ($SkipInstaller -or -not $RequireFirebaseConfig) {
+        throw "Release builds require an authenticated installer."
+    }
+    python tools/windows/check_release.py $env:RELEASE_TAG
+    if ($LASTEXITCODE -ne 0) { throw "Release source version mismatch." }
+}
 Write-Host "Building GeoStudio 2.0 from $Repo"
 python -m pip install -e ".[web]"
 if ($LASTEXITCODE -ne 0) { throw "Python dependency installation failed." }
@@ -62,8 +72,12 @@ try {
     $project = $env:GEOSTUDIO_FIREBASE_PROJECT_ID
     $key = $env:GEOSTUDIO_FIREBASE_WEB_API_KEY
     if ($project -and $key) {
-        python tools/windows/configure_firebase.py
-        if ($LASTEXITCODE -ne 0) { throw "Invalid Firebase configuration." }
+        if ($RequireFirebaseConfig) {
+            python tools/windows/configure_firebase.py --require-full
+        } else {
+            python tools/windows/configure_firebase.py
+        }
+        if ($LASTEXITCODE -ne 0) { throw "Invalid or incomplete Firebase configuration." }
     } elseif ($project -or $key -or $RequireFirebaseConfig) {
         throw "Set both GEOSTUDIO_FIREBASE_PROJECT_ID and GEOSTUDIO_FIREBASE_WEB_API_KEY before building an authenticated preview."
     } else {
@@ -113,6 +127,14 @@ if ($helpCode -ne 0) { throw "Packaged EXE failed smoke test: --help (exit $help
 # sys.stdout/stderr set to None and expects HTTP 200.
 $selfCode = Invoke-PackagedExe -Exe $Executable -Arguments @("--selftest") -TimeoutSeconds 300
 if ($selfCode -ne 0) { throw "Packaged EXE failed headless self-test (exit $selfCode)" }
+
+if ($RequireFirebaseConfig) {
+    # Verify the bundled client config itself, not merely the source template.
+    $version = python -c "from geostudio import __version__; print(__version__)"
+    if ($LASTEXITCODE -ne 0) { throw "Could not read source version." }
+    $authCode = Invoke-PackagedExe -Exe $Executable -Arguments @("--selftest-release", $version)
+    if ($authCode -ne 0) { throw "Packaged EXE failed authentication configuration check." }
+}
 
 if (-not $SkipInstaller) {
     $Iscc = Join-Path ([Environment]::GetFolderPath("ProgramFilesX86")) "Inno Setup 6/ISCC.exe"
