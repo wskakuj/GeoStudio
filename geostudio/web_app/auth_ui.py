@@ -293,11 +293,15 @@ class Field(tk.Frame):
         self.placeholder.bind("<Button-1>",lambda _:self.entry.focus_set())
         self.entry.bind("<FocusIn>",self._focus,add="+")
         self.entry.bind("<FocusOut>",self._focus,add="+")
+        self._focus_job=None
         self._trace=variable.trace_add("write",self._update_placeholder)
         self.bind("<Destroy>",self._on_destroy,add="+")
         self._update_placeholder()
     def _on_destroy(self,event):
         if event.widget is self:
+            if self._focus_job is not None:
+                self.after_cancel(self._focus_job)
+                self._focus_job=None
             try:self.variable.trace_remove("write",self._trace)
             except tk.TclError:pass
     def _update_placeholder(self,*_args):
@@ -306,13 +310,17 @@ class Field(tk.Frame):
         else:
             self.placeholder.place_forget()
     def _focus(self,_event=None):
+        if self._focus_job is not None:
+            self.after_cancel(self._focus_job)
         def update():
+            self._focus_job=None
             if not self.winfo_exists():
                 return
-            focused=self.entry.focus_get() in (self.entry,self.eye)
+            focus=self.entry.focus_get()
+            focused=focus is not None and focus in (self.entry,self.eye)
             self.surface.recolor(border=FOCUS if focused else BORDER)
             self._update_placeholder()
-        self.after_idle(update)
+        self._focus_job=self.after_idle(update)
     def toggle(self):
         if not self.secret:return
         self.revealed=not self.revealed
@@ -510,3 +518,40 @@ class Shell:
         w.geometry("%dx%d+%d+%d"%(width,height,max(0,(screen_w-width)//2),max(0,(screen_h-height)//2)))
         w.update_idletasks()
         dark_titlebar(w)
+
+
+def selftest_widgets():
+    """Frozen-runtime check: no login, network, user credentials or editor."""
+    root=None
+    try:
+        # Ensure both actual controller modules are importable in the bundle.
+        from .firebase_login import LoginWindow
+        from .firebase_registration import RegistrationWindow
+        root=tk.Tk()
+        root.withdraw()
+        shell=Shell(root,"diagnostic")
+        shell.heading("Test", "Diagnostic only", 1)
+        theme=shell.theme
+        variable=tk.StringVar(master=root,value="synthetic")
+        field=Field(shell.content,theme,"Password",variable,icon="lock",secret=True)
+        field.pack(fill="x")
+        button=theme.button(shell.content,"Continue",lambda:None)
+        button.pack(fill="x")
+        theme.checkbox(shell.content,"Remember",tk.BooleanVar(master=root)).pack()
+        notice=Notice(shell.content,theme)
+        notice.show("Test","success",before=button)
+        root.update_idletasks()
+        if not field.entry.cget("show"):
+            return False
+        field.toggle()
+        if field.entry.cget("show") or variable.get()!="synthetic":
+            return False
+        field.mask()
+        return bool(field.entry.cget("show") and button.winfo_reqwidth()>0
+                    and theme.style.layout("GS.Primary.TButton")
+                    and LoginWindow and RegistrationWindow)
+    except Exception:
+        return False
+    finally:
+        if root is not None:
+            root.destroy()

@@ -153,6 +153,9 @@ def _selftest(workspace) -> int:
         # Exercise the actual DPAPI binding on Windows, with synthetic data
         # in a temporary directory, never a user session.
         if os.name == "nt":
+            from .auth_ui import selftest_widgets
+            if not selftest_widgets():
+                return 1
             from tempfile import TemporaryDirectory
             from .firebase_vault import WindowsSessionVault
             with TemporaryDirectory() as directory:
