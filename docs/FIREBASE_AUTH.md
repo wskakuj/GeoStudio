@@ -1,4 +1,6 @@
-# GeoStudio 2.0 — logowanie Firebase (gałąź rozwojowa)
+# GeoStudio 2.0 — logowanie Firebase
+
+> Poniżej historyczna instrukcja konfiguracji gałęzi rozwojowej. Logowanie, zaproszenia i administracja są już w main. Aktualny proces wydawania: [FIREBASE_RELEASE.md](FIREBASE_RELEASE.md).
 
 ## Stan i zakres
 
@@ -8,8 +10,7 @@ e-mail/hasło, a Firestore zawiera niezależną listę uprawnionych UID.
 Żadne pliki MAP, rastry, współrzędne ani biblioteki nie trafiają do Firebase.
 Wszystkie operacje GIS pozostają lokalne.
 
-**Nie scalać ani nie publikować wydania, dopóki konfiguracja, testy na żywo
-i plan aktualizacji nie zostaną zaakceptowane.**
+Publikację chronionego instalatora opisuje osobna instrukcja wydania.
 
 ## Konfiguracja Firebase Console
 

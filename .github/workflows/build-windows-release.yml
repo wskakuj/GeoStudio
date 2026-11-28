@@ -1,41 +1,51 @@
-name: Build GeoStudio Windows release from selected ref
+name: Build GeoStudio Windows release from main
 
 on:
   workflow_dispatch:
     inputs:
       source_ref:
-        description: Branch or commit to package
+        description: Source branch (only main is allowed)
         required: true
         default: main
         type: string
       release_tag:
-        description: GitHub release tag (np. v2.0.0)
+        description: GitHub release tag (np. v2.0.109)
         required: true
-        default: v2.0.0
+        default: v2.0.109
         type: string
+      publish:
+        description: Publish a public release after all installer tests
+        required: true
+        default: false
+        type: boolean
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
-  group: windows-release-${{ inputs.release_tag }}
+  group: geostudio-windows-release
   cancel-in-progress: false
 
 jobs:
   build:
-    name: Build Windows installer
+    name: Build authenticated Windows installer
     runs-on: windows-latest
-    timeout-minutes: 60
+    timeout-minutes: 40
     steps:
-      - name: Check out selected GeoStudio version
-        uses: actions/checkout@v4
-        with:
-          ref: ${{ inputs.source_ref }}
-      - name: Record exact source commit
-        id: source
+      - name: Require main
+        env:
+          SOURCE_REF: ${{ inputs.source_ref }}
+          WORKFLOW_REF: ${{ github.ref }}
         shell: pwsh
         run: |
-          "sha=$(git rev-parse HEAD)" >> $env:GITHUB_OUTPUT
+          if ($env:SOURCE_REF -cne "main" -or $env:WORKFLOW_REF -cne "refs/heads/main") {
+              throw "Run this workflow on main with source_ref=main."
+          }
+      - name: Check out immutable main commit
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
@@ -48,7 +58,7 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "Selected source and release tag do not match." }
           $existing = git ls-remote --tags origin "refs/tags/$env:RELEASE_TAG"
           if ($LASTEXITCODE -ne 0) { throw "Unable to verify release tag." }
-          if ($existing) { throw "Release tag already exists. Use a new version; do not reuse a published tag." }
+          if ($existing) { throw "Release tag already exists. Do not reuse a published tag." }
       - name: Install Inno Setup 6 if missing
         shell: pwsh
         run: |
@@ -57,28 +67,99 @@ jobs:
             choco install innosetup -y --no-progress
             if ($LASTEXITCODE -ne 0) { throw "Inno Setup installation failed." }
           }
-      - name: Build and smoke-check installer
-        id: installer
-        timeout-minutes: 20
+      - name: Build and verify authenticated installer
+        timeout-minutes: 25
+        env:
+          RELEASE_TAG: ${{ inputs.release_tag }}
+          GEOSTUDIO_FIREBASE_PROJECT_ID: ${{ secrets.GEOSTUDIO_FIREBASE_PROJECT_ID }}
+          GEOSTUDIO_FIREBASE_WEB_API_KEY: ${{ secrets.GEOSTUDIO_FIREBASE_WEB_API_KEY }}
+          GEOSTUDIO_OFFLINE_URL: ${{ secrets.GEOSTUDIO_OFFLINE_URL }}
+          GEOSTUDIO_OFFLINE_PUBLIC_KEY: ${{ secrets.GEOSTUDIO_OFFLINE_PUBLIC_KEY }}
+          GEOSTUDIO_ADMIN_URL: ${{ secrets.GEOSTUDIO_ADMIN_URL }}
+        shell: pwsh
+        run: |
+          ./tools/windows/build.ps1 -RequireFirebaseConfig
+          $version = $env:RELEASE_TAG.Substring(1)
+          $installer = & ./tools/windows/check_installer.ps1 -Version $version
+          $hash = (Get-FileHash -Algorithm SHA256 $installer.FullName).Hash.ToLowerInvariant()
+          "$hash  $($installer.Name)" | Set-Content -Encoding ascii "dist/installer/SHA256SUMS.txt"
+      - name: Upload candidate
+        uses: actions/upload-artifact@v4
+        with:
+          name: GeoStudio2-Authenticated-Installer
+          path: |
+            dist/installer/*.exe
+            dist/installer/SHA256SUMS.txt
+          if-no-files-found: error
+          retention-days: 7
+
+  upgrade_test:
+    name: Test existing 2.0.108 installation upgrade
+    needs: build
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: actions/download-artifact@v4
+        with:
+          name: GeoStudio2-Authenticated-Installer
+          path: dist/installer
+      - name: Install old release, update in place and verify installed EXE
         env:
           RELEASE_TAG: ${{ inputs.release_tag }}
         shell: pwsh
         run: |
-          ./tools/windows/build.ps1
-          $version = $env:RELEASE_TAG.Substring(1)
-          $installer = & ./tools/windows/check_installer.ps1 -Version $version
-          "path=dist/installer/$($installer.Name)" >> $env:GITHUB_OUTPUT
-      - name: Publish prerelease and attach installer
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: ${{ inputs.release_tag }}
-          target_commitish: ${{ steps.source.outputs.sha }}
-          name: GeoStudio 2.0 · ${{ inputs.release_tag }}
-          body: |
-            Wstępne wydanie instalatora GeoStudio 2.0 dla Windows.
+          ./tools/windows/test_upgrade.ps1 -Version ($env:RELEASE_TAG.Substring(1))
 
-            Źródło: `${{ inputs.source_ref }}` (`${{ steps.source.outputs.sha }}`).
-            Instalator tworzy instalację dla bieżącego użytkownika.
-          prerelease: false
-          files: ${{ steps.installer.outputs.path }}
-          fail_on_unmatched_files: true
+  publish:
+    name: Publish explicitly requested release
+    needs: [build, upgrade_test]
+    if: inputs.publish == true && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: GeoStudio2-Authenticated-Installer
+          path: installer
+      - name: Create complete draft and only then publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ inputs.release_tag }}
+          SOURCE_SHA: ${{ github.sha }}
+          GH_REPO: ${{ github.repository }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$RELEASE_TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          if gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+              echo "Release already exists. Do not overwrite it." >&2
+              exit 1
+          fi
+          refs=$(gh api "repos/$GH_REPO/git/matching-refs/tags/$RELEASE_TAG")
+          if jq -e --arg ref "refs/tags/$RELEASE_TAG" 'any(.[]; .ref == $ref)' <<<"$refs" >/dev/null; then
+              echo "Release tag already exists." >&2
+              exit 1
+          fi
+          cd installer
+          sha256sum --check SHA256SUMS.txt
+          asset="GeoStudio2-Setup-${RELEASE_TAG#v}-x64.exe"
+          test -f "$asset"
+          cat > notes.txt <<EOF
+          Wydanie GeoStudio 2.0 dla Windows z logowaniem Firebase.
+          Rejestracja z kodem zaproszenia, panel administratora, limity komputerów
+          oraz licencje offline. Po aktualizacji wymagane jest aktywne konto.
+          Instalator aktualizuje istniejącą instalację GeoStudio 2.0.
+
+          Źródło: $SOURCE_SHA (main).
+          SHA-256 instalatora: plik SHA256SUMS.txt.
+          EOF
+          gh release create "$RELEASE_TAG" "$asset" SHA256SUMS.txt \
+            --draft --target "$SOURCE_SHA" --title "GeoStudio 2.0 · $RELEASE_TAG" --notes-file notes.txt
+          gh release view "$RELEASE_TAG" --json isDraft,assets | \
+            jq -e --arg asset "$asset" '.isDraft and (.assets | length == 2 and any(.[]; .name == $asset) and any(.[]; .name == "SHA256SUMS.txt"))'
+          gh release edit "$RELEASE_TAG" --draft=false --latest
