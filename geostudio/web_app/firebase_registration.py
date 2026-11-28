@@ -32,6 +32,7 @@ class RegistrationWindow:
         self.result = None
         self.sent_at = None
         self.poll_id = None
+        self.resend_id = None
         self.pending = queue.Queue()
         content = self.shell.content
         self.pages = tk.Frame(content, bg=CARD)
@@ -86,11 +87,10 @@ class RegistrationWindow:
         win.deiconify()
         win.grab_set()
         self.email_field.focus()
-        self.poll_id = win.after(150,self.poll)
 
     def show_notice(self,text="",kind="info"):
         self.notice.show(text,kind,before=self.primary)
-        self.shell.fit()
+        self.shell.request_fit()
 
     def refresh_controls(self):
         for field in self.fields:
@@ -102,11 +102,22 @@ class RegistrationWindow:
             self.update_resend()
 
     def update_resend(self):
+        if self.resend_id is not None:
+            self.win.after_cancel(self.resend_id)
+            self.resend_id=None
         wait=0 if self.sent_at is None else max(0,30-int(time.monotonic()-self.sent_at))
         can_resend=not self.busy and not wait and not (self.session and self.session.email_verified)
         text=("Nie dotarł e-mail? Wyślij ponownie" if not wait else "Wyślij ponownie za %d s"%wait)
         if self.resend.cget("text")!=text:self.resend.configure(text=text)
-        self.resend.configure(state="normal" if can_resend else "disabled")
+        state="normal" if can_resend else "disabled"
+        if str(self.resend.cget("state"))!=state:self.resend.configure(state=state)
+        # Only the actual resend countdown needs an idle timer.
+        if wait and not self.busy and not (self.session and self.session.email_verified):
+            self.resend_id=self.win.after(1000,self._resend_tick)
+
+    def _resend_tick(self):
+        self.resend_id=None
+        self.update_resend()
 
     def primary_action(self):
         self.launch("begin" if self.page=="form" else "finish")
@@ -135,7 +146,7 @@ class RegistrationWindow:
                                      "resend":"Wysyłanie wiadomości…"}[action])
         self.refresh_controls()
         self.progress.start(before=self.primary)
-        self.shell.fit()
+        self.shell.request_fit()
 
         def worker():
             try:
@@ -145,6 +156,7 @@ class RegistrationWindow:
             except Exception:
                 self.pending.put((action,None,"Nie udało się wykonać operacji. Spróbuj ponownie."))
         threading.Thread(target=worker,daemon=True,name="GeoStudioRegistration").start()
+        self.poll_id=self.win.after(40,self.poll)
 
     def show_verification(self):
         self.page="verify"
@@ -171,7 +183,8 @@ class RegistrationWindow:
         try:
             action,data,error=self.pending.get_nowait()
         except queue.Empty:
-            if self.page=="verify":self.update_resend()
+            self.poll_id=self.win.after(40,self.poll)
+            return
         else:
             self.busy=False
             self.progress.stop()
@@ -201,7 +214,6 @@ class RegistrationWindow:
                 self.result=(self.session.email,info)
                 self.close()
                 return
-        self.poll_id=self.win.after(150,self.poll)
 
     def close(self):
         if self.busy:
@@ -217,6 +229,9 @@ class RegistrationWindow:
         if self.poll_id is not None:
             self.win.after_cancel(self.poll_id)
             self.poll_id=None
+        if self.resend_id is not None:
+            self.win.after_cancel(self.resend_id)
+            self.resend_id=None
         self.win.destroy()
 
 

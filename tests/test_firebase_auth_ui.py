@@ -213,3 +213,66 @@ def test_large_dpi_can_scroll_and_reach_primary(root):
         root.update()
         assert dialog.shell.canvas.yview()[1] >= .99
     dialog.close()
+
+
+
+def test_focus_and_typing_reuse_small_cached_surfaces(root, monkeypatch):
+    from geostudio.web_app import auth_ui
+    rendered=[]
+    original=auth_ui._round_image
+    def track(master,width,height,*args,**kwargs):
+        rendered.append((width,height))
+        return original(master,width,height,*args,**kwargs)
+    monkeypatch.setattr(auth_ui,"_round_image",track)
+    login=LoginWindow(root,FakeClient(),None,force_prompt=True)
+    root.update()
+    assert rendered and max(max(size) for size in rendered)<=login.shell.theme.dp(40)+1
+    rendered.clear()
+    assert login.poll_id is None
+    for i in range(10):
+        login.email_field.surface.recolor(border=auth_ui.FOCUS)
+        login.email.set("test%d@example.invalid"%i)
+        login.email_field.surface.recolor(border=auth_ui.BORDER)
+        login.password.set("synthetic-%d"%i)
+        login.password_field.eye.invoke()
+        root.update_idletasks()
+    assert not rendered, "Typing/focus must never allocate new rounded bitmaps"
+    assert login.poll_id is None
+    assert login.progress.job is None
+    login.close()
+
+
+def test_registration_idle_has_no_polling(root):
+    root.deiconify()
+    dialog=RegistrationWindow(root,FakeClient(),"test@example.invalid")
+    root.update()
+    assert dialog.poll_id is None and dialog.resend_id is None
+    dialog.password.set("synthetic-password")
+    dialog.code.set("GS-AAAA-AAAA-AAAA-AAAA-AAAA-AAAA-AAAA-AAAA")
+    dialog.primary.invoke()
+    pump(root,lambda:dialog.page=="verify" and not dialog.busy)
+    assert dialog.poll_id is None
+    assert dialog.resend_id is None
+    dialog.resend.invoke()
+    pump(root,lambda:not dialog.busy)
+    assert dialog.poll_id is None and dialog.resend_id is not None
+    dialog.close()
+    assert dialog.resend_id is None
+
+
+def test_layout_requests_are_coalesced_and_do_not_recenter(root,monkeypatch):
+    login=LoginWindow(root,FakeClient(),None,force_prompt=True)
+    root.update()
+    shell=login.shell
+    calls=[]
+    original=shell._fit
+    def tracked():
+        calls.append(True)
+        return original()
+    monkeypatch.setattr(shell,"_fit",tracked)
+    for _ in range(20):
+        shell.request_fit()
+    assert not calls
+    root.update_idletasks()
+    assert len(calls)==1
+    login.close()

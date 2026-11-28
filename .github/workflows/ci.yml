@@ -5,6 +5,7 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -26,7 +27,8 @@ jobs:
         run: node --test firebase/worker/*.test.mjs
       - run: python -m pytest -q
       - name: Exercise actual Tk authentication windows with a virtual display
-        run: xvfb-run -a -s "-screen 0 1280x1024x24" python -m pytest -q tests/test_firebase_auth_ui.py
+        timeout-minutes: 2
+        run: timeout -k 5s 90s xvfb-run -a -s "-screen 0 1280x1024x24" python -m pytest -vv -o faulthandler_timeout=30 tests/test_firebase_auth_ui.py
         env:
           GEOSTUDIO_REQUIRE_AUTH_UI_TEST: "1"
       - run: python -m pytest -q tests/test_gui.py

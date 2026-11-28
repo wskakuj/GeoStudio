@@ -80,11 +80,10 @@ class LoginWindow:
             except (OSError, ValueError):
                 self._notice("Nie udało się odczytać zapamiętanej sesji. Zaloguj się ponownie.",
                              "warning")
-        self.poll_id = root.after(100, self._poll)
 
     def _notice(self, text="", kind="info"):
         self.notice.show(text, kind, before=self.primary)
-        self.shell.fit()
+        self.shell.request_fit()
 
     def _set_busy(self, busy, action=""):
         self.busy = busy
@@ -108,7 +107,7 @@ class LoginWindow:
         if self.busy:
             return
         self._set_busy(True, action)
-        self.shell.fit()
+        self.shell.request_fit()
 
         def worker():
             try:
@@ -118,6 +117,7 @@ class LoginWindow:
             except Exception:
                 self.pending.put((action, None, AuthError("Nie udało się sprawdzić dostępu."), keep_session))
         threading.Thread(target=worker, daemon=True, name="GeoStudioSignIn").start()
+        self.poll_id = self.root.after(40, self._poll)
 
     def _poll(self):
         from tkinter import messagebox
@@ -125,7 +125,7 @@ class LoginWindow:
         try:
             action, grant, error, keep_session = self.pending.get_nowait()
         except queue.Empty:
-            self.poll_id = self.root.after(100, self._poll)
+            self.poll_id = self.root.after(40, self._poll)
             return
         self._set_busy(False)
         if action in ("login", "restore") and error is None:
@@ -152,7 +152,6 @@ class LoginWindow:
             self.password_field.focus()
         elif action == "restore":
             self.email_field.focus()
-        self.poll_id = self.root.after(100, self._poll)
 
     def submit(self):
         if self.busy:
