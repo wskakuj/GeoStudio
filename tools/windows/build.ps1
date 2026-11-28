@@ -1,10 +1,12 @@
 # Build a self-contained Windows preview app. No administrator rights needed.
-param([switch]$SkipInstaller)
+param([switch]$SkipInstaller, [switch]$RequireFirebaseConfig)
 $ErrorActionPreference = "Stop"
 # Disable ONNX Runtime telemetry even while build hooks inspect the package.
 $env:ORT_DISABLE_TELEMETRY = "1"
 $Repo = Split-Path (Split-Path $PSScriptRoot -Parent) -Parent
 Set-Location $Repo
+# This branch is an authentication preview, not a public release.
+if ($env:RELEASE_TAG) { throw "Authenticated preview: publishing a release is disabled." }
 Write-Host "Building GeoStudio 2.0 from $Repo"
 python -m pip install -e ".[web]"
 if ($LASTEXITCODE -ne 0) { throw "Python dependency installation failed." }
@@ -52,8 +54,26 @@ $Args = @(
     "--exclude-module", "shiboken6",
     "tools/windows/geostudio2_entry.py"
 )
-python -m PyInstaller @Args
-if ($LASTEXITCODE -ne 0) { throw "PyInstaller failed." }
+# Freeze public Firebase client configuration only into the build. The tracked
+# template is restored even if the build fails; never print config values.
+$configPath = Join-Path $Repo "geostudio/web_app/firebase_settings.py"
+$originalConfig = [System.IO.File]::ReadAllBytes($configPath)
+try {
+    $project = $env:GEOSTUDIO_FIREBASE_PROJECT_ID
+    $key = $env:GEOSTUDIO_FIREBASE_WEB_API_KEY
+    if ($project -and $key) {
+        python tools/windows/configure_firebase.py
+        if ($LASTEXITCODE -ne 0) { throw "Invalid Firebase configuration." }
+    } elseif ($project -or $key -or $RequireFirebaseConfig) {
+        throw "Set both GEOSTUDIO_FIREBASE_PROJECT_ID and GEOSTUDIO_FIREBASE_WEB_API_KEY before building an authenticated preview."
+    } else {
+        Write-Warning "Firebase is not configured. This is a locked diagnostic build."
+    }
+    python -m PyInstaller @Args
+    if ($LASTEXITCODE -ne 0) { throw "PyInstaller failed." }
+} finally {
+    [System.IO.File]::WriteAllBytes($configPath, $originalConfig)
+}
 
 $Executable = Join-Path $Repo "dist/GeoStudio2/GeoStudio2.exe"
 if (-not (Test-Path $Executable)) { throw "Missing packaged executable: $Executable" }

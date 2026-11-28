@@ -19,46 +19,35 @@ permissions:
   contents: read
 
 jobs:
-  installer:
+  portable:
     runs-on: windows-latest
-    # A healthy build takes ~4 minutes; 40 leaves room for a cold pip cache
-    # without burning an hour when something really is stuck.
     timeout-minutes: 40
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - name: Install Inno Setup 6 only if missing
+      - name: Build authenticated portable preview (manual branch run)
+        if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/ai2/feat-firebase-auth'
+        env:
+          GEOSTUDIO_FIREBASE_PROJECT_ID: ${{ secrets.GEOSTUDIO_FIREBASE_PROJECT_ID }}
+          GEOSTUDIO_FIREBASE_WEB_API_KEY: ${{ secrets.GEOSTUDIO_FIREBASE_WEB_API_KEY }}
+          GEOSTUDIO_OFFLINE_URL: ${{ secrets.GEOSTUDIO_OFFLINE_URL }}
+          GEOSTUDIO_OFFLINE_PUBLIC_KEY: ${{ secrets.GEOSTUDIO_OFFLINE_PUBLIC_KEY }}
+          GEOSTUDIO_ADMIN_URL: ${{ secrets.GEOSTUDIO_ADMIN_URL }}
         shell: pwsh
-        run: |
-          $iscc = Join-Path ([Environment]::GetFolderPath("ProgramFilesX86")) "Inno Setup 6/ISCC.exe"
-          if (!(Test-Path $iscc)) {
-            choco install innosetup -y --no-progress
-            if ($LASTEXITCODE -ne 0) { throw "Inno Setup installation failed." }
-          }
-      - name: Build Windows EXE and per-user installer
+        run: ./tools/windows/build.ps1 -SkipInstaller -RequireFirebaseConfig
+      - name: Build locked diagnostic preview (no Firebase configuration)
+        if: github.event_name != 'workflow_dispatch' || github.ref != 'refs/heads/ai2/feat-firebase-auth'
         shell: pwsh
-        run: ./tools/windows/build.ps1
-      - name: Check installer output
-        shell: pwsh
-        run: |
-          $version = python -c "from geostudio import __version__; print(__version__)"
-          if ($LASTEXITCODE -ne 0) { throw "Unable to read source version." }
-          $version = $version.Trim()
-          python tools/windows/check_release.py "v$version"
-          if ($LASTEXITCODE -ne 0) { throw "Source versions do not match." }
-          $installer = & ./tools/windows/check_installer.ps1 -Version $version
-          Write-Host "Installer validated: $($installer.FullName)"
-      - uses: actions/upload-artifact@v4
+        run: ./tools/windows/build.ps1 -SkipInstaller
+      - name: Upload authenticated portable preview
+        if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/ai2/feat-firebase-auth'
+        uses: actions/upload-artifact@v4
         with:
-          name: GeoStudio2-Setup-x64
-          path: dist/installer/*.exe
-          if-no-files-found: error
-          retention-days: 14
-      - uses: actions/upload-artifact@v4
-        with:
-          name: GeoStudio2-portable-x64
+          name: GeoStudio2-Firebase-Test-portable-x64
           path: dist/GeoStudio2/
           if-no-files-found: error
-          retention-days: 14
+          retention-days: 7

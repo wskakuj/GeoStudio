@@ -6,6 +6,8 @@
 <meta name="api-token" content="__GEOSTUDIO_LOCAL_TOKEN__">
 <title>GeoStudio 2.0</title>
 <link rel="stylesheet" href="/tabs.css">
+<link rel="stylesheet" href="/admin.css">
+<script defer src="/admin.js"></script>
 <script defer src="/tabs.js"></script>
 </head>
 <body>
@@ -16,8 +18,146 @@
   <div id="tab-list" class="tabs" role="tablist" aria-label="Otwarte mapy"></div>
   <button id="add-tab" type="button" title="Nowa zakładka mapy" aria-label="Nowa zakładka mapy">+</button>
   <span id="tab-count" class="tab-count"></span>
+  <details id="auth-account" hidden>
+    <summary><span id="auth-account-label">Konto</span></summary>
+    <div class="auth-menu">
+      <strong id="auth-email"></strong>
+      <span id="auth-expiry"></span>
+      <span id="auth-devices"></span>
+      <span id="auth-offline"></span>
+      <button type="button" id="auth-admin" hidden>Panel administratora</button>
+      <button type="button" id="auth-refresh">Odśwież uprawnienia</button>
+      <button type="button" id="auth-change">Zmień konto</button>
+      <button type="button" id="auth-logout">Wyloguj</button>
+    </div>
+  </details>
 </header>
+<div id="auth-notice" hidden>
+  <span id="auth-message" role="status"></span>
+  <button type="button" id="auth-save-copy" hidden>Zapisz kopię aktywnej mapy</button>
+</div>
 <main id="editors" aria-label="Obszar roboczy"></main>
 <div id="tab-error" role="alert" hidden></div>
+<dialog id="admin-dialog" aria-labelledby="admin-title">
+  <header class="admin-heading">
+    <div><small>GEOSTUDIO · ADMINISTRACJA</small><h2 id="admin-title">Zarządzanie dostępem</h2>
+      <p>Tylko online · uprawnienia sprawdzane przez serwer</p></div>
+    <button type="button" id="admin-close" class="admin-button">Zamknij ×</button>
+  </header>
+  <nav class="admin-nav" aria-label="Administracja">
+    <button id="admin-users-tab" class="admin-button primary" type="button" aria-pressed="true">Użytkownicy</button>
+    <button id="admin-invites-tab" class="admin-button" type="button" aria-pressed="false">Zaproszenia</button>
+  </nav>
+  <div id="admin-stats" class="admin-stats" aria-label="Statystyki kont"></div>
+  <div class="admin-toolbar" id="admin-users-toolbar">
+    <input id="admin-search" type="search" placeholder="Szukaj e-maila lub nazwy…" aria-label="Szukaj konta">
+    <select id="admin-filter" aria-label="Filtr stanu kont"><option value="all">Wszystkie konta</option><option value="active">Aktywne</option><option value="blocked">Nieaktywne</option><option value="pending">Oczekujące na akceptację</option></select>
+    <button type="button" id="admin-refresh" class="admin-button">Odśwież</button>
+    <button type="button" id="admin-add" class="admin-button primary">+ Nowe konto</button>
+  </div>
+  <div id="admin-notice" role="status" aria-live="polite"></div>
+  <div class="admin-body" id="admin-users-body">
+    <section class="admin-users" aria-label="Lista użytkowników">
+      <table class="admin-table"><thead><tr><th>Użytkownik</th><th>Status</th><th>Komputery</th><th>Ostatnie połączenie</th></tr></thead><tbody id="admin-rows"></tbody></table>
+      <p class="admin-muted" id="admin-empty" hidden>Brak pasujących kont.</p>
+    </section>
+    <section class="admin-detail" aria-label="Szczegóły konta">
+      <div id="admin-placeholder" class="admin-placeholder">Wybierz konto z listy albo utwórz nowe.</div>
+      <form id="admin-create-form" hidden>
+        <h3>Nowe konto</h3>
+        <label>Adres e-mail<input id="admin-new-email" type="email" required maxlength="254" autocomplete="off"></label>
+        <label>Nazwa użytkownika<input id="admin-new-name" maxlength="160" autocomplete="off"></label>
+        <label>Hasło początkowe (opcjonalne)<input id="admin-new-password" type="password" minlength="12" maxlength="128" autocomplete="new-password" placeholder="Puste = losowe, nieujawniane"></label>
+        <label class="admin-check"><input id="admin-new-reset" type="checkbox" checked> Wyślij e-mail ustawienia hasła</label>
+        <p class="admin-muted">Domyślnie aktywne, bezterminowo, dwa komputery, bez offline. Hasło musi mieć co najmniej 12 znaków lub pozostaw je puste i wyślij reset.</p>
+        <div class="admin-actions"><button class="admin-button primary" type="submit">Utwórz konto</button><button class="admin-button" type="button" id="admin-cancel-create">Anuluj</button></div>
+      </form>
+      <div id="admin-selected" hidden>
+        <div class="admin-detail-title"><h3 id="admin-account-name"></h3><span id="admin-account-email" class="admin-muted"></span></div>
+        <p id="admin-account-login" class="admin-muted"></p>
+        <p id="admin-pending-approval" class="admin-pending" hidden>Oczekuje na akceptację. Zaznacz aktywny dostęp i zapisz uprawnienia, aby zatwierdzić konto.</p>
+        <form id="admin-edit-form">
+          <div class="admin-fields">
+            <label>Nazwa<input id="admin-name" maxlength="160"></label>
+            <label>Limit komputerów (0 = bez limitu)<input id="admin-limit" type="number" min="0" max="20" required></label>
+            <label class="admin-wide">Notatki<textarea id="admin-notes" maxlength="500" rows="2"></textarea></label>
+            <label class="admin-check"><input id="admin-active" type="checkbox"> Aktywny dostęp</label>
+            <label class="admin-check"><input id="admin-unlimited" type="checkbox"> Bezterminowo</label>
+            <label class="admin-wide">Ważny do (czas lokalny)<input id="admin-expiry" type="datetime-local"></label>
+            <label class="admin-wide">Praca offline
+              <select id="admin-offline">
+                <option value="0">Wyłączona — wymagany internet</option>
+                <option value="72">72 godziny od ostatniej weryfikacji online</option>
+                <option value="-1">Bezterminowo (do daty ważności konta, jeśli ustawiona)</option>
+              </select>
+            </label>
+            <p class="admin-muted admin-wide" id="admin-offline-warning" hidden>Uwaga: licencji bezterminowej nie można zdalnie unieważnić na komputerze, który nie połączy się ponownie z internetem. Nadaj ją wyłącznie zaufanym użytkownikom.</p>
+            <label class="admin-check admin-wide" id="admin-enable-auth-row" hidden><input id="admin-enable-auth" type="checkbox"> Włącz również wyłączone konto Firebase Authentication</label>
+          </div>
+          <h4>Komputery</h4>
+          <p class="admin-muted">Zaznacz rejestracje do usunięcia i zapisz uprawnienia. Komputer może ponownie zarejestrować się, jeśli jest wolne miejsce.</p>
+          <div id="admin-devices"></div>
+          <div class="admin-actions"><button class="admin-button primary" type="submit">Zapisz uprawnienia</button><button class="admin-button" type="button" id="admin-reset">Wyślij reset hasła</button></div>
+        </form>
+        <h4>Historia uruchomień i logowań</h4>
+        <p class="admin-muted">Do 50 ostatnich wpisów z 30 dni. Aktywność online jest odświeżana w trakcie sprawdzania dostępu; brak wpisu nie oznacza braku pracy offline.</p>
+        <div id="admin-history"></div>
+        <section id="admin-delete-section" class="admin-danger">
+          <h4>Usuń konto</h4>
+          <p class="admin-muted">Trwale usuwa konto Firebase, uprawnienia i historię. Istniejąca licencja offline może działać do końca ważności lub bezterminowo, jeśli nie ma terminu i komputer pozostaje offline.</p>
+          <label>Wpisz dokładny e-mail konta<input id="admin-confirm-email" type="email" autocomplete="off"></label>
+          <button type="button" class="admin-button danger" id="admin-delete">Usuń trwale</button>
+        </section>
+      </div>
+    </section>
+  </div>
+  <section id="admin-invites-body" hidden>
+    <div class="invite-toolbar">
+      <label class="admin-check"><input id="invite-registration-enabled" type="checkbox"> Rejestracja z kodem zaproszenia</label>
+      <button id="invite-settings-save" class="admin-button" type="button">Zapisz ustawienie</button>
+      <span class="admin-muted">Wyłączenie blokuje nowe aktywacje, ale nie istniejące konta.</span>
+      <button id="invite-refresh" class="admin-button" type="button">Odśwież</button>
+    </div>
+    <div class="invite-layout">
+      <section class="admin-users invite-list" aria-label="Lista zaproszeń">
+        <h3>Kody zaproszeń</h3>
+        <p class="admin-muted">Pełny kod jest widoczny tylko przy utworzeniu. Później pozostaje końcówka kodu.</p>
+        <table class="admin-table"><thead><tr><th>Zaproszenie</th><th>Status</th><th>Użycia</th><th>Ważność</th></tr></thead><tbody id="invite-rows"></tbody></table>
+        <p id="invite-empty" class="admin-muted" hidden>Brak zaproszeń.</p>
+        <p id="invite-truncated" class="admin-muted" hidden>Lista ograniczona do 500 wyników.</p>
+        <section id="invite-detail" hidden>
+          <h3 id="invite-detail-title"></h3>
+          <p id="invite-detail-policy" class="admin-muted"></p>
+          <button type="button" class="admin-button danger" id="invite-revoke">Unieważnij kod</button>
+          <h4>Historia wykorzystania</h4>
+          <div id="invite-history"></div>
+        </section>
+      </section>
+      <section class="admin-detail" aria-label="Nowe zaproszenie">
+        <form id="invite-create-form">
+          <h3>Nowy kod zaproszenia</h3>
+          <div class="admin-fields">
+            <label class="admin-wide">Nazwa / opis<input id="invite-label" maxlength="100" placeholder="np. Biuro projektowe"></label>
+            <label class="admin-wide">Przypisany e-mail (opcjonalnie)<input id="invite-email" type="email" maxlength="254" placeholder="Dowolny adres, jeśli puste"></label>
+            <label>Liczba rejestracji (0 = bez limitu)<input id="invite-max-uses" type="number" min="0" max="100000" required value="1"></label>
+            <label>Ważność kodu w dniach (0 = bezterminowo)<input id="invite-valid-days" type="number" min="0" max="3650" required value="7"></label>
+            <label>Ważność konta w dniach (0 = bezterminowo)<input id="invite-account-days" type="number" min="0" max="3650" required value="0"></label>
+            <label>Limit komputerów (0 = bez limitu)<input id="invite-device-limit" type="number" min="0" max="20" required value="2"></label>
+            <label class="admin-wide">Praca offline<select id="invite-offline"><option value="0">Wyłączona</option><option value="72">72 godziny</option><option value="-1">Bezterminowo</option></select></label>
+            <label class="admin-check admin-wide"><input id="invite-approval" type="checkbox"> Wymagaj dodatkowej akceptacji administratora</label>
+          </div>
+          <p class="admin-muted">Użytkownik zawsze potwierdza e-mail. Przy dodatkowej akceptacji konto będzie oczekiwało na włączenie aktywnego dostępu.</p>
+          <button type="submit" class="admin-button primary">Wygeneruj kod</button>
+        </form>
+        <section id="invite-result" hidden>
+          <h4>Nowy kod — skopiuj teraz</h4>
+          <p class="admin-muted">Kod jest poufny. Nie można odzyskać go z listy.</p>
+          <input id="invite-code" readonly aria-label="Wygenerowany kod zaproszenia" autocomplete="off">
+          <button id="invite-copy" type="button" class="admin-button">Kopiuj kod</button>
+        </section>
+      </section>
+    </div>
+  </section>
+</dialog>
 </body>
 </html>

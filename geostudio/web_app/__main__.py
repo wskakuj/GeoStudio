@@ -81,6 +81,33 @@ def _uvicorn_log_config():
     }
 
 
+def _check_windows_runtime():
+    """Load the same .NET bridge as pywebview, without creating a window."""
+    if os.name == "nt":
+        import clr
+        clr.AddReference("System.Windows.Forms")
+
+
+def _is_pythonnet_loader_error(error):
+    return "Failed to resolve Python.Runtime.Loader.Initialize" in str(error)
+
+
+def _show_windows_runtime_error():
+    # Do not silently remove Internet-zone markings from downloaded files.
+    # Let the owner verify their archive and decide whether to unblock it.
+    import ctypes
+    ctypes.windll.user32.MessageBoxW(
+        None,
+        "Nie udało się uruchomić głównego okna GeoStudio (Python.NET).\n\n"
+        "Jeżeli korzystasz z zaufanego ZIP pobranego z własnego GitHub Actions, "
+        "sprawdź Właściwości archiwum: Odblokuj, następnie wypakuj je ponownie "
+        "do nowego katalogu. Zachowaj cały folder _internal.\n\n"
+        "Jeżeli problem nadal występuje, sprawdź kompletność archiwum "
+        "oraz instalację .NET Framework. Nie wyłączaj zabezpieczeń Windows.",
+        "GeoStudio — nie udało się wczytać biblioteki .NET", 0x10,
+    )
+
+
 def _selftest(workspace) -> int:
     """Start the server with no console streams, exactly like a windowed EXE.
 
@@ -97,6 +124,9 @@ def _selftest(workspace) -> int:
     worker = None
     sock = None
     try:
+        # The HTTP/OCR smoke test alone does not exercise Python.NET.
+        # Fail CI if the packaged managed assembly cannot initialize.
+        _check_windows_runtime()
         # Exercise the bundled PDFium DLL, not just Python imports.  A build
         # can launch its UI successfully while missing the native PDF decoder.
         # The complete fixture and PNG stay in memory; no user file is read.
@@ -119,7 +149,26 @@ def _selftest(workspace) -> int:
         from .raster_a1 import selftest_raster_a1
         if not selftest_raster_a1():
             return 1
-        app = create_app(workspace, multi_document=True)
+        from .firebase_auth import DiagnosticGate
+        # Exercise the actual DPAPI binding on Windows, with synthetic data
+        # in a temporary directory, never a user session.
+        if os.name == "nt":
+            from .auth_ui import selftest_widgets
+            if not selftest_widgets():
+                return 1
+            from tempfile import TemporaryDirectory
+            from .firebase_vault import WindowsSessionVault
+            with TemporaryDirectory() as directory:
+                vault = WindowsSessionVault("diagnostic", Path(directory) / "session.bin")
+                vault.save("test-token-not-a-real-credential")
+                if vault.load() != "test-token-not-a-real-credential":
+                    return 1
+                if b"test-token-not-a-real-credential" in vault.path.read_bytes():
+                    return 1
+                vault.clear()
+                if vault.path.exists():
+                    return 1
+        app = create_app(workspace, multi_document=True, access_gate=DiagnosticGate())
         config = uvicorn.Config(
             app=app, log_level="warning", access_log=False, server_header=False,
             log_config=_uvicorn_log_config())
@@ -150,6 +199,8 @@ def _selftest(workspace) -> int:
             "/raster_trace_metrics.js": b"GeoStudioRasterTraceMetrics",
             "/raster_a1.js": b"GeoStudioRasterA1",
             "/floating_dialog.js": b"GeoStudioFloatingDialog",
+            "/admin.js": b"GeoStudioAdmin",
+            "/admin.css": b"#admin-dialog",
         }
         for path, marker in assets.items():
             with urllib.request.urlopen(
@@ -157,6 +208,15 @@ def _selftest(workspace) -> int:
                 body = response.read()
                 if response.status != 200 or marker not in body:
                     return 1
+        request = urllib.request.Request(
+            f"http://127.0.0.1:{port}/api/documents",
+            headers={"X-GeoStudio-Token": app.state.api_token})
+        try:
+            with urllib.request.urlopen(request, timeout=10):
+                return 1  # diagnostic process must never serve editor APIs
+        except urllib.error.HTTPError as error:
+            if error.code != 403:
+                return 1
         return 0
     except BaseException:
         return 1
@@ -201,21 +261,28 @@ def main(argv=None):
                         help="Sprawdź start bez konsoli (używane przez pakowanie)")
     parser.add_argument("--no-update-check", action="store_true",
                         help="Nie sprawdzaj aktualizacji przy starcie")
+    parser.add_argument("--login", action="store_true",
+                        help="Pomiń zapamiętaną sesję i pokaż okno logowania")
     args = parser.parse_args(argv)
 
+    if args.selftest:
+        # Diagnostic only: no user files, no native bridge or persistent server.
+        return _selftest(PreviewWorkspace())
+
+    from .firebase_login import run_login
+    gate = run_login(force_prompt=args.login)
+    if gate is None:
+        return 0
     workspace = PreviewWorkspace()
     if args.map is not None:
         workspace.load_map(args.map.read_bytes(), args.map.name)
 
-    if args.selftest:
-        return _selftest(workspace)
-
-    if not args.no_update_check:
-        # Pytanie i pobieranie idą w tle, żeby okno startowało od razu;
-        # przy zgodzie program kończy się sam (launch_installer -> os._exit).
-        threading.Thread(target=check_updates_on_start, daemon=True).start()
-
-    app = create_app(workspace, multi_document=True)
+    # The existing public updater must not install an unprotected release.
+    app = create_app(workspace, multi_document=True, access_gate=gate)
+    stop_auth = threading.Event()
+    auth_worker = threading.Thread(target=gate.run, args=(stop_auth,),
+                                   daemon=True, name="GeoStudioFirebase")
+    auth_worker.start()
     # Bind immediately to an ephemeral loopback port. Passing an already-bound
     # socket to uvicorn avoids races with other apps and never exposes the
     # user's map files to LAN clients.
@@ -250,12 +317,22 @@ def main(argv=None):
         try:
             server.run(sockets=[sock])
         finally:
+            stop_auth.set()
             sock.close()
         return
 
     try:
+        _check_windows_runtime()
         import webview
+    except RuntimeError as exc:
+        stop_auth.set()
+        sock.close()
+        if os.name == "nt" and _is_pythonnet_loader_error(exc):
+            _show_windows_runtime_error()
+            return 1
+        raise
     except ImportError as exc:
+        stop_auth.set()
         sock.close()
         raise SystemExit(
             'Brakuje pywebview. Uruchom: py -m pip install -e ".[web]" '
@@ -277,7 +354,7 @@ def main(argv=None):
         if not server.started:
             raise RuntimeError("Lokalny serwer nie wystartował.")
         from .documents import DocumentNativeBridge
-        native_picker = DocumentNativeBridge(app.state.documents)
+        native_picker = DocumentNativeBridge(app.state.documents, access_gate=gate)
         webview.create_window(
             "GeoStudio 2.0",
             address, width=1480, height=940, min_size=(960, 640),
@@ -286,7 +363,13 @@ def main(argv=None):
         # Crucially, the JS bridge keeps NO reference to the pywebview
         # Window: dialogs open independently through Tk on the worker thread.
         webview.start()
+    except RuntimeError as exc:
+        if os.name == "nt" and _is_pythonnet_loader_error(exc):
+            _show_windows_runtime_error()
+            return 1
+        raise
     finally:
+        stop_auth.set()
         server.should_exit = True
         worker.join(timeout=4)
         sock.close()
