@@ -200,12 +200,17 @@ def run_login(force_prompt=False):
         if busy:
             return
         from .firebase_registration import open_registration
-        address = open_registration(root, client, initial_email=email.get())
-        if address:
+        password.set("")
+        if revealed:
+            toggle_password()
+        registration = open_registration(root, client, initial_email=email.get())
+        if registration:
+            address, notice = registration
             email.set(address)
+            message.set(notice)
             password_entry.focus_set()
 
-    register = tk.Button(form, text="Utwórz konto z kodem zaproszenia",
+    register = tk.Button(form, text="Utwórz konto",
                          command=show_registration, fg="#e9eff7", bg="#25364b",
                          activebackground="#35485e", activeforeground="white",
                          relief="flat", padx=8, pady=7, font=("Segoe UI", 10))

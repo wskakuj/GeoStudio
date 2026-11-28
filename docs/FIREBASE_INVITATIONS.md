@@ -16,9 +16,14 @@
    Rejestracja domyślnie wyłączona, ręczne tworzenie kont pozostaje.
 5. Utwórz jednorazowe zaproszenie testowe, skopiuj pełny kod (widoczny
    tylko raz). W innym oknie logowania użyj przycisku Utwórz konto z kodem,
-   wprowadź e-mail, hasło (12–128 znaków), powtórzenie hasła i kod.
-   Kliknij Utwórz konto i wyślij link. Sprawdź pocztę, w tym spam.
-   Po kliknięciu linku wpisz hasło ponownie i zakończ rejestrację.
+   wprowadź e-mail, hasło (12–128 znaków) i kod. Hasło można podejrzeć.
+   Kliknij Utwórz konto. Na drugim ekranie sprawdź pocztę, w tym spam.
+   Po kliknięciu linku wybierz Potwierdziłem e-mail. Nie wpisuj ponownie
+   hasła ani kodu w otwartej sesji rejestracji. Jeśli wiadomość nie dotarła,
+   użyj linku Wyślij ponownie (lokalna przerwa 30 s). Po zamknięciu
+   okna możesz wznowić rejestrację tym samym formularzem i tymi samymi
+   danymi. Stan rejestracji i token są tylko w pamięci, nie na dysku.
+   Po zakończeniu GeoStudio wraca do logowania z uzupełnionym e-mailem.
    Wymagana jest aktualna wersja kodu i połączenie z internetem.
 6. Jeśli kod wymaga akceptacji: na liście użytkowników wybierz
    Oczekujące na akceptację, zaznacz Aktywny dostęp i zapisz.

@@ -190,6 +190,21 @@ class Grant:
     offline_unlimited: bool = False
 
 
+@dataclass(repr=False)
+class RegistrationSession:
+    """Short-lived in-memory state, never saved to the session vault."""
+    email: str
+    code: str
+    uid: str
+    refresh_token: str
+    email_sent: bool = False
+    email_verified: bool = False
+
+    def clear(self):
+        self.refresh_token = ""
+        self.code = ""
+
+
 class FirebaseClient:
     def __init__(self, config: FirebaseConfig, transport=_transport, machine_id=None):
         self.config = config
@@ -390,43 +405,78 @@ class FirebaseClient:
                 or not 1 <= len(code.strip()) <= 80):
             raise AuthDenied("Wpisz poprawny e-mail, hasło (12–128 znaków) i kod zaproszenia.")
 
+    @staticmethod
+    def _email_verified_hint(credentials):
+        # Presentation only. The Worker verifies the actual Firebase account
+        # and email_verified claim before writing any entitlement.
+        try:
+            return json.loads(b64decode(credentials.id_token.split(".")[1])).get("email_verified") is True
+        except (ValueError, IndexError, AttributeError, TypeError):
+            return False
+
     def begin_registration(self, email, password, code):
         self._registration_input(email, password, code)
         email = email.strip()
+        code = code.strip()
         self._registration_call("invite_check", code=code, email=email)
         try:
-            result = self._post("signUp", {
+            credentials = self._credentials(self._post("signUp", {
                 "email": email, "password": password, "returnSecureToken": True,
-            })
-            credentials = self._credentials(result)
+            }))
         except AuthDenied:
-            raise AuthDenied("Nie udało się utworzyć konta. Jeśli już je założyłeś, "
-                             "użyj ponownego wysłania linku lub zakończ rejestrację.") from None
-        try:
+            # One button also resumes a previously started registration.
+            # Only successful Firebase sign-in can recover the session.
+            try:
+                credentials = self._credentials(self._post("signInWithPassword", {
+                    "email": email, "password": password, "returnSecureToken": True,
+                }))
+            except AuthDenied:
+                raise AuthDenied("Nie udało się utworzyć konta. Sprawdź dane. "
+                                 "Jeśli masz już konto, zaloguj się lub zresetuj hasło.") from None
+            state = self._registration_call("invite_status", identity=credentials.id_token)
+            if state.get("unregistered") is not True:
+                if state.get("pending"):
+                    raise AuthDenied("Konto oczekuje na akceptację administratora.") from None
+                raise AuthDenied("Konto już istnieje i ma przypisane uprawnienia. Wróć do logowania.") from None
+
+        session = RegistrationSession(email, code, credentials.uid, credentials.refresh_token,
+                                      email_verified=self._email_verified_hint(credentials))
+        if not session.email_verified:
+            try:
+                self._post("sendOobCode", {"requestType": "VERIFY_EMAIL",
+                                          "idToken": credentials.id_token})
+                session.email_sent = True
+            except AuthError:
+                # The account already exists. Continue to verification with
+                # a resend link instead of asking the user to enter data again.
+                pass
+        return session
+
+    def _registration_credentials(self, session):
+        if not isinstance(session, RegistrationSession) or not session.refresh_token or not session.code:
+            raise AuthDenied("Sesja rejestracji wygasła. Wróć do formularza.")
+        credentials = self._refresh_credentials(session.refresh_token)
+        if credentials.uid != session.uid:
+            session.clear()
+            raise AuthDenied("Sesja rejestracji zmieniła konto. Rozpocznij ponownie.")
+        # Keep rotated refresh tokens even when the subsequent redeem fails.
+        session.refresh_token = credentials.refresh_token
+        session.email_verified = self._email_verified_hint(credentials)
+        return credentials
+
+    def resend_registration(self, session):
+        credentials = self._registration_credentials(session)
+        if not session.email_verified:
+            self._registration_call("invite_check", code=session.code, email=session.email)
             self._post("sendOobCode", {"requestType": "VERIFY_EMAIL",
                                       "idToken": credentials.id_token})
-        except AuthError:
-            raise AuthUnavailable("Konto utworzono, ale nie potwierdzono wysłania e-maila. "
-                                  "Użyj przycisku Wyślij link ponownie.") from None
-        return {"ok": True}
+            session.email_sent = True
+        return session
 
-    def resend_registration(self, email, password, code):
-        self._registration_input(email, password, code)
-        self._registration_call("invite_check", code=code, email=email.strip())
-        credentials = self._credentials(self._post("signInWithPassword", {
-            "email": email.strip(), "password": password, "returnSecureToken": True,
-        }))
-        self._post("sendOobCode", {"requestType": "VERIFY_EMAIL", "idToken": credentials.id_token})
-        return {"ok": True}
-
-    def finish_registration(self, email, password, code):
-        self._registration_input(email, password, code)
-        credentials = self._credentials(self._post("signInWithPassword", {
-            "email": email.strip(), "password": password, "returnSecureToken": True,
-        }))
-        # The Worker checks the actual identity and verified email using Google,
-        # consumes the invitation and creates access atomically. No local grant.
-        return self._registration_call("invite_redeem", code=code,
+    def finish_registration(self, session):
+        credentials = self._registration_credentials(session)
+        # Verification and single-use redemption remain server-side.
+        return self._registration_call("invite_redeem", code=session.code,
                                        identity=credentials.id_token)
 
     def login(self, email, password):
@@ -455,7 +505,7 @@ class FirebaseClient:
                                      "potwierdź e-mail i zakończ ją kodem zaproszenia.") from None
             raise AuthDenied("Logowanie poprawne, ale konto nie ma aktywnego dostępu do GeoStudio.") from None
 
-    def refresh(self, refresh_token, *, activity_kind="heartbeat"):
+    def _refresh_credentials(self, refresh_token):
         url = ("https://securetoken.googleapis.com/v1/token?"
                + urllib.parse.urlencode({"key": self.config.api_key}))
         body = urllib.parse.urlencode({
@@ -464,7 +514,10 @@ class FirebaseClient:
         result = self._transport("POST", url, body, {
             "Content-Type": "application/x-www-form-urlencoded", "Accept": "application/json",
         })
-        grant = self._authorize(self._credentials(result, refresh=True))
+        return self._credentials(result, refresh=True)
+
+    def refresh(self, refresh_token, *, activity_kind="heartbeat"):
+        grant = self._authorize(self._refresh_credentials(refresh_token))
         self._report_activity(grant, activity_kind)
         return grant
 
